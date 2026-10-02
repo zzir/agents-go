@@ -19,9 +19,9 @@
 //      'completed' — per-call status is not persisted; the rejection notice
 //      survives in the call's output text.
 import { describe, it, expect } from 'vitest';
-import { buildTimeline, findToolCall, type EntryView, type TimelineEntry, type TurnEntry } from '@/lib/timeline';
+import { buildTimeline, findToolCall, rowKeys, type EntryView, type TimelineEntry, type TurnEntry } from '@/lib/timeline';
 import {
-  ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
+  ensureLiveTurn, mergeLiveTail, appendInjected, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, syncTaskCard, appendHandoffPart,
   resolvePendingApprovals, supersedePendingApprovals,
 } from '@/lib/streamReducer';
@@ -518,6 +518,83 @@ describe('stream/replay isomorphism', () => {
     ];
     const merged = mergeLiveTail(persisted, live);
     expect(merged.filter(m => m.role === 'user')).toHaveLength(2);
+  });
+
+  // An input the run reads from its queue (a steer, a follow-up) is a user
+  // entry in the middle of the run: the store cuts the turn there, and the
+  // live view must cut it at the same place — one run, two turns.
+  it('a consumed injection splits the live turn exactly where reload puts it', () => {
+    let live = ensureLiveTurn([], RUN, 'deploy')!;
+    live = appendMessageItem(live, 'deploying to prod', false)!;
+    live = appendInjected(live, RUN, 'use staging', 1)!;
+    live = appendMessageItem(live, 'switched to staging', false)!;
+    live = finalizeTurn(live, 'switched to staging', '') || live;
+
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'item', role: 'user', content: 'deploy' },
+      { id: "2", run_id: RUN, kind: 'item', role: 'assistant', content: 'deploying to prod', display: { kind: 'message', text: 'deploying to prod' } },
+      { id: "3", run_id: RUN, kind: 'item', role: 'user', content: 'use staging' },
+      { id: "4", run_id: RUN, kind: 'item', role: 'assistant', content: 'switched to staging', display: { kind: 'message', text: 'switched to staging' } },
+    ];
+    // What a turn or a bubble shows, without the ids only one side has.
+    const shape = (msgs: TimelineEntry[]) => msgs.map(m => m.role === 'turn'
+      ? { role: m.role, runId: m.runId, parts: m.parts }
+      : { role: m.role, runId: (m as { runId?: string }).runId, content: (m as { content?: string }).content });
+    expect(shape(live)).toEqual(shape(buildTimeline(rows)));
+    expect(shape(live).map(m => m.role)).toEqual(['user', 'turn', 'user', 'turn']);
+
+    // A hub replay of the same injection adds nothing; a second one is new.
+    expect(appendInjected(live, RUN, 'use staging', 1)).toBeNull();
+    expect(appendInjected(live, RUN, 'use staging', 2)!.filter(m => m.role === 'user')).toHaveLength(3);
+    // The store already holds the injection but not the turn after it (a
+    // reload between the two): the replay adds the turn alone.
+    const stored = buildTimeline(rows.slice(0, 3));
+    const resumed = appendInjected(stored, RUN, 'use staging', 1)!;
+    expect(resumed.map(m => m.role)).toEqual(['user', 'turn', 'user', 'turn']);
+    expect(resumed.filter(m => m.role === 'user')).toHaveLength(2);
+  });
+
+  // The live rows of a split run share its id: two turns keyed alike made
+  // React keep a ghost of one when the stored rows replaced them.
+  it('a split run renders under distinct keys, live and stored', () => {
+    let live = ensureLiveTurn([], RUN, 'deploy')!;
+    live = appendInjected(live, RUN, 'use staging', 1)!;
+    live = appendInjected(live, RUN, 'and tag it', 2)!;
+    const keys = rowKeys(live);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toEqual(['user-r' + RUN, 'turn-r' + RUN, 'user-r' + RUN + '~1', 'turn-r' + RUN + '~1', 'user-r' + RUN + '~2', 'turn-r' + RUN + '~2']);
+    // Stored rows carry their own ids, an optimistic bubble its client id, and
+    // a row with neither falls back to its position.
+    expect(rowKeys([
+      { role: 'user', content: 'q', messageId: '7', runId: RUN },
+      { role: 'turn', parts: [], messageId: '8', runId: RUN },
+      { role: 'user', content: 'next', clientMsgId: 'c3' },
+      { role: 'system', content: 'note' },
+    ] as TimelineEntry[])).toEqual(['user-m7', 'turn-m8', 'user-cc3', 'msg-i3']);
+  });
+
+  it('mergeLiveTail: a run an injection split keeps the turn the store does not have yet', () => {
+    let live = ensureLiveTurn([], RUN, 'deploy')!;
+    live = appendMessageItem(live, 'deploying to prod', false)!;
+    live = appendInjected(live, RUN, 'use staging', 1)!;
+    live = appendMessageItem(live, 'switching…', false)!;
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'item', role: 'user', content: 'deploy' },
+      { id: "2", run_id: RUN, kind: 'item', role: 'assistant', content: 'deploying to prod', display: { kind: 'message', text: 'deploying to prod' } },
+      { id: "3", run_id: RUN, kind: 'item', role: 'user', content: 'use staging' },
+    ];
+    // The store has the first turn and the injected message: its rows win for
+    // those, and the live second turn follows them.
+    const merged = mergeLiveTail(buildTimeline(rows), live, RUN);
+    expect(merged.map(m => m.role)).toEqual(['user', 'turn', 'user', 'turn']);
+    expect(merged.slice(0, 3).every(m => m.messageId !== undefined)).toBe(true);
+    expect((merged[3] as TurnEntry).parts).toEqual([{ type: 'text', content: 'switching…' }]);
+    // Fetched before the injection was stored: the live bubble stays, after
+    // the stored first turn, with the live second turn behind it.
+    const early = mergeLiveTail(buildTimeline(rows.slice(0, 2)), live, RUN);
+    expect(early.map(m => m.role)).toEqual(['user', 'turn', 'user', 'turn']);
+    expect((early[2] as { content?: string }).content).toBe('use staging');
+    expect((early[3] as TurnEntry).parts).toEqual([{ type: 'text', content: 'switching…' }]);
   });
 
   it('replay dedup: re-delivered items and repeated run.started do not duplicate', () => {

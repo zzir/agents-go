@@ -1922,3 +1922,25 @@ anyway still calls every tool it is allowed. What bounds that is the approval
 gate and the trust a trigger's work runs on (§5.75), not the frame.
 
 Rules: [invariant 85](workbench-invariants.md)
+
+### 5.81 An injected input is announced by a narrow event until run.entry ships
+
+Decided 2026-10-03.
+
+**Decision.** When a run reads an input queued on it, the workbench publishes
+`run.injected {run_id, input, index}` and the live view splits its turn there,
+as a reload does at the stored user entry. The composer queues over REST and
+drops its own queued bubble by the text the event names.
+
+**Rejected.** Shipping `run.entry` first: half the streaming reducer is
+rewritten, and steering waits behind it. Reloading the page when an input is
+read: the timeline flickers and races the live tail. A `client_msg_id` on the
+event: the SDK reads one queue in arrival order but each kind at its own
+point, and an id only this tab knows says nothing to the others.
+
+**Cost accepted.** One more event, absorbed when `run.entry` ships. Two queued
+messages with the same text are told apart by order alone. An input a
+guardrail replaced matches no queued bubble: it shows in the timeline, and the
+original returns to the box when the run ends.
+
+Rules: [invariant 16](workbench-invariants.md)

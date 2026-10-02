@@ -1,4 +1,5 @@
 import type { components } from '@/lib/apiTypes.gen';
+import type { InjectQueue } from '@/lib/protocol';
 
 // The generated OpenAPI schemas — swagger.yaml is CI-checked fresh, and
 // `npm run gen:api` keeps apiTypes.gen.ts matching it (CI checks that too).
@@ -428,6 +429,11 @@ export const api = {
   },
   providerTypes: {
     list: () => request('/provider-types'),
+  },
+  runs: {
+    // Queues input on a live run; 409 when the run is paused, starting or over.
+    inject: (runId: string, body: { queue: InjectQueue; input: string }) =>
+      request<{ run_id: string; queue: string }>(`/runs/${runId}/inject`, { method: 'POST', body: JSON.stringify(body) }),
   },
   tasks: {
     // One page across every conversation, newest first ({items, total}): the

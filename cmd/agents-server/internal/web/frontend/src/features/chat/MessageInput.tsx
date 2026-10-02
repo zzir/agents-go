@@ -20,6 +20,10 @@ interface MessageInputProps {
   // before typing; blocked, when set, is said instead.
   hint?: string;
   running: boolean;
+  // onQueue, while a run is live, takes what is typed instead of onSend: a
+  // steer the run reads at its next step, or a follow-up for when it ends.
+  // Text only — an image, /plan and /workflow belong to a new run.
+  onQueue?: (text: string, queue: 'steer' | 'follow_up') => void;
   // allowAttachments gates every image affordance: attachment storage is
   // configured AND the picked agent has Vision on.
   allowAttachments?: boolean;
@@ -42,7 +46,11 @@ interface AttachmentDraft {
 
 let draftKey = 0;
 
-export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, hint, running, allowAttachments, toolbar, plusItems }: MessageInputProps) {
+// The commands that set up a NEW run (its plan phase, a workflow start): they
+// cannot ride on one that is already going.
+const NEW_RUN_COMMAND = /^\/(plan|workflow)\b/;
+
+export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, hint, running, onQueue, allowAttachments, toolbar, plusItems }: MessageInputProps) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [atts, setAtts] = useState<AttachmentDraft[]>([]);
   const [attCfg, setAttCfg] = useState<AttachmentConfig | null>(null);
@@ -85,8 +93,16 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
     });
   }, [syncAttDraft]);
 
+  // While a run is live the box queues text on it; everything a new run
+  // would carry waits for one.
+  const queueing = running && !!onQueue;
+
   const addFiles = useCallback((files: File[]) => {
     const cfg = attCfg;
+    if (queueing) {
+      if (files.some(isImageFile)) toast.info('Images go with a new message — add them when this run finishes');
+      return;
+    }
     if (!cfg?.enabled || !allowAttachments) {
       if (files.some(isImageFile)) toast.info(!cfg?.enabled ? 'Image attachments are not configured on this server' : 'This agent does not accept images — enable Vision in its settings');
       return;
@@ -103,7 +119,7 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
       added.forEach(d => startUpload(d, cfg));
       return [...prev, ...added];
     });
-  }, [attCfg, allowAttachments, startUpload]);
+  }, [attCfg, allowAttachments, startUpload, queueing]);
 
   const removeAtt = useCallback((key: string) => {
     setAtts(prev => {
@@ -163,7 +179,7 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
   const offered = useMemo(() => (query === null ? [] : matchCommands(commands, query)), [commands, query]);
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
-  const popupOpen = query !== null && offered.length > 0 && dismissedFor !== text;
+  const popupOpen = !queueing && query !== null && offered.length > 0 && dismissedFor !== text;
   useEffect(() => { setActiveIndex(0); }, [query]);
   const pick = useCallback((cmd: SlashCommand) => {
     updateText(cmd.insert);
@@ -175,8 +191,23 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
   const image = imageAffordance(attCfg, Boolean(allowAttachments));
   const showPlus = image.enabled || plusItems != null;
 
+  // queueAs hands the typed text to the live run and empties the box; the
+  // images in the strip stay for the next new message.
+  const queueAs = (queue: 'steer' | 'follow_up') => {
+    const trimmed = text.trim();
+    if (!onQueue || blocked || !trimmed) return;
+    if (NEW_RUN_COMMAND.test(trimmed)) {
+      toast.info('/plan and /workflow start a new run — send it when this one finishes');
+      return;
+    }
+    onQueue(trimmed, queue);
+    setText('');
+    clearDraft(sessionId);
+  };
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
+    if (queueing) { queueAs('steer'); return; }
     const trimmed = text.trim();
     if (disabled || blocked || uploading) return;
     if (!trimmed && readyAtts.length === 0) return;
@@ -248,7 +279,7 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
           onPaste={handlePaste}
           onBlur={() => { if (popupOpen) setDismissedFor(text); }}
           disabled={!!blocked}
-          placeholder={blocked || hint || 'type something here…'}
+          placeholder={blocked || (queueing ? 'Running — Enter queues your message' : hint) || 'type something here…'}
           rows={2}
           aria-autocomplete="list"
           aria-controls={popupOpen ? 'slash-commands' : undefined}
@@ -270,10 +301,12 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
               </ActionMenu.Anchor>
               <ActionMenu.Overlay>
                 <ActionList>
-                  <ActionList.Item disabled={!image.enabled} onSelect={() => fileInputRef.current?.click()}>
+                  <ActionList.Item disabled={!image.enabled || queueing} onSelect={() => fileInputRef.current?.click()}>
                     <ActionList.LeadingVisual><ImageIcon /></ActionList.LeadingVisual>
                     Image…
-                    {image.hint && <ActionList.Description variant="block">{image.hint}</ActionList.Description>}
+                    {queueing
+                      ? <ActionList.Description variant="block">Images go with a new message.</ActionList.Description>
+                      : image.hint && <ActionList.Description variant="block">{image.hint}</ActionList.Description>}
                   </ActionList.Item>
                   {plusItems}
                 </ActionList>
@@ -285,6 +318,15 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
             <span className="chat-input-divider" />
             {running ? (
               <>
+                {queueing && (
+                  <IconButton
+                    icon={PaperAirplaneIcon}
+                    variant="invisible"
+                    aria-label="Send now"
+                    type="submit"
+                    disabled={!text.trim()}
+                  />
+                )}
                 <IconButton
                   icon={SquareCircleIcon}
                   variant="invisible"
@@ -293,10 +335,12 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
                   style={{ color: 'var(--fgColor-danger)' }}
                 />
                 {/* The graceful stop, reachable without a modifier key: a
-                    touch or keyboard user opens the menu beside the button. */}
+                    touch or keyboard user opens the menu beside the button.
+                    The follow-up is here too: the other thing to do with a
+                    run that is still going. */}
                 <ActionMenu>
                   <ActionMenu.Anchor>
-                    <IconButton icon={TriangleDownIcon} size="small" variant="invisible" aria-label="More ways to stop" />
+                    <IconButton icon={TriangleDownIcon} size="small" variant="invisible" aria-label="More actions for this run" />
                   </ActionMenu.Anchor>
                   <ActionMenu.Overlay>
                     <ActionList>
@@ -308,6 +352,15 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
                         Finish this turn, then stop
                         <ActionList.Description variant="block">The current step completes; no further turn starts.</ActionList.Description>
                       </ActionList.Item>
+                      {queueing && (
+                        <>
+                          <ActionList.Divider />
+                          <ActionList.Item disabled={!text.trim()} onSelect={() => queueAs('follow_up')}>
+                            Send after this run
+                            <ActionList.Description variant="block">What is typed waits until this run finishes, then gets its own answer.</ActionList.Description>
+                          </ActionList.Item>
+                        </>
+                      )}
                     </ActionList>
                   </ActionMenu.Overlay>
                 </ActionMenu>

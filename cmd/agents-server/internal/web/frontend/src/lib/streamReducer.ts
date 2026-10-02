@@ -50,9 +50,31 @@ export function ensureLiveTurn(msgs: Msgs, runId: string, input?: string, attach
   return out;
 }
 
+// appendInjected splits the live turn where the run read a queued input: the
+// turn so far ends, the input shows as a user bubble, and an empty turn of the
+// same run takes what follows — where a reload cuts at the stored user entry.
+// index counts the run's injections from 1: one the timeline already shows (a
+// hub replay, a row the store returned) adds no second bubble — only the turn
+// after it, when that is missing. Returns null when nothing changes.
+export function appendInjected(msgs: Msgs, runId: string, input: string, index: number): Msgs | null {
+  // The run's user entries after its first turn are its injections, in order.
+  let shown = 0;
+  let turnSeen = false;
+  for (const m of msgs) {
+    if (m.role === 'turn' && m.runId === runId) turnSeen = true;
+    else if (m.role === 'user' && m.runId === runId && turnSeen) shown++;
+  }
+  const next = { role: 'turn', parts: [], runId } as TurnEntry;
+  if (shown >= index) {
+    const last = msgs[msgs.length - 1];
+    return last?.role === 'user' && last.runId === runId ? [...msgs, next] : null;
+  }
+  return [...msgs, { role: 'user', content: input, runId, injected: index } as UserEntry, next];
+}
+
 // mergeLiveTail re-appends the unstamped tail of `current` (optimistic and
 // broadcast bubbles, the in-flight turn) after a fetched timeline, deduping
-// what the store already covers; only liveRunId's turn survives — invariant 19.
+// what the store already covers; only liveRunId's turns survive — invariant 19.
 export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string | null): Msgs {
   let i = current.length;
   while (i > 0 && current[i - 1].messageId === undefined) i--;
@@ -63,8 +85,16 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string
   // claimed by an earlier tail entry can't absorb a second identical one, so two
   // successive identical sends don't collapse into a single message.
   const contentConsumed = new Set<number>();
+  // A run an injection split shows as several turns; the store's cover the
+  // first of the live run's, in order.
+  let storedLiveTurns = persisted.filter(p => p.role === 'turn' && p.runId === liveRunId).length;
   for (const u of tail) {
-    if (u.role === 'user') {
+    if (u.role === 'user' && u.injected !== undefined) {
+      // An injected bubble shares its run id with the prompt, so the store
+      // covers it only where it holds the same text under that run.
+      const idx = out.findIndex((p, k) => !contentConsumed.has(k) && p.role === 'user' && p.runId === u.runId && p.content === u.content && k < persisted.length);
+      if (idx >= 0) contentConsumed.add(idx); else out.push(u);
+    } else if (u.role === 'user') {
       // Identity keys win: a shared runId or clientMsgId means the same message.
       // Two DISTINCT optimistic sends of the same text carry different
       // clientMsgIds and must both survive.
@@ -91,8 +121,8 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string
     } else if (u.role === 'turn') {
       const rid = u.runId;
       if (!rid || rid !== liveRunId) continue;
-      const dup = out.some(p => p.role === 'turn' && p.runId === rid);
-      if (!dup) out.push(u);
+      if (storedLiveTurns > 0) { storedLiveTurns--; continue; }
+      out.push(u);
     } else {
       out.push(u);
     }

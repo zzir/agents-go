@@ -100,21 +100,25 @@ func TestHandleStreamEvent_EmptyMessageSkipped(t *testing.T) {
 	}
 }
 
-// Input injected into a live run is a user entry, which no server → client
-// event carries today (the run.entry of protocol.md's Open changes will).
-// run.message is the nearest-looking event and the wrong one: it would render
-// the user's own text as assistant output. So nothing goes out for it.
-func TestHandleStreamEvent_InjectedInputDropped(t *testing.T) {
+// Input injected into a live run is a user entry: it goes out as run.injected
+// with its text, and never as run.message, which would render the user's own
+// words as assistant output.
+func TestHandleStreamEvent_InjectedInputIsItsOwnEvent(t *testing.T) {
 	in := agents.InputItemsFromText("also check the logs")[0]
 	ev := &agents.RunItemStreamEvent{
 		Name: "injected_input_created",
 		Item: &agents.RunItem{Kind: agents.ItemInjectedInput, RawInput: &in},
 	}
 
-	gotType := ""
-	(&Runner{}).handleStreamEvent(ev, "run_1", func(typ string, _ any) { gotType = typ }, nil)
-	if gotType != "" {
-		t.Errorf("injected input emitted %q, want no event", gotType)
+	var gotType string
+	var got protocol.RunInjected
+	runner := &Runner{hub: NewRunHub(t.Context())}
+	runner.handleStreamEvent(ev, "run_1", func(typ string, payload any) {
+		gotType = typ
+		got, _ = payload.(protocol.RunInjected)
+	}, nil)
+	if gotType != protocol.EventRunInjected || got.RunID != "run_1" || got.Input != "also check the logs" {
+		t.Errorf("injected input emitted %q %+v, want run.injected carrying the text", gotType, got)
 	}
 }
 

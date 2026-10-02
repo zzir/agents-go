@@ -4,6 +4,8 @@
 // and forget. insert returns false when no composer is mounted (no session
 // open) so callers can surface a hint instead of silently dropping text.
 
+import { loadDraft, saveDraft } from '@/lib/drafts';
+
 type InsertListener = ((text: string) => void) | null;
 
 let _listener: InsertListener = null;
@@ -14,6 +16,14 @@ export function insertIntoComposer(text: string): boolean {
   if (!_listener) return false;
   _listener(text);
   return true;
+}
+
+// putBackInComposer returns text a person typed to the box it came from: the
+// open composer when it is that session's, else the session's saved draft.
+export function putBackInComposer(sessionId: string, open: boolean, text: string): void {
+  if (open && insertIntoComposer(text)) return;
+  const draft = loadDraft(sessionId);
+  saveDraft(sessionId, draft ? draft + '\n' + text : text);
 }
 
 // quoteAsCodeBlock wraps raw terminal output in a Markdown code fence, using

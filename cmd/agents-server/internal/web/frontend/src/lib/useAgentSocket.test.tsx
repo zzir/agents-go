@@ -14,8 +14,10 @@ const apiMock = vi.hoisted(() => ({
   },
 }));
 vi.mock('@/lib/api', () => ({ api: apiMock, getToken: () => 'tok', clearToken: vi.fn() }));
+vi.mock('@/lib/composer', () => ({ putBackInComposer: vi.fn() }));
 
 import { invalidate } from '@/lib/apiCache';
+import { putBackInComposer } from '@/lib/composer';
 import { EV, ERR } from '@/lib/protocol';
 import { useAgentSocket, defaultSS, type SessionEvents, type SessionState } from '@/lib/useAgentSocket';
 import type { TurnEntry } from '@/lib/timeline';
@@ -64,6 +66,7 @@ beforeEach(() => {
   visibility = 'visible';
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
   vi.mocked(invalidate).mockClear();
+  vi.mocked(putBackInComposer).mockClear();
   for (const fn of Object.values(apiMock.sessions)) fn.mockClear();
   apiMock.sessions.messages.mockImplementation(async () => []);
 });
@@ -177,6 +180,78 @@ describe('useAgentSocket session status', () => {
     // The reset comes with the relisting that answers in its place.
     expect(t.events.onStatus).toHaveBeenCalledWith(null);
     expect(vi.mocked(invalidate)).toHaveBeenCalledWith('sessions');
+    await t.unmount();
+  });
+});
+
+describe('useAgentSocket queued input', () => {
+  const queued = (clientMsgId: string, text: string, queue: 'steer' | 'follow_up') => ({ clientMsgId, runId: RUN, text, queue });
+  const roles = (s: SessionState) => s.messages.map(m => m.role + ('content' in m && m.content ? ':' + m.content : ''));
+
+  // The run reads one queue in arrival order, but each kind at its own point:
+  // a follow-up queued first is still waiting when a later steer is read. So
+  // the event names what was read, and the tab drops that one — never the head.
+  it('drops the queued input the run read, by its text, and splits the turn there', async () => {
+    const t = await mount(() => S1);
+    await act(async () => {
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'deploy' });
+      t.hook().queueInput(S1, queued('c1', 'then write the changelog', 'follow_up'));
+      t.hook().queueInput(S1, queued('c2', 'use staging', 'steer'));
+      t.sock().receive(EV.runMessage, { run_id: RUN, text: 'deploying to prod', item_id: 'm1' });
+    });
+    expect(t.store[S1].queued.map(q => q.clientMsgId)).toEqual(['c1', 'c2']);
+
+    await act(async () => { t.sock().receive(EV.runInjected, { run_id: RUN, input: 'use staging', index: 1 }); });
+    expect(t.store[S1].queued.map(q => q.clientMsgId)).toEqual(['c1']);
+    expect(roles(t.store[S1])).toEqual(['user:deploy', 'turn', 'user:use staging', 'turn']);
+    // What follows lands in the new turn.
+    await act(async () => { t.sock().receive(EV.runMessage, { run_id: RUN, text: 'switched', item_id: 'm2' }); });
+    expect(textParts(t.store[S1])).toEqual(['deploying to prod', 'switched']);
+    expect((t.store[S1].messages[3] as TurnEntry).parts).toEqual([{ type: 'text', content: 'switched' }]);
+
+    // A hub replay re-delivers the event: nothing moves.
+    await act(async () => { t.sock().receive(EV.runInjected, { run_id: RUN, input: 'use staging', index: 1 }); });
+    expect(roles(t.store[S1])).toHaveLength(4);
+    // An input another tab or a REST client queued matches nothing here: the
+    // timeline shows it, the queue is left alone.
+    await act(async () => { t.sock().receive(EV.runInjected, { run_id: RUN, input: 'from elsewhere', index: 2 }); });
+    expect(t.store[S1].queued.map(q => q.clientMsgId)).toEqual(['c1']);
+    expect(roles(t.store[S1]).slice(4)).toEqual(['user:from elsewhere', 'turn']);
+    await t.unmount();
+  });
+
+  it('returns what an ended run never read to the box it was typed in; a pause keeps it queued', async () => {
+    const t = await mount(() => S1);
+    await act(async () => {
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'deploy' });
+      t.hook().queueInput(S1, queued('c1', 'first', 'steer'));
+      t.hook().queueInput(S1, queued('c2', 'second', 'follow_up'));
+    });
+    // Paused for approval is not over: the run still holds its queue.
+    await act(async () => { t.sock().receive(EV.runInterrupted, { run_id: RUN }); });
+    expect(t.store[S1].queued).toHaveLength(2);
+    expect(putBackInComposer).not.toHaveBeenCalled();
+
+    await act(async () => {
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN });
+      t.sock().receive(EV.runCancelled, { run_id: RUN, reason: 'stopped' });
+    });
+    expect(t.store[S1].queued).toEqual([]);
+    expect(vi.mocked(putBackInComposer).mock.calls).toEqual([[S1, true, 'first\nsecond']]);
+    await t.unmount();
+  });
+
+  it('a withdrawn input is gone from the queue once, and only once', async () => {
+    const t = await mount(() => S1);
+    await act(async () => {
+      t.sock().receive(EV.runStarted, { session_id: S1, run_id: RUN, input: 'deploy' });
+      t.hook().queueInput(S1, queued('c1', 'first', 'steer'));
+    });
+    let first = false;
+    let second = true;
+    await act(async () => { first = t.hook().dropQueued(S1, 'c1'); second = t.hook().dropQueued(S1, 'c1'); });
+    expect([first, second]).toEqual([true, false]);
+    expect(t.store[S1].queued).toEqual([]);
     await t.unmount();
   });
 });

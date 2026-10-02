@@ -196,6 +196,9 @@ interface UserEntry {
   // Stamped on this browser's own not-yet-sent bubble (no run or row id yet):
   // what a rollback finds, and what tells two identical sends apart.
   clientMsgId?: string;
+  // Set on a live bubble the run read from its queue (run.injected's index):
+  // it shares its run id with the prompt, so the id alone does not name it.
+  injected?: number;
 }
 
 // WorkflowStartedNote is the data of a started note: a workflow's start (which
@@ -484,6 +487,27 @@ function assemble(
   }
   finishTurn();
   return timeline;
+}
+
+// rowKeys gives every rendered row a stable, UNIQUE React key: the durable
+// store id first, then the run id or the sender's optimistic client id, and
+// the array index only for a transient row that has none. Type-tagged
+// prefixes (m/r/c/i) keep the number spaces apart, and the role prefix keeps
+// a bubble and a turn of one run distinct. A run an injection split shares
+// its id between rows of the same role until the store stamps them: the later
+// ones take an ordinal, or React reuses the wrong node and leaves a ghost.
+export function rowKeys(messages: Array<{ role: string; messageId?: string | number; runId?: string; clientMsgId?: string }>): string[] {
+  const seen = new Map<string, number>();
+  return messages.map((m, i) => {
+    const role = m.role === 'turn' || m.role === 'user' || m.role === 'compaction' ? m.role : 'msg';
+    const base = m.messageId != null ? role + '-m' + m.messageId
+      : m.runId ? role + '-r' + m.runId
+        : m.clientMsgId ? role + '-c' + m.clientMsgId
+          : role + '-i' + i;
+    const n = seen.get(base) || 0;
+    seen.set(base, n + 1);
+    return n === 0 ? base : base + '~' + n;
+  });
 }
 
 // findToolCall returns the tool call with the given id (searching newest-first),

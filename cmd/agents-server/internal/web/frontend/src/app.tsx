@@ -21,7 +21,7 @@ const TerminalPanel = React.lazy(() =>
   import('@/features/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })),
 );
 import { checkAuth, getToken, api, exchangeCode, TOKEN_KEY } from '@/lib/api';
-import { EV, TASK_KIND_WORKFLOW, type SessionStatus, type SessionStatusEvent } from '@/lib/protocol';
+import { EV, TASK_KIND_WORKFLOW, type InjectQueue, type SessionStatus, type SessionStatusEvent } from '@/lib/protocol';
 import { WorkflowsHub, type HubTab } from '@/features/workflows/WorkflowsHub';
 import { WORKFLOW_COMMAND } from '@/features/chat/SlashMenu';
 import { SESSION_REMOVED } from '@/features/sessions/SessionPicker';
@@ -30,6 +30,7 @@ import { patchToolCall, type ToolCallPatch } from '@/lib/timeline';
 import { syncTaskCard } from '@/lib/streamReducer';
 import { adoptNewSessionPrefs, clearSessionPrefs } from '@/lib/drafts';
 import { toast } from '@/lib/toast';
+import { putBackInComposer } from '@/lib/composer';
 import { MeContext, useMeLoader } from '@/lib/me';
 import { useNarrow } from '@/lib/hooks';
 import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
@@ -315,7 +316,7 @@ function App() {
     },
   }), [refreshOwnPending]);
 
-  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS, sessionEvents);
+  const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask, queueInput, dropQueued } = useAgentSocket(updateSS, sessionEvents);
 
   // patchTask applies a server-confirmed task state change (e.g. the stop
   // API's response) directly — the fallback for when no hub broadcast will
@@ -539,6 +540,27 @@ function App() {
     }
   }, [activeSession, updateSS, wsRef, runWorkflowCommand]);
 
+  // handleInject queues a message on the conversation's live run — a steer it
+  // reads at its next step, or a follow-up it takes once it finishes. What
+  // could not be queued goes back to the box it was typed in.
+  const handleInject = useCallback((text: string, queue: InjectQueue) => {
+    const sid = activeSession;
+    const runId = sid ? ssRef.current[sid]?.liveRunId : null;
+    if (!sid || !runId) {
+      putBackInComposer(sid || '', true, text);
+      toast.info('The run just ended — send it as a new message');
+      return;
+    }
+    const item = { clientMsgId: nextClientMsgId(), runId, text, queue };
+    queueInput(sid, item);
+    api.runs.inject(runId, { queue, input: text }).catch((e: Error & { status?: number }) => {
+      // Only what is still queued comes back here: the run's end returns the rest.
+      if (!dropQueued(sid, item.clientMsgId)) return;
+      putBackInComposer(sid, activeSessionRef.current === sid, text);
+      toast.error(e?.status === 409 ? `Not queued — ${e.message}` : 'Could not queue the message — it is back in the box');
+    });
+  }, [activeSession, queueInput, dropQueued]);
+
   // handleCancel reports whether the stop was SENT: no live run to stop, or a
   // socket that is down, is a stop that did not happen and must not read as
   // one.
@@ -710,11 +732,11 @@ function App() {
   // One object of callbacks, rebuilt only when one of them is; the memo'd
   // view compares it by reference.
   const chatActions = useMemo<ChatViewActions>(() => ({
-    onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onFork: handleFork,
+    onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onInject: handleInject, onFork: handleFork,
     onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
     onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask, onLoadSpan: handleLoadSpan,
     onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings, onRetryLoad: handleRetryLoad,
-  }), [handleSend, handleCancel, handleApprove, handleReject, handleFork, handleSwitchBranch, handleCompact,
+  }), [handleSend, handleCancel, handleApprove, handleReject, handleInject, handleFork, handleSwitchBranch, handleCompact,
     handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad]);
 
   // A signature that moves with any execution in any conversation (every

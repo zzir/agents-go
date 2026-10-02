@@ -1,10 +1,10 @@
 import type { AttachmentMeta } from '@/lib/attachments';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { WSClient } from '@/lib/ws';
-import { EV, ERR, type RunDiagnostic, type SessionStatusEvent, type TaskRow } from '@/lib/protocol';
+import { EV, ERR, type InjectQueue, type RunDiagnostic, type SessionStatusEvent, type TaskRow } from '@/lib/protocol';
 import { buildTimeline, type DisplayExtra, type EntryView, type TimelineEntry, type ToolCall } from '@/lib/timeline';
 import {
-  ensureLiveTurn, mergeLiveTail, appendMessageItem, appendReasoningItem, finalizeTurn,
+  ensureLiveTurn, mergeLiveTail, appendInjected, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, syncTaskCard, appendToolProgress, appendHandoffPart, resolvePendingApprovals, supersedePendingApprovals,
   TERMINAL_TASK_STATUSES,
 } from '@/lib/streamReducer';
@@ -12,6 +12,7 @@ import { api, clearToken } from '@/lib/api';
 import { invalidate } from '@/lib/apiCache';
 import { resyncAfterGap, type GapResync } from '@/lib/gapResync';
 import { toast } from '@/lib/toast';
+import { putBackInComposer } from '@/lib/composer';
 import { ME_RELOAD } from '@/lib/me';
 import {
   createTaskRouter, mergeTaskRows, seedTaskRows, withPendingTaskApprovals,
@@ -22,6 +23,15 @@ import type { TraceEventData as TraceEvent } from '@/features/chat/TracePanel';
 
 export { taskStateFromRow, taskRetryable } from '@/lib/taskEvents';
 export type { TaskState, TaskViewState } from '@/lib/taskEvents';
+
+// QueuedInput is a message this tab queued on a live run (POST
+// /runs/:id/inject) and has not yet seen the run read.
+export interface QueuedInput {
+  clientMsgId: string;
+  runId: string;
+  text: string;
+  queue: InjectQueue;
+}
 
 export interface SessionState {
   messages: TimelineEntry[];
@@ -51,6 +61,9 @@ export interface SessionState {
   tasksError?: string;
   // The task currently inspected in the side panel, or null.
   taskView: TaskViewState | null;
+  // What this tab queued on the live run and the run has not read yet, in
+  // the order sent.
+  queued: QueuedInput[];
 }
 
 // A fetched timeline: the assembled messages and the raw entries they came from.
@@ -65,7 +78,7 @@ export function defaultSS(): SessionState {
   return {
     messages: [], streaming: '', reasoning: '', running: false, compacting: false, diagnostics: [],
     traceRuns: {}, liveRunId: null, loaded: false,
-    entries: [], tasks: {}, tasksLoaded: false, taskView: null,
+    entries: [], tasks: {}, tasksLoaded: false, taskView: null, queued: [],
   };
 }
 
@@ -179,6 +192,26 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   // a fetch launched before the bump describes a path the session is no
   // longer on, and its late resolution is dropped.
   const timelineGenRef = useRef<Record<string, number>>({});
+
+  // The queued inputs per session: the ref is what the event handlers read
+  // and write at once; SessionState.queued mirrors it for the view.
+  const queuedRef = useRef<Record<string, QueuedInput[]>>({});
+  const setQueued = useCallback((sid: string, next: QueuedInput[]) => {
+    queuedRef.current[sid] = next;
+    updateSS(sid, s => ({ ...s, queued: next }));
+  }, [updateSS]);
+  const queueInput = useCallback((sid: string, item: QueuedInput) => {
+    setQueued(sid, [...(queuedRef.current[sid] || []), item]);
+  }, [setQueued]);
+  // dropQueued withdraws one queued input; false when the run already read it
+  // or its end already returned it.
+  const dropQueued = useCallback((sid: string, clientMsgId: string): boolean => {
+    const cur = queuedRef.current[sid] || [];
+    const next = cur.filter(q => q.clientMsgId !== clientMsgId);
+    if (next.length === cur.length) return false;
+    setQueued(sid, next);
+    return true;
+  }, [setQueued]);
 
   // Coalesce high-frequency delta updates (run.step / run.reasoning) to one
   // setState per animation frame per key — buffers accumulate synchronously
@@ -412,6 +445,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       mutedRunsRef.current.delete(runId);
     }
     delete sessionRunRef.current[deletedId];
+    delete queuedRef.current[deletedId];
     tasks.forgetSession(deletedId);
   }, [tasks]);
 
@@ -442,6 +476,17 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       delete runMapRef.current[runId];
       mutedRunsRef.current.delete(runId);
       if (sid && sessionRunRef.current[sid] === runId) delete sessionRunRef.current[sid];
+    };
+
+    // putBackUnread returns what was queued on an ended run and never read to
+    // the box it was typed in — nothing a person typed is dropped silently.
+    const putBackUnread = (sid: string, runId: string) => {
+      const all = queuedRef.current[sid] || [];
+      const unread = all.filter(q => q.runId === runId);
+      if (unread.length === 0) return;
+      setQueued(sid, all.filter(q => q.runId !== runId));
+      putBackInComposer(sid, eventsRef.current.activeSession() === sid, unread.map(q => q.text).join('\n'));
+      toast.info('Unread queued messages were put back');
     };
 
     // resubscribe asks the hub to replay a chat run from `fromSeq` and clears
@@ -569,7 +614,31 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
         const msgs = finalizeTurn(s.messages, text, thinking);
         return { ...s, messages: msgs || s.messages, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
       });
+      putBackUnread(sid, p.run_id);
       reloadMessages(sid);
+    });
+
+    // The run read one of its queued inputs: the turn so far ends, the input
+    // shows as the user's message, and what follows is a new turn — the split
+    // a reload makes at the stored entry (invariant 16). This tab's oldest
+    // queued input with that exact text was the one; another tab's or a REST
+    // client's matches none and leaves the queue alone.
+    ws.on(EV.runInjected, (p: { run_id: string; input: string; index: number }) => {
+      const sid = runMapRef.current[p.run_id];
+      if (!sid) return;
+      const seen = appendedItemsRef.current[p.run_id] || (appendedItemsRef.current[p.run_id] = new Set());
+      if (seen.has('inj:' + p.index)) return;
+      seen.add('inj:' + p.index);
+      streamBufsRef.current[p.run_id] = '';
+      reasoningBufsRef.current[p.run_id] = '';
+      const all = queuedRef.current[sid] || [];
+      const at = all.findIndex(q => q.runId === p.run_id && q.text === p.input);
+      if (at >= 0) queuedRef.current[sid] = [...all.slice(0, at), ...all.slice(at + 1)];
+      const queued = queuedRef.current[sid] || [];
+      updateSS(sid, s => {
+        const msgs = appendInjected(s.messages, p.run_id, p.input, p.index);
+        return { ...s, messages: msgs || s.messages, queued, streaming: '', reasoning: '' };
+      });
     });
 
     ws.on(EV.runError, (p: { run_id?: string; session_id?: string; code?: string; message: string; guardrail?: string; stage?: string }) => {
@@ -641,6 +710,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
         ...s, messages: appendErrorPart(s.messages, errPart, thinking, remaining),
         streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null,
       }));
+      if (rid) putBackUnread(sid, rid);
       // A guardrail block already rendered its typed card (with the retracted
       // answer above it) optimistically. A reload would replace that with the
       // persisted timeline, which — since the SDK never persists a tripped output
@@ -672,6 +742,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
         if (s.liveRunId && s.liveRunId !== rid) return { ...s, messages: msgs };
         return { ...s, messages: msgs, streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null };
       });
+      putBackUnread(sid, rid);
       reloadMessages(sid);
     });
 
@@ -877,7 +948,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       }
       rafPending.clear();
     };
-  }, [updateSS, reloadMessages, scheduleFrame, tasks, loadTimeline, fetchTraces]);
+  }, [updateSS, reloadMessages, scheduleFrame, tasks, loadTimeline, fetchTraces, setQueued]);
 
   // watchTask opens the Inspector's live view of a task: snapshot the child
   // session's persisted transcript + traces, then let the router stream the
@@ -938,5 +1009,5 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     updateSS(sid, s => ({ ...s, loaded: false, entries: [] }));
   }, [updateSS]);
 
-  return { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask };
+  return { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask, queueInput, dropQueued };
 }

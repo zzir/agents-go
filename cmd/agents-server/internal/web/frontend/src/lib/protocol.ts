@@ -37,6 +37,9 @@ export const EV = {
   runInterrupted: 'run.interrupted',
   runCancelled: 'run.cancelled',
   runCompaction: 'run.compaction',
+  // The run read an input queued on it (run.inject): a user message in the
+  // middle of the run, numbered within it so a replay is recognized.
+  runInjected: 'run.injected',
   // Trouble a run went through and SURVIVED: retries, a fallback model, a
   // compaction pass that gave up. None of these reach run.error.
   runDiagnostic: 'run.diagnostic',
@@ -138,6 +141,10 @@ export function parseTaskNotification(content: string | undefined | null): null 
   const first = items[0];
   return { text, label: first ? first.label : null, taskId: first ? first.taskId : null, items };
 }
+
+// The queues run.inject and POST /runs/:id/inject take (mirror of the Go
+// protocol.InjectQueue* consts). The composer offers the two that extend a run.
+export type InjectQueue = 'steer' | 'next_turn' | 'follow_up';
 
 // A conversation's derived status (mirror of the Go protocol.Session*
 // consts), highest priority first; the client renders it and derives none.

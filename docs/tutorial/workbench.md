@@ -69,8 +69,14 @@ runs that message in plan mode — the agent reads and proposes, and its
 `submit_plan` waits for your approval before anything changes — and
 `/plan off <message>` leaves plan mode with that message (`/workflow <name>`
 joins them once you have [workflows](#automate-it)). **Stop** aborts the run
-at once; Shift-click it, or open **More ways to stop** beside it, to let the
-current turn finish first.
+at once; Shift-click it, or open the menu beside it, to let the current turn
+finish first.
+
+You do not have to wait for a run to finish to say more. While one is going,
+Enter queues what you typed: the agent reads it after its current step and
+changes course. **Send after this run**, in the same menu as the stops, queues
+it for when the run finishes instead. A queued message waits above the box
+until it is read, and comes back into the box if the run ends first.
 
 ## Give it a sandbox
 

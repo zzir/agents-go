@@ -47,6 +47,9 @@ const (
 	EventRunInterrupted  = "run.interrupted"
 	EventRunCancelled    = "run.cancelled"
 	EventRunCompaction   = "run.compaction"
+	// EventRunInjected says the run read input queued on it (run.inject): a
+	// user message in the middle of the run, which no other live event carries.
+	EventRunInjected = "run.injected"
 	// EventRunDiagnostic reports trouble a run went through and SURVIVED
 	// (retries, a fallback model, a compaction pass that gave up).
 	EventRunDiagnostic       = "run.diagnostic"
@@ -307,6 +310,14 @@ type RunReasoningItem struct {
 	Text  string `json:"text"`
 	// ItemID is the model item's stable id, used for replay dedup like RunMessage.
 	ItemID string `json:"item_id,omitempty"`
+}
+
+// RunInjected carries one injected input the run has read. Index counts the
+// run's injections from 1, so a replay of the event is recognized.
+type RunInjected struct {
+	RunID string `json:"run_id"`
+	Input string `json:"input"`
+	Index int    `json:"index"`
 }
 
 // RunToolCall is emitted when the agent invokes a tool (or requests approval for one).

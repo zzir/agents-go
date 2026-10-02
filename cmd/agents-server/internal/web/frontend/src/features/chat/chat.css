@@ -666,6 +666,28 @@
   margin-top: var(--base-size-8);
 }
 
+/* Messages queued on the live run, above the composer they were typed in:
+   quiet, sized to it, one line each. */
+.chat-queued {
+  display: flex; flex-direction: column; gap: var(--base-size-4);
+  width: calc(100% - 2 * var(--base-size-16));
+  max-width: var(--composer-max-width);
+  margin: 0 auto var(--base-size-4);
+}
+.chat-queued-item {
+  display: flex; align-items: baseline; gap: var(--base-size-8);
+  padding: var(--base-size-4) var(--base-size-8);
+  border: 1px dashed var(--borderColor-muted);
+  border-radius: var(--borderRadius-medium);
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+}
+.chat-queued-note { flex: none; }
+.chat-queued-text {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fgColor-default);
+}
+
 /* A rejection's reason box (RejectButton): a line of its own under the
    buttons of whichever wrapping row holds them. The task header does not
    wrap (its id gives way instead), so there the box hangs below it. */

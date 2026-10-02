@@ -906,6 +906,7 @@ which run this is.
 | `run.tool_result`       | Tool output — `{run_id, tool_call_id, output, title?, summary?, renderer?, is_error?, extra?}`; the optional display fields mirror the stored output entry's `display` (`extra` is the tool's `Details` bag), so the live card carries the same data a reload rebuilds. A multimodal result's `output` is the Responses content list as JSON (`[{"type":"input_text",…},{"type":"input_image","image_url":…},{"type":"input_file",…}]`, SDK spec §2.7b) — the card shows the image and offers the file; anything else is text |
 | `run.handoff`           | Agent handoff — `{run_id, from, to, from_id?, to_id?}`; the ids name the config rows behind the agents, for their avatars                               |
 | `run.compaction`        | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}`                                                               |
+| `run.injected`          | The run read an input queued on it (`run.inject`, `POST /runs/:id/inject`) — `{run_id, input, index}`; a user message in the middle of the run: the turn so far ends and a new one follows. `index` counts the run's injections from 1, what a client dedups a hub replay by |
 | `run.output`            | Final output — `{run_id, final_output}`                                                                                                                 |
 | `run.interrupted`       | Paused for tool approval — `{run_id}`; NOT final: the decision resumes the SAME run id, and its events continue the sequence on the same subscription. Sent only once the pause is durable (the `pending_approvals` row written) — a pause that cannot be recorded ends the run as `run.error` (`persist_error`) instead, so nothing is ever announced as awaiting a decision nobody can make |
 | `run.diagnostic`        | Trouble the run survived — `{run_id, type, code?, message?, details?}`; `type` is an open vocabulary (`model_retry`, `model_fallback`, `tool_panic`, …), so show unknown kinds generically |
@@ -1038,6 +1039,9 @@ roughly half the streaming reducer becomes a replace-by-id; the
 reconciliation between a history fetch and the live events that arrived
 while it was in flight is a client ordering problem no payload shape touches.
 `run.message.item_id` is the first piece of this already on the wire.
+`run.injected` is the seventh item event it replaces: the read input becomes
+a `run.entry` of the user's
+([decisions §5.81](../explanation/decisions.md#581-an-injected-input-is-announced-by-a-narrow-event-until-runentry-ships)).
 
 ### Known gaps
 

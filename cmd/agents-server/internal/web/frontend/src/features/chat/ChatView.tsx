@@ -4,13 +4,13 @@ import { Button, ActionMenu, ActionList, Link } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
-import { type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
+import { rowKeys, type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { labelRuns } from '@/lib/runLabels';
 import { useScrollToBottom, useApi, useCopy } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
 import { composerProjectRows, composerSandboxView, projectLabel, type SandboxSupports, type SessionBinding } from '@/lib/binding';
 import { useProjects } from '@/lib/useProjects';
-import { parseTaskNotification, TASK_KIND_WORKFLOW, type TaskStatus } from '@/lib/protocol';
+import { parseTaskNotification, TASK_KIND_WORKFLOW, type InjectQueue, type TaskStatus } from '@/lib/protocol';
 import type { SessionState, TaskState } from '@/lib/useAgentSocket';
 import { ChatSessionProvider, useDerivedChatTasks, type ChatSessionState, type ChatActions } from '@/features/chat/ChatSessionContext';
 import { BackgroundListPanel, BackgroundDetailPanel, BackgroundMissingPanel } from '@/features/chat/BackgroundPanel';
@@ -63,25 +63,6 @@ interface ChatMessage {
   note?: WorkflowStartedNote;
 }
 
-// Stable React key for a rendered message: prefer the durable store id, then
-// the run id or the sender's optimistic client id, and only fall back to the
-// array index for a transient entry that has none. Type-tagged prefixes
-// (m/r/c/i) keep the id and index number-spaces from colliding; the role
-// prefix keeps a user bubble and a turn that share a run id distinct. Plain
-// index keys let collapse / copied state drift onto the wrong message whenever
-// the list length changed (reload, fork, session switch).
-function entryKey(
-  m: { messageId?: string | number; runId?: string; clientMsgId?: string },
-  i: number,
-  role: string,
-): string {
-  if (m.messageId != null) return role + '-m' + m.messageId;
-  if (m.runId) return role + '-r' + m.runId;
-  if (m.clientMsgId) return role + '-c' + m.clientMsgId;
-  return role + '-i' + i;
-}
-
-
 interface AgentConfig {
   id: string;
   name: string;
@@ -121,6 +102,8 @@ export interface ChatViewActions {
   onCancel: (graceful?: boolean) => boolean;
   onApprove?: (id: string, scope?: string) => void;
   onReject?: (id: string, reason?: string) => void;
+  // Queues a message on the session's live run: a steer, or a follow-up.
+  onInject?: (text: string, queue: InjectQueue) => void;
   onFork?: (id: string) => void;
   // Switches the session's active branch to another attempt.
   onSwitchBranch?: (tipEntryId: string) => void;
@@ -185,10 +168,10 @@ export function ChatView({
   const messages: ChatMessage[] = state.messages;
   const {
     entries, loaded, streaming, reasoning, running, compacting, diagnostics, traceRuns,
-    liveRunId, tasks, tasksLoaded, tasksError, taskView,
+    liveRunId, tasks, tasksLoaded, tasksError, taskView, queued,
   } = state;
   const {
-    onSend, onCancel, onApprove, onReject, onFork, onSwitchBranch, onCompact, onRegenerate,
+    onSend, onCancel, onApprove, onReject, onInject, onFork, onSwitchBranch, onCompact, onRegenerate,
     onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen, onSettingsOpen,
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
@@ -322,6 +305,13 @@ export function ChatView({
     // Bound: the server uses the binding regardless — send no project claim.
     onSend(text, agentConfigId, sessionBinding ? '' : projectId, attachments);
   }, [agentConfigId, projectId, sessionBinding, onSend, scrollToBottom]);
+
+  // A message typed while the run is live is queued on it; like a send, it
+  // follows the log again (invariant 18).
+  const handleQueue = useCallback((text: string, queue: InjectQueue) => {
+    scrollToBottom();
+    onInject?.(text, queue);
+  }, [onInject, scrollToBottom]);
 
   // Image affordances follow the PICKED agent's Vision flag; the server
   // re-checks at run start, so this is presentation, not the gate.
@@ -627,6 +617,8 @@ export function ChatView({
     </>
   );
 
+  const keys = useMemo(() => rowKeys(messages), [messages]);
+
   // One transcript row. Extracted from the render so the workflow grouping can
   // wrap a span of them without the map body moving.
   const renderMessage = (m: ChatMessage, i: number) => {
@@ -644,7 +636,7 @@ export function ChatView({
           : undefined;
         return (
           <TurnBlock
-            key={entryKey(m, i, 'turn')}
+            key={keys[i]}
             parts={m.parts || []}
             streaming={isLive ? streaming : null}
             reasoning={isLive ? reasoning : null}
@@ -660,7 +652,7 @@ export function ChatView({
         const rid = userRunMap[i];
         return (
           <UserMessage
-            key={entryKey(m, i, 'user')}
+            key={keys[i]}
             content={m.content || ''}
             attachments={(m as { attachments?: AttachmentMeta[] }).attachments}
             traceRunId={rid || null}
@@ -669,12 +661,12 @@ export function ChatView({
         );
       }
       if (m.role === 'compaction') {
-        return <CompactionCard key={entryKey(m, i, 'compaction')} content={m.content} tokensBefore={m.tokensBefore} tokensAfter={m.tokensAfter} reset={m.reset} folded={m.foldedCount} />;
+        return <CompactionCard key={keys[i]} content={m.content} tokensBefore={m.tokensBefore} tokensAfter={m.tokensAfter} reset={m.reset} folded={m.foldedCount} />;
       }
       if (m.role === 'system' && m.note) {
-        return <WorkflowStartedChip key={entryKey(m, i, 'msg')} note={m.note} content={m.content || ''} traceRunId={userRunMap[i] || null} msgIdx={i} />;
+        return <WorkflowStartedChip key={keys[i]} note={m.note} content={m.content || ''} traceRunId={userRunMap[i] || null} msgIdx={i} />;
       }
-      return <MessageBubble key={entryKey(m, i, 'msg')} role={m.role} content={m.content || ''} />;
+      return <MessageBubble key={keys[i]} role={m.role} content={m.content || ''} />;
   };
 
   const isEmpty = loaded && messages.length === 0;
@@ -803,6 +795,16 @@ export function ChatView({
         <ChatToc items={tocItems} scrollElRef={chatElRef} onJump={jumpToMsg} />
         </div>
         <WorkflowStrip />
+        {queued.length > 0 && (
+          <div className="chat-queued" aria-live="polite">
+            {queued.map(q => (
+              <div key={q.clientMsgId} className="chat-queued-item">
+                <span className="chat-queued-note">{q.queue === 'follow_up' ? 'Queued · sent when this run finishes' : 'Queued · read after the current step'}</span>
+                <span className="chat-queued-text">{q.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <MessageInput
           key={`input-${sessionId}`}
           sessionId={sessionId}
@@ -812,6 +814,7 @@ export function ChatView({
           blocked={gate.blocked}
           hint={ownPending ? PENDING_HINT : undefined}
           running={running}
+          onQueue={liveRunId && onInject ? handleQueue : undefined}
           allowAttachments={allowAttachments}
           toolbar={inputToolbar}
           plusItems={plusItems}

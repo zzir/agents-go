@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
@@ -153,8 +154,13 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 				})
 			}
 		case "injected_input_created":
-			// An injected input is a USER entry no live event carries; the SDK
-			// persists it and every other connection reads it on its next load.
+			// A user message in the middle of the run: the live view splits its
+			// turn here, where a reload will (invariant 16).
+			if e.Item.Kind == agents.ItemInjectedInput && e.Item.RawInput != nil {
+				send(protocol.EventRunInjected, protocol.RunInjected{
+					RunID: runID, Input: session.ItemText(*e.Item.RawInput), Index: r.hub.nextInjection(runID),
+				})
+			}
 		case "handoff_occured":
 			if e.Item.Kind == agents.ItemHandoffOutput && e.Item.HandoffFrom != nil && e.Item.HandoffTo != nil {
 				send(protocol.EventRunHandoff, protocol.RunHandoff{

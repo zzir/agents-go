@@ -7,13 +7,14 @@ import { createRoot } from 'react-dom/client';
 // plain elements here. A menu renders its items inline, so a test can click
 // them; the slash popup's rows keep their ids and roles.
 vi.mock('@primer/react', () => {
-  const Item = ({ children, id, role, onSelect }: { children?: ReactNode; id?: string; role?: string; onSelect?: () => void }) => (
-    <li id={id} role={role} onClick={onSelect}>{children}</li>
+  const Item = ({ children, id, role, onSelect, disabled }: { children?: ReactNode; id?: string; role?: string; onSelect?: () => void; disabled?: boolean }) => (
+    <li id={id} role={role} aria-disabled={disabled || undefined} onClick={disabled ? undefined : onSelect}>{children}</li>
   );
   const ActionList = ({ children }: { children?: ReactNode }) => <ul>{children}</ul>;
   ActionList.Item = Item;
   ActionList.LeadingVisual = ({ children }: { children?: ReactNode }) => <span>{children}</span>;
   ActionList.Description = ({ children }: { children?: ReactNode }) => <span>{children}</span>;
+  ActionList.Divider = () => <hr />;
   const ActionMenu = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
   ActionMenu.Anchor = ({ children }: { children?: ReactNode }) => <>{children}</>;
   ActionMenu.Overlay = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
@@ -30,7 +31,8 @@ vi.mock('@primer/octicons-react', () => Object.fromEntries(
     .map(n => [n, () => null]),
 ));
 vi.mock('@/lib/api', () => ({ api: { attachments: { remove: async () => null }, workflows: { list: async () => [] } } }));
-vi.mock('@/lib/toast', () => ({ toast: { info: () => {}, error: () => {} } }));
+const toastMock = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }));
+vi.mock('@/lib/toast', () => ({ toast: toastMock }));
 vi.mock('@/lib/hooks', () => ({ useApi: () => ({ data: null, loading: false, error: null, reload: () => {}, mutateData: () => {} }) }));
 vi.mock('@/lib/attachments', () => ({
   fetchAttachmentConfig: async () => ({ enabled: false, max_count: 0 }),
@@ -44,7 +46,7 @@ const g = globalThis as Record<string, unknown>;
 let savedActEnv: unknown;
 beforeAll(() => { savedActEnv = g.IS_REACT_ACT_ENVIRONMENT; g.IS_REACT_ACT_ENVIRONMENT = true; });
 afterAll(() => { if (savedActEnv === undefined) delete g.IS_REACT_ACT_ENVIRONMENT; else g.IS_REACT_ACT_ENVIRONMENT = savedActEnv; });
-beforeEach(() => { localStorage.clear(); });
+beforeEach(() => { localStorage.clear(); toastMock.info.mockClear(); toastMock.error.mockClear(); });
 
 const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
 
@@ -134,7 +136,9 @@ describe('MessageInput keys', () => {
 
   it('offers the graceful stop in a menu while running', () => {
     const m = mount({ running: true });
-    expect(m.host.querySelector('button[aria-label="More ways to stop"]')).not.toBeNull();
+    expect(m.host.querySelector('button[aria-label="More actions for this run"]')).not.toBeNull();
+    // Without a way to queue there is nothing to send while it runs.
+    expect(m.host.querySelector('button[aria-label="Send now"]')).toBeNull();
     const items = [...m.host.querySelectorAll('li')];
     expect(items.map(li => li.textContent)).toEqual([
       'Stop nowCancels the run where it is.',
@@ -144,6 +148,65 @@ describe('MessageInput keys', () => {
     expect(m.onCancel).toHaveBeenCalledWith(true);
     act(() => items[0].click());
     expect(m.onCancel).toHaveBeenCalledWith(false);
+    m.unmount();
+  });
+});
+
+describe('MessageInput while a run is live', () => {
+  const live = (extra: Partial<Parameters<typeof MessageInput>[0]> = {}) => {
+    const onQueue = vi.fn();
+    return { onQueue, ...mount({ running: true, disabled: true, onQueue, ...extra }) };
+  };
+
+  // Enter used to do nothing while a run was going, without a word.
+  it('queues what is typed as a steer on Enter, and does not send', () => {
+    const m = live();
+    expect(m.textarea().placeholder).toBe('Running — Enter queues your message');
+    m.type('  use staging instead ');
+    m.key('Enter');
+    expect(m.onQueue.mock.calls).toEqual([['use staging instead', 'steer']]);
+    expect(m.onSend).not.toHaveBeenCalled();
+    expect(m.textarea().value).toBe('');
+    // Nothing typed, nothing queued.
+    m.key('Enter');
+    expect(m.onQueue).toHaveBeenCalledTimes(1);
+    m.unmount();
+  });
+
+  it('Send now steers too, and is off while the box is empty', () => {
+    const m = live();
+    const send = () => m.host.querySelector('button[aria-label="Send now"]') as HTMLButtonElement;
+    expect(send().disabled).toBe(true);
+    m.type('check the logs first');
+    expect(send().disabled).toBe(false);
+    act(() => send().click());
+    expect(m.onQueue.mock.calls).toEqual([['check the logs first', 'steer']]);
+    m.unmount();
+  });
+
+  it('offers Send after this run in the run menu, queued as a follow-up', () => {
+    const m = live();
+    const item = () => [...m.host.querySelectorAll('li')].find(li => li.textContent?.startsWith('Send after this run'))!;
+    expect(item().getAttribute('aria-disabled')).toBe('true');
+    m.type('then write the changelog');
+    expect(item().getAttribute('aria-disabled')).toBeNull();
+    act(() => item().click());
+    expect(m.onQueue.mock.calls).toEqual([['then write the changelog', 'follow_up']]);
+    expect(m.textarea().value).toBe('');
+    m.unmount();
+  });
+
+  // What sets up a new run cannot ride on one that is already going: the
+  // text stays for when it finishes, and the box says why.
+  it('keeps /plan and /workflow for a new run', () => {
+    const m = live();
+    for (const text of ['/plan rewrite the parser', '/workflow release 1.2']) {
+      m.type(text);
+      m.key('Enter');
+      expect(m.textarea().value).toBe(text);
+    }
+    expect(m.onQueue).not.toHaveBeenCalled();
+    expect(toastMock.info).toHaveBeenCalledTimes(2);
     m.unmount();
   });
 });

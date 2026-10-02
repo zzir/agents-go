@@ -187,6 +187,8 @@ type runRecord struct {
 	// for a subscriber whose cursor lies before it — invariant 14.
 	started    *protocol.Envelope
 	startedSeq int
+	// injected counts the injected inputs the run has read, across its segments.
+	injected int
 }
 
 // RunHub owns the lifecycle of active and recently-finished runs: it enforces
@@ -777,6 +779,21 @@ func (h *RunHub) Inject(runID, queue string, input any) (bool, error) {
 	default:
 		return false, fmt.Errorf("unknown injection queue %q", queue)
 	}
+}
+
+// nextInjection numbers an injected input the run just read, from 1; a run
+// the hub does not hold counts nothing.
+func (h *RunHub) nextInjection(runID string) int {
+	h.mu.Lock()
+	rec := h.runs[runID]
+	h.mu.Unlock()
+	if rec == nil {
+		return 0
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	rec.injected++
+	return rec.injected
 }
 
 // StopAfterTurn requests a graceful stop of a live run: the current turn
