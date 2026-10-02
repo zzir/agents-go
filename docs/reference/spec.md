@@ -27,9 +27,11 @@ Non-goals (§1.2) moved to [scope](../explanation/scope.md#12-non-goals).
 
 ### 1.1 What this is
 
-A Go SDK for building agents on the **OpenAI Responses API**. It began as a port
-of openai-agents-python and shares its core concepts — agents, handoffs,
-guardrails, sessions — but evolves independently. See
+A Go SDK for building agents on the **OpenAI Responses API**. Other backends
+are supported by translating at the adapter
+([decisions §5.10](../explanation/decisions.md#510-non-responses-backends-adapt-at-the-model-boundary)).
+It began as a port of openai-agents-python and shares its core concepts —
+agents, handoffs, guardrails, sessions — but evolves independently. See
 [migration_from_python.md](../explanation/migration_from_python.md) if you are arriving from the
 Python SDK, and [upstream_watch.md](../explanation/upstream_watch.md) for what we have reviewed
 from upstream.
@@ -85,6 +87,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7q](#27q-a-sandbox-makes-its-working-directory) | A sandbox makes its working directory | A stock image need not ship one |
 | [§2.7s](#27s-apply_patch-locates-hunks-by-whole-lines) | apply_patch locates hunks by whole lines | Context can never bind inside a longer line |
 | [§2.7t](#27t-sandbox-file-tools-share-execs-path-view) | Sandbox file tools share exec's path view | Relative under the working directory, absolute as-is; bind-mount confines to `WorkDir` |
+| [§2.7u](#27u-an-e2b-compatible-service-is-addressed-by-its-responses) | An E2B-compatible service is addressed by its responses | A returned domain wins; the lease extends through `connect` alone |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets 🚧 | `MaxTurns` is the one budget dimension implemented |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -139,6 +142,7 @@ it triggers (tool execution, handoff).
 
 ```
 for turn := 1; ; turn++ {
+    check caller stop (not before this call's first turn)
     check turn budget
     check ctx cancellation
     resolve model / instructions / prompt / tools / handoffs / output schema
@@ -166,10 +170,12 @@ for turn := 1; ; turn++ {
 
 **A `RunState` round-trips whole.** Everything a resume consumes is in the wire
 format — the pending injected input, the disclosed deferred tools, the
-server-conversation cursor, the off-chain-history flag and the host extra map
-(`Extra`) — pinned by a full-field round-trip test (`RunStateSchemaVersion`
-1.6). The serialized surface IS the contract; the in-process resume passing the
-live pointer is never the only path that works.
+server-conversation cursor, the off-chain-history flag, the context-reset
+request and fresh-context guard ([§2.5i](#25i-the-model-manages-its-own-context))
+and the host extra map (`Extra`) — pinned by a full-field round-trip test at
+the current `RunStateSchemaVersion`. The serialized surface IS the contract;
+the in-process resume passing the live pointer is never the only path that
+works.
 
 - **A resumed turn re-processes a response the restored cursor already
   accounts for and does not advance it**, so a resumed run keeps sending deltas.
@@ -274,7 +280,7 @@ no message, but there was tool activity (e.g. all calls rejected)
     → continue to the next turn (results must reach the model)
 
 message contains a refusal
-    → *ModelRefusalError
+    → ModelRefusal recovery handler, or *ModelRefusalError if none
       (a refusal wins over any text or structured content in the same message)
 
 the agent has an OutputType:
@@ -371,6 +377,8 @@ three:
 - **`MaxTurns` keeps accumulating across a handoff**; it is not reset.
 - **`InputFilter` may rewrite the history handed to the target agent. The
   session always retains the unfiltered conversation.**
+- **A handoff `InputFilter` (`NestHandoffHistory` included) under
+  `UsePreviousResponseID` / `ConversationID` fails the run with a `*UserError`.**
 - **The acknowledgement the target reads for the transfer call is the marker
   `{"assistant": <target name>}` followed by a plain-language identity line**
   ([§5.40](../explanation/decisions.md#540-a-handoff-acknowledgement-tells-the-target-it-owns-the-turn)).
