@@ -89,7 +89,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7t](#27t-sandbox-file-tools-share-execs-path-view) | Sandbox file tools share exec's path view | Relative under the working directory, absolute as-is; bind-mount confines to `WorkDir` |
 | [§2.7u](#27u-an-e2b-compatible-service-is-addressed-by-its-responses) | An E2B-compatible service is addressed by its responses | A returned domain wins; the lease extends through `connect` alone |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
-| [§2.9](#29-budgets-) | Budgets 🚧 | `MaxTurns` is the one budget dimension implemented |
+| [§2.9](#29-budgets-) | Budgets ❓ | `MaxTurns` is the one budget dimension; token and deadline budgets are open (§6.3) |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
 | [§2.11](#211-event-fan-out) | Event fan-out | `Fanout[T]`: one producer, many consumers, a drop is a `*GapError` |
 | [§2.11b](#211b-run-control) | Run control | `RunControl` — steer, inject, approve, cancel, from another goroutine |
@@ -1356,12 +1356,11 @@ path invoked it — handoff shares the run (and its session), agent-as-tool star
 a nested run (with its own session unless configured otherwise). The two paths do
 not interact.
 
-### 2.9 Budgets 🚧
+### 2.9 Budgets ❓
 
-`MaxTurns` is the one budget dimension implemented — it counts model calls;
-its counting rule across handoffs lives in [§2.4](#24-handoffs). 🚧 Token
-and deadline dimensions are unimplemented, and their semantics (what counts,
-how they compose) are undecided.
+`MaxTurns` is the one budget dimension — it counts model calls; its counting
+rule across handoffs lives in [§2.4](#24-handoffs). Token and deadline budgets
+are open — see [§6.3](#63-token-and-deadline-budgets).
 
 ### 2.10 Errors and recovery
 
@@ -1979,6 +1978,19 @@ makes the sole justification for a submodule. Folding `skills` back into the
 root module is the consistent move. Folding keeps the import path but deletes
 a module someone may require, so it rides the next breaking minor. Open until
 decided.
+
+### 6.3 Token and deadline budgets
+
+Whether a run carries a token budget or a deadline of its own. Two answers,
+neither chosen:
+
+- **`RunOptions` gains token and deadline budgets**, beside `MaxTurns`.
+- **It does not.** A run's deadline is the caller's `ctx`; a token stop is
+  `ShouldStopAfterTurn` summing each turn's `TurnResult.Response.Usage`; a
+  per-attempt timeout belongs to the retry layer (§5.22).
+
+The one consumer today, the workbench's workflow budget, counts across runs
+and checks between steps.
 
 When a new case comes up that this document does not answer, add it here with
 the options under consideration.
