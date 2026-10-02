@@ -120,6 +120,18 @@ describe('MessageInput keys', () => {
     m.unmount();
   });
 
+  // A hint is something to know before typing: it stands in for the idle
+  // placeholder, and gives way to the reason nothing can be sent at all.
+  it('shows a hint as its placeholder, and the blocked reason over it', () => {
+    const hinted = mount({ hint: 'Sending skips the pending call' });
+    expect(hinted.textarea().placeholder).toBe('Sending skips the pending call');
+    expect(hinted.textarea().disabled).toBe(false);
+    hinted.unmount();
+    const both = mount({ hint: 'Sending skips the pending call', blocked: 'Create an agent first' });
+    expect(both.textarea().placeholder).toBe('Create an agent first');
+    both.unmount();
+  });
+
   it('offers the graceful stop in a menu while running', () => {
     const m = mount({ running: true });
     expect(m.host.querySelector('button[aria-label="More ways to stop"]')).not.toBeNull();

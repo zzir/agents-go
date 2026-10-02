@@ -210,7 +210,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	// A workflow step waiting to START has no run to resume: the decision
 	// starts the step's run or ends the execution.
 	if pending.Kind == store.ApprovalKindStep {
-		runID, err = r.resolveStepApproval(ctx, pending, approve)
+		runID, err = r.resolveStepApproval(ctx, pending, approve, reason)
 		return runID, pending.SessionID, err
 	}
 

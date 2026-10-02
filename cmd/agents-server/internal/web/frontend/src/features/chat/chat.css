@@ -666,6 +666,12 @@
   margin-top: var(--base-size-8);
 }
 
+/* A rejection's reason box (RejectButton): a line of its own under the
+   buttons of whichever wrapping row holds them. The task header does not
+   wrap (its id gives way instead), so there the box hangs below it. */
+.reject-reason { flex: 1 0 100%; }
+.task-detail-head .reject-reason { position: absolute; top: 100%; left: 0; right: 0; z-index: 1; }
+
 /* submit_plan review: the plan renders as prose, not JSON */
 .ToolCallCard-plan { margin: 0; font-size: var(--base-text-size-xs); }
 
@@ -941,7 +947,7 @@
   margin-top: var(--base-size-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.task-row-actions { display: flex; align-items: center; gap: var(--base-size-4); margin-top: var(--base-size-6); }
+.task-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-4); margin-top: var(--base-size-6); }
 /* Stop sits apart on the right — destructive, away from the primary actions. */
 .task-row-stop { margin-left: auto; }
 
@@ -960,21 +966,23 @@
 .task-status-dot-cancelled      { background: var(--fgColor-muted); }
 
 .task-detail-head {
+  position: relative;
   display: flex; align-items: center; gap: var(--base-size-8);
   padding-bottom: var(--base-size-8);
   border-bottom: 1px solid var(--borderColor-muted);
   margin-bottom: var(--base-size-8);
 }
-/* On a narrow panel the id is the one thing that gives way — the action
-   buttons stay whole (the full id is one copy-click away). */
+/* On a narrow panel the id gives way first (the full id is one copy-click
+   away), then the activity text; the action buttons stay whole. */
 .task-detail-head > * { flex-shrink: 0; }
+.task-detail-head > .task-row-activity { flex-shrink: 1; }
 .task-detail-spacer { flex: 1; }
 .task-detail-id {
   border: none; background: none; padding: 0;
   font-family: var(--fontStack-monospace); font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted); cursor: pointer;
   display: inline-flex; align-items: center; gap: var(--base-size-4);
-  flex-shrink: 1; min-width: 24px; overflow: hidden;
+  flex-shrink: 100; min-width: 24px; overflow: hidden;
 }
 .task-detail-id-text {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

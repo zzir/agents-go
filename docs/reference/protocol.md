@@ -547,7 +547,8 @@ execution too. `state.step_runs` records how each step's run ended
 the task's terminal status ([invariant 31](../explanation/workbench-invariants.md)).
 
 **Pauses, compaction, budget.** A `pause_before` step holds the sequence as a
-task pause filed as an approval; rejecting cancels the execution
+task pause filed as an approval; rejecting cancels the execution, and a
+reason given with the rejection is written into the execution's `summary`
 ([invariant 37](../explanation/workbench-invariants.md)). A `compact_before`
 step folds the transcript first with the step's OWN agent's compaction
 settings — an agent whose compaction is off leaves the transcript as it is,

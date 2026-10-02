@@ -25,7 +25,8 @@ export interface ChatSessionState {
 
 export interface ChatActions {
   approve?: (toolCallId: string, scope?: string) => void;
-  reject?: (toolCallId: string) => void;
+  // reason, when given, is what the model reads as the rejected call's output.
+  reject?: (toolCallId: string, reason?: string) => void;
   fork?: (messageId: string) => void;
   switchBranch?: (tipEntryId: string) => void;
   // Branches back to the user ENTRY id and runs again.

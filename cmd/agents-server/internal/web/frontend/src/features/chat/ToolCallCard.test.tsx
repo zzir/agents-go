@@ -1,17 +1,28 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { act, type ReactNode } from 'react';
+import { act, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
 import { createRoot } from 'react-dom/client';
 
-// Primer ships CSS the node loader cannot import; the card's Button and Label
-// are plain elements here, and the markdown pipeline (a worker) is not what
-// this test is about.
-vi.mock('@primer/react', () => ({
-  Button: ({ children, onClick }: { children?: ReactNode; onClick?: () => void }) => <button type="button" onClick={onClick}>{children}</button>,
-  Label: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
-}));
+// Primer ships CSS the node loader cannot import; the card's pieces are plain
+// elements here — a menu renders its items inline, so a test can click them —
+// and the markdown pipeline (a worker) is not what this test is about.
+vi.mock('@primer/react', () => {
+  const ActionList = ({ children }: { children?: ReactNode }) => <ul>{children}</ul>;
+  ActionList.Item = ({ children, onSelect }: { children?: ReactNode; onSelect?: () => void }) => <li><button type="button" onClick={onSelect}>{children}</button></li>;
+  const ActionMenu = ({ children }: { children?: ReactNode }) => <>{children}</>;
+  ActionMenu.Anchor = ({ children }: { children?: ReactNode }) => <>{children}</>;
+  ActionMenu.Overlay = ({ children }: { children?: ReactNode }) => <>{children}</>;
+  return {
+    ActionList, ActionMenu,
+    Button: ({ children, onClick }: { children?: ReactNode; onClick?: () => void }) => <button type="button" onClick={onClick}>{children}</button>,
+    ButtonGroup: ({ children }: { children?: ReactNode }) => <>{children}</>,
+    IconButton: ({ 'aria-label': label }: { 'aria-label'?: string }) => <button type="button" aria-label={label} />,
+    Label: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+    Textarea: ({ block: _block, resize: _resize, ...rest }: { block?: boolean; resize?: string } & TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> }) => <textarea {...rest} />,
+  };
+});
 vi.mock('@primer/octicons-react', () => Object.fromEntries(
-  ['ToolsIcon', 'StackIcon', 'SyncIcon', 'CheckIcon', 'DotFillIcon', 'CircleIcon', 'ChevronRightIcon'].map(n => [n, () => null]),
+  ['ToolsIcon', 'StackIcon', 'SyncIcon', 'CheckIcon', 'DotFillIcon', 'CircleIcon', 'ChevronRightIcon', 'TriangleDownIcon'].map(n => [n, () => null]),
 ));
 vi.mock('@/lib/markdown', () => ({ useAsyncMarkdown: () => '' }));
 vi.mock('@/features/chat/ToolOutputBody', () => ({ ToolOutputBody: () => null }));
@@ -43,7 +54,8 @@ function mount(toolCall: ToolCall) {
       </ChatSessionProvider>,
     );
   });
-  const buttons = () => [...host.querySelectorAll('.ToolCallCard-approval button')] as HTMLButtonElement[];
+  // The decision buttons by their words; the reject menu's unlabelled caret is left out.
+  const buttons = () => ([...host.querySelectorAll('.ToolCallCard-approval button')] as HTMLButtonElement[]).filter(b => b.textContent);
   const click = (label: string) => act(() => buttons().find(b => b.textContent === label)!.click());
   return { host, approve, reject, buttons, click, unmount: () => { act(() => root.unmount()); host.remove(); } };
 }
@@ -55,19 +67,57 @@ const pending = (tool_name: string, args: Record<string, unknown>): ToolCall => 
 describe('ToolCallCard approval', () => {
   it('offers exec_command its three trust tiers and a reject, each sending its scope', () => {
     const m = mount(pending('exec_command', { cmd: 'ls -la' }));
-    expect(m.buttons().map(b => b.textContent)).toEqual(['Approve once', 'Trust this command', 'Trust all this session', 'Reject']);
+    expect(m.buttons().map(b => b.textContent)).toEqual(['Approve once', 'Trust this command', 'Trust all this session', 'Reject', 'Reject with reason…']);
     m.click('Approve once');
     m.click('Trust this command');
     m.click('Trust all this session');
     expect(m.approve.mock.calls).toEqual([['c1', 'once'], ['c1', 'same'], ['c1', 'all']]);
     m.click('Reject');
-    expect(m.reject).toHaveBeenCalledWith('c1');
+    expect(m.reject).toHaveBeenCalledWith('c1', undefined);
+    m.unmount();
+  });
+
+  // The reason is what the model reads as the rejected call's output: typed
+  // in the card, sent with the rejection.
+  it('Reject with reason sends the typed reason', () => {
+    const m = mount(pending('exec_command', { cmd: 'make deploy' }));
+    expect(m.host.querySelector('textarea')).toBeNull();
+    m.click('Reject with reason…');
+    const box = m.host.querySelector('textarea') as HTMLTextAreaElement;
+    const key = (k: string, init: KeyboardEventInit = {}) => act(() => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }));
+    });
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, '  use staging ');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    // An IME's Enter confirms the composition; Shift+Enter is a new line.
+    key('Enter', { isComposing: true });
+    key('Enter', { shiftKey: true });
+    expect(m.reject).not.toHaveBeenCalled();
+    key('Enter');
+    expect(m.reject.mock.calls).toEqual([['c1', 'use staging']]);
+    m.unmount();
+  });
+
+  it('Escape closes the reason box without rejecting, and an empty reason is a plain reject', () => {
+    const m = mount(pending('exec_command', { cmd: 'ls' }));
+    m.click('Reject with reason…');
+    const key = (k: string) => act(() => {
+      m.host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    });
+    key('Escape');
+    expect(m.host.querySelector('textarea')).toBeNull();
+    expect(m.reject).not.toHaveBeenCalled();
+    m.click('Reject with reason…');
+    key('Enter');
+    expect(m.reject.mock.calls).toEqual([['c1', undefined]]);
     m.unmount();
   });
 
   it('offers any other tool one approve, named for what it does', () => {
     const a = mount(pending('memory_write', { key: 'k', text: 't' }));
-    expect(a.buttons().map(b => b.textContent)).toEqual(['Approve', 'Reject']);
+    expect(a.buttons().map(b => b.textContent)).toEqual(['Approve', 'Reject', 'Reject with reason…']);
     a.click('Approve');
     expect(a.approve).toHaveBeenCalledWith('c1', 'once');
     a.unmount();

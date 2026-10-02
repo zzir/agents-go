@@ -264,6 +264,22 @@ function App() {
     });
   }, []);
 
+  // Whether the open conversation's OWN run waits on a decision — what a new
+  // message would abandon; a task's pause is not that. Read off the session
+  // detail's pending calls, re-read when its status is announced.
+  const [ownPending, setOwnPending] = useState<{ id: string; pending: boolean } | null>(null);
+  const ownPendingGen = useRef(0);
+  const readOwnPending = useCallback((sid: string, detail: unknown) => {
+    const calls = (detail as { pending?: Array<{ task_id?: string }> } | null)?.pending || [];
+    setOwnPending({ id: sid, pending: calls.some(c => !c.task_id) });
+  }, []);
+  const refreshOwnPending = useCallback((sid: string) => {
+    const gen = ++ownPendingGen.current;
+    api.sessions.get(sid)
+      .then(detail => { if (gen === ownPendingGen.current && activeSessionRef.current === sid) readOwnPending(sid, detail); })
+      .catch(() => undefined);
+  }, [readOwnPending]);
+
   // The sidebar's markers: each conversation's status as the server last
   // announced it (session.status), over the one its list row carries. Derived
   // server-side and rendered as is — invariant 3.
@@ -287,8 +303,17 @@ function App() {
         if (!st) return Object.keys(prev).length === 0 ? prev : {};
         return prev[st.session_id] === st.status ? prev : { ...prev, [st.session_id]: st.status };
       });
+      const sid = st ? st.session_id : activeSessionRef.current;
+      if (!sid || sid !== activeSessionRef.current) return;
+      // Nothing waited on needs no read; otherwise the detail says whose call it is.
+      if (st && st.pending_count === 0) {
+        ownPendingGen.current++;
+        setOwnPending({ id: sid, pending: false });
+      } else {
+        refreshOwnPending(sid);
+      }
     },
-  }), []);
+  }), [refreshOwnPending]);
 
   const { wsRef, sessionRunRef, connected, loadSession, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask } = useAgentSocket(updateSS, sessionEvents);
 
@@ -337,6 +362,8 @@ function App() {
       .then((sess) => {
         if (cancelled) return;
         const s = sess as { name?: string; project_id?: string; agent_config_id?: string };
+        ownPendingGen.current++;
+        readOwnPending(activeSession, sess);
         // A binding announced while this fetch was in flight wins: the fetch
         // read the row before the bind landed, and bindings never change.
         const announced = announcedBindings.current[activeSession];
@@ -357,7 +384,7 @@ function App() {
         else tryLoad(); // transient error — try loading anyway
       });
     return () => { cancelled = true; };
-  }, [activeSession, loadSession]);
+  }, [activeSession, loadSession, readOwnPending]);
 
   // Backfill the session's persisted trace summary on load: the chat labels
   // each turn with its run span's duration, and the trace/context lenses join
@@ -541,10 +568,10 @@ function App() {
     }
   }, [updateToolCall, wsRef]);
 
-  const handleReject = useCallback((toolCallId: string) => {
+  const handleReject = useCallback((toolCallId: string, reason?: string) => {
     if (!wsRef.current) return;
     updateToolCall(toolCallId, { status: 'rejected' });
-    if (!wsRef.current.send(EV.toolReject, { tool_call_id: toolCallId })) {
+    if (!wsRef.current.send(EV.toolReject, reason ? { tool_call_id: toolCallId, reason } : { tool_call_id: toolCallId })) {
       updateToolCall(toolCallId, { status: null });
       toast.error('Not connected — rejection not sent, try again');
     }
@@ -791,6 +818,7 @@ function App() {
       sessionName={sessionMeta && sessionMeta.id === activeSession ? sessionMeta.name : ''}
       sessionAgentId={sessionMeta && sessionMeta.id === activeSession ? sessionMeta.agentConfigId : undefined}
       sessionBinding={sessionBinding}
+      ownPending={!!ownPending && ownPending.id === activeSession && ownPending.pending}
       state={currentSS}
       loadError={currentSS.loadError}
       settingsReloadKey={settingsReloadKey}

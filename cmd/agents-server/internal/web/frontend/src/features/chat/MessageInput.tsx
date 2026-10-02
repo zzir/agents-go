@@ -16,6 +16,9 @@ interface MessageInputProps {
   // blocked disables the textarea itself and says why in its placeholder —
   // nothing can be sent (no agent to send to), so nothing should be typed.
   blocked?: string;
+  // hint replaces the idle placeholder with something the person should know
+  // before typing; blocked, when set, is said instead.
+  hint?: string;
   running: boolean;
   // allowAttachments gates every image affordance: attachment storage is
   // configured AND the picked agent has Vision on.
@@ -39,7 +42,7 @@ interface AttachmentDraft {
 
 let draftKey = 0;
 
-export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, running, allowAttachments, toolbar, plusItems }: MessageInputProps) {
+export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, hint, running, allowAttachments, toolbar, plusItems }: MessageInputProps) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [atts, setAtts] = useState<AttachmentDraft[]>([]);
   const [attCfg, setAttCfg] = useState<AttachmentConfig | null>(null);
@@ -245,7 +248,7 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, r
           onPaste={handlePaste}
           onBlur={() => { if (popupOpen) setDismissedFor(text); }}
           disabled={!!blocked}
-          placeholder={blocked || 'type something here…'}
+          placeholder={blocked || hint || 'type something here…'}
           rows={2}
           aria-autocomplete="list"
           aria-controls={popupOpen ? 'slash-commands' : undefined}

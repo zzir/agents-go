@@ -11,10 +11,12 @@ import { fmtDuration, itemDuration, stepRows, type BackgroundItem } from '@/lib/
 import type { TaskViewState } from '@/lib/useAgentSocket';
 import type { TurnPart } from '@/lib/timeline';
 import { useChatActions, useChatSession, useChatBackground } from '@/features/chat/ChatSessionContext';
+import { RejectButton } from '@/features/chat/RejectButton';
 import { useDecisionHold } from '@/features/chat/useDecisionHold';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
+import { STEP_APPROVAL_TOOL } from '@/lib/protocol';
 import { isLive, statusDot } from '@/lib/status';
 import { useCopy, useNowTicker } from '@/lib/hooks';
 
@@ -86,7 +88,7 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
                   {it.status === 'input_required' && it.pendingCallId && onApprove && onReject && (
                     <>
                       <Button size="small" variant="primary" disabled={held(it.pendingCallId)} onClick={() => decide(it.pendingCallId!, () => onApprove(it.pendingCallId!))}>Approve</Button>
-                      <Button size="small" variant="danger" disabled={held(it.pendingCallId)} onClick={() => decide(it.pendingCallId!, () => onReject(it.pendingCallId!))}>Reject</Button>
+                      <RejectButton step={it.pendingToolName === STEP_APPROVAL_TOOL} disabled={held(it.pendingCallId)} onReject={reason => decide(it.pendingCallId!, () => onReject(it.pendingCallId!, reason))} />
                     </>
                   )}
                   {it.activity && <span className="task-row-activity">{it.activity}</span>}
@@ -217,7 +219,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
         {item.status === 'input_required' && item.pendingCallId && onApprove && onReject && (
           <>
             <Button size="small" variant="primary" disabled={held(item.pendingCallId)} onClick={() => decide(item.pendingCallId!, () => onApprove(item.pendingCallId!))}>Approve</Button>
-            <Button size="small" variant="danger" disabled={held(item.pendingCallId)} onClick={() => decide(item.pendingCallId!, () => onReject(item.pendingCallId!))}>Reject</Button>
+            <RejectButton step={item.pendingToolName === STEP_APPROVAL_TOOL} disabled={held(item.pendingCallId)} onReject={reason => decide(item.pendingCallId!, () => onReject(item.pendingCallId!, reason))} />
           </>
         )}
         {live && <Button size="small" onClick={() => stopTask(item.id)}>Stop</Button>}

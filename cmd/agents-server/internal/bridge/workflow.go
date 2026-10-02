@@ -332,8 +332,9 @@ func (r *Runner) pauseWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 }
 
 // resolveStepApproval applies a decision on a paused step: approve reclaims the
-// task and starts the run; reject cancels the execution — invariant 37.
-func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.PendingApproval, approve bool) (runID string, err error) {
+// task and starts the run; reject cancels the execution, its summary carrying
+// the reason when one was given — invariant 37.
+func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.PendingApproval, approve bool, reason string) (runID string, err error) {
 	mctx := context.WithoutCancel(ctx)
 	row, err := r.Deps.Tasks.ByChildSession(ctx, pending.SessionID)
 	if err != nil {
@@ -342,7 +343,11 @@ func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.Pending
 	if !approve {
 		// The claim and the ending in one write: the row deleted and the
 		// execution cancelled — the person's decision, so nobody is woken.
-		claimed, ended, err := r.Deps.Tasks.ClaimApprovalCancelled(mctx, row.ID, pending.RunID, "step rejected")
+		summary := "step rejected"
+		if reason = strings.TrimSpace(reason); reason != "" {
+			summary += ": " + reason
+		}
+		claimed, ended, err := r.Deps.Tasks.ClaimApprovalCancelled(mctx, row.ID, pending.RunID, summary)
 		if err != nil {
 			return "", err
 		}

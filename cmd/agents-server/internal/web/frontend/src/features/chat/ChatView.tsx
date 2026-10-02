@@ -108,6 +108,10 @@ function flashMessage(el: Element) {
   window.setTimeout(() => el.classList.remove('msg-jump-flash'), 1800);
 }
 
+// What the composer says while the session's own run waits on a decision: a
+// new message wins over the pause (invariant 19), and that should not surprise.
+const PENDING_HINT = 'Sending skips the pending call — or use Reject with reason';
+
 /* ---------- ChatView ---------- */
 
 // ChatViewActions is what the view can ask the app to do. Every member is a
@@ -116,7 +120,7 @@ export interface ChatViewActions {
   onSend: (text: string, agentConfigId: string, projectId?: string, attachments?: AttachmentMeta[]) => void;
   onCancel: (graceful?: boolean) => boolean;
   onApprove?: (id: string, scope?: string) => void;
-  onReject?: (id: string) => void;
+  onReject?: (id: string, reason?: string) => void;
   onFork?: (id: string) => void;
   // Switches the session's active branch to another attempt.
   onSwitchBranch?: (tipEntryId: string) => void;
@@ -157,6 +161,9 @@ interface ChatViewProps {
   // the first project-carrying run; server-authoritative and immutable
   // afterwards — switching projects means starting a new session.
   sessionBinding?: SessionBinding | null;
+  // The session's OWN run waits on a decision (the server's word): a message
+  // sent now abandons that pause, and the composer says so.
+  ownPending?: boolean;
   // The session as the socket layer keeps it: timeline, stream, live run,
   // tasks. One reference per session, replaced on change.
   state: SessionState;
@@ -171,7 +178,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
-  sessionId, sessionName, sessionAgentId, sessionBinding, state, loadError, settingsReloadKey, bindingsVersion, panel, actions,
+  sessionId, sessionName, sessionAgentId, sessionBinding, ownPending, state, loadError, settingsReloadKey, bindingsVersion, panel, actions,
 }: ChatViewProps) {
   // The rendered timeline drops the entries no longer on the active branch;
   // the trace panel still lists their runs, so it reads the raw entries.
@@ -803,6 +810,7 @@ export function ChatView({
           onCancel={handleCancel}
           disabled={running || !agentConfigId}
           blocked={gate.blocked}
+          hint={ownPending ? PENDING_HINT : undefined}
           running={running}
           allowAttachments={allowAttachments}
           toolbar={inputToolbar}

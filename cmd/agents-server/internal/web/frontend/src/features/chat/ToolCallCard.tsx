@@ -6,6 +6,7 @@ import { Disclosure } from '@/components/Disclosure';
 import { useAsyncMarkdown } from '@/lib/markdown';
 import { type ToolCall } from '@/lib/timeline';
 import { useChatActions, useChatTaskLookups } from '@/features/chat/ChatSessionContext';
+import { RejectButton } from '@/features/chat/RejectButton';
 import { ToolOutputBody } from '@/features/chat/ToolOutputBody';
 import { WorkflowSpecBody } from '@/features/chat/WorkflowSpecBody';
 import { parseWorkflowSpec, type WorkflowSpec } from '@/lib/workflowArgs';
@@ -395,9 +396,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
               {tool_name === 'submit_plan' ? 'Approve plan' : tool_name === 'save_workflow' ? 'Save workflow' : 'Approve'}
             </Button>
           )}
-          <Button size="small" variant="danger" onClick={() => decide(() => onReject && onReject(tool_call_id))}>
-            Reject
-          </Button>
+          <RejectButton onReject={reason => decide(() => onReject && onReject(tool_call_id, reason))} />
         </div>
       )}
     </Disclosure>

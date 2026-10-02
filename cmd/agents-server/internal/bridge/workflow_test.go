@@ -1044,7 +1044,7 @@ func TestStepApprovalOnAnUnpausedTaskIsNotReady(t *testing.T) {
 	if err := runner.Deps.PendingApprovals.Save(ctx, pending); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runner.resolveStepApproval(ctx, pending, true); !errors.As(err, new(*ApprovalNotReadyError)) {
+	if _, err := runner.resolveStepApproval(ctx, pending, true, ""); !errors.As(err, new(*ApprovalNotReadyError)) {
 		t.Fatalf("approve of an unpaused step = %v, want ApprovalNotReadyError", err)
 	}
 	if _, err := runner.Deps.PendingApprovals.Get(ctx, row.RunID); err != nil {
@@ -1106,6 +1106,31 @@ func TestWorkflowPausesBeforeAStepUntilApproved(t *testing.T) {
 	// The approval was consumed; a second decision has nothing to act on.
 	if _, _, err := runner.ResolveApproval(ctx, calls[0].ToolCallID, true, ApprovalOnce, "", nil); err == nil {
 		t.Fatal("a consumed step approval must not be answerable twice")
+	}
+}
+
+// A step rejected with a reason says why on the execution it ended; without
+// one the summary stays the bare fact.
+func TestStepRejectRecordsTheReason(t *testing.T) {
+	ctx := context.Background()
+	srv := oneShotModel(t)
+	defer srv.Close()
+	for reason, want := range map[string]string{
+		"  use staging \n": "step rejected: use staging",
+		"":                 "step rejected",
+	} {
+		runner, _, info, pending := pausedFixture(t, srv.URL)
+		calls := pending.ParsedToolCalls()
+		if _, _, err := runner.ResolveApproval(ctx, calls[0].ToolCallID, false, ApprovalOnce, reason, nil); err != nil {
+			t.Fatalf("reject with %q: %v", reason, err)
+		}
+		row, err := runner.Deps.Tasks.Get(ctx, info.TaskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.Status != "cancelled" || row.Summary != want {
+			t.Errorf("reason %q: task = %s %q, want cancelled %q", reason, row.Status, row.Summary, want)
+		}
 	}
 }
 
