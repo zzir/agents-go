@@ -150,9 +150,6 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 		cerr := cs.RunCompaction(ctx, session.CompactionArgs{
 			ResponseID: r.lastResponseID,
 			Store:      r.lastStore,
-			// Whether the log holds anything that response's chain never saw;
-			// the storage decides what to do about it.
-			OffChainItems: r.offChainItems(),
 			StartSpan: func() *tracing.SpanHandle {
 				cspan = r.trace.StartCompactionSpan(r.agentParentID())
 				return cspan
@@ -170,48 +167,4 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 			cspan.Finish()
 		}
 	}
-}
-
-// offChainItems reports whether the stored log holds anything the response
-// chain rooted at lastResponseID cannot know about — decisions §5.51.
-func (r *runner) offChainItems() bool {
-	return r.offChainHistory || hasOffChainItems(r.sessionItems)
-}
-
-// hasOffChainItems reports whether any item postdates the last model response
-// — counted by position from the last SourceModel item (decisions §5.51).
-func hasOffChainItems(items []*RunItem) bool {
-	for i, item := range slices.Backward(items) {
-		if item.Source.Type == SourceModel {
-			return i != len(items)-1
-		}
-	}
-	// No model output at all, so nothing anchors these items to a response.
-	return len(items) > 0
-}
-
-// withheldItemEntries reports whether the projectors keep an ITEM entry out of
-// the model input entirely (nil projector, or one returning none).
-func withheldItemEntries(entries []session.Entry, projectors map[session.EntryKind]session.Projector) bool {
-	project, overridden := projectors[session.EntryKindItem]
-	if !overridden {
-		// The default projection sends every item entry.
-		return false
-	}
-	for _, e := range entries {
-		if e.Kind != session.EntryKindItem {
-			continue
-		}
-		// A nil projector suppresses the kind outright, so the first item entry
-		// settles it.
-		if project == nil {
-			return true
-		}
-		items, err := project(e)
-		// An error fails the projection anyway; report it as withheld, not consent.
-		if err != nil || len(items) == 0 {
-			return true
-		}
-	}
-	return false
 }

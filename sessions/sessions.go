@@ -290,60 +290,35 @@ func (s *Session) Clear(ctx context.Context) error {
 // is read inside the same transaction — see lockForWrite.
 func (s *Session) ReplaceEntries(ctx context.Context, entries ...session.Entry) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		_, err := s.replaceIn(ctx, tx, entries, nil)
-		return err
+		return s.replaceIn(ctx, tx, entries)
 	})
 }
 
-// ReplaceEntriesIf implements session.GuardedReplacer. The high-water mark the
-// guard compares is read by the transaction that carries the rewrite, holding
-// the same write lock every append holds — so an append cannot commit between
-// the comparison and the swap.
-func (s *Session) ReplaceEntriesIf(ctx context.Context, expect int64, entries ...session.Entry) (bool, error) {
-	replaced := false
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		var err error
-		replaced, err = s.replaceIn(ctx, tx, entries, &expect)
-		return err
-	})
-	if err != nil {
-		return false, err
-	}
-	return replaced, nil
-}
-
-// replaceIn swaps this session's rows for entries on the caller's transaction
-// and reports whether it wrote; a non-nil expect guards on the highest seq.
-func (s *Session) replaceIn(ctx context.Context, tx bun.Tx, entries []session.Entry, expect *int64) (bool, error) {
+// replaceIn swaps this session's rows for entries on the caller's transaction.
+func (s *Session) replaceIn(ctx context.Context, tx bun.Tx, entries []session.Entry) error {
 	if err := s.lockForWrite(ctx, tx); err != nil {
-		return false, err
+		return err
 	}
 	// A replace does not restart the numbering — a cursor outlives the entries it
 	// pointed at — so the high-water mark carries over while the branch starts fresh.
 	at, err := s.appendPointIn(ctx, tx)
 	if err != nil {
-		return false, err
-	}
-	if expect != nil && at.LastSeq != *expect {
-		return false, nil
+		return err
 	}
 	rows, err := s.encodeEntries(entries, session.AppendPoint{LastSeq: at.LastSeq})
 	if err != nil {
-		return false, err
+		return err
 	}
 	if _, err := tx.NewDelete().Model((*entry)(nil)).
 		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
-		return false, err
+		return err
 	}
 	if len(rows) > 0 {
 		if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
-			return false, err
+			return err
 		}
 	}
-	if err := s.touchIn(ctx, tx); err != nil {
-		return false, err
-	}
-	return true, nil
+	return s.touchIn(ctx, tx)
 }
 
 // encodeEntries prepares entries for insertion, filling in the store-owned
@@ -400,9 +375,8 @@ func decodeEntry(r entry) (session.Entry, error) {
 }
 
 var (
-	_ session.Storage         = (*Session)(nil)
-	_ session.AtomicReplacer  = (*Session)(nil)
-	_ session.GuardedReplacer = (*Session)(nil)
+	_ session.Storage        = (*Session)(nil)
+	_ session.AtomicReplacer = (*Session)(nil)
 )
 
 // Metadata implements session.Storage. It counts rather than loading, and

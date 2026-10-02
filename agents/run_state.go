@@ -17,7 +17,7 @@ import (
 // round-trips within this SDK only. Decoding accepts the same major, no newer
 // than this minor and no older than runStateOldestDecodableMinor; the minors
 // name format steps, not releases — see decisions §5.18.
-const RunStateSchemaVersion = "1.7"
+const RunStateSchemaVersion = "1.8"
 
 // runStateOldestDecodableMinor is the oldest minor this decoder accepts. Raise
 // it when a bump REPLACES or reinterprets a field — decisions §5.18.
@@ -64,10 +64,6 @@ type RunState struct {
 	// ToolsUsed lists the agents that had called tools when the run paused, so
 	// ResumeRun keeps their tool_choice reset in effect.
 	ToolsUsed []string
-
-	// OffChainHistory records that the stored log held items no model call
-	// carried; the resume's only source (runner.offChainItems). Absent → false.
-	OffChainHistory bool
 
 	// DisclosedTools names the deferred tools opened up before the pause, so a
 	// resumed run does not re-hide a tool the model has already been told about.
@@ -257,8 +253,6 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	}
 	// First-turn input guardrails are not re-run on resume; this is their only source.
 	r.guardrailResults = state.GuardrailResults
-	// Likewise off-chain history: a resume re-reads nothing and re-runs no filter.
-	r.offChainHistory = state.OffChainHistory
 	// Restore the tool-use tracker so tool_choice stays reset for every agent
 	// that had used tools before the pause (not only the interrupted one).
 	if len(state.ToolsUsed) > 0 {
@@ -323,7 +317,6 @@ type serialRunState struct {
 	SessionItems          []serialItem                   `json:"session_items,omitempty"`
 	PersistedSessionItems int                            `json:"persisted_session_items,omitempty"`
 	ToolsUsed             []string                       `json:"tools_used,omitempty"`
-	OffChainHistory       bool                           `json:"off_chain_history,omitempty"`
 	DisclosedTools        []string                       `json:"disclosed_tools,omitempty"`
 	ContextReset          bool                           `json:"context_reset,omitempty"`
 	ContextFresh          bool                           `json:"context_fresh,omitempty"`
@@ -469,7 +462,6 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 		MaxTurns:              s.MaxTurns,
 		PersistedSessionItems: s.PersistedSessionItems,
 		ToolsUsed:             s.ToolsUsed,
-		OffChainHistory:       s.OffChainHistory,
 		DisclosedTools:        s.DisclosedTools,
 		ContextReset:          s.ContextReset,
 		ContextFresh:          s.ContextFresh,
@@ -695,7 +687,6 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		MaxTurns:              in.MaxTurns,
 		PersistedSessionItems: in.PersistedSessionItems,
 		ToolsUsed:             in.ToolsUsed,
-		OffChainHistory:       in.OffChainHistory,
 		DisclosedTools:        in.DisclosedTools,
 		ContextReset:          in.ContextReset,
 		ContextFresh:          in.ContextFresh,

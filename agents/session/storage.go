@@ -166,21 +166,6 @@ func (s *InMemoryStorage) ReplaceEntries(_ context.Context, entries ...Entry) er
 	return nil
 }
 
-// ReplaceEntriesIf implements GuardedReplacer. The comparison and the swap are
-// under the lock an append takes, so nothing can land between them.
-func (s *InMemoryStorage) ReplaceEntriesIf(_ context.Context, expect int64, entries ...Entry) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.checkLive(); err != nil {
-		return false, err
-	}
-	if AppendPointOf(s.entries).LastSeq != expect {
-		return false, nil
-	}
-	s.replaceLocked(entries)
-	return true, nil
-}
-
 // replaceLocked swaps the whole history, carrying the high-water mark over.
 // Callers hold s.mu.
 func (s *InMemoryStorage) replaceLocked(entries []Entry) {
@@ -207,9 +192,8 @@ func (s *InMemoryStorage) SetTitle(title string) {
 }
 
 var (
-	_ Storage         = (*InMemoryStorage)(nil)
-	_ AtomicReplacer  = (*InMemoryStorage)(nil)
-	_ GuardedReplacer = (*InMemoryStorage)(nil)
+	_ Storage        = (*InMemoryStorage)(nil)
+	_ AtomicReplacer = (*InMemoryStorage)(nil)
 )
 
 // PageEntries applies a cursor to entries already in append order. Backends
@@ -251,14 +235,4 @@ func ReplaceEntries(ctx context.Context, s Storage, entries ...Entry) error {
 // failure lands between clearing and re-adding.
 type AtomicReplacer interface {
 	ReplaceEntries(ctx context.Context, entries ...Entry) error
-}
-
-// GuardedReplacer is an optional Storage capability: replace the entire
-// history only while the log has not moved since the caller read it. expect
-// is the highest sequence number the store HELD at that read, zero for a log
-// read empty. On a match the history is replaced and replaced is true; else
-// nothing is written and replaced is false — a lost race, not an error. It
-// catches appends only: a removal that keeps the highest seq reads as unmoved.
-type GuardedReplacer interface {
-	ReplaceEntriesIf(ctx context.Context, expect int64, entries ...Entry) (replaced bool, err error)
 }

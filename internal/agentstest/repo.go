@@ -224,10 +224,6 @@ func checkDeletedHandleRefusesEveryWrite(t *testing.T, r RepoUnderTest) {
 	if replacer, ok := st.(session.AtomicReplacer); ok {
 		refuses("ReplaceEntries", replacer.ReplaceEntries(ctx, storageItem(t, "from the dead")))
 	}
-	if g, ok := st.(session.GuardedReplacer); ok {
-		_, err := g.ReplaceEntriesIf(ctx, 0, storageItem(t, "from the dead"))
-		refuses("ReplaceEntriesIf", err)
-	}
 	listed, err := r.Repo.List(ctx, session.ListOptions{IncludeHidden: true})
 	if err != nil {
 		t.Fatalf("list: %v", err)

@@ -41,26 +41,12 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 		if herr != nil {
 			return nil, nil, nil, herr
 		}
-		// A read that came back FULL is one the window truncated: what it left
-		// behind is stored, entered no request, and is on no response chain (see
-		// offChainItems). Measuring it here (not "a window is configured") is what
-		// lets the flag clear. A log exactly the window's size reads full too, so
-		// this errs toward reporting — the safe direction.
-		if limit > 0 && len(entries) >= limit {
-			r.offChainHistory = true
-		}
 		// Compact before projecting: the compactor reasons about entries, and
 		// projection turns whatever survives into model input.
 		entries, _ = r.compactContext(ctx, CompactBeforeRun, entries)
 		history, herr := session.ProjectEntries(entries, opts.Conversation.Projectors)
 		if herr != nil {
 			return nil, nil, nil, herr
-		}
-		// A projector that sends nothing for an item entry keeps it out of every
-		// request while leaving it in the log — like what a window cut off (see
-		// offChainItems).
-		if withheldItemEntries(entries, opts.Conversation.Projectors) {
-			r.offChainHistory = true
 		}
 		if len(history) > 0 {
 			modelInput = make([]InputItem, 0, len(history)+len(userInput))

@@ -82,12 +82,10 @@ that does not exist is `session.ErrNotFound`, never an empty session.
 
 ## Optional storage capabilities
 
-`AtomicReplacer` (swap the whole history in one step), `GuardedReplacer` (swap
-it only while nothing was appended since the caller read — what
-[automatic compaction](#automatic-compaction) uses) and `CompactionAware`
-(compact its own history after a run) are optional interfaces a store may
-implement; a wrapper that claims one delivers it or refuses
-([spec §2.5c](../reference/spec.md#25c-session-layering)).
+`AtomicReplacer` (swap the whole history in one step — what a fork uses) and
+`CompactionAware` (compact its own history after a run) are optional
+interfaces a store may implement; a wrapper that claims one delivers it or
+refuses ([spec §2.5c](../reference/spec.md#25c-session-layering)).
 
 ## Projection: what the model reads
 
@@ -131,9 +129,8 @@ sess.Append(ctx, upd)
 ```
 
 An update may be stored before its target, and one whose target is missing is
-ignored. Local compaction never rewrites either — it appends a
-[checkpoint](#run-level-compaction); the one path that does rewrite is
-`openai.CompactionSession` ([below](#automatic-compaction)).
+ignored. Compaction never rewrites either — it appends a
+[checkpoint](#run-level-compaction).
 
 ## Choosing an implementation
 
@@ -145,7 +142,6 @@ The built-ins sit on a spectrum from "zero dependencies" to "full database". The
 | `sessions` (SQLite) | `.db` file | bun + driver | `sessions` | durable local history in one file |
 | `sessions` (PostgreSQL) | server | bun + driver | `sessions` | concurrent processes, shared/production storage |
 | `openai.ConversationsSession` | OpenAI server | core (`models/openai`) | core | no local store; history lives in the OpenAI Conversations API |
-| `openai.CompactionSession` | wraps another Session | core (`models/openai`) | core | auto-summarize history via `responses.compact` once it grows large |
 
 ## Built-in implementations
 
@@ -338,37 +334,6 @@ In the workbench an agent's compaction mode chooses between `summary`
 (at most 300 words) the summary model writes; a failed recap degrades to a
 plain reset.
 
-### Automatic compaction
-
-`openai.CompactionSession` **decorates** any other `Session`, calling the OpenAI `responses.compact` API to summarize history once it grows past a threshold, then replacing the stored items with the compacted result.
-
-```go
-compacting, err := openai.NewCompactionSession(base, openai.CompactionOptions{
-	Model:     "gpt-4.1", // compaction model (default gpt-4.1); Mode / ShouldCompact override the defaults
-	Threshold: 20,        // compact when ≥20 candidate items accumulate (default 10)
-})
-sess := session.NewSession(compacting) // the decorator is a Storage; wrap it for the run
-```
-
-A runnable program is [examples/compaction](../../examples/compaction/main.go). The runner attempts compaction once, after the final output is persisted; "candidate" items exclude user messages and existing compaction items. It cannot wrap a `ConversationsSession`, requires an OpenAI compaction model, and a failure is recorded on the run's `compaction` span rather than failing the run.
-
-This is the one path that rewrites, because the server's compact API returns a
-replacement rather than a decision. The rewrite goes through
-`session.GuardedReplacer`: the store swaps only while nothing has been appended
-since the pass read, a pass that loses that comparison is abandoned (recorded on
-the span as `abandoned`), and a backend with only `AtomicReplacer` gets the
-unguarded swap ([spec §2.5f](../reference/spec.md#25f-compaction)).
-
-Anything in the log that never reached the `previous_response_id` chain — items
-after the last model response, entries a `Settings.Limit` window cut off, what
-a handoff filter dropped or a projector withheld — makes the pass compact from
-the stored items instead; with `Mode: CompactionModePreviousResponseID` pinned
-it is skipped (`abandoned: off_chain_items`), so pinning the mode **and**
-setting `Settings.Limit` means no compaction at all once the log outgrows the
-window — drop one of the two
-([decisions §5.51](../explanation/decisions.md#551-off-chain-history-is-decided-by-position-not-provenance)).
-
-For the provider-agnostic, append-only alternative see [Run-level compaction](#run-level-compaction) above.
 
 ## Recovering from a crash
 

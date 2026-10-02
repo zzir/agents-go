@@ -100,8 +100,6 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 		Force:      true,
 		ResponseID: r.lastResponseID,
 		Store:      r.lastStore,
-		// Forces the safe compact-from-history path — see offChainItems.
-		OffChainItems: r.offChainItems(),
 		StartSpan: func() *tracing.SpanHandle {
 			cspan = r.trace.StartCompactionSpan(r.agentParentID())
 			return cspan

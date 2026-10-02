@@ -187,10 +187,6 @@ type CompactionArgs struct {
 	// but the newest user message, carrying what the model kept for itself
 	// (spec §2.5i). A storage that cannot reset compacts as it would.
 	Reset bool
-	// OffChainItems reports that the stored history holds items the server-side
-	// chain rooted at ResponseID never saw. A storage that REPLACES the log from
-	// that chain must not do so while it is set — spec §2.5f.
-	OffChainItems bool
 	// StartSpan, when non-nil, opens a compaction tracing span. Call it right
 	// before actually compacting (not on the no-op path); the runner finishes
 	// the span and records any RunCompaction error on it.

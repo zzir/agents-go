@@ -33,9 +33,6 @@ var storageChecks = []struct {
 	{"SeqIsMonotonic", checkSeqMonotonic},
 	{"SeqSurvivesAReplace", checkSeqSurvivesReplace},
 	{"AReplaceKeepsTheIDsItIsGiven", checkReplaceKeepsIDs},
-	{"AGuardedReplaceTakesTheSeqItWasShown", checkGuardedReplaceMatches},
-	{"AGuardedReplaceRefusesAMovedLog", checkGuardedReplaceRefusesMoved},
-	{"AGuardedReplaceOnAnEmptyLogExpectsZero", checkGuardedReplaceEmptyLog},
 	{"SeqDoesNotMoveOnRead", checkSeqStableOnRead},
 	{"EntryIDsAreUniqueAndNotReused", checkEntryIDsUnique},
 	{"CursorReturnsWhatItHasNotShown", checkCursorCompleteness},
@@ -148,115 +145,6 @@ func checkReplaceKeepsIDs(t *testing.T, st session.Storage) {
 	}
 	if got[0].Seq <= kept.Seq {
 		t.Fatalf("the carried entry has Seq %d, at or before the %d already issued", got[0].Seq, kept.Seq)
-	}
-
-	g, ok := st.(session.GuardedReplacer)
-	if !ok {
-		return
-	}
-	carried.ParentID, carried.Seq = "", 0
-	replaced, err := g.ReplaceEntriesIf(ctx, got[0].Seq, carried)
-	if err != nil {
-		t.Fatalf("guarded replace: %v", err)
-	}
-	if !replaced {
-		t.Fatalf("the guarded replace refused Seq %d, which is where the log stands", got[0].Seq)
-	}
-	if again := storageEntries(t, st); again[0].ID != kept.ID {
-		t.Fatalf("the guarded replace re-minted the entry id: %q came back as %q", kept.ID, again[0].ID)
-	}
-}
-
-// A guarded replace is the ordinary swap when the log has not moved: the
-// sequence number the caller was shown is still the highest one there.
-func checkGuardedReplaceMatches(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	g, ok := st.(session.GuardedReplacer)
-	if !ok {
-		t.Skip("this store does not replace its history under a guard")
-	}
-	storageWrite(t, st, "one", "two")
-	expect := storageEntries(t, st)[1].Seq
-
-	replaced, err := g.ReplaceEntriesIf(ctx, expect, storageItem(t, "replacement"))
-	if err != nil {
-		t.Fatalf("guarded replace: %v", err)
-	}
-	if !replaced {
-		t.Fatalf("the guarded replace refused Seq %d, which is where the log stands", expect)
-	}
-	got := storageEntries(t, st)
-	if len(got) != 1 {
-		t.Fatalf("after a guarded replace the session holds %d entries, want 1", len(got))
-	}
-	if got[0].Seq <= expect {
-		t.Fatalf("the replacement has Seq %d, at or before the %d already issued", got[0].Seq, expect)
-	}
-}
-
-// The whole point: a log that moved since the caller read it is left EXACTLY as
-// it stands. The replacement was computed from a history that no longer exists,
-// and writing it would delete what arrived in the meantime — the entries the
-// caller never saw, held nowhere else.
-func checkGuardedReplaceRefusesMoved(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	g, ok := st.(session.GuardedReplacer)
-	if !ok {
-		t.Skip("this store does not replace its history under a guard")
-	}
-	storageWrite(t, st, "one", "two")
-	stale := storageEntries(t, st)[1].Seq
-	storageWrite(t, st, "three")
-	before := storageEntries(t, st)
-
-	replaced, err := g.ReplaceEntriesIf(ctx, stale, storageItem(t, "replacement"))
-	if err != nil {
-		t.Fatalf("guarded replace: %v", err)
-	}
-	if replaced {
-		t.Fatalf("the guarded replace wrote against Seq %d after the log moved past it", stale)
-	}
-	after := storageEntries(t, st)
-	if len(after) != len(before) {
-		t.Fatalf("a refused replace left %d entries, want the %d that were there", len(after), len(before))
-	}
-	for i := range before {
-		if !before[i].Equal(after[i]) {
-			t.Fatalf("a refused replace changed entry %d: %+v became %+v", i, before[i], after[i])
-		}
-	}
-}
-
-// Zero is the expectation for a log read empty. It is what the log HOLDS, not
-// what the store has ever handed out: a store answering with its high-water
-// mark would refuse every replace of a session that had been emptied, forever.
-func checkGuardedReplaceEmptyLog(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	g, ok := st.(session.GuardedReplacer)
-	if !ok {
-		t.Skip("this store does not replace its history under a guard")
-	}
-	replaced, err := g.ReplaceEntriesIf(ctx, 0, storageItem(t, "first"))
-	if err != nil {
-		t.Fatalf("guarded replace of an empty log: %v", err)
-	}
-	if !replaced {
-		t.Fatal("the guarded replace refused an empty log at expect 0")
-	}
-	if n := len(storageEntries(t, st)); n != 1 {
-		t.Fatalf("after the replace the session holds %d entries, want 1", n)
-	}
-
-	// And once it holds something, zero is a stale expectation like any other.
-	replaced, err = g.ReplaceEntriesIf(ctx, 0, storageItem(t, "second"))
-	if err != nil {
-		t.Fatalf("guarded replace at a stale zero: %v", err)
-	}
-	if replaced {
-		t.Fatal("the guarded replace accepted expect 0 against a log that holds an entry")
 	}
 }
 

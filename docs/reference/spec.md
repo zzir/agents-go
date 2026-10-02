@@ -170,8 +170,8 @@ for turn := 1; ; turn++ {
 
 **A `RunState` round-trips whole.** Everything a resume consumes is in the wire
 format — the pending injected input, the disclosed deferred tools, the
-server-conversation cursor, the off-chain-history flag, the context-reset
-request and fresh-context guard ([§2.5i](#25i-the-model-manages-its-own-context))
+server-conversation cursor, the context-reset request and fresh-context guard
+([§2.5i](#25i-the-model-manages-its-own-context))
 and the host extra map (`Extra`) — pinned by a full-field round-trip test at
 the current `RunStateSchemaVersion`. The serialized surface IS the contract;
 the in-process resume passing the live pointer is never the only path that
@@ -479,12 +479,10 @@ Rules across the layers:
   saves nothing on the way in. The cost grows with the conversation and
   compaction does not reduce it — an accepted ceiling.
 - **Capabilities a store may or may not have are optional interfaces**, not
-  required methods: `AtomicReplacer`, `GuardedReplacer`, `CompactionAware`.
+  required methods: `AtomicReplacer`, `CompactionAware`.
 - **A wrapper that claims a capability delivers its contract or refuses.**
   Delegating `AtomicReplacer` to a wrapped store without it returns an error
-  before touching anything, never a non-atomic Clear+Append; `GuardedReplacer`
-  over a store that cannot compare the log back errors rather than answering
-  `replaced=false`.
+  before touching anything, never a non-atomic Clear+Append.
 
 ### 2.5d Sessions are trees
 
@@ -576,10 +574,10 @@ when its answer is right.
   in — a row's own time-ordered key (a UUIDv7) is not, since a clock can step
   back.
 - **Never reused**, including after the entry holding it is removed.
-- **Never moved for an entry that stays.** The one exception is a rewrite that
-  RE-ADDS an entry (server-side compaction carrying over what it did not
-  summarize): ids are kept, numbers are fresh, so a consumer tailing with
-  `AfterSeq` sees it again under a new number and deduplicates by id.
+- **Never moved for an entry that stays.** The one exception is a
+  `ReplaceEntries` that re-adds an entry: ids are kept, numbers are fresh, so a
+  consumer tailing with `AfterSeq` sees it again under a new number and
+  deduplicates by id.
 - **`Clear` and `ReplaceEntries` do not restart it.** A cursor outlives the
   entries it pointed at.
 - **One value per entry, whichever API returns it.** *All shared, but for the
@@ -686,45 +684,8 @@ belong to the run.
   the caller's own `Compact` saw; a compactor whose state no longer describes
   them (shared across concurrent runs, re-aimed at another session) reports
   nothing rather than recording another conversation's exclusions.
-- **The one path that still rewrites is `openai.CompactionSession`**, whose
-  server compact API returns a replacement rather than a decision.
 
-**A rewrite built from the response chain never deletes what that chain never
-saw.** The runner reports every way the log outgrows the chain through the
-single flag `CompactionArgs.OffChainItems`:
-
-| Case | Reported when |
-|---|---|
-| Position | anything stands AFTER the last model-produced item — a terminating tool's output, an error handler's fallback, input injected past the last model call. Decided by position, never by provenance |
-| A truncated read | `Conversation.Settings.Limit` is set and the prepare-time read came back FULL (a log exactly the window's size reads full too; the rule errs toward reporting) |
-| A handoff input filter | a filter RAN, whatever it returned; its output is never inspected |
-| A projector that withholds an item | a projector returned nothing for an `item` entry — measured per entry, not per config; a projector that rewrites an item is not withholding it |
-
-- **The last three ride across an interrupt/resume on
-  `RunState.OffChainHistory`**; a resumed run re-reads no history and re-runs
-  no filter. Position clears between runs, so it is recomputed every time and
-  never carried.
-- **`openai.CompactionSession` answers the flag by compacting from the stored
-  items** instead of `previous_response_id`. A caller who PINNED
-  `CompactionModePreviousResponseID` gets the pass skipped and
-  `abandoned: off_chain_items` on the span — transient for position, every run
-  past a truncating window (a conflict only the caller can resolve).
-- **The runner never decides this by skipping the pass**: a storage with no
-  chain to be wrong about must still compact.
-- **That rewrite is guarded by the sequence number it read.** The swap goes
-  through `GuardedReplacer`: the store compares its highest HELD sequence
-  number (zero for a log read empty; never the highest ever issued) and writes
-  only while it still matches, comparison and write in ONE step under whatever
-  already serializes that store's appends.
-- **A pass that loses the comparison is abandoned**, not retried and not
-  merged: nothing is written, `abandoned` is recorded on the `compaction` span,
-  and the next pass starts from the history as it then stands. A store without
-  the capability keeps the unguarded swap.
-- **The rewrite keeps the ids of the entries it carries over**, so an update
-  entry still finds its target; those entries are numbered afresh
-  ([§2.5e2](#25e2-the-entry-lifecycle-contract)).
-
-— see [decisions §5.51](../explanation/decisions.md)
+— see [decisions §5.56](../explanation/decisions.md)
 
 ### 2.5g Context overflow
 

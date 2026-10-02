@@ -258,10 +258,6 @@ type runner struct {
 	lastResponseID string
 	lastStore      *bool
 
-	// offChainHistory records that the stored log holds items no model call in
-	// this run carried. Monotone; carried on RunState — see offChainItems.
-	offChainHistory bool
-
 	// guardrailMu guards guardrailResults: tool stages record from per-call
 	// goroutines while input/output stages record from the main loop.
 	guardrailMu      sync.Mutex
@@ -627,7 +623,6 @@ func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleS
 			}
 			st.originalInput = filtered
 			r.restartGenerated()
-			r.offChainHistory = true
 		}
 	}
 	r.log.Info(ctx, "handoff",
@@ -831,7 +826,6 @@ func (r *runner) buildPauseState(turn int, resp *ModelResponse, step *singleStep
 		CurrentTurn:           turn,
 		MaxTurns:              r.maxTurns,
 		ToolsUsed:             sortedKeys(r.toolsUsedBy),
-		OffChainHistory:       r.offChainHistory,
 		PendingInput:          r.ctrl.Pending(),
 		DisclosedTools:        sortedKeys(r.disclosed),
 		ContextReset:          r.rc.contextReset.Load(),

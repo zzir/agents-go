@@ -1142,45 +1142,11 @@ Rules: workbench invariant 62.
 
 ### 5.51 Off-chain history is decided by position, not provenance
 
-Decided 2026-08. `openai.CompactionSession` rewrites history from the server's
-response chain, and a rewrite deletes whatever the chain never saw, so the
-runner reports every way the log can outgrow the chain through one flag,
-`CompactionArgs.OffChainItems` — four cases, each measured, none assumed.
-
-**Decision.** Position (anything after the last model-produced item) is
-decided by position alone: a steer taken after the final output is external
-input that reached no model call, so provenance misclassifies it. A truncated
-read is reported only when the prepare-time read came back FULL, the one
-observable that says the window cut something; a log exactly the window's
-size reads full too, so the rule errs toward reporting. A handoff filter is
-reported whenever it RAN, without inspecting its output: an identity filter
-and one that redacts in place leave the length untouched, and a comparison
-that got it wrong deletes the original unread. A withholding projector is
-measured per entry, not per config: a projector that REWRITES an item is not
-withholding it, and "a projector is installed" would never clear. The last
-three ride on `RunState.OffChainHistory` because a resumed run re-reads no
-history and re-runs no filter, and answering from the resumed options is
-silently false whenever the caller did not repeat `Conversation.Settings`;
-position clears between runs and is recomputed. The guarded swap compares the
-highest sequence the store HOLDS, not the highest ever issued, or a session
-emptied outside the SDK would refuse every replace forever.
-
-**Rejected.** A runner-side skip of the pass when the flag is set: it takes
-the decision away from a storage with no chain to be wrong about, and an
-agent that always finishes through a terminating tool would never compact.
-Detecting identity filters by comparing output. Keying the window case on "a
-limit is configured": a log that never reached its window would be mistaken
-for the pin-plus-window conflict. Retrying or merging a pass that lost the
-sequence comparison: compaction is housekeeping, one skipped pass costs size.
-
-**Cost accepted.** A caller who PINNED `CompactionModePreviousResponseID` and
-configured a read window gets the pass abandoned every run
-(`abandoned: off_chain_items`) while the log grows — only the caller can
-resolve it, by dropping one of the two. A store without `GuardedReplacer`
-keeps the unguarded swap: refusing to compact for it would take the feature
-from every third-party store rather than from the race.
-
-Rules: spec §2.5f
+Retired 2026-10-03. Was `CompactionArgs.OffChainItems` and
+`RunState.OffChainHistory`: what a rewrite built from a server response chain
+would delete, reported for `openai.CompactionSession`. Because that session
+went — the one path that rewrote history — and nothing else read the flag;
+an older state's flag is ignored and the schema floor stays. See §5.52.
 
 ### 5.52 Overflow recovery writes on the side the pass can survive
 
@@ -1193,9 +1159,9 @@ want opposite answers.
 
 **Decision.** A `Compactor` reads the log and returns a projection of it, so
 the turn has to be IN the log before the pass: write first. A
-`CompactionAware` storage may answer with a replacement built from its own
-response chain, on which nothing produced locally stands, so a write made
-first is a write the pass deletes — stored, counted delivered by that very
+`CompactionAware` storage may answer with a replacement that keeps nothing of
+the newest turn (a reset keeps the newest user message alone), so a write made
+first is a write the pass folds — stored, counted delivered by that very
 write, then gone, with nothing in flight to roll back: write after the pass,
 then read the log once more so the turn stands on the compacted history. The
 path is chosen up front from whether the storage compacts itself. A forced
