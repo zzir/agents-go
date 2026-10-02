@@ -5,12 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"math"
 	"math/rand/v2"
+	"net"
 	"time"
 
 	"github.com/zzir/agents-go/tracing"
+)
+
+// ErrAttemptTimeout and ErrIdleTimeout are the errors of an attempt the retry
+// layer's own clocks ended (RetryPolicy.AttemptTimeout / IdleTimeout), wrapped
+// in what the attempt returns — so a caller tells them from its own deadline.
+var (
+	ErrAttemptTimeout = errors.New("agents: model attempt timed out")
+	ErrIdleTimeout    = errors.New("agents: model stream idle timed out")
 )
 
 // RetryPolicy configures a RetryModel. The zero value is valid and uses the
@@ -43,6 +53,16 @@ type RetryPolicy struct {
 	// openai.RetryAfter.
 	RetryAfter func(error) (time.Duration, bool)
 
+	// AttemptTimeout bounds one attempt apart from the caller's ctx: a
+	// blocking call wholly, a streaming call until its first output event.
+	// Zero is no bound. An attempt it ends is retried; the error wraps
+	// ErrAttemptTimeout — see spec §2.16.
+	AttemptTimeout time.Duration
+	// IdleTimeout bounds the silence between two events of a streaming
+	// attempt, the first included. Zero is no bound. Before output the
+	// attempt is retried; after it the stream ends with ErrIdleTimeout.
+	IdleTimeout time.Duration
+
 	// sleep waits for d or until ctx is done, returning ctx.Err() if cancelled.
 	// When nil, a real timer is used. Tests inject a fake to avoid real waits.
 	sleep func(ctx context.Context, d time.Duration) error
@@ -51,10 +71,12 @@ type RetryPolicy struct {
 // retryPolicyJSON is the JSON-friendly representation of RetryPolicy, using
 // millisecond integer fields instead of time.Duration.
 type retryPolicyJSON struct {
-	MaxAttempts int     `json:"max_attempts"`
-	BaseDelayMs int     `json:"base_delay_ms"`
-	MaxDelayMs  int     `json:"max_delay_ms"`
-	Multiplier  float64 `json:"multiplier"`
+	MaxAttempts      int     `json:"max_attempts"`
+	BaseDelayMs      int     `json:"base_delay_ms"`
+	MaxDelayMs       int     `json:"max_delay_ms"`
+	Multiplier       float64 `json:"multiplier"`
+	AttemptTimeoutMs int     `json:"attempt_timeout_ms,omitempty"`
+	IdleTimeoutMs    int     `json:"idle_timeout_ms,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler. It accepts a JSON object with
@@ -70,6 +92,8 @@ func (p *RetryPolicy) UnmarshalJSON(data []byte) error {
 	p.BaseDelay = time.Duration(raw.BaseDelayMs) * time.Millisecond
 	p.MaxDelay = time.Duration(raw.MaxDelayMs) * time.Millisecond
 	p.Multiplier = raw.Multiplier
+	p.AttemptTimeout = time.Duration(raw.AttemptTimeoutMs) * time.Millisecond
+	p.IdleTimeout = time.Duration(raw.IdleTimeoutMs) * time.Millisecond
 	return nil
 }
 
@@ -77,10 +101,12 @@ func (p *RetryPolicy) UnmarshalJSON(data []byte) error {
 // format that UnmarshalJSON consumes.
 func (p RetryPolicy) MarshalJSON() ([]byte, error) {
 	return json.Marshal(retryPolicyJSON{
-		MaxAttempts: p.MaxAttempts,
-		BaseDelayMs: int(p.BaseDelay / time.Millisecond),
-		MaxDelayMs:  int(p.MaxDelay / time.Millisecond),
-		Multiplier:  p.Multiplier,
+		MaxAttempts:      p.MaxAttempts,
+		BaseDelayMs:      int(p.BaseDelay / time.Millisecond),
+		MaxDelayMs:       int(p.MaxDelay / time.Millisecond),
+		Multiplier:       p.Multiplier,
+		AttemptTimeoutMs: int(p.AttemptTimeout / time.Millisecond),
+		IdleTimeoutMs:    int(p.IdleTimeout / time.Millisecond),
 	})
 }
 
@@ -171,6 +197,98 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// attemptWatch is the policy's clock on one attempt: it cancels the attempt's
+// context, with the matching error as cause, when AttemptTimeout or (streaming)
+// IdleTimeout runs out. Zero durations arm nothing.
+type attemptWatch struct {
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	total  *time.Timer
+	idle   *time.Timer
+	idleD  time.Duration
+}
+
+func (p RetryPolicy) watch(parent context.Context, streaming bool) *attemptWatch {
+	w := &attemptWatch{}
+	w.ctx, w.cancel = context.WithCancelCause(parent)
+	if p.AttemptTimeout > 0 {
+		w.total = time.AfterFunc(p.AttemptTimeout, func() { w.cancel(ErrAttemptTimeout) })
+	}
+	if streaming && p.IdleTimeout > 0 {
+		w.idleD = p.IdleTimeout
+		w.idle = time.AfterFunc(p.IdleTimeout, func() { w.cancel(ErrIdleTimeout) })
+	}
+	return w
+}
+
+// event notes a stream event: the silence clock restarts, and the first output
+// event releases the attempt clock (a committed stream may run long).
+func (w *attemptWatch) event(committed bool) {
+	if w.idle != nil {
+		w.idle.Reset(w.idleD)
+	}
+	if committed && w.total != nil {
+		w.total.Stop()
+		w.total = nil
+	}
+}
+
+// end releases the clocks and reports which of them, if any, ended the attempt.
+func (w *attemptWatch) end() error {
+	if w.total != nil {
+		w.total.Stop()
+	}
+	if w.idle != nil {
+		w.idle.Stop()
+	}
+	cause := context.Cause(w.ctx)
+	w.cancel(nil)
+	if errors.Is(cause, ErrAttemptTimeout) || errors.Is(cause, ErrIdleTimeout) {
+		return cause
+	}
+	return nil
+}
+
+// timeoutError is the attempt's error when a clock ended it: the inner error
+// only says cancelled, which would read as the caller's own stop.
+func (p RetryPolicy) timeoutError(cause error) error {
+	d := p.AttemptTimeout
+	if errors.Is(cause, ErrIdleTimeout) {
+		d = p.IdleTimeout
+	}
+	return fmt.Errorf("%w after %s", cause, d)
+}
+
+// stateful reports a request that chains server-side state, where a replayed
+// attempt could repeat the turn — see spec §2.16.
+func (req ModelRequest) stateful() bool {
+	return req.PreviousResponseID != "" || req.ConversationID != ""
+}
+
+// replaySafe reports a failure known not to have applied the request: the
+// server answered it (any error that is not transport-shaped), or the dial
+// itself failed. A deadline or a connection severed after the send is ambiguous.
+func replaySafe(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return false
+	}
+	if op, ok := errors.AsType[*net.OpError](err); ok {
+		return op.Op == "dial"
+	}
+	_, isNet := errors.AsType[net.Error](err)
+	return !isNet
+}
+
+// retryable decides whether a failed attempt may be replaced: one the policy's
+// clock ended is, unless the request is stateful; otherwise RetryIf decides,
+// and a stateful request also needs the failure to be replay-safe.
+func (p RetryPolicy) retryable(req ModelRequest, err error, timedOut bool) bool {
+	if req.stateful() && (timedOut || !replaySafe(err)) {
+		return false
+	}
+	return timedOut || p.retryIf()(err)
+}
+
 // retryModel wraps a Model and retries transient failures with backoff.
 type retryModel struct {
 	inner  Model
@@ -186,16 +304,20 @@ func NewRetryModel(inner Model, policy RetryPolicy) Model {
 }
 
 func (m *retryModel) Respond(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
-	retryIf := m.policy.retryIf()
 	maxAttempts := m.policy.maxAttempts()
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		resp, err := m.inner.Respond(ctx, req)
+		w := m.policy.watch(ctx, false)
+		resp, err := m.inner.Respond(w.ctx, req)
+		timedOut := w.end()
 		if err == nil {
 			return resp, nil
 		}
+		if timedOut != nil {
+			err = m.policy.timeoutError(timedOut)
+		}
 		lastErr = err
-		if attempt == maxAttempts || !retryIf(err) {
+		if attempt == maxAttempts || !m.policy.retryable(req, err, timedOut != nil) {
 			break
 		}
 		// Record the retry so the extra latency is explainable afterward.
@@ -217,10 +339,11 @@ func (m *retryModel) Respond(ctx context.Context, req ModelRequest) (*ModelRespo
 // later error passes straight through. See decisions §5.16.
 func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
 	return func(yield func(*ResponseStreamEvent, error) bool) {
-		retryIf := m.policy.retryIf()
 		maxAttempts := m.policy.maxAttempts()
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			a := deliverStreamAttempt(m.inner.StreamResponse(ctx, req), yield)
+			w := m.policy.watch(ctx, true)
+			a := deliverStreamAttempt(m.inner.StreamResponse(w.ctx, req), yield, w.event)
+			timedOut := w.end()
 			if a.stopped {
 				return
 			}
@@ -231,7 +354,10 @@ func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.
 				flushStreamEvents(a.pending, yield)
 				return
 			}
-			if a.committed || attempt == maxAttempts || !retryIf(a.err) {
+			if timedOut != nil {
+				a.err = m.policy.timeoutError(timedOut)
+			}
+			if a.committed || attempt == maxAttempts || !m.policy.retryable(req, a.err, timedOut != nil) {
 				if a.committed {
 					// A committed stream cannot be retried; record the break so a
 					// truncated answer is explainable.

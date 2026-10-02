@@ -1876,12 +1876,22 @@ Model-side retry, the counterpart rule:
   default and overrides it.
 - **A `Retry-After` longer than `MaxDelay` ends the retries**, returning that
   attempt's wrapped error rather than clamping to the cap and trying again.
+- **A run's deadline is the caller's `ctx`; an attempt's is
+  `RetryPolicy.AttemptTimeout`** — a blocking call wholly, a stream until its
+  first output event — and `IdleTimeout` bounds the silence between a stream's events.
+- **An attempt the policy's clock ended is retried, whatever `RetryIf` says**,
+  its error wrapping `ErrAttemptTimeout` or `ErrIdleTimeout` and neither
+  `context.Canceled` nor `DeadlineExceeded`; a committed stream ends with it.
+- **A stateful request fails closed on an ambiguous failure.** With
+  `PreviousResponseID` or `ConversationID` set, an attempt is retried only when
+  the server answered it or the dial failed — never after a timeout or a severed connection.
 
 — see decisions
 [§5.20](../explanation/decisions.md#520-a-shared-connection-is-not-a-callers-to-cancel),
 [§5.21](../explanation/decisions.md#521-a-dead-shared-connection-repairs-itself-and-the-redial-never-repeats-a-tool-call),
 [§5.21b](../explanation/decisions.md#521b-an-mcp-retry-waits-on-the-transport-never-on-an-answer),
-[§5.22](../explanation/decisions.md#522-retry-policy-lives-in-one-layer)
+[§5.22](../explanation/decisions.md#522-retry-policy-lives-in-one-layer),
+[§5.83](../explanation/decisions.md#583-a-stateful-request-is-not-replayed-into-the-dark-and-an-attempt-has-its-own-clock)
 
 ---
 
@@ -1946,8 +1956,11 @@ neither chosen:
 
 - **`RunOptions` gains token and deadline budgets**, beside `MaxTurns`.
 - **It does not.** A run's deadline is the caller's `ctx`; a token stop is
-  `ShouldStopAfterTurn` summing each turn's `TurnResult.Response.Usage`; a
-  per-attempt timeout belongs to the retry layer (§5.22).
+  `ShouldStopAfterTurn` summing each turn's `TurnResult.Response.Usage`.
+
+Decided: a per-attempt deadline belongs to the retry layer —
+`RetryPolicy.AttemptTimeout` (§2.16). Open: a token budget and a deadline for
+the whole run.
 
 The one consumer today, the workbench's workflow budget, counts across runs
 and checks between steps.

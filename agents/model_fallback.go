@@ -78,7 +78,7 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 	return func(yield func(*ResponseStreamEvent, error) bool) {
 		var errs []error
 		for i, inner := range m.models {
-			a := deliverStreamAttempt(inner.StreamResponse(ctx, req), yield)
+			a := deliverStreamAttempt(inner.StreamResponse(ctx, req), yield, nil)
 			if a.stopped {
 				return
 			}

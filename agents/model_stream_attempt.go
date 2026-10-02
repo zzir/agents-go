@@ -19,9 +19,11 @@ type streamAttempt struct {
 
 // deliverStreamAttempt consumes one inner stream for a retry/fallback decorator,
 // holding back lifecycle and failure events until output commits it (decisions §5.16).
+// onEvent, if non-nil, sees every event with whether the attempt is committed.
 func deliverStreamAttempt(
 	seq iter.Seq2[*ResponseStreamEvent, error],
 	yield func(*ResponseStreamEvent, error) bool,
+	onEvent func(committed bool),
 ) streamAttempt {
 	var a streamAttempt
 	for ev, err := range seq {
@@ -34,6 +36,9 @@ func deliverStreamAttempt(
 		}
 		if !a.committed && (streamLifecycleEvent(ev.Type) || streamFailureEvent(ev.Type)) {
 			a.pending = append(a.pending, ev)
+			if onEvent != nil {
+				onEvent(false)
+			}
 			continue
 		}
 		if !a.committed {
@@ -43,6 +48,9 @@ func deliverStreamAttempt(
 				return a
 			}
 			a.pending = nil
+		}
+		if onEvent != nil {
+			onEvent(true)
 		}
 		if !yield(ev, nil) {
 			a.stopped = true

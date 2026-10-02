@@ -48,12 +48,12 @@ when it bears on this project, not a review of every release:
 | 2026-08-05 | openai-agents-python | v0.19.4 | A failed concurrent call cancels its siblings | ported | Already present: spec §2.2 |
 | 2026-08-11 | openai-agents-python | v0.20.0 | Default model `gpt-5.6-luna` | declined | scope §3: no built-in default model |
 | 2026-08-11 | openai-agents-python | v0.20.0 | Mount-credential acknowledgement | declined | The mount mechanism it guards is not here |
-| 2026-08-11 | openai-agents-python | v0.20.0 | A retry of a stateful request fails closed unless the application approves the replay | deferred | Candidate; the stream-position half is decisions §5.16 |
+| 2026-08-11 | openai-agents-python | v0.20.0 | A retry of a stateful request fails closed unless the application approves the replay | adapted | A stateful request is retried only when the server answered or the dial failed; no approval hook (decisions §5.83). The stream-position half is §5.16 |
 | 2026-08-11 | openai-agents-python | v0.20.0 | `RunState.add_input` runs input guardrails | adapted | Injected input passes the input guardrails before it is recorded (a97d9fd4; decisions §5.78) |
 | 2026-08-11 | openai-agents-python | v0.20.0, v0.21.1 | Tool approvals bound to concrete invocations; exact call decisions honored | adapted | An exact per-call decision outranks a standing one (5c8015ff; decisions §5.74). A call digest: deferred |
 | 2026-08-11 | openai-agents-python | v0.20.0 | Raw usage payloads | deferred | No consumer |
 | 2026-08-15 | openai-agents-python | v0.21.0 | Public testing kit | deferred | Candidate: publish the `Storage` conformance suite; the fake model stays internal (decisions §5.23) |
-| 2026-08-16 | openai-agents-python | v0.21.1 | Model call timeouts | deferred | Candidate: a per-attempt timeout on `RetryPolicy` |
+| 2026-08-16 | openai-agents-python | v0.21.1 | Model call timeouts | adapted | `RetryPolicy.AttemptTimeout` and `IdleTimeout`, in the retry layer rather than the client (decisions §5.83) |
 | 2026-08-16 | openai-agents-python | v0.21.1 | Run-scoped sandbox working directory | deferred | When parallel tasks share a container |
 | 2026-08-16 | openai-agents-python | v0.21.1 | Docker sandbox without a network | ported | Already present: spec §2.7o |
 | 2026-08-19 | openai-agents-python | v0.22.0 | A terminal tool output an output guardrail refuses is redacted from stored state | adapted | A turn `ToolResult.Terminate` ended is saved with its outputs withheld (4f891891; decisions §5.79); a `ShouldStopAfterTurn` stop is not covered |

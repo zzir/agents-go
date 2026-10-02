@@ -1966,3 +1966,32 @@ model capabilities (scope §1.2). An agent that had `todo_write` loses it until
 the switch is turned on. Revisit when the checklist benchmark reports.
 
 Rules: [invariant 34](workbench-invariants.md), [invariant 67](workbench-invariants.md)
+
+### 5.83 A stateful request is not replayed into the dark, and an attempt has its own clock
+
+Decided 2026-10-03.
+
+**Decision.** A request carrying `PreviousResponseID` or `ConversationID`
+appends to a chain the server keeps, so a retry after an ambiguous failure
+(a timeout, a connection severed after the send) could land the turn twice;
+such an attempt is retried only when the server answered it or the dial
+failed. The retry layer carries the attempt's deadlines — `AttemptTimeout`,
+released once a stream commits, and `IdleTimeout` between a stream's events —
+as `context.WithCancelCause` clocks whose cause is the policy's own error, so
+a timed-out attempt is retried whatever `RetryIf` says and the error a caller
+sees is never mistaken for its own cancellation.
+
+**Rejected.** A `ReplaySafe` classifier on the policy: no caller needs a
+different rule, and the transport shape of an error is visible without the
+adapter. Treating every 5xx as unsafe for a stateful request: the server
+answered, and a status is the one signal there is. `context.WithTimeoutCause`
+for the attempt clock: its deadline cannot be released at the commit point,
+and a long answer that started promptly would be cut. A per-call deadline
+hidden in the HTTP client: it cannot tell the first byte from the last.
+
+**Cost accepted.** A stateful request that times out fails after one attempt
+even when the server never saw it. A stall after output ends the stream with
+an error rather than resuming it: the Responses API resumes a stream by
+sequence number, which no decorator does yet.
+
+Rules: spec §2.16.

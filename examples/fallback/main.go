@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/models/openai"
@@ -38,11 +39,13 @@ func main() {
 	}
 
 	// Retry transient errors (429/5xx/network) on each backend, honoring any
-	// Retry-After header, then fall back from primary to backup.
+	// Retry-After header, then fall back from primary to backup. An attempt
+	// that has not produced output within a minute is retried too.
 	policy := agents.RetryPolicy{
-		MaxAttempts: 3,
-		RetryIf:     openai.RetryableError,
-		RetryAfter:  openai.RetryAfter,
+		MaxAttempts:    3,
+		RetryIf:        openai.RetryableError,
+		RetryAfter:     openai.RetryAfter,
+		AttemptTimeout: time.Minute,
 	}
 	// By default every error except context cancellation advances the chain.
 	// WithShouldFallback narrows that: with openai.RetryableError only

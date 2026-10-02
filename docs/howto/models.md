@@ -96,14 +96,18 @@ A family of provider-agnostic decorators composes for resilience, multi-backend 
 
 ```go
 policy := agents.RetryPolicy{
-    MaxAttempts: 3,                     // total tries; 1 disables retry
-    RetryIf:     openai.RetryableError, // retry 429/5xx/network, not 4xx or cancel
-    RetryAfter:  openai.RetryAfter,     // honor a Retry-After header when present
+    MaxAttempts:    3,                     // total tries; 1 disables retry
+    RetryIf:        openai.RetryableError, // retry 429/5xx/network, not 4xx or cancel
+    RetryAfter:     openai.RetryAfter,     // honor a Retry-After header when present
+    AttemptTimeout: 60 * time.Second,      // one attempt, until a stream's first output
+    IdleTimeout:    30 * time.Second,      // silence between a stream's events
 }
 model := agents.NewRetryModel(primary, policy)
 ```
 
 Without `RetryIf`, the default (`agents.DefaultRetryIf`) retries every error except context cancellation and deadline expiry (`context.Canceled`, `context.DeadlineExceeded`); `openai.RetryableError` adds OpenAI-aware status-code classification. `openai.RetryAfter` understands both `Retry-After-Ms` (milliseconds, checked first — what OpenAI actually sends on short rate limits) and `Retry-After` (seconds or HTTP-date); a server-suggested delay longer than the policy's `MaxDelay` ends the retries with that attempt's error rather than being clamped to the cap.
+
+The two timeouts are the retry layer's own clocks, apart from the caller's `ctx`: an attempt they end is retried whatever `RetryIf` says, and when the attempts run out the error wraps `agents.ErrAttemptTimeout` or `agents.ErrIdleTimeout` — not `context.DeadlineExceeded`, which stays the caller's. A request that chains server-side state (`UsePreviousResponseID`, `ConversationID`) is retried only when the server answered it or the dial failed; a timeout or a connection severed after the send fails the run rather than risk landing the turn twice (spec §2.16).
 
 > **One layer of retry.** Both `openai.NewProvider` and `anthropic.NewProvider` build their clients with `WithMaxRetries(0)`, so a provider without `NewRetryModel` performs no retries at all; pass `option.WithMaxRetries(n)` explicitly to hand retries back to the transport ([decisions §5.22](../explanation/decisions.md#522-retry-policy-lives-in-one-layer)).
 
