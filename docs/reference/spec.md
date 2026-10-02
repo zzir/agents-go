@@ -1831,11 +1831,15 @@ it.
 - **An adapter whose backend binds replayed reasoning to its prefix asks it to
   drop a mismatched block when the request already enables reasoning**; each
   drop is a `thinking_dropped` diagnostic naming the block's path and reason.
+- **Such an adapter also drops, oldest first, what it can no longer replay**:
+  each block's `encrypted_content` carries a fingerprint of the system text and
+  tool set it was produced under, and the newest block bound to another prefix ends the replay of every block before it.
 - **A backend that reports overflow in a success-shaped response surfaces it
   as an error carrying the overflow marker**
   ([§2.5g](#25g-context-overflow)).
 
-— see [decisions §5.10](../explanation/decisions.md#510-non-responses-backends-adapt-at-the-model-boundary);
+— see [decisions §5.10](../explanation/decisions.md#510-non-responses-backends-adapt-at-the-model-boundary),
+[§5.84](../explanation/decisions.md#584-a-thinking-block-remembers-the-prefix-it-was-bound-to);
 the Anthropic mappings are in [howto/models.md](../howto/models.md)
 
 ### 2.16 MCP client: shared connections and retry

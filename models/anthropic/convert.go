@@ -1,8 +1,12 @@
 package anthropic
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"slices"
 	"strings"
 
 	ant "github.com/anthropics/anthropic-sdk-go"
@@ -14,10 +18,51 @@ import (
 
 // The two continuity blobs ride in encrypted_content behind a prefix, so the
 // adapter can tell them apart and drop another provider's (base64 never has ':').
+// After the prefix comes the fingerprint of the request prefix the block was
+// produced under, then ':' and the blob — see spec §2.15.
 const (
 	signaturePrefix = "thinking_signature:"
 	redactedPrefix  = "redacted_thinking:"
+	fingerprintLen  = 16
 )
+
+// prefixFingerprint names what a thinking block is bound to — the system text
+// and the tool definitions, order-independent — as fingerprintLen hex characters.
+func prefixFingerprint(system string, tools []ant.ToolUnionParam) string {
+	h := sha256.New()
+	_, _ = io.WriteString(h, system)
+	defs := make([]string, 0, len(tools))
+	for _, t := range tools {
+		b, _ := json.Marshal(t)
+		defs = append(defs, string(b))
+	}
+	slices.Sort(defs)
+	for _, d := range defs {
+		_, _ = h.Write([]byte{0})
+		_, _ = io.WriteString(h, d)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:fingerprintLen]
+}
+
+// bindBlob encodes a continuity blob with the fingerprint it is bound to; an
+// empty fingerprint keeps the bare form.
+func bindBlob(prefix, fingerprint, blob string) string {
+	if fingerprint == "" {
+		return prefix + blob
+	}
+	return prefix + fingerprint + ":" + blob
+}
+
+// splitFingerprint separates a stored blob into the fingerprint it carries
+// ("" for one written before fingerprints) and the blob itself.
+func splitFingerprint(rest string) (fingerprint, blob string) {
+	if len(rest) > fingerprintLen && rest[fingerprintLen] == ':' {
+		if _, err := hex.DecodeString(rest[:fingerprintLen]); err == nil {
+			return rest[:fingerprintLen], rest[fingerprintLen+1:]
+		}
+	}
+	return "", rest
+}
 
 // unsupportedFeatures are rejected with a UserError when used (modelkit.Reject).
 // service_tier is here because its values do not map onto the Responses tiers.
@@ -84,10 +129,20 @@ var thinkingBudgets = map[agents.ReasoningEffort]int64{
 
 // convertInput translates canonical input items into Messages API turns,
 // merging consecutive same-role items into one MessageParam's content blocks.
-func convertInput(items []agents.InputItem) ([]ant.MessageParam, error) {
+// fingerprint is this request's prefix: thinking bound to another one is
+// dropped from the start of the history up to the newest such block.
+func convertInput(items []agents.InputItem, fingerprint string) ([]ant.MessageParam, error) {
 	parsed, err := modelkit.ParseInput(items)
 	if err != nil {
 		return nil, err
+	}
+	stale := -1
+	for i := len(parsed) - 1; i >= 0 && stale < 0; i-- {
+		if parsed[i].Type == "reasoning" {
+			if _, bound, ok := thinkingBlock(parsed[i]); ok && bound != fingerprint {
+				stale = i
+			}
+		}
 	}
 	var messages []ant.MessageParam
 	appendBlocks := func(role ant.MessageParamRole, blocks ...ant.ContentBlockParamUnion) {
@@ -139,7 +194,10 @@ func convertInput(items []agents.InputItem) ([]ant.MessageParam, error) {
 			}
 			appendBlocks(ant.MessageParamRoleUser, block)
 		case "reasoning":
-			block, ok := thinkingBlock(item)
+			if i <= stale {
+				continue
+			}
+			block, _, ok := thinkingBlock(item)
 			if ok {
 				appendBlocks(ant.MessageParamRoleAssistant, block)
 			}
@@ -303,21 +361,24 @@ func toolResultBlock(item modelkit.Item) (ant.ContentBlockParamUnion, error) {
 }
 
 // thinkingBlock rebuilds the thinking / redacted_thinking block a reasoning
-// item came from; ok is false when unsigned or carrying another provider's blob.
-func thinkingBlock(item modelkit.Item) (ant.ContentBlockParamUnion, bool) {
+// item came from, with the prefix fingerprint it was bound to; ok is false
+// when unsigned or carrying another provider's blob.
+func thinkingBlock(item modelkit.Item) (block ant.ContentBlockParamUnion, fingerprint string, ok bool) {
 	enc := item.EncryptedContent
-	if data, ok := strings.CutPrefix(enc, redactedPrefix); ok {
-		return ant.NewRedactedThinkingBlock(data), true
+	if rest, ok := strings.CutPrefix(enc, redactedPrefix); ok {
+		fingerprint, data := splitFingerprint(rest)
+		return ant.NewRedactedThinkingBlock(data), fingerprint, true
 	}
-	sig, ok := strings.CutPrefix(enc, signaturePrefix)
+	rest, ok := strings.CutPrefix(enc, signaturePrefix)
 	if !ok {
-		return ant.ContentBlockParamUnion{}, false
+		return ant.ContentBlockParamUnion{}, "", false
 	}
+	fingerprint, sig := splitFingerprint(rest)
 	texts := item.ContentTexts
 	if len(texts) == 0 {
 		texts = item.SummaryTexts
 	}
-	return ant.NewThinkingBlock(sig, strings.Join(texts, "\n\n")), true
+	return ant.NewThinkingBlock(sig, strings.Join(texts, "\n\n")), fingerprint, true
 }
 
 // parseDataURL splits a data: URL into media type and base64 payload.
@@ -430,18 +491,19 @@ func convertToolChoice(choice agents.ToolChoice, parallel *bool, hasTools bool) 
 
 // blockToItem converts one non-text content block into a canonical item (text
 // is merged by convertOutput); anonymous blocks get ids from message id + index.
-func blockToItem(msgID string, index int, block ant.ContentBlockUnion) (agents.OutputItem, error) {
+// fingerprint is the request prefix a thinking block is bound to.
+func blockToItem(msgID string, index int, block ant.ContentBlockUnion, fingerprint string) (agents.OutputItem, error) {
 	switch block.Type {
 	case "tool_use":
 		return modelkit.FunctionCallItem(block.ID, block.ID, block.Name, string(block.Input))
 	case "thinking":
 		enc := ""
 		if block.Signature != "" {
-			enc = signaturePrefix + block.Signature
+			enc = bindBlob(signaturePrefix, fingerprint, block.Signature)
 		}
 		return modelkit.ReasoningItem(blockItemID(msgID, index), block.Thinking, enc)
 	case "redacted_thinking":
-		return modelkit.ReasoningItem(blockItemID(msgID, index), "", redactedPrefix+block.Data)
+		return modelkit.ReasoningItem(blockItemID(msgID, index), "", bindBlob(redactedPrefix, fingerprint, block.Data))
 	default:
 		// No server tools are requested, so a server-tool block cannot be represented
 		// or replayed; dropping it silently would corrupt the conversation.
@@ -452,7 +514,7 @@ func blockToItem(msgID string, index int, block ant.ContentBlockUnion) (agents.O
 
 // convertOutput converts a complete response message into canonical items:
 // consecutive text blocks are ONE message, a refusal is ONE item (decisions §5.49).
-func convertOutput(msg *ant.Message) ([]agents.OutputItem, error) {
+func convertOutput(msg *ant.Message, fingerprint string) ([]agents.OutputItem, error) {
 	if msg.StopReason == ant.StopReasonRefusal {
 		item, err := modelkit.RefusalItem(blockItemID(msg.ID, 0), refusalText(msg))
 		if err != nil {
@@ -472,7 +534,7 @@ func convertOutput(msg *ant.Message) ([]agents.OutputItem, error) {
 			}
 			item, err = modelkit.MessageItem(blockItemID(msg.ID, start), texts...)
 		} else {
-			item, err = blockToItem(msg.ID, i, msg.Content[i])
+			item, err = blockToItem(msg.ID, i, msg.Content[i], fingerprint)
 			i++
 		}
 		if err != nil {

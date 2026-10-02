@@ -1995,3 +1995,30 @@ an error rather than resuming it: the Responses API resumes a stream by
 sequence number, which no decorator does yet.
 
 Rules: spec §2.16.
+
+### 5.84 A thinking block remembers the prefix it was bound to
+
+Decided 2026-10-03.
+
+**Decision.** The Anthropic adapter writes a fingerprint of the request prefix
+— the system text and the tool definitions, 16 hex characters of a SHA-256 —
+into each thinking block's `encrypted_content`, behind the existing
+`thinking_signature:` / `redacted_thinking:` prefix. On replay it computes the
+current fingerprint and leaves out the newest block bound to another prefix
+together with every block before it: a leading run of thinking may be
+removed, a block in the middle may not. The host re-renders its instruction
+layer every run (memories, skills, a background suffix), so the prefix moves
+mid-session as a matter of course; §5.77's `drop_block` remains the net under
+an account that enforces the binding without this adapter's knowledge.
+
+**Rejected.** Storing the fingerprint on the SDK entry: a field on
+`session.Entry` every provider would carry for one adapter's rule. Hashing the
+whole message prefix: a block is bound to its own turn's history anyway, and
+the system text and tools are what a host edits. A fingerprint on the OpenAI
+side: no failure has been reproduced there.
+
+**Cost accepted.** Blocks written before fingerprints replay no more; the
+first request after the upgrade thinks from scratch. An instruction edit
+costs the conversation its earlier thinking, as the API would have.
+
+Rules: spec §2.15.

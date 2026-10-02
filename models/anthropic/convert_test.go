@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,7 +33,7 @@ func budgetModel() *MessagesModel {
 // API would actually see.
 func wireParams(t *testing.T, m *MessagesModel, req agents.ModelRequest) map[string]any {
 	t.Helper()
-	params, err := m.buildParams(req)
+	params, _, err := m.buildParams(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ func TestBuildParamsPromptCachingOptOut(t *testing.T) {
 // and expects one assistant message with thinking/text/tool_use blocks in
 // order, followed by one user message with the tool_result.
 func TestBuildParamsMergesAssistantTurn(t *testing.T) {
-	rs, err := modelkit.ReasoningItem("rs_1", "hmm", signaturePrefix+"sig-1")
+	rs, err := modelkit.ReasoningItem("rs_1", "hmm", bindBlob(signaturePrefix, prefixFingerprint("", nil), "sig-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +213,8 @@ func TestBuildParamsReasoningWithoutSignatureIsDropped(t *testing.T) {
 }
 
 func TestBuildParamsRedactedThinkingRoundTrip(t *testing.T) {
-	rs, err := modelkit.ReasoningItem("rs_1", "", redactedPrefix+"opaque-bytes")
+	fp := prefixFingerprint("", nil)
+	rs, err := modelkit.ReasoningItem("rs_1", "", bindBlob(redactedPrefix, fp, "opaque-bytes"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,6 +227,106 @@ func TestBuildParamsRedactedThinkingRoundTrip(t *testing.T) {
 	block := wire["messages"].([]any)[1].(map[string]any)["content"].([]any)[0].(map[string]any)
 	if block["type"] != "redacted_thinking" || block["data"] != "opaque-bytes" {
 		t.Errorf("block = %v, want redacted_thinking with original data", block)
+	}
+}
+
+// thinkingTurn is one assistant turn of history: a signed thinking block bound
+// to the prefix `system` names, then the answer text.
+func thinkingTurn(t *testing.T, id, system string, tools []*agents.Tool) []agents.InputItem {
+	t.Helper()
+	fp := prefixFingerprint(system, convertTools(tools, nil))
+	rs, err := modelkit.ReasoningItem("rs_"+id, "thinking "+id, bindBlob(signaturePrefix, fp, "sig-"+id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := modelkit.MessageItem("msg_"+id, "answer "+id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := agents.OutputToInput([]agents.OutputItem{rs, msg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return items
+}
+
+// thinkingSigs lists the signatures of the thinking blocks on the wire, in order.
+func thinkingSigs(wire map[string]any) []string {
+	var sigs []string
+	for _, m := range wire["messages"].([]any) {
+		for _, b := range m.(map[string]any)["content"].([]any) {
+			if block := b.(map[string]any); block["type"] == "thinking" {
+				sigs = append(sigs, block["signature"].(string))
+			}
+		}
+	}
+	return sigs
+}
+
+// Thinking is bound to the system text and tools it was produced under: a
+// block bound to another prefix, and every block before it, is left out of
+// the replay; the newest run bound to this prefix stays (spec §2.15).
+func TestBuildParamsDropsThinkingBoundToAnotherPrefix(t *testing.T) {
+	ask := func(system string, turns ...[]agents.InputItem) []string {
+		input := agents.InputItemsFromText("hi")
+		for _, turn := range turns {
+			input = append(input, turn...)
+			input = append(input, agents.InputItemsFromText("more")...)
+		}
+		return thinkingSigs(wireParams(t, testModel(), agents.ModelRequest{SystemInstructions: system, Input: input}))
+	}
+	a1, a2 := thinkingTurn(t, "a1", "prompt A", nil), thinkingTurn(t, "a2", "prompt A", nil)
+	b1 := thinkingTurn(t, "b1", "prompt B", nil)
+
+	// The system unchanged: every block replays.
+	if got := ask("prompt A", a1, a2); !slices.Equal(got, []string{"sig-a1", "sig-a2"}) {
+		t.Fatalf("unchanged prefix replays %v, want both blocks", got)
+	}
+	// The system edited: the older blocks go.
+	if got := ask("prompt B", a1, a2); len(got) != 0 {
+		t.Fatalf("an edited prefix still replays %v", got)
+	}
+	// A → B → A: only the run after the last foreign block stays.
+	if got := ask("prompt A", a1, b1, a2); !slices.Equal(got, []string{"sig-a2"}) {
+		t.Fatalf("A→B→A replays %v, want the last A block only", got)
+	}
+	// A tool added changes the prefix as much as the text does.
+	tool := agents.NewTool("ping", "pings", func(context.Context, *agents.ToolContext, struct{}) (string, error) { return "", nil })
+	withTool := thinkingTurn(t, "t1", "prompt A", []*agents.Tool{tool})
+	input := append(agents.InputItemsFromText("hi"), withTool...)
+	input = append(input, agents.InputItemsFromText("more")...)
+	if got := thinkingSigs(wireParams(t, testModel(), agents.ModelRequest{SystemInstructions: "prompt A", Input: input})); len(got) != 0 {
+		t.Fatalf("a block bound to a tool set replays %v without the tools", got)
+	}
+	if got := thinkingSigs(wireParams(t, testModel(), agents.ModelRequest{SystemInstructions: "prompt A", Tools: []*agents.Tool{tool}, Input: input})); !slices.Equal(got, []string{"sig-t1"}) {
+		t.Fatalf("with its tools the block replays as %v", got)
+	}
+	// A block from before fingerprints is bound to no prefix this request has.
+	legacy, _ := modelkit.ReasoningItem("rs_old", "old", signaturePrefix+"sig-old")
+	old, _ := agents.OutputToInput([]agents.OutputItem{legacy})
+	input = append(agents.InputItemsFromText("hi"), old...)
+	input = append(input, agents.InputItemsFromText("more")...)
+	if got := thinkingSigs(wireParams(t, testModel(), agents.ModelRequest{Input: input})); len(got) != 0 {
+		t.Fatalf("an unfingerprinted block replays as %v", got)
+	}
+}
+
+// The fingerprint a produced block carries is the one its own request's
+// replay computes, tool order aside.
+func TestPrefixFingerprintIsStable(t *testing.T) {
+	a := agents.NewTool("a", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) { return "", nil })
+	b := agents.NewTool("b", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) { return "", nil })
+	ab := prefixFingerprint("s", convertTools([]*agents.Tool{a, b}, nil))
+	ba := prefixFingerprint("s", convertTools([]*agents.Tool{b, a}, nil))
+	if ab != ba || len(ab) != fingerprintLen {
+		t.Fatalf("fingerprints %q / %q should match and be %d characters", ab, ba, fingerprintLen)
+	}
+	if prefixFingerprint("s", convertTools([]*agents.Tool{a}, nil)) == ab || prefixFingerprint("t", convertTools([]*agents.Tool{a, b}, nil)) == ab {
+		t.Fatal("a different tool set or system text must change the fingerprint")
+	}
+	_, fp, _ := thinkingBlock(modelkit.Item{EncryptedContent: bindBlob(signaturePrefix, ab, "sig")})
+	if fp != ab {
+		t.Fatalf("stored fingerprint read back as %q, want %q", fp, ab)
 	}
 }
 
@@ -371,7 +473,7 @@ func TestEffortMapsToAdaptiveThinking(t *testing.T) {
 		"temperature": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, Temperature: new(0.5)},
 		"tool_choice": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, ToolChoice: agents.ToolChoiceRequired},
 	} {
-		if _, err := testModel().buildParams(agents.ModelRequest{Input: agents.InputItemsFromText("hi"), Settings: s}); err != nil {
+		if _, _, err := testModel().buildParams(agents.ModelRequest{Input: agents.InputItemsFromText("hi"), Settings: s}); err != nil {
 			t.Errorf("%s with an adaptive effort: %v, want it sent", name, err)
 		}
 	}
@@ -381,7 +483,7 @@ func TestEffortMapsToAdaptiveThinking(t *testing.T) {
 // so it is refused by name instead of read as "send nothing".
 func TestEffortNoneIsUserError(t *testing.T) {
 	for name, m := range map[string]*MessagesModel{"adaptive": testModel(), "budget": budgetModel()} {
-		_, err := m.buildParams(agents.ModelRequest{
+		_, _, err := m.buildParams(agents.ModelRequest{
 			Input:    agents.InputItemsFromText("hi"),
 			Settings: &agents.ModelSettings{Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortNone}},
 		})
@@ -424,7 +526,7 @@ func TestBudgetThinkingOptIn(t *testing.T) {
 }
 
 func TestBudgetThinkingVsExplicitMaxTokens(t *testing.T) {
-	_, err := budgetModel().buildParams(agents.ModelRequest{
+	_, _, err := budgetModel().buildParams(agents.ModelRequest{
 		Input: agents.InputItemsFromText("hi"),
 		Settings: &agents.ModelSettings{
 			Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortMedium},
@@ -440,7 +542,7 @@ func TestBudgetThinkingVsExplicitMaxTokens(t *testing.T) {
 // than quietly read as high.
 func TestBudgetModeRejectsXhigh(t *testing.T) {
 	for _, effort := range []agents.ReasoningEffort{agents.ReasoningEffortXhigh, agents.ReasoningEffortMax} {
-		_, err := budgetModel().buildParams(agents.ModelRequest{
+		_, _, err := budgetModel().buildParams(agents.ModelRequest{
 			Input:    agents.InputItemsFromText("hi"),
 			Settings: &agents.ModelSettings{Reasoning: &agents.Reasoning{Effort: effort}},
 		})
@@ -457,7 +559,7 @@ func TestBuildParamsRejectsUnsupportedSettings(t *testing.T) {
 		"verbosity":            {Input: agents.InputItemsFromText("hi"), Settings: &agents.ModelSettings{Verbosity: agents.VerbosityLow}},
 		"metadata_other_key":   {Input: agents.InputItemsFromText("hi"), Settings: &agents.ModelSettings{Metadata: map[string]string{"trace": "x"}}},
 	} {
-		_, err := testModel().buildParams(req)
+		_, _, err := testModel().buildParams(req)
 		if _, ok := errors.AsType[*agents.UserError](err); !ok {
 			t.Errorf("%s: expected UserError, got %v", name, err)
 		}
@@ -528,7 +630,7 @@ func TestBudgetThinkingSamplingConflicts(t *testing.T) {
 		"top_p":       {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, TopP: new(0.9)},
 		"tool_choice": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, ToolChoice: agents.ToolChoiceRequired},
 	} {
-		_, err := budgetModel().buildParams(agents.ModelRequest{Input: agents.InputItemsFromText("hi"), Settings: s})
+		_, _, err := budgetModel().buildParams(agents.ModelRequest{Input: agents.InputItemsFromText("hi"), Settings: s})
 		if _, ok := errors.AsType[*agents.UserError](err); !ok {
 			t.Errorf("%s: expected UserError for thinking conflict, got %v", name, err)
 		}

@@ -35,16 +35,18 @@ func NewMessagesModel(model string, client ant.MessageService) *MessagesModel {
 
 var _ agents.Model = (*MessagesModel)(nil)
 
-// buildParams assembles the Messages API request from a ModelRequest.
-func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewParams, error) {
+// buildParams assembles the Messages API request from a ModelRequest; the
+// fingerprint is the prefix this request's thinking blocks are bound to.
+func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewParams, string, error) {
 	if err := modelkit.Reject("anthropic", req, unsupportedFeatures...); err != nil {
-		return ant.MessageNewParams{}, err
-	}
-	messages, err := convertInput(req.Input)
-	if err != nil {
-		return ant.MessageNewParams{}, err
+		return ant.MessageNewParams{}, "", err
 	}
 	tools := convertTools(req.Tools, req.Handoffs)
+	fingerprint := prefixFingerprint(req.SystemInstructions, tools)
+	messages, err := convertInput(req.Input, fingerprint)
+	if err != nil {
+		return ant.MessageNewParams{}, "", err
+	}
 
 	messages, leadingSystem := hoistLeadingSystem(messages)
 	params := ant.MessageNewParams{
@@ -72,9 +74,9 @@ func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewPara
 		params.CacheControl = ant.NewCacheControlEphemeralParam()
 	}
 	if err := applySettings(&params, req.Settings, m.budgetThinking); err != nil {
-		return ant.MessageNewParams{}, err
+		return ant.MessageNewParams{}, "", err
 	}
-	return params, nil
+	return params, fingerprint, nil
 }
 
 // applySettings overlays the model settings. max_tokens is mandatory here, and
@@ -203,7 +205,7 @@ func (m *MessagesModel) Respond(ctx context.Context, req agents.ModelRequest) (*
 // translated event by event into canonical response.* events; see stream.go.
 func (m *MessagesModel) StreamResponse(ctx context.Context, req agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
 	return func(yield func(*agents.ResponseStreamEvent, error) bool) {
-		params, err := m.buildParams(req)
+		params, fingerprint, err := m.buildParams(req)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -214,7 +216,7 @@ func (m *MessagesModel) StreamResponse(ctx context.Context, req agents.ModelRequ
 		}
 		stream := m.client.NewStreaming(ctx, params, opts...)
 		defer stream.Close()
-		synthesizeStream(ctx, stream, yield)
+		synthesizeStream(ctx, stream, yield, fingerprint)
 	}
 }
 

@@ -137,8 +137,10 @@ func TestStreamOutOfOrderBlockStops(t *testing.T) {
 		}
 		t.Fatalf("terminal output order = %v, want [reasoning message] (index order)", types)
 	}
-	if enc := final.Output[0].AsReasoning().EncryptedContent; enc != signaturePrefix+"sig-x" {
-		t.Errorf("encrypted_content = %q, want prefixed signature", enc)
+	// The signature is stored behind the prefix with the fingerprint of the
+	// request it is bound to (no system text, no tools here).
+	if enc, want := final.Output[0].AsReasoning().EncryptedContent, bindBlob(signaturePrefix, prefixFingerprint("", nil), "sig-x"); enc != want {
+		t.Errorf("encrypted_content = %q, want %q", enc, want)
 	}
 }
 

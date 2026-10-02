@@ -22,7 +22,7 @@ type streamItem struct {
 // synthesizeStream translates the Messages SSE stream into canonical
 // response.* events: deltas live, finished items at message_stop (decisions §5.49).
 // ctx carries the run's diagnostic sink.
-func synthesizeStream(ctx context.Context, stream *ssestream.Stream[ant.MessageStreamEventUnion], yield func(*agents.ResponseStreamEvent, error) bool) {
+func synthesizeStream(ctx context.Context, stream *ssestream.Stream[ant.MessageStreamEventUnion], yield func(*agents.ResponseStreamEvent, error) bool, fingerprint string) {
 	emit := func(ev agents.ResponseStreamEvent, err error) bool {
 		if err != nil {
 			yield(nil, err)
@@ -120,7 +120,7 @@ func synthesizeStream(ctx context.Context, stream *ssestream.Stream[ant.MessageS
 			}
 			// Rebuilt from the accumulator in INDEX order: a stop-ordered history could
 			// replay with thinking after text, which the API rejects.
-			output, err := convertOutput(&acc)
+			output, err := convertOutput(&acc, fingerprint)
 			if err != nil {
 				yield(nil, err)
 				return
