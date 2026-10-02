@@ -21,7 +21,7 @@ func collectItemEvents(t *testing.T, stream RunStream) ([]string, *RunResult) {
 		if !ok {
 			continue
 		}
-		name := ie.Name
+		name := string(ie.Item.Kind)
 		switch ie.Item.Kind {
 		case ItemToolCall, ItemToolCallOutput:
 			if id := ie.Item.CallID(); id != "" {
@@ -65,7 +65,7 @@ func TestHITL_ResumeRunStreamed_EmitsResumedSegmentEvents(t *testing.T) {
 	if len(res.Interruptions) != 1 {
 		t.Fatalf("expected 1 interruption, got %d", len(res.Interruptions))
 	}
-	wantInterrupted := []string{"message_output_created", "tool_called:call_1"}
+	wantInterrupted := []string{"message_output", "tool_call:call_1"}
 	if !reflect.DeepEqual(interrupted, wantInterrupted) {
 		t.Errorf("interrupted segment events = %v, want %v", interrupted, wantInterrupted)
 	}
@@ -80,11 +80,11 @@ func TestHITL_ResumeRunStreamed_EmitsResumedSegmentEvents(t *testing.T) {
 		t.Fatal("resumed stream produced no result")
 	}
 	wantResumed := []string{
-		"tool_output:call_1",
-		"message_output_created",
-		"tool_called:call_2",
-		"tool_output:call_2",
-		"message_output_created",
+		"tool_call_output:call_1",
+		"message_output",
+		"tool_call:call_2",
+		"tool_call_output:call_2",
+		"message_output",
 	}
 	if !reflect.DeepEqual(resumed, wantResumed) {
 		t.Errorf("resumed segment events = %v, want %v", resumed, wantResumed)
@@ -131,7 +131,7 @@ func TestHITL_ResumeRunStreamed_ReInterrupt(t *testing.T) {
 	if len(res2.Interruptions) != 1 {
 		t.Fatalf("expected re-interruption, got %d interruptions", len(res2.Interruptions))
 	}
-	want := []string{"tool_output:call_1", "tool_called:call_2"}
+	want := []string{"tool_call_output:call_1", "tool_call:call_2"}
 	if !reflect.DeepEqual(events, want) {
 		t.Errorf("resumed segment events = %v, want %v", events, want)
 	}

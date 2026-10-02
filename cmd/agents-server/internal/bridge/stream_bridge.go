@@ -106,72 +106,64 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 		}
 
 	case *agents.RunItemStreamEvent:
-		switch e.Name {
-		case "message_output_created":
+		switch e.Item.Kind {
+		case agents.ItemMessage:
 			// The completed turn text, authoritative over the run.step deltas;
 			// resumed segments and delta-less backends rely on it entirely.
-			if e.Item.Kind == agents.ItemMessage {
-				if text := e.Item.Text(); text != "" {
-					send(protocol.EventRunMessage, protocol.RunMessage{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
-				}
+			if text := e.Item.Text(); text != "" {
+				send(protocol.EventRunMessage, protocol.RunMessage{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
 			}
-		case "reasoning_item_created":
+		case agents.ItemReasoning:
 			// The completed thinking block, authoritative over run.reasoning
 			// deltas — and the only signal when a backend streams none.
-			if e.Item.Kind == agents.ItemReasoning {
-				if text := e.Item.Text(); text != "" {
-					send(protocol.EventRunReasoningItem, protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
-				}
+			if text := e.Item.Text(); text != "" {
+				send(protocol.EventRunReasoningItem, protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
 			}
-		case "tool_called":
-			if e.Item.Kind == agents.ItemToolCall {
-				// A handoff's tool_called (IsHandoff) never gets a tool_output,
-				// so its card would spin forever; run.handoff already conveys it.
-				if e.Item.IsHandoff {
-					return
-				}
-				fc := e.Item.FunctionCall()
-				send(protocol.EventRunToolCall, protocol.RunToolCall{
-					RunID:      runID,
-					ToolCallID: fc.CallID,
-					ToolName:   fc.Name,
-					Arguments:  fc.Arguments,
-				})
+		case agents.ItemToolCall:
+			// The tool call wrapping a handoff (IsHandoff) never gets an
+			// output, so its card would spin forever; run.handoff conveys it.
+			if e.Item.IsHandoff {
+				return
 			}
-		case "tool_output":
-			if e.Item.Kind == agents.ItemToolCallOutput {
-				// The display rendering, not %v: a multimodal output is a content
-				// list, and the live card must match what a reload rebuilds.
-				d := e.Item.Display()
-				send(protocol.EventRunToolResult, protocol.RunToolResult{
-					RunID:      runID,
-					ToolCallID: e.Item.CallID(),
-					Output:     d.Output,
-					Title:      d.Title,
-					Summary:    d.Summary,
-					Renderer:   d.Renderer,
-					IsError:    d.IsError,
-					Extra:      d.Extra,
-				})
-			}
-		case "handoff_requested":
-			if e.Item.Kind == agents.ItemHandoffCall && e.Item.Agent != nil {
+			fc := e.Item.FunctionCall()
+			send(protocol.EventRunToolCall, protocol.RunToolCall{
+				RunID:      runID,
+				ToolCallID: fc.CallID,
+				ToolName:   fc.Name,
+				Arguments:  fc.Arguments,
+			})
+		case agents.ItemToolCallOutput:
+			// The display rendering, not %v: a multimodal output is a content
+			// list, and the live card must match what a reload rebuilds.
+			d := e.Item.Display()
+			send(protocol.EventRunToolResult, protocol.RunToolResult{
+				RunID:      runID,
+				ToolCallID: e.Item.CallID(),
+				Output:     d.Output,
+				Title:      d.Title,
+				Summary:    d.Summary,
+				Renderer:   d.Renderer,
+				IsError:    d.IsError,
+				Extra:      d.Extra,
+			})
+		case agents.ItemHandoffCall:
+			if e.Item.Agent != nil {
 				send(protocol.EventRunHandoff, protocol.RunHandoff{
 					RunID:  runID,
 					From:   e.Item.Agent.Name,
 					FromID: agentIDs[e.Item.Agent.Name],
 				})
 			}
-		case "injected_input_created":
+		case agents.ItemInjectedInput:
 			// A user message in the middle of the run: the live view splits its
 			// turn here, where a reload will (invariant 16).
-			if e.Item.Kind == agents.ItemInjectedInput && e.Item.RawInput != nil {
+			if e.Item.RawInput != nil {
 				send(protocol.EventRunInjected, protocol.RunInjected{
 					RunID: runID, Input: session.ItemText(*e.Item.RawInput), Index: r.hub.nextInjection(runID),
 				})
 			}
-		case "handoff_occured":
-			if e.Item.Kind == agents.ItemHandoffOutput && e.Item.HandoffFrom != nil && e.Item.HandoffTo != nil {
+		case agents.ItemHandoffOutput:
+			if e.Item.HandoffFrom != nil && e.Item.HandoffTo != nil {
 				send(protocol.EventRunHandoff, protocol.RunHandoff{
 					RunID:  runID,
 					From:   e.Item.HandoffFrom.Name,
@@ -181,7 +173,6 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 				})
 			}
 		}
-
 	case *agents.ToolProgressEvent:
 		// Live output of a long-running tool; the answer arrives separately
 		// as run.tool_result.

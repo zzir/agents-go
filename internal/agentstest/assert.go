@@ -102,13 +102,13 @@ func CollectRun(tb testing.TB, stream agents.RunStream) ([]agents.StreamEvent, *
 	return events, res
 }
 
-// RunItemEventNames returns the name of every run-item event in a stream, in
+// RunItemKinds returns the kind of every run-item event in a stream, in
 // order — the sequence a UI would render.
-func RunItemEventNames(events []agents.StreamEvent) []string {
-	var out []string
+func RunItemKinds(events []agents.StreamEvent) []agents.ItemKind {
+	var out []agents.ItemKind
 	for _, ev := range events {
 		if e, ok := ev.(*agents.RunItemStreamEvent); ok {
-			out = append(out, e.Name)
+			out = append(out, e.Item.Kind)
 		}
 	}
 	return out

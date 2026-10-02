@@ -193,7 +193,7 @@ func TestInjectedInput_IsSavedToTheSession(t *testing.T) {
 // reserved for an item type this build does not model, and a consumer that
 // matches on the name — agents-server's bridge does — could not tell an
 // injection from one of those otherwise.
-func TestInjectedInput_StreamEventIsNamed(t *testing.T) {
+func TestInjectedInput_ArrivesAsItsOwnItemKind(t *testing.T) {
 	probe := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
 		return "ok", nil
 	})
@@ -233,22 +233,28 @@ func TestInjectedInput_StreamEventIsNamed(t *testing.T) {
 			if err := tc.inject(ctrl); err != nil {
 				t.Fatal(err)
 			}
-			var names []string
+			injected := 0
 			for ev, err := range stream {
 				if err != nil {
 					t.Fatal(err)
 				}
 				ie, ok := ev.(*RunItemStreamEvent)
-				if !ok || ie.Item.Kind != ItemInjectedInput {
+				if !ok {
 					continue
 				}
-				names = append(names, ie.Name)
+				if ie.Item.Kind == ItemUnknown {
+					t.Error("an injected input must not borrow ItemUnknown")
+				}
+				if ie.Item.Kind != ItemInjectedInput {
+					continue
+				}
+				injected++
 				if got := ie.Item.Display().Text; got != tc.text {
 					t.Errorf("injected item text = %q, want %q", got, tc.text)
 				}
 			}
-			if len(names) != 1 || names[0] != "injected_input_created" {
-				t.Errorf("injected input events = %v, want one injected_input_created", names)
+			if injected != 1 {
+				t.Errorf("injected input events = %d, want one", injected)
 			}
 		})
 	}

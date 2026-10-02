@@ -19,13 +19,10 @@ type RawResponsesStreamEvent struct {
 
 func (*RawResponsesStreamEvent) streamEvent() {}
 
-// RunItemStreamEvent is emitted when the runner produces a new RunItem (a
-// message, tool call, tool output, handoff or reasoning item).
+// RunItemStreamEvent is emitted when the runner produces a new RunItem; a
+// consumer branches on Item.Kind. A handoff call arrives twice: as an
+// ItemToolCall with IsHandoff set, then as an ItemHandoffCall — spec §2.4.
 type RunItemStreamEvent struct {
-	// Name is the event name, e.g. "message_output_created", "tool_called",
-	// "tool_output", "handoff_requested", "handoff_occured",
-	// "reasoning_item_created", "injected_input_created".
-	Name string
 	Item *RunItem
 }
 
@@ -126,39 +123,14 @@ func (r *runner) emit(event StreamEvent) bool {
 	return true
 }
 
-// emitItem emits a run item's stream event. A handoff call additionally emits
-// a tool_called event wrapping the call — the model's own view of a handoff.
+// emitItem emits a run item's stream event. A handoff call is preceded by a
+// tool-call event wrapping it — the model's own view of a handoff.
 func (r *runner) emitItem(it *RunItem) bool {
 	if it.Kind == ItemHandoffCall {
 		wrapped := &RunItem{Kind: ItemToolCall, Agent: it.Agent, Raw: it.Raw, IsHandoff: true}
-		if !r.emit(&RunItemStreamEvent{Name: "tool_called", Item: wrapped}) {
+		if !r.emit(&RunItemStreamEvent{Item: wrapped}) {
 			return false
 		}
 	}
-	return r.emit(&RunItemStreamEvent{Name: runItemEventName(it), Item: it})
-}
-
-// runItemEventName maps an item kind to its stream event name.
-func runItemEventName(item *RunItem) string {
-	switch item.Kind {
-	case ItemMessage:
-		return "message_output_created"
-	case ItemToolCall:
-		return "tool_called"
-	case ItemToolCallOutput:
-		return "tool_output"
-	case ItemHandoffCall:
-		return "handoff_requested"
-	case ItemHandoffOutput:
-		// (sic) — the misspelling is the wire name consumers already match on.
-		return "handoff_occured"
-	case ItemReasoning:
-		return "reasoning_item_created"
-	case ItemInjectedInput:
-		return "injected_input_created"
-	default:
-		// "unknown" belongs to ItemUnknown alone; a kind the SDK models must
-		// never borrow it, or a consumer matching on the name cannot tell them apart.
-		return "unknown"
-	}
+	return r.emit(&RunItemStreamEvent{Item: it})
 }

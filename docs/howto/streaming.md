@@ -18,7 +18,7 @@ for event, err := range stream {
 			fmt.Print(ev.Data.Delta) // union exposes the variant fields flattened
 		}
 	case *agents.RunItemStreamEvent:
-		fmt.Printf("\n[%s]\n", ev.Name) // e.g. message_output_created, tool_called, tool_output
+		fmt.Printf("\n[%s]\n", ev.Item.Kind) // e.g. message_output, tool_call, tool_call_output
 	case *agents.AgentUpdatedStreamEvent:
 		fmt.Printf("\n[now talking to %s]\n", ev.NewAgent.Name)
 	case *agents.RunCompletedEvent:
@@ -75,14 +75,15 @@ UI streaming. Only `Run` produces them; `RunSync` makes one blocking call.
 
 `*RunItemStreamEvent` fires when an item is **complete** (a full message, a tool
 call, a tool result) — the right granularity for "Fetching the weather…"-style
-progress, ignoring per-token noise. Names: `message_output_created`,
-`tool_called`, `tool_output`, `handoff_requested`, `handoff_occured`,
-`reasoning_item_created`, `injected_input_created`.
+progress, ignoring per-token noise. Branch on `Item.Kind`: `ItemMessage`,
+`ItemToolCall`, `ItemToolCallOutput`, `ItemHandoffCall`, `ItemHandoffOutput`,
+`ItemReasoning`, `ItemInjectedInput`.
 
-A handoff surfaces as **both** `tool_called` and `handoff_requested`: the model
-called a tool, and that tool was a handoff. The `tool_called` wrapper carries
-`Item.IsHandoff = true`, so a consumer rendering tool calls can drop or badge
-it without keeping a list of every handoff tool name.
+A handoff surfaces **twice**, as an `ItemToolCall` and then as an
+`ItemHandoffCall`: the model called a tool, and that tool was a handoff. The
+tool-call wrapper carries `Item.IsHandoff = true`, so a consumer rendering
+tool calls can drop or badge it without keeping a list of every handoff tool
+name.
 
 `*AgentUpdatedStreamEvent` fires once for the starting agent, then on each
 handoff.

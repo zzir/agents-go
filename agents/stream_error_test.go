@@ -79,7 +79,7 @@ func TestStreamedResult_StopAfterTurn(t *testing.T) {
 		if done, ok := ev.(*RunCompletedEvent); ok {
 			res = done.Result
 		}
-		if ie, ok := ev.(*RunItemStreamEvent); ok && ie.Name == "tool_called" {
+		if ie, ok := ev.(*RunItemStreamEvent); ok && ie.Item.Kind == ItemToolCall {
 			// The turn-1 tool is emitted but still blocked; ask for a graceful
 			// stop, then let the tool finish so the turn completes.
 			ctrl.StopAfterTurn()
@@ -144,28 +144,28 @@ func TestStreamedResult_HandoffEmitsToolCalled(t *testing.T) {
 		if !ok {
 			continue
 		}
-		switch ie.Name {
-		case "tool_called":
-			if ie.Item.Kind == ItemToolCall && ie.Item.FunctionCall().CallID == "h1" {
+		switch ie.Item.Kind {
+		case ItemToolCall:
+			if ie.Item.FunctionCall().CallID == "h1" {
 				toolCalledHandoff++
 				// The wrapper says what it wraps, so a consumer can drop or
 				// badge it without a list of every handoff tool name.
 				if !ie.Item.IsHandoff {
-					t.Error("handoff tool_called wrapper has IsHandoff=false, want true")
+					t.Error("the tool-call wrapper of a handoff has IsHandoff=false, want true")
 				}
 			}
-		case "handoff_requested":
+		case ItemHandoffCall:
 			handoffRequested++
 			if ie.Item.IsHandoff {
-				t.Error("handoff_requested item has IsHandoff=true; the flag belongs to the tool_called wrapper alone")
+				t.Error("the handoff call has IsHandoff=true; the flag belongs to its tool-call wrapper alone")
 			}
 		}
 	}
 	if toolCalledHandoff != 1 {
-		t.Errorf("handoff tool_called events = %d, want 1", toolCalledHandoff)
+		t.Errorf("tool-call events wrapping the handoff = %d, want 1", toolCalledHandoff)
 	}
 	if handoffRequested != 1 {
-		t.Errorf("handoff_requested events = %d, want 1", handoffRequested)
+		t.Errorf("handoff call events = %d, want 1", handoffRequested)
 	}
 }
 
@@ -272,12 +272,12 @@ func TestRunStreamed_Events(t *testing.T) {
 		case *RawResponsesStreamEvent:
 			raw++
 		case *RunItemStreamEvent:
-			switch e.Name {
-			case "tool_called":
+			switch e.Item.Kind {
+			case ItemToolCall:
 				toolCalled++
-			case "tool_output":
+			case ItemToolCallOutput:
 				toolOutput++
-			case "message_output_created":
+			case ItemMessage:
 				message++
 			}
 		}
@@ -289,10 +289,10 @@ func TestRunStreamed_Events(t *testing.T) {
 		t.Errorf("expected >=2 raw events (one per turn), got %d", raw)
 	}
 	if toolCalled != 1 {
-		t.Errorf("tool_called events = %d, want 1", toolCalled)
+		t.Errorf("tool call events = %d, want 1", toolCalled)
 	}
 	if toolOutput != 1 {
-		t.Errorf("tool_output events = %d, want 1", toolOutput)
+		t.Errorf("tool output events = %d, want 1", toolOutput)
 	}
 	if message != 1 {
 		t.Errorf("message events = %d, want 1", message)

@@ -30,39 +30,38 @@ func toolCallItem(t *testing.T, name, callID string) *agents.RunItem {
 	return agents.NewModelItem(agents.ItemToolCall, nil, item)
 }
 
-// A handoff surfaces as a tool_called event (wrapping the transfer_to_X call,
-// marked IsHandoff) in addition to handoff_requested. It carries no
-// tool_output, so the bridge must suppress it — otherwise the UI shows a tool
-// card that never completes.
+// A handoff surfaces as a tool-call item (wrapping the transfer_to_X call,
+// marked IsHandoff) ahead of the handoff call itself. It gets no output, so
+// the bridge must suppress it — otherwise the UI shows a tool card that never
+// completes.
 func TestHandleStreamEvent_HandoffToolCalledSuppressed(t *testing.T) {
 	wrapper := toolCallItem(t, "transfer_to_billing", "h1")
 	wrapper.IsHandoff = true
-	ev := &agents.RunItemStreamEvent{Name: "tool_called", Item: wrapper}
+	ev := &agents.RunItemStreamEvent{Item: wrapper}
 
 	// The handoff wrapper: suppressed, no run.tool_call.
 	called := false
 	(&Runner{}).handleStreamEvent(ev, "run_1", func(string, any) { called = true }, nil)
 	if called {
-		t.Error("handoff tool_called should be suppressed (no run.tool_call)")
+		t.Error("the tool call wrapping a handoff should be suppressed (no run.tool_call)")
 	}
 
 	// A real tool of the same shape still emits run.tool_call.
 	gotType := ""
 	(&Runner{}).handleStreamEvent(
-		&agents.RunItemStreamEvent{Name: "tool_called", Item: toolCallItem(t, "get_weather", "c1")},
+		&agents.RunItemStreamEvent{Item: toolCallItem(t, "get_weather", "c1")},
 		"run_1", func(typ string, _ any) { gotType = typ }, nil)
 	if gotType != "run.tool_call" {
 		t.Errorf("regular tool event type = %q, want run.tool_call", gotType)
 	}
 }
 
-// handleStreamEvent must bridge message_output_created into a run.message
+// handleStreamEvent must bridge a completed message item into a run.message
 // event carrying the turn's full text: interim messages between tool calls
 // have no other authoritative live signal — run.step deltas may be absent on
 // some backends, and a resumed segment has none for its earlier turns.
 func TestHandleStreamEvent_MessageOutputCreated(t *testing.T) {
 	ev := &agents.RunItemStreamEvent{
-		Name: "message_output_created",
 		Item: messageItem(t, `[{"type":"output_text","text":"writing the file","annotations":[]}]`),
 	}
 
@@ -89,7 +88,6 @@ func TestHandleStreamEvent_MessageOutputCreated(t *testing.T) {
 // empty chat bubble.
 func TestHandleStreamEvent_EmptyMessageSkipped(t *testing.T) {
 	ev := &agents.RunItemStreamEvent{
-		Name: "message_output_created",
 		Item: messageItem(t, `[]`),
 	}
 
@@ -106,7 +104,6 @@ func TestHandleStreamEvent_EmptyMessageSkipped(t *testing.T) {
 func TestHandleStreamEvent_InjectedInputIsItsOwnEvent(t *testing.T) {
 	in := agents.InputItemsFromText("also check the logs")[0]
 	ev := &agents.RunItemStreamEvent{
-		Name: "injected_input_created",
 		Item: &agents.RunItem{Kind: agents.ItemInjectedInput, RawInput: &in},
 	}
 
@@ -132,7 +129,7 @@ func reasoningItem(t *testing.T, bodyJSON string) *agents.RunItem {
 	return agents.NewModelItem(agents.ItemReasoning, nil, item)
 }
 
-// handleStreamEvent must bridge reasoning_item_created into run.reasoning_item
+// handleStreamEvent must bridge a completed reasoning item into run.reasoning_item
 // with the turn's full thinking text — for backends that use the standard
 // summary array and for those that put raw reasoning in content parts.
 func TestHandleStreamEvent_ReasoningItemCreated(t *testing.T) {
@@ -147,7 +144,6 @@ func TestHandleStreamEvent_ReasoningItemCreated(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := &agents.RunItemStreamEvent{
-				Name: "reasoning_item_created",
 				Item: reasoningItem(t, tc.body),
 			}
 			var gotType string
@@ -174,7 +170,6 @@ func TestHandleStreamEvent_ReasoningItemCreated(t *testing.T) {
 // empty thinking block.
 func TestHandleStreamEvent_EmptyReasoningSkipped(t *testing.T) {
 	ev := &agents.RunItemStreamEvent{
-		Name: "reasoning_item_created",
 		Item: reasoningItem(t, `"summary":[]`),
 	}
 

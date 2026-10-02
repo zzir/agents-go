@@ -362,10 +362,10 @@ three:
 ### 2.4 Handoffs
 
 - **A handoff is expressed as a function call**; to the model it is just a tool.
-- **On the stream it surfaces as both `tool_called` and `handoff_requested`** —
-  the model's view and the runner's. The `tool_called` wrapper carries
-  `RunItem.IsHandoff = true` and has no paired `tool_output`, so a consumer can
-  drop or badge the wrapped form without a list of every handoff tool name.
+- **On the stream it surfaces twice**, as an `ItemToolCall` and then as an
+  `ItemHandoffCall` — the model's view and the runner's. The tool-call wrapper
+  carries `RunItem.IsHandoff = true` and gets no output item, so a consumer can
+  drop or badge it without a list of every handoff tool name.
 - **The target resolves from `OnInvoke` when set, else from `Target`** (the
   static declaration `HandoffTo` fills); neither set fails the run with a
   `*UserError`. `Target` keeps the graph statically enumerable for a consumer
@@ -1481,8 +1481,9 @@ nothing more: a host renders progress from the stream's own events. Beyond
   session.
 - **Injected input becomes a run item** with `Source{Type: SourceUser}` after
   passing the input guardrails ([§2.6](#26-guardrails)), treated downstream
-  exactly like the input the run started with. Its stream event is
-  `injected_input_created`; `"unknown"` stays reserved for `ItemUnknown`.
+  exactly like the input the run started with. On the stream its item is an
+  `ItemInjectedInput`; `ItemUnknown` stays reserved for what the SDK does not
+  model.
 - **A tripped injection is consumed**: the run fails with the tripwire, whose
   `Result.Checked` holds the refused input; none of it is persisted, and an
   answer reached before it is.

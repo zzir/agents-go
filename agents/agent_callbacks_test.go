@@ -99,13 +99,13 @@ func TestStreamReplacesTheObservationHooks(t *testing.T) {
 	}
 
 	var agentSwitches int
-	seen := map[string]bool{}
+	seen := map[ItemKind]bool{}
 	for _, ev := range events {
 		switch e := ev.(type) {
 		case *AgentUpdatedStreamEvent:
 			agentSwitches++
 		case *RunItemStreamEvent:
-			seen[e.Name] = true
+			seen[e.Item.Kind] = true
 		}
 	}
 	// OnAgentStart / OnHandoff become agent-updated events.
@@ -113,7 +113,7 @@ func TestStreamReplacesTheObservationHooks(t *testing.T) {
 		t.Errorf("agent switches = %d, want 2 (start + handoff)", agentSwitches)
 	}
 	// OnToolStart / OnToolEnd become item events.
-	for _, want := range []string{"tool_called", "tool_output", "handoff_requested"} {
+	for _, want := range []ItemKind{ItemToolCall, ItemToolCallOutput, ItemHandoffCall} {
 		if !seen[want] {
 			t.Errorf("event %q missing; it replaced a hook", want)
 		}

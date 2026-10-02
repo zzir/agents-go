@@ -473,7 +473,7 @@ func TestErrorHandlers_Streamed_EmitsSynthesizedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, event := range events {
-		if ie, ok := event.(*RunItemStreamEvent); ok && ie.Name == "message_output_created" {
+		if ie, ok := event.(*RunItemStreamEvent); ok {
 			if ie.Item.Kind == ItemMessage {
 				m := ie.Item
 				messageEvents = append(messageEvents, m.Text())
@@ -511,7 +511,7 @@ func TestErrorHandlers_Streamed_MaxTurnsRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, event := range events {
-		if ie, ok := event.(*RunItemStreamEvent); ok && ie.Name == "message_output_created" {
+		if ie, ok := event.(*RunItemStreamEvent); ok {
 			if ie.Item.Kind == ItemMessage && ie.Item.Text() == "budget spent" {
 				sawSynthesized = true
 			}

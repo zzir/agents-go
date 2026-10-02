@@ -162,10 +162,10 @@ func TestStreaming_EventsAndFinalResult(t *testing.T) {
 	events, res := agentstest.CollectRun(t, stream)
 	agentstest.AssertFinalOutput(t, res, "it is sunny")
 
-	names := agentstest.RunItemEventNames(events)
-	for _, want := range []string{"tool_called", "tool_output", "message_output_created"} {
-		if !slices.Contains(names, want) {
-			t.Errorf("stream missing %q event; got %v", want, names)
+	kinds := agentstest.RunItemKinds(events)
+	for _, want := range []agents.ItemKind{agents.ItemToolCall, agents.ItemToolCallOutput, agents.ItemMessage} {
+		if !slices.Contains(kinds, want) {
+			t.Errorf("stream missing a %q event; got %v", want, kinds)
 		}
 	}
 }

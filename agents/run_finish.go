@@ -105,7 +105,7 @@ func (r *runner) recoverMaxTurns(ctx context.Context, cause *MaxTurnsError) (*Ru
 		// finishRun reports r.sessionItems as NewItems, so the synthesized
 		// fallback message joins the run there (and the session).
 		r.sessionItems = append(r.sessionItems, rec.message)
-		if !r.emit(&RunItemStreamEvent{Name: runItemEventName(rec.message), Item: rec.message}) {
+		if !r.emit(&RunItemStreamEvent{Item: rec.message}) {
 			return nil, errConsumerStopped
 		}
 	}

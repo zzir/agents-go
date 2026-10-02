@@ -46,7 +46,7 @@ func TestItemsPersistedEventGuaranteesStoredPrefix(t *testing.T) {
 		switch e := ev.(type) {
 		case *agents.RunItemStreamEvent:
 			itemsSeen++
-			if e.Name == "tool_output" && persistEvents == 1 {
+			if e.Item.Kind == agents.ItemToolCallOutput && persistEvents == 1 {
 				sawToolOutputBeforeTurnSave = true
 			}
 		case *agents.ItemsPersistedEvent:

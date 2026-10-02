@@ -124,14 +124,14 @@ func TestMiddleware_PassesEventsThrough(t *testing.T) {
 	if res == nil || res.FinalOutputString() != "done" {
 		t.Fatalf("result = %+v", res)
 	}
-	names := map[string]bool{}
+	kinds := map[ItemKind]bool{}
 	for _, ev := range events {
 		if ie, ok := ev.(*RunItemStreamEvent); ok {
-			names[ie.Name] = true
+			kinds[ie.Item.Kind] = true
 		}
 	}
-	for _, want := range []string{"tool_called", "tool_output", "message_output_created"} {
-		if !names[want] {
+	for _, want := range []ItemKind{ItemToolCall, ItemToolCallOutput, ItemMessage} {
+		if !kinds[want] {
 			t.Errorf("event %q did not survive the chain", want)
 		}
 	}
