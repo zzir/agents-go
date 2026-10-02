@@ -1534,7 +1534,8 @@ a provider not trained to keep notes loses the task on the first fold. A
 save-point compaction pass for self-compacting storages, so a run could
 reset itself when the threshold trips mid-run: it changes the point contract
 of §2.5f for every such storage; the budget notice and `new_context` cover
-the case this round.
+the case this round — `new_context` alone where a host withholds the notice,
+as the workbench does for an Anthropic backend (workbench invariant 83).
 
 **Cost accepted.** Two booleans on `RunState` (a schema minor), so a request
 made in a turn that pauses for approval is performed when the run resumes,
