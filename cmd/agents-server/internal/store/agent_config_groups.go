@@ -33,6 +33,8 @@ type BehaviorGroup struct {
 	Vision bool `json:"vision,omitempty"`
 	// OverrideSystemPrompt sends this agent's instructions alone, empty included; the global system prompt is not prepended.
 	OverrideSystemPrompt bool `json:"override_system_prompt,omitempty"`
+	// ThinkingMode is how an Anthropic backend sends the reasoning effort: "" as adaptive thinking, "budget" as a thinking token budget.
+	ThinkingMode string `json:"thinking_mode,omitempty"`
 }
 
 // SubagentsOn reports whether the agent's chat runs get the task tools;

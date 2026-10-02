@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -156,6 +157,11 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 	case "", "preserve", "omit":
 	default:
 		return nil, fmt.Errorf("reasoning_item_id_policy %q: use preserve, omit, or leave it unset", ac.Behavior.ReasoningItemIDPolicy)
+	}
+	switch ac.Behavior.ThinkingMode {
+	case "", providers.ThinkingModeBudget:
+	default:
+		return nil, fmt.Errorf("thinking_mode %q: use budget, or leave it unset", ac.Behavior.ThinkingMode)
 	}
 
 	if ac.ModelSettings != "" {

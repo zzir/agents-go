@@ -4,12 +4,16 @@
 // tools and sessions work exactly as with the OpenAI provider.
 //
 // Run with: ANTHROPIC_API_KEY=... go run .
+// An older model takes its reasoning effort as a token budget:
+// go run . -model claude-haiku-4-5
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/models/anthropic"
@@ -20,6 +24,9 @@ type weatherArgs struct {
 }
 
 func main() {
+	model := flag.String("model", "claude-opus-5", "the Claude model to run")
+	flag.Parse()
+
 	getWeather := agents.NewTool("get_weather", "Look up the current weather for a city.",
 		func(ctx context.Context, tc *agents.ToolContext, args weatherArgs) (string, error) {
 			return fmt.Sprintf("It is sunny and 22°C in %s.", args.City), nil
@@ -28,12 +35,20 @@ func main() {
 	agent := &agents.Agent{
 		Name:         "claude-weather-bot",
 		Instructions: agents.StaticInstructions("Answer weather questions using the get_weather tool."),
-		Model:        "claude-opus-5",
+		Model:        *model,
 		Tools:        []*agents.Tool{getWeather},
+		// Sent as adaptive thinking with this effort.
+		ModelSettings: &agents.ModelSettings{Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortHigh}},
+	}
+
+	// Models before adaptive thinking take the effort as a thinking budget.
+	provider := anthropic.NewProvider()
+	if strings.HasPrefix(*model, "claude-haiku-") {
+		provider.WithBudgetThinking(true)
 	}
 
 	stream, _ := agents.Run(context.Background(), agent, "What's the weather in Oslo?", agents.RunOptions{
-		Model: agents.ModelOptions{Provider: anthropic.NewProvider()},
+		Model: agents.ModelOptions{Provider: provider},
 	})
 
 	var res *agents.RunResult

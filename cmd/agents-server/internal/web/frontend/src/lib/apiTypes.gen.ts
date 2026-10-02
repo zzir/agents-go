@@ -7730,7 +7730,7 @@ export interface components {
          * @description Effort is "minimal", "low", "medium" or "high".
          * @enum {string}
          */
-        "agents.ReasoningEffort": "minimal" | "low" | "medium" | "high";
+        "agents.ReasoningEffort": "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
         /**
          * @description Summary is "auto", "concise" or "detailed".
          * @enum {string}
@@ -8432,6 +8432,8 @@ export interface components {
             stop_at_tools?: string;
             /** @description Subagents grants the agent's chat runs the task tools; nil/true = on. */
             subagents?: boolean;
+            /** @description ThinkingMode is how an Anthropic backend sends the reasoning effort: "" as adaptive thinking, "budget" as a thinking token budget. */
+            thinking_mode?: string;
             /** @description ToolChoiceReset resets a pinned tool_choice after a tool runs; nil/true = on. */
             tool_choice_reset?: boolean;
             tool_not_found_behavior?: string;

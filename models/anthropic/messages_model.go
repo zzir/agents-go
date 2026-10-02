@@ -17,6 +17,9 @@ type MessagesModel struct {
 	model         string
 	client        ant.MessageService
 	promptCaching bool
+	// budgetThinking sends reasoning effort as a thinking token budget instead
+	// of adaptive thinking — see Provider.WithBudgetThinking.
+	budgetThinking bool
 }
 
 // NewMessagesModel returns a MessagesModel for the given model name, using the
@@ -64,15 +67,16 @@ func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewPara
 	if m.promptCaching {
 		params.CacheControl = ant.NewCacheControlEphemeralParam()
 	}
-	if err := applySettings(&params, req.Settings); err != nil {
+	if err := applySettings(&params, req.Settings, m.budgetThinking); err != nil {
 		return ant.MessageNewParams{}, err
 	}
 	return params, nil
 }
 
-// applySettings overlays the model settings; max_tokens is mandatory here and
-// an enabled thinking budget must stay strictly below it.
-func applySettings(params *ant.MessageNewParams, s *agents.ModelSettings) error {
+// applySettings overlays the model settings. max_tokens is mandatory here, and
+// thinking spends from it: the default grows with the effort, an explicit one
+// stands as given.
+func applySettings(params *ant.MessageNewParams, s *agents.ModelSettings, budgetThinking bool) error {
 	maxTokens := DefaultMaxTokens
 	explicitMax := false
 	if s != nil && s.MaxTokens != nil {
@@ -91,39 +95,79 @@ func applySettings(params *ant.MessageNewParams, s *agents.ModelSettings) error 
 			return err
 		}
 		if s.Reasoning != nil && s.Reasoning.Effort != "" {
-			budget, ok := thinkingBudgets[s.Reasoning.Effort]
-			if !ok {
-				return agents.NewUserError("anthropic: unknown reasoning effort %q", s.Reasoning.Effort)
+			var room int64
+			var err error
+			if budgetThinking {
+				room, err = applyBudgetThinking(params, s, maxTokens, explicitMax)
+			} else {
+				room, err = applyAdaptiveThinking(params, s.Reasoning.Effort)
 			}
-			// The API's thinking incompatibilities: a preflightable 400 should be a
-			// UserError naming the conflict, not a remote error naming a field.
-			if s.Temperature != nil || s.TopP != nil {
-				return agents.NewUserError(
-					"anthropic: temperature/top_p cannot be combined with thinking (reasoning.effort) — unset the sampling overrides or the effort")
+			if err != nil {
+				return err
 			}
-			switch s.ToolChoice {
-			case "", agents.ToolChoiceAuto, agents.ToolChoiceNone:
-			default:
-				return agents.NewUserError(
-					"anthropic: tool_choice %q cannot be combined with thinking — the API allows only auto/none while thinking", s.ToolChoice)
-			}
-			if explicitMax && maxTokens <= budget {
-				return agents.NewUserError(
-					"anthropic: max_tokens (%d) must exceed the thinking budget for reasoning effort %q (%d) — raise max_tokens or lower the effort",
-					maxTokens, s.Reasoning.Effort, budget)
-			}
-			if !explicitMax && maxTokens <= budget {
-				// The default cap grows instead of failing: the user asked for
-				// thinking, not for a max_tokens negotiation.
-				maxTokens = budget + DefaultMaxTokens
-			}
-			params.Thinking = ant.ThinkingConfigParamUnion{
-				OfEnabled: &ant.ThinkingConfigEnabledParam{BudgetTokens: budget},
+			// The default cap grows instead of failing: the user asked for
+			// thinking, not for a max_tokens negotiation.
+			if !explicitMax && maxTokens <= room {
+				maxTokens = room + DefaultMaxTokens
 			}
 		}
 	}
 	params.MaxTokens = maxTokens
 	return nil
+}
+
+// applyAdaptiveThinking maps an effort onto adaptive thinking plus
+// output_config.effort and returns the room the default max_tokens leaves it.
+func applyAdaptiveThinking(params *ant.MessageNewParams, effort agents.ReasoningEffort) (int64, error) {
+	wire, ok := adaptiveEfforts[effort]
+	if !ok {
+		if effort == agents.ReasoningEffortNone {
+			return 0, agents.NewUserError(
+				"anthropic: reasoning effort \"none\" cannot be expressed — some models think whatever the request says; leave the effort unset instead")
+		}
+		return 0, agents.NewUserError("anthropic: unknown reasoning effort %q", effort)
+	}
+	params.Thinking = ant.ThinkingConfigParamUnion{
+		OfAdaptive: &ant.ThinkingConfigAdaptiveParam{Display: ant.ThinkingConfigAdaptiveDisplaySummarized},
+	}
+	params.OutputConfig.Effort = wire
+	return thinkingRoom[wire], nil
+}
+
+// applyBudgetThinking maps an effort onto a thinking token budget, the form
+// models before adaptive thinking take, and returns that budget.
+func applyBudgetThinking(params *ant.MessageNewParams, s *agents.ModelSettings, maxTokens int64, explicitMax bool) (int64, error) {
+	effort := s.Reasoning.Effort
+	budget, ok := thinkingBudgets[effort]
+	if !ok {
+		switch effort {
+		case agents.ReasoningEffortNone, agents.ReasoningEffortXhigh, agents.ReasoningEffortMax:
+			return 0, agents.NewUserError(
+				"anthropic: reasoning effort %q has no thinking budget — use minimal, low, medium or high, or turn budget thinking off", effort)
+		}
+		return 0, agents.NewUserError("anthropic: unknown reasoning effort %q", effort)
+	}
+	// Manual thinking's incompatibilities: a preflightable 400 should be a
+	// UserError naming the conflict, not a remote error naming a field.
+	if s.Temperature != nil || s.TopP != nil {
+		return 0, agents.NewUserError(
+			"anthropic: temperature/top_p cannot be combined with a thinking budget (reasoning.effort) — unset the sampling overrides or the effort")
+	}
+	switch s.ToolChoice {
+	case "", agents.ToolChoiceAuto, agents.ToolChoiceNone:
+	default:
+		return 0, agents.NewUserError(
+			"anthropic: tool_choice %q cannot be combined with a thinking budget — the API allows only auto/none while thinking", s.ToolChoice)
+	}
+	if explicitMax && maxTokens <= budget {
+		return 0, agents.NewUserError(
+			"anthropic: max_tokens (%d) must exceed the thinking budget for reasoning effort %q (%d) — raise max_tokens or lower the effort",
+			maxTokens, effort, budget)
+	}
+	params.Thinking = ant.ThinkingConfigParamUnion{
+		OfEnabled: &ant.ThinkingConfigEnabledParam{BudgetTokens: budget},
+	}
+	return budget, nil
 }
 
 // applyMetadata maps canonical metadata onto the Messages metadata object,

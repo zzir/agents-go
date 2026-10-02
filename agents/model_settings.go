@@ -76,16 +76,19 @@ type PromptCacheOptions struct {
 	TTL string `json:"ttl,omitempty"`
 }
 
-// ReasoningEffort constrains reasoning effort: "minimal", "low", "medium" or
-// "high". Empty means unset.
+// ReasoningEffort constrains reasoning effort. Which values a model accepts is
+// the backend's to say: an adapter rejects one it cannot express.
 type ReasoningEffort string
 
-// The predefined reasoning-effort levels.
+// Reasoning effort levels.
 const (
+	ReasoningEffortNone    ReasoningEffort = "none"
 	ReasoningEffortMinimal ReasoningEffort = "minimal"
 	ReasoningEffortLow     ReasoningEffort = "low"
 	ReasoningEffortMedium  ReasoningEffort = "medium"
 	ReasoningEffortHigh    ReasoningEffort = "high"
+	ReasoningEffortXhigh   ReasoningEffort = "xhigh"
+	ReasoningEffortMax     ReasoningEffort = "max"
 )
 
 // ReasoningSummary selects the reasoning summary style: "auto", "concise" or

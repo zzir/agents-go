@@ -103,6 +103,19 @@ func newAnthropicModelProvider(apiKey, baseURL string, proxyClient *http.Client)
 	return anthropicProvider.NewProvider(opts...)
 }
 
+// ThinkingModeBudget is the behavior.thinking_mode value that sends an
+// Anthropic backend's reasoning effort as a thinking token budget.
+const ThinkingModeBudget = "budget"
+
+// ApplyThinkingMode sets how an Anthropic provider sends the reasoning effort;
+// any other provider is returned as it came.
+func ApplyThinkingMode(p agents.ModelProvider, mode string) agents.ModelProvider {
+	if ap, ok := p.(*anthropicProvider.Provider); ok {
+		ap.WithBudgetThinking(mode == ThinkingModeBudget)
+	}
+	return p
+}
+
 func normalizeType(t string) string {
 	if t == "" {
 		return TypeOpenAI

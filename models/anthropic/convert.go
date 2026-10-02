@@ -48,12 +48,33 @@ func Capabilities() modelkit.Capabilities {
 // DefaultMaxTokens is used when the request does not set MaxTokens. The
 // Messages API requires max_tokens on every call, so "unset" needs a value;
 // requiring every caller to pick one would make the provider unusable as a
-// drop-in. When thinking is enabled the default grows to keep the budget
-// below the cap (see thinkingBudget).
+// drop-in. With a reasoning effort set the default grows by the effort's room.
 const DefaultMaxTokens int64 = 8192
 
-// thinkingBudgets maps reasoning effort to a thinking token budget, which every
-// thinking-capable model accepts; the SDK keeps no capability table (scope §1.2).
+// adaptiveEfforts maps reasoning effort to output_config.effort, the form
+// adaptive thinking takes; minimal has no wire value and reads as low.
+var adaptiveEfforts = map[agents.ReasoningEffort]ant.OutputConfigEffort{
+	agents.ReasoningEffortMinimal: ant.OutputConfigEffortLow,
+	agents.ReasoningEffortLow:     ant.OutputConfigEffortLow,
+	agents.ReasoningEffortMedium:  ant.OutputConfigEffortMedium,
+	agents.ReasoningEffortHigh:    ant.OutputConfigEffortHigh,
+	agents.ReasoningEffortXhigh:   ant.OutputConfigEffortXhigh,
+	agents.ReasoningEffortMax:     ant.OutputConfigEffortMax,
+}
+
+// thinkingRoom is what the default max_tokens leaves an adaptive effort to
+// think in: thinking counts against max_tokens. Past high the caller sets
+// MaxTokens, since a larger default could exceed a model's output limit.
+var thinkingRoom = map[ant.OutputConfigEffort]int64{
+	ant.OutputConfigEffortLow:    4096,
+	ant.OutputConfigEffortMedium: 16384,
+	ant.OutputConfigEffortHigh:   32768,
+	ant.OutputConfigEffortXhigh:  32768,
+	ant.OutputConfigEffortMax:    32768,
+}
+
+// thinkingBudgets maps reasoning effort to a thinking token budget, for the
+// models that take one (Provider.WithBudgetThinking).
 var thinkingBudgets = map[agents.ReasoningEffort]int64{
 	agents.ReasoningEffortMinimal: 1024,
 	agents.ReasoningEffortLow:     4096,

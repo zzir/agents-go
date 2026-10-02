@@ -210,16 +210,22 @@ components:
     agents.ReasoningEffort:
       description: Effort is "minimal", "low", "medium" or "high".
       enum:
+      - none
       - minimal
       - low
       - medium
       - high
+      - xhigh
+      - max
       type: string
       x-enum-varnames:
+      - ReasoningEffortNone
       - ReasoningEffortMinimal
       - ReasoningEffortLow
       - ReasoningEffortMedium
       - ReasoningEffortHigh
+      - ReasoningEffortXhigh
+      - ReasoningEffortMax
     agents.ReasoningSummary:
       description: Summary is "auto", "concise" or "detailed".
       enum:
@@ -1525,6 +1531,10 @@ components:
           description: Subagents grants the agent's chat runs the task tools; nil/true
             = on.
           type: boolean
+        thinking_mode:
+          description: 'ThinkingMode is how an Anthropic backend sends the reasoning
+            effort: "" as adaptive thinking, "budget" as a thinking token budget.'
+          type: string
         tool_choice_reset:
           description: ToolChoiceReset resets a pinned tool_choice after a tool runs;
             nil/true = on.

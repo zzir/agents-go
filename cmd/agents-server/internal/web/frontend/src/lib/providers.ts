@@ -60,8 +60,8 @@ export const PROVIDERS: ProviderMeta[] = [
     modelPlaceholder: 'claude-opus-5',
     keyPlaceholder: 'sk-ant-…',
     defaultBaseURL: 'https://api.anthropic.com',
-    effortHint: 'Maps to an Anthropic thinking budget (minimal 1k / low 4k / medium 16k / high 32k tokens)',
-    effortOptions: EFFORT_BASE,
+    effortHint: 'Sent as adaptive thinking with this effort; Thinking mode below switches to a token budget for models that need one',
+    effortOptions: [...EFFORT_BASE, ['xhigh', 'Extra High'], ['max', 'Max']],
   },
 ];
 

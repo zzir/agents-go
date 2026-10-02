@@ -1816,3 +1816,27 @@ next fire — asks anew. A run's grants live in memory like the trust they stand
 in for: a turn resumed after a restart reads the session's, emptied by it.
 
 Rules: [invariant 84](workbench-invariants.md)
+
+### 5.76 Anthropic effort maps to adaptive thinking; a thinking budget is an opt-in
+
+Decided 2026-10-03.
+
+**Decision.** The Anthropic adapter sends `Reasoning.Effort` as
+`thinking: {type: adaptive}` plus `output_config.effort`, the form current
+Claude models take; `Provider.WithBudgetThinking(true)` sends it as
+`budget_tokens` for the models that predate it. Unset sends nothing.
+
+**Rejected.** Budgets as the default: current models answer `budget_tokens`
+with a 400. A per-model capability table that picks the form: scope §1.2.
+Falling back on a remote 400 by matching its text. Reading `none` as "send no
+thinking": some models think whatever the request says, so it is refused by
+name. A flat default `max_tokens` for the adaptive path: thinking spends from
+it, so the default keeps growing with the effort.
+
+**Cost accepted.** A caller on Claude Haiku 4.5 or older who sets an effort
+must opt into the budget; `minimal` reads as `low`; past `high` the default
+`max_tokens` stops growing and the caller sets it. Only the budget path keeps
+the sampling and forced-tool-choice prechecks: what adaptive thinking refuses
+is the API's to say.
+
+Rules: [models how-to](../howto/models.md#anthropic-backend-defaults)

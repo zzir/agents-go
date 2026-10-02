@@ -21,6 +21,13 @@ func testModel() *MessagesModel {
 	return &MessagesModel{model: "claude-test", promptCaching: true}
 }
 
+// budgetModel is testModel with reasoning effort sent as a thinking budget.
+func budgetModel() *MessagesModel {
+	m := testModel()
+	m.budgetThinking = true
+	return m
+}
+
 // wireParams builds the request and returns its wire JSON, which is what the
 // API would actually see.
 func wireParams(t *testing.T, m *MessagesModel, req agents.ModelRequest) map[string]any {
@@ -289,8 +296,102 @@ func TestBuildParamsToolSchemaSurvives(t *testing.T) {
 	}
 }
 
-func TestBuildParamsThinkingBudget(t *testing.T) {
-	wire := wireParams(t, testModel(), agents.ModelRequest{
+// A reasoning effort is adaptive thinking plus output_config.effort — the form
+// current models take (decisions §5.76). minimal has no wire value and reads
+// as low; the default max_tokens leaves the effort room to think in.
+func TestEffortMapsToAdaptiveThinking(t *testing.T) {
+	for _, tc := range []struct {
+		effort    agents.ReasoningEffort
+		wire      string
+		maxTokens int64
+	}{
+		{agents.ReasoningEffortMinimal, "low", DefaultMaxTokens},
+		{agents.ReasoningEffortLow, "low", DefaultMaxTokens},
+		{agents.ReasoningEffortMedium, "medium", 16384 + DefaultMaxTokens},
+		{agents.ReasoningEffortHigh, "high", 32768 + DefaultMaxTokens},
+		{agents.ReasoningEffortXhigh, "xhigh", 32768 + DefaultMaxTokens},
+		{agents.ReasoningEffortMax, "max", 32768 + DefaultMaxTokens},
+	} {
+		wire := wireParams(t, testModel(), agents.ModelRequest{
+			Input:    agents.InputItemsFromText("hi"),
+			Settings: &agents.ModelSettings{Reasoning: &agents.Reasoning{Effort: tc.effort}},
+		})
+		thinking, _ := wire["thinking"].(map[string]any)
+		if thinking["type"] != "adaptive" || thinking["display"] != "summarized" {
+			t.Errorf("%s: thinking = %v, want adaptive with a summarized display", tc.effort, thinking)
+		}
+		if _, has := thinking["budget_tokens"]; has {
+			t.Errorf("%s: adaptive thinking carries a budget: %v", tc.effort, thinking)
+		}
+		oc, _ := wire["output_config"].(map[string]any)
+		if oc["effort"] != tc.wire {
+			t.Errorf("%s: output_config = %v, want effort %q", tc.effort, oc, tc.wire)
+		}
+		if wire["max_tokens"] != float64(tc.maxTokens) {
+			t.Errorf("%s: max_tokens = %v, want %d", tc.effort, wire["max_tokens"], tc.maxTokens)
+		}
+	}
+
+	// No effort: nothing about thinking is sent, and the model decides.
+	wire := wireParams(t, testModel(), agents.ModelRequest{Input: agents.InputItemsFromText("hi")})
+	if _, has := wire["thinking"]; has {
+		t.Errorf("thinking sent with no effort set: %v", wire["thinking"])
+	}
+	if _, has := wire["output_config"]; has {
+		t.Errorf("output_config sent with no effort set: %v", wire["output_config"])
+	}
+
+	// An explicit max_tokens stands as given, and the effort rides beside a
+	// structured-output format without displacing it.
+	schema := agents.NewDynamicOutputSchema("answer", map[string]any{
+		"type": "object", "properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+		"required": []any{"ok"}, "additionalProperties": false,
+	}, true)
+	wire = wireParams(t, testModel(), agents.ModelRequest{
+		Input:        agents.InputItemsFromText("hi"),
+		OutputSchema: schema,
+		Settings: &agents.ModelSettings{
+			Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortHigh},
+			MaxTokens: new(int64(1000)),
+		},
+	})
+	oc, _ := wire["output_config"].(map[string]any)
+	if oc["effort"] != "high" || oc["format"] == nil {
+		t.Errorf("output_config = %v, want the effort beside the format", oc)
+	}
+	if wire["max_tokens"] != float64(1000) {
+		t.Errorf("max_tokens = %v, want the caller's 1000", wire["max_tokens"])
+	}
+
+	// Adaptive thinking takes sampling overrides and a forced tool choice.
+	for name, s := range map[string]*agents.ModelSettings{
+		"temperature": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, Temperature: new(0.5)},
+		"tool_choice": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, ToolChoice: agents.ToolChoiceRequired},
+	} {
+		if _, err := testModel().buildParams(agents.ModelRequest{Input: agents.InputItemsFromText("hi"), Settings: s}); err != nil {
+			t.Errorf("%s with an adaptive effort: %v, want it sent", name, err)
+		}
+	}
+}
+
+// "none" cannot be promised — some models think whatever the request says —
+// so it is refused by name instead of read as "send nothing".
+func TestEffortNoneIsUserError(t *testing.T) {
+	for name, m := range map[string]*MessagesModel{"adaptive": testModel(), "budget": budgetModel()} {
+		_, err := m.buildParams(agents.ModelRequest{
+			Input:    agents.InputItemsFromText("hi"),
+			Settings: &agents.ModelSettings{Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortNone}},
+		})
+		if _, ok := errors.AsType[*agents.UserError](err); !ok || !strings.Contains(err.Error(), "none") {
+			t.Errorf("%s: err = %v, want a UserError naming the effort", name, err)
+		}
+	}
+}
+
+// The opt-in sends an effort as a thinking token budget, the form models
+// before adaptive thinking take: no display, no output_config.
+func TestBudgetThinkingOptIn(t *testing.T) {
+	wire := wireParams(t, budgetModel(), agents.ModelRequest{
 		Input:    agents.InputItemsFromText("hi"),
 		Settings: &agents.ModelSettings{Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortMedium}},
 	})
@@ -298,14 +399,29 @@ func TestBuildParamsThinkingBudget(t *testing.T) {
 	if thinking["type"] != "enabled" || thinking["budget_tokens"] != float64(16384) {
 		t.Errorf("thinking = %v", thinking)
 	}
+	if _, has := thinking["display"]; has {
+		t.Errorf("a thinking budget carries a display: %v", thinking)
+	}
+	if _, has := wire["output_config"]; has {
+		t.Errorf("a thinking budget carries output_config: %v", wire["output_config"])
+	}
 	// budget >= default cap: the default grows instead of failing.
 	if wire["max_tokens"] != float64(16384+DefaultMaxTokens) {
 		t.Errorf("max_tokens = %v, want %d", wire["max_tokens"], 16384+DefaultMaxTokens)
 	}
+
+	// The provider's switch reaches the models it resolves.
+	m, err := NewProvider().WithBudgetThinking(true).Model("claude-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.(*MessagesModel).budgetThinking {
+		t.Error("WithBudgetThinking(true) did not reach the model")
+	}
 }
 
-func TestBuildParamsThinkingBudgetVsExplicitMaxTokens(t *testing.T) {
-	_, err := testModel().buildParams(agents.ModelRequest{
+func TestBudgetThinkingVsExplicitMaxTokens(t *testing.T) {
+	_, err := budgetModel().buildParams(agents.ModelRequest{
 		Input: agents.InputItemsFromText("hi"),
 		Settings: &agents.ModelSettings{
 			Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortMedium},
@@ -314,6 +430,20 @@ func TestBuildParamsThinkingBudgetVsExplicitMaxTokens(t *testing.T) {
 	})
 	if _, ok := errors.AsType[*agents.UserError](err); !ok {
 		t.Fatalf("expected UserError for max_tokens below the thinking budget, got %v", err)
+	}
+}
+
+// A budget has no value past high: the two upper efforts are refused rather
+// than quietly read as high.
+func TestBudgetModeRejectsXhigh(t *testing.T) {
+	for _, effort := range []agents.ReasoningEffort{agents.ReasoningEffortXhigh, agents.ReasoningEffortMax} {
+		_, err := budgetModel().buildParams(agents.ModelRequest{
+			Input:    agents.InputItemsFromText("hi"),
+			Settings: &agents.ModelSettings{Reasoning: &agents.Reasoning{Effort: effort}},
+		})
+		if _, ok := errors.AsType[*agents.UserError](err); !ok {
+			t.Errorf("%s in budget mode: err = %v, want a UserError", effort, err)
+		}
 	}
 }
 
@@ -388,13 +518,14 @@ func TestBuildParamsEmptyToolResult(t *testing.T) {
 	}
 }
 
-func TestBuildParamsThinkingSamplingConflicts(t *testing.T) {
+// A thinking budget's documented conflicts are refused before the call.
+func TestBudgetThinkingSamplingConflicts(t *testing.T) {
 	for name, s := range map[string]*agents.ModelSettings{
 		"temperature": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, Temperature: new(0.5)},
 		"top_p":       {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, TopP: new(0.9)},
 		"tool_choice": {Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortLow}, ToolChoice: agents.ToolChoiceRequired},
 	} {
-		_, err := testModel().buildParams(agents.ModelRequest{Input: agents.InputItemsFromText("hi"), Settings: s})
+		_, err := budgetModel().buildParams(agents.ModelRequest{Input: agents.InputItemsFromText("hi"), Settings: s})
 		if _, ok := errors.AsType[*agents.UserError](err); !ok {
 			t.Errorf("%s: expected UserError for thinking conflict, got %v", name, err)
 		}

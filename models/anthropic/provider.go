@@ -21,6 +21,8 @@ type Provider struct {
 	// promptCaching applies the request-level cache_control marker: on by
 	// default, since an agent loop resends a growing prefix every turn.
 	promptCaching bool
+	// budgetThinking: see WithBudgetThinking.
+	budgetThinking bool
 }
 
 // NewProvider builds a Provider. Pass anthropic-sdk-go request options such as
@@ -46,6 +48,14 @@ func (p *Provider) WithPromptCaching(enabled bool) *Provider {
 	return p
 }
 
+// WithBudgetThinking sends a reasoning effort as a thinking token budget
+// instead of adaptive thinking: the form models without adaptive thinking take
+// (Claude Haiku 4.5 and older) — decisions §5.76.
+func (p *Provider) WithBudgetThinking(enabled bool) *Provider {
+	p.budgetThinking = enabled
+	return p
+}
+
 // Model implements agents.ModelProvider.
 func (p *Provider) Model(modelName string) (agents.Model, error) {
 	if modelName == "" {
@@ -54,7 +64,7 @@ func (p *Provider) Model(modelName string) (agents.Model, error) {
 	if modelName == "" {
 		return nil, agents.NewUserError("anthropic: no model specified — set Agent.Model or Provider.WithDefaultModel")
 	}
-	return &MessagesModel{model: modelName, client: p.client.Messages, promptCaching: p.promptCaching}, nil
+	return &MessagesModel{model: modelName, client: p.client.Messages, promptCaching: p.promptCaching, budgetThinking: p.budgetThinking}, nil
 }
 
 var _ agents.ModelProvider = (*Provider)(nil)

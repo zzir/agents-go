@@ -30,7 +30,7 @@ import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/provid
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 export const CONFIG_GROUPS: Record<string, string[]> = {
-  behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'subagents', 'vision', 'override_system_prompt'],
+  behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'subagents', 'vision', 'override_system_prompt', 'thinking_mode'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
@@ -145,6 +145,7 @@ interface AgentFormData {
   max_tool_concurrency: string;
   tool_not_found_behavior: string;
   reasoning_item_id_policy: string;
+  thinking_mode: string;
   workflow_authoring: boolean;
   subagents: boolean;
   vision: boolean;
@@ -247,7 +248,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
       // New agents default to a bounded fan-out; an existing agent keeps its
       // stored value (0 = unlimited) via the spread below.
       handoff_input_filter: '', max_tool_concurrency: initial ? '' : '8',
-      tool_not_found_behavior: '', reasoning_item_id_policy: '', workflow_authoring: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: [],
+      tool_not_found_behavior: '', reasoning_item_id_policy: '', thinking_mode: '', workflow_authoring: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: [],
       compaction_enabled: false, compaction_threshold_tokens: '',
       compaction_window: '', compaction_model: '', compaction_prompt: '', compaction_mode: '',
       memory_tools: false, memory_agent_write: false, history_tools: false,
@@ -413,6 +414,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           reasoningEffort,
           meta.effortOptions.some(([v]) => v === reasoningEffort) ? meta.effortOptions : [...meta.effortOptions, [reasoningEffort, reasoningEffort] as const],
           setReasoningEffort, meta.effortHint)}
+        {/* Anthropic only; a stored budget mode stays visible on any backend,
+            so switching provider never hides a value the form would save. */}
+        {(meta.type === 'anthropic' || form.thinking_mode) && seg('Thinking mode', form.thinking_mode || '',
+          [['', 'Adaptive (default)'], ['budget', 'Token budget']], v => set('thinking_mode', v),
+          'How the effort is sent: adaptive thinking for current models, a token budget for Claude Haiku 4.5 and older')}
         {/* Hidden when the backend has no service tiers AND nothing is stored:
             a control that can only produce a failing value is noise. A stored
             value stays visible with its warning, so it is never a hidden trap. */}
