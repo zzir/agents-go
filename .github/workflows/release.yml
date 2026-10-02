@@ -55,6 +55,10 @@ jobs:
       - name: A patch release carries no API break
         run: ./scripts/release-check.sh "$GITHUB_REF_NAME"
 
+      # Every library module is tagged at this version on this commit (decisions §5.7).
+      - name: The library modules are tagged in lockstep
+        run: ./scripts/release-prep.sh --verify "$GITHUB_REF_NAME"
+
       # One line for the release header; the script exits 0 whatever it finds.
       - name: Workbench schema note
         run: echo "SCHEMA_NOTE=$(./scripts/schema-compat.sh "$PREV_TAG")" >> "$GITHUB_ENV"
@@ -65,3 +69,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The commit carries the library modules' prefixed tags too: name the root's.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+          GORELEASER_PREVIOUS_TAG: ${{ env.PREV_TAG }}

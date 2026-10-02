@@ -33,6 +33,7 @@ go test -race ./agents -run TestName  # single test
 golangci-lint run                     # CI uses golangci-lint v2.13
 ./scripts/schema-compat.sh v0.4.4     # does HEAD open a database that tag created? (the release header's line)
 ./scripts/release-check.sh v0.5.1     # before tagging: a patch that breaks exported API is refused (decisions §5.8)
+./scripts/release-prep.sh v0.5.1      # release commit: every go.mod requires the version; prints the lockstep tag commands
 ```
 
 ## Layout
@@ -40,7 +41,9 @@ golangci-lint run                     # CI uses golangci-lint v2.13
 Go workspace (`go.work`, gitignored) with eight modules. **A submodule exists only
 to keep a heavy dependency out of the core** ([decisions §5.7](docs/explanation/decisions.md)) —
 anything dependency-free stays in the root module. Non-root modules `require` the
-root via `replace => ..`:
+root and keep `replace => ..`: the replace is what CI and local builds use, the
+required version is what a consumer gets — `scripts/release-prep.sh` writes it
+at each release and prints the lockstep tags (decisions §5.7):
 
 - **root** — the SDK (includes `models/modelkit`, the dependency-free toolkit +
   conformance suite for model adapters)

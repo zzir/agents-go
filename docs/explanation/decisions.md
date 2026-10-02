@@ -151,7 +151,12 @@ of how self-contained they are.
 **Rejected.** Splitting by cohesion — `mcp` is a module because
 `modelcontextprotocol/go-sdk` brings a raft of indirect requirements, and for
 no other reason; the core holds servers through the `agents.MCPServer`
-inversion, so the split cost one `go.mod` and moved no import path.
+inversion, so the split moved no import path.
+
+**Cost accepted.** A submodule is a separately released module: every release
+tags `<dir>/vX.Y.Z` beside `vX.Y.Z` on the one commit whose `go.mod`s require
+the root at `vX.Y.Z` (the `replace` stays, for CI). A submodule pseudo-version
+from between releases may not build against the root it names.
 
 Rules: [Architecture](architecture.md#module-boundaries).
 

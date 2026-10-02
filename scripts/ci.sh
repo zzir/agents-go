@@ -45,6 +45,9 @@ step "Frontend audit"
   exit 1
 )
 
+step "Release wiring"
+./scripts/release-prep.sh --check
+
 step "Vet"
 go vet ./...
 

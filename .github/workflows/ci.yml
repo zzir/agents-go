@@ -36,6 +36,9 @@ jobs:
           check-latest: true
           cache: true
 
+      - name: Release wiring
+        run: ./scripts/release-prep.sh --check
+
       - name: Vet
         run: go vet ./...
 
