@@ -17,11 +17,8 @@ const PlanToolName = "submit_plan"
 
 // DefaultReadOnlyTools are extra tool names Plan leaves usable while planning,
 // on top of every tool that declares Tool.ReadOnly — for tools a caller does
-// not own. todo_write is here so Todo stacks with Plan in either order.
-var DefaultReadOnlyTools = []string{
-	"read_file", "list_files", "task_status",
-	TodoToolName,
-}
+// not own.
+var DefaultReadOnlyTools = []string{"read_file", "list_files", "task_status"}
 
 // DefaultPlanInstructions is the planning preamble. It tells the model what
 // phase it is in, what it can touch, and how to leave the phase — the three

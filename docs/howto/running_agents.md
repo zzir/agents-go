@@ -200,7 +200,6 @@ refuse before the model is ever called.
 | `middleware.Loop` | Re-runs the agent until an `Evaluator` accepts the answer, feeding each rejected attempt back with the reason |
 | `middleware.Approval` | Answers approval interruptions from a standing `ApprovalPolicy` and resumes, so the caller only sees the pauses the policy declined |
 | `middleware.Plan` | Plan mode: read-only exploration, a plan submitted through `submit_plan` pauses for approval, and approval unlocks the toolset in the same run |
-| `middleware.Todo` | **Deprecated, removed in v0.5.0** — give the agent a checklist tool of your own instead ([examples/planmode](../../examples/planmode/main.go)) |
 
 ```go
 import "github.com/zzir/agents-go/agents/middleware"
@@ -227,11 +226,9 @@ that is not read-only (`Tool.ReadOnly`, or named in `ReadOnlyTools`) stays in
 the toolset but refuses when called, handoffs are hidden, and no approval is
 raised. `submit_plan` is always approval-gated, and that pause IS the plan
 review — `Approve` unlocks the full toolset and the same run continues,
-`Reject`'s message sends the model back to planning. **Todo mode**
-(`middleware.Todo`, deprecated) adds `todo_write`, which replaces the whole
-list on every call and reports it through `OnUpdate`; a checklist is better
-built as an ordinary tool, which plan mode then refuses like any other. Both
-rewrite the entry agent only. Why gating denies rather than hides, and what a
+`Reject`'s message sends the model back to planning. A checklist is an
+ordinary tool of your own, which plan mode refuses like any other write. Plan
+rewrites the entry agent only. Why gating denies rather than hides, and what a
 durable-resume host persists, are
 [spec §2.12](../reference/spec.md#212-middleware); a runnable program with
 plan mode and such a tool is [examples/planmode](../../examples/planmode/main.go).

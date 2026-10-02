@@ -291,7 +291,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 			result.Agent = entry
 			mark = bucketToolsSince(result.Agent, mark, store.ToolSourceChecklist, &result.Profile)
 		}
-		result.Agent, result.PlanPhase = middleware.Plan{ReadOnlyTools: planReadOnlyTools}.Apply(result.Agent)
+		result.Agent, result.PlanPhase = middleware.Plan{}.Apply(result.Agent)
 		bucketToolsSince(result.Agent, mark, store.ToolSourcePlan, &result.Profile)
 		keepApprovedPlan(result.Agent, deps.KeepApprovedPlan, ownerID)
 	}
@@ -330,10 +330,6 @@ func keepApprovedPlan(agent *agents.Agent, keep func(ctx context.Context, sessio
 	}
 	agent.Tools[at] = &submit
 }
-
-// planReadOnlyTools are the tools left usable while planning beside those
-// that declare themselves read-only: the checklist is not one of them.
-var planReadOnlyTools = []string{"read_file", "list_files", "task_status"}
 
 // agentBuildCtx threads a recursive handoff build: stack is the recursion PATH
 // (cycle detection — a diamond's shared node is no back-edge), cache reuses builds.

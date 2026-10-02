@@ -191,6 +191,34 @@ func TestPlan_GatedToolRefusesInsteadOfFailing(t *testing.T) {
 	}
 }
 
+// A checklist is a write like any other: the default read-only names admit no
+// todo_write, so one a caller built is refused while planning.
+func TestDefaultReadOnlyToolsRefuseAChecklist(t *testing.T) {
+	var writes atomic.Int32
+	model := &recordingModel{responses: []*agents.ModelResponse{
+		resp(toolCallArgs(t, "todo_write", "c1", `{}`)),
+		resp(message(t, "planning first")),
+	}}
+	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{noopTool("todo_write", &writes)}}
+	res, err := agents.RunSync(context.Background(), agent, "go",
+		agents.RunOptions{Middlewares: []agents.RunMiddleware{Plan{}}})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if writes.Load() != 0 {
+		t.Fatal("the checklist ran while planning")
+	}
+	var refusal string
+	for _, it := range res.NewItems {
+		if it.Kind == agents.ItemToolCallOutput {
+			refusal, _ = it.Output.(string)
+		}
+	}
+	if !strings.Contains(refusal, PlanToolName) {
+		t.Fatalf("refusal = %q, want it to name submit_plan", refusal)
+	}
+}
+
 // fakeMCP lists a fixed set of tools.
 type fakeMCP struct{ tools []*agents.Tool }
 

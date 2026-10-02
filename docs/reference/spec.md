@@ -1619,7 +1619,7 @@ run).
   The paused state's agent and input are already decided; a middleware's edits
   to those fields do not apply on resume.
 
-**Workflow middlewares (`Plan`, `Todo`)** rewrite the ENTRY agent only; handoff
+**The workflow middleware (`Plan`)** rewrites the ENTRY agent only; handoff
 targets keep their own toolset.
 
 - **Plan gates by DENYING, not hiding.** While planning, a tool outside the
@@ -1647,11 +1647,8 @@ targets keep their own toolset.
 - **The plan review is an ordinary approval pause.** `submit_plan` is always
   approval-gated; approving unlocks and the SAME run continues, rejecting feeds
   the message back and planning continues.
-- **`todo_write` replaces the whole list, atomically**; a malformed list is
-  refused whole. An empty status defaults to pending. `todo_write` is on
-  `DefaultReadOnlyTools`.
 - **The rewrite is exported as `Apply`**, so a durable-resume host rebuilds
-  WITH the plan/todo tools; `Plan.Apply` returns the run's `*PlanPhase`, and
+  WITH the plan tools; `Plan.Apply` returns the run's `*PlanPhase`, and
   `Unlock` starts a rebuilt run in the executing phase.
 - **A durable-resume host persists the UNLOCK, and persisting it is the
   unlock's precondition.** `PlanPhase.OnUnlock` fires once, when the approved
@@ -1938,6 +1935,7 @@ Defaults that callers may depend on:
 | Tool concurrency | unlimited | Bound with `MaxToolConcurrency` |
 | Input guardrails | concurrent with the model call | `Blocking: true` makes one a gate; injected input always blocking |
 | Session persistence | after each turn | Final turn is written after output guardrails pass |
+| `Plan.ReadOnlyTools` | `read_file`, `list_files`, `task_status` | `DefaultReadOnlyTools`, when the field is nil; a tool declaring `Tool.ReadOnly` is admitted beside them |
 | `RunResult.Usage` / `RunState.Usage` | detached snapshot | Never the live accumulator; read without synchronization. Mid-run, `RunContext.Usage` is live — read it via `Snapshot()` |
 | Budget notice | off | `ContextBudget{Window, WindowFor, Occupied}.InputFilter()` appends `Context budget: about N of W tokens in use (P% left).` as the last input item ([§2.5i](#25i-the-model-manages-its-own-context)) |
 | History tools | 20 hits, 2,000-character excerpts, 20,000-character reads, 1,000-character queries | `history.MaxLimit`, `ExcerptChars`, `MaxReadChars`, `MaxQueryChars`; a case-insensitive literal substring, newest first, no ranking ([§2.5i](#25i-the-model-manages-its-own-context)) |

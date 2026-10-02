@@ -1261,9 +1261,7 @@ failure the gate exists to catch.
 
 **Rejected.** Hiding gated tools. A second pause mechanism for plan review:
 `submit_plan` is an ordinary approval-gated tool. A session-scoped phase in
-the SDK. Trusting `readOnlyHint`. Per-item `todo_write` updates: sending the
-whole list is simpler to prompt for and impossible to desynchronize, and a
-malformed list refused whole keeps `OnUpdate` from seeing a half-applied state.
+the SDK. Trusting `readOnlyHint`.
 
 **Cost accepted.** A gated write tool spends a model turn on a refusal. A
 read-only tool named in `ApproveTools` keeps its approval in both phases.
@@ -1983,8 +1981,8 @@ Decided 2026-10-03.
 
 **Decision.** The workbench owns `todo_write`: a tool of its own, on an
 agent's chat runs when `behavior.checklist` is set, off by default, refused
-while the session plans. The SDK's `middleware.Todo` loses its one consumer
-and is deprecated, to be removed with the next breaking minor.
+while the session plans. The SDK ships no checklist: its `middleware.Todo`
+lost its one consumer here.
 
 **Rejected.** On for every chat agent, as since 2026-08 ("when a job is worth
 tracking is the model's judgement"): the judgement needs the tool listed on
@@ -1993,7 +1991,8 @@ preamble that an overriding agent with no text still sent, and both reference
 harnesses off by default. Keeping it in the SDK: a list is rendered by a host,
 and the host is who knows its statuses. Folding it into `agents/tasks`: a
 checklist is one run's notes, a task outlives its run. Deleting it before the
-checklist benchmark reports.
+checklist benchmark reports. Per-item updates: sending the whole list is
+simpler to prompt for and impossible to desynchronize.
 
 **Cost accepted.** A weaker or local model that needs the list has to be given
 it by hand, per agent rather than per model: the project keeps no table of

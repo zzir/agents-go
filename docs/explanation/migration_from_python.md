@@ -131,7 +131,7 @@ needed yet** (open to contribution). Each entry says which it is.
 - **Stream-only backend adaptation**: `NewStreamOnlyModel` / `NewStreamOnlyProvider` serve blocking calls via an internal stream ([Models](../howto/models.md#retries-fallback-and-multiple-providers))
 - **`NewDynamicOutputSchema`**: an `OutputSchema` from a runtime JSON Schema map, beside the compile-time `OutputType[T]()` ([Agents](../howto/agents.md#structured-output-types))
 - **`WrapInstructions`**: a prefix and/or suffix applied at resolution time, so per-run inner instructions still compose ([Agents](../howto/agents.md#dynamic-instructions))
-- **Run middleware** (`agents/middleware`): `Loop`, `Approval`, `Plan`, `Todo` ([Running agents](../howto/running_agents.md#middleware))
+- **Run middleware** (`agents/middleware`): `Loop`, `Approval`, `Plan` ([Running agents](../howto/running_agents.md#middleware))
 - **`RetryPolicy` JSON round-trip**: millisecond-based `base_delay_ms` / `max_delay_ms` fields, directly loadable from a configuration store
 - **Simplified guardrail constructors**: `NewInputGuardrail` / `NewOutputGuardrail` take a callback receiving only the input/output ([Guardrails](../howto/guardrails.md#typed-constructors))
 - **`NewRawTool`**: a `Tool` from a runtime JSON Schema and a raw-JSON callback, returning an error rather than the construction panic `NewTool` reserves for type bugs ([Tools](../howto/tools.md#hand-built-tools))
