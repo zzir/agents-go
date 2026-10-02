@@ -9,6 +9,7 @@ import { Loading } from '@/components/Loading';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, invalidate, useApi, useCrud, usePage } from '@/lib/hooks';
+import { SESSION_LISTS } from '@/lib/sessionPages';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
@@ -293,7 +294,7 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
         body.project_id = project.id;
       }
       await api.workflows.run(workflow.id, body);
-      if (made) invalidate('sessions');
+      if (made) invalidate(SESSION_LISTS);
       toast.success(`Started "${workflow.name}" in the background — the result comes back to the session`);
       onClose();
     } catch (e) {

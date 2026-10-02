@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -153,15 +154,21 @@ func newSessionView(sess store.Session, st bridge.SessionState) sessionView {
 // `?all=true` is the admin's management view — every owner's sessions;
 // content stays behind the per-session owner checks.
 //
-//	@Summary	List sessions
-//	@Tags		sessions
-//	@Produce	json
-//	@Param		all	query		bool	false	"Every owner's sessions (admin only)"
-//	@Success	200	{array}		sessionView
-//	@Failure	403	{object}	ErrorResponse	"all=true by a member"
-//	@Failure	500	{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/sessions [get]
+//	@Summary		List sessions
+//	@Description	Newest first by updated_at. Pinned sessions come whole with the first page; limit counts the unpinned ones and before (a session id from the previous page) continues after it. q matches the name or the first user message, case-insensitively. Without limit the whole list is returned.
+//	@Tags			sessions
+//	@Produce		json
+//	@Param			all		query		bool	false	"Every owner's sessions (admin only)"
+//	@Param			limit	query		int		false	"Unpinned sessions per page (0 = all)"
+//	@Param			before	query		string	false	"Continue after this session id (the last of the previous page)"
+//	@Param			q		query		string	false	"Match the name or the first user message"
+//	@Success		200		{array}		sessionView
+//	@Failure		400		{object}	ErrorResponse	"limit is not a non-negative integer"
+//	@Failure		403		{object}	ErrorResponse	"all=true by a member"
+//	@Failure		404		{object}	ErrorResponse	"before names no session of the caller"
+//	@Failure		500		{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions [get]
 func (h *SessionHandler) List(c *gin.Context) {
 	u, _ := server.CurrentUser(c)
 	owner := u.ID
@@ -171,13 +178,21 @@ func (h *SessionHandler) List(c *gin.Context) {
 		}
 		owner = store.EveryOwner
 	}
-	ctx := c.Request.Context()
-	sessions, err := h.sessions.List(ctx, owner)
-	if err != nil {
-		internalError(c, err)
+	limit, ok := queryInt(c, "limit")
+	if !ok {
 		return
 	}
-	states, err := h.statuses.SessionStatuses(ctx, owner, nil)
+	ctx := c.Request.Context()
+	sessions, err := h.sessions.ListPage(ctx, owner, store.SessionPage{Limit: limit, Before: c.Query("before"), Query: strings.TrimSpace(c.Query("q"))})
+	if err != nil {
+		storeError(c, err) // an unknown cursor → 404
+		return
+	}
+	ids := make([]string, 0, len(sessions))
+	for i := range sessions {
+		ids = append(ids, sessions[i].ID)
+	}
+	states, err := h.statuses.SessionStatuses(ctx, owner, ids)
 	if err != nil {
 		internalError(c, err)
 		return

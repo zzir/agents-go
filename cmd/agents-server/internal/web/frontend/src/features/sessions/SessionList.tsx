@@ -3,9 +3,10 @@ import { useState, useEffect, useRef, type FormEvent, type ReactElement, type Re
 import { ActionList, ActionMenu, Dialog, FormControl, IconButton, TextInput, useConfirm } from '@primer/react';
 import { KebabHorizontalIcon, PencilIcon, PinIcon, PinSlashIcon, PlusIcon, RepoForkedIcon, SearchIcon, TrashIcon, WorkflowIcon, XIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { useApi } from '@/lib/hooks';
+import { useApi, useDebouncedValue } from '@/lib/hooks';
 import type { SessionStatus } from '@/lib/protocol';
 import { filterSessionsByName } from '@/lib/sessionFilter';
+import { SESSION_PAGE, hasMoreSessions, sessionListKey } from '@/lib/sessionPages';
 import { toast } from '@/lib/toast';
 
 interface Session {
@@ -157,12 +158,32 @@ function RenameDialog({ session, onClose, onRenamed }: { session: Session; onClo
 
 export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onNew, reloadKey, statuses, onOpenHub }: SessionListProps): ReactElement {
   const confirmDialog = useConfirm();
-  const { data: sessions, reload, mutateData } = useApi(() => api.sessions.list() as Promise<Session[]>, [], 'sessions');
+  const [query, setQuery] = useState('');
+  // The server searches the name and the first user message once the typing
+  // settles; until then the rows in hand are narrowed by name.
+  const q = useDebouncedValue(query.trim(), 250);
+  // How much of the list is shown: a page, then one more per scroll to the
+  // end. A longer prefix, not a next page, so a refresh keeps it whole.
+  const [limit, setLimit] = useState(SESSION_PAGE);
+  useEffect(() => { setLimit(SESSION_PAGE); }, [q]);
+  const { data: sessions, loading, reload, mutateData } = useApi(
+    () => api.sessions.list({ limit, q: q || undefined }) as Promise<Session[]>, [limit, q], sessionListKey(limit, q));
+  const hasMore = !!sessions && hasMoreSessions(sessions, limit);
+  const showMore = () => { if (hasMore && !loading) setLimit(l => l + SESSION_PAGE); };
+  // The end of the list asks for more as it scrolls into view.
+  const moreRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = moreRef.current;
+    if (!el || !hasMore || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) showMore(); });
+    io.observe(el);
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, loading, limit]);
 
   useEffect(() => {
     if (reloadKey) reload(); // auto-refresh: does not throw
   }, [reloadKey, reload]);
-  const [query, setQuery] = useState('');
   // The search box is a button until clicked; it stays open while a filter is
   // typed, so the narrowed list is never shown without the query that made it.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -325,6 +346,13 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
                 : <div className="blankslate">{emptyText}</div>
             )}
           </ActionList>
+        )}
+        {hasMore && (
+          <div ref={moreRef} className="sidebar-more">
+            <button type="button" className="sidebar-more-button" onClick={showMore} disabled={loading}>
+              {loading ? 'Loading…' : 'Show more'}
+            </button>
+          </div>
         )}
       </div>
       {renaming && <RenameDialog session={renaming} onClose={() => setRenaming(null)} onRenamed={handleRenamed} />}

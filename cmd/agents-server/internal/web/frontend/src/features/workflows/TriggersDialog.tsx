@@ -4,6 +4,7 @@ import { Blankslate } from '@primer/react/experimental';
 import { ClockIcon, DependabotIcon, KebabHorizontalIcon, TrashIcon, WebhookIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { invalidate, useApi, useCopy } from '@/lib/hooks';
+import { SESSION_LISTS } from '@/lib/sessionPages';
 import { nameOf, type Named } from '@/lib/named';
 import { fc } from '@/lib/form';
 import { formatTime } from '@/lib/time';
@@ -279,7 +280,7 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
       const saved = initial
         ? await api.triggers.update(initial.id, { ...initial, ...fields }) as Trigger
         : await api.triggers.create({ ...fields, enabled: true }) as Trigger;
-      if (made) invalidate('sessions');
+      if (made) invalidate(SESSION_LISTS);
       onSaved(saved, !initial);
       toast.success(initial ? 'Trigger saved' : 'Trigger added');
     } catch (e) {

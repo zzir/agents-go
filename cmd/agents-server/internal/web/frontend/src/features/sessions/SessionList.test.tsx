@@ -30,20 +30,25 @@ vi.mock('@primer/octicons-react', () => Object.fromEntries(
   ['KebabHorizontalIcon', 'PencilIcon', 'PinIcon', 'PinSlashIcon', 'PlusIcon', 'RepoForkedIcon', 'SearchIcon', 'TrashIcon', 'WorkflowIcon', 'XIcon']
     .map(n => [n, () => null]),
 ));
-const { rows } = vi.hoisted(() => ({ rows: { value: [] as { id: string; name: string; pinned: boolean; status?: string }[] } }));
-vi.mock('@/lib/api', () => ({ api: { sessions: { list: async () => rows.value } } }));
+const { rows, listCalls } = vi.hoisted(() => ({
+  rows: { value: [] as { id: string; name: string; pinned: boolean; status?: string }[] },
+  listCalls: [] as Array<{ limit?: number; q?: string }>,
+}));
+vi.mock('@/lib/api', () => ({ api: { sessions: { list: async (opts: { limit?: number; q?: string } = {}) => { listCalls.push(opts); return rows.value.slice(0, opts.limit ? opts.limit + rows.value.filter(r => r.pinned).length : undefined); } } } }));
 vi.mock('@/lib/toast', () => ({ toast: { error: () => {} } }));
 vi.mock('@/lib/hooks', () => ({
-  useApi: (fetcher: () => Promise<unknown>) => {
+  // Re-fetches when the deps move, as the real hook does; no cache.
+  useApi: (fetcher: () => Promise<unknown>, deps: unknown[] = []) => {
     const [data, setData] = useState<unknown>(null);
     useEffect(() => {
       let alive = true;
       fetcher().then(d => { if (alive) setData(d); });
       return () => { alive = false; };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, deps);
     return { data, loading: data === null, error: null, reload: () => {}, mutateData: () => {} };
   },
+  useDebouncedValue: <T,>(v: T) => v,
 }));
 import { SessionList } from '@/features/sessions/SessionList';
 
@@ -104,6 +109,26 @@ describe('SessionList', () => {
     const text = (name: string) => [...host.querySelectorAll('li')].find(li => li.textContent?.startsWith(name))?.textContent;
     expect(text('Alpha')).toBe('Alpha');
     expect(text('Beta')).toBe('Beta — awaiting your approval');
+    unmount();
+  });
+
+  // The list is read a page at a time: a page that fills its limit ends in
+  // "Show more", which asks for a longer prefix; a short page is the end.
+  it('loads more only while a page is full, by asking for a longer prefix', async () => {
+    rows.value = [{ id: 'p', name: 'Pinned', pinned: true }];
+    for (let i = 0; i < 150; i++) rows.value.push({ id: 's' + i, name: 'Session ' + i, pinned: false });
+    listCalls.length = 0;
+    const { host, unmount } = await mount();
+    expect(listCalls[0]).toEqual({ limit: 100, q: undefined });
+    expect(host.querySelectorAll('li').length).toBe(101);
+    const more = host.querySelector('.sidebar-more-button') as HTMLButtonElement | null;
+    expect(more?.textContent).toBe('Show more');
+    await act(async () => { more!.click(); });
+    await act(async () => {});
+    expect(listCalls[listCalls.length - 1]).toEqual({ limit: 200, q: undefined });
+    expect(host.querySelectorAll('li').length).toBe(151);
+    // 150 of 200 asked for: the end.
+    expect(host.querySelector('.sidebar-more-button')).toBeNull();
     unmount();
   });
 });

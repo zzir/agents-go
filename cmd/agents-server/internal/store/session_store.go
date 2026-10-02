@@ -73,6 +73,77 @@ func (s *SessionStore) List(ctx context.Context, ownerID string) ([]Session, err
 	return sessions, nil
 }
 
+// SessionPage selects one page of a listing: Limit unpinned sessions (0 = all)
+// before the one Before names ("" = the newest), matching Query on the name
+// or the first user message (case-insensitive; "" = every session). Pinned
+// sessions come whole with the first page.
+type SessionPage struct {
+	Limit  int
+	Before string
+	Query  string
+}
+
+// ListPage returns one owner's chat sessions newest first by (updated_at, id):
+// on the first page every pinned session, then the unpinned ones Limit at a
+// time. A Before that names no listable session of the owner is ErrNotFound.
+func (s *SessionStore) ListPage(ctx context.Context, ownerID string, page SessionPage) ([]Session, error) {
+	if ownerID == "" {
+		return nil, errListNoOwner
+	}
+	base := func() *bun.SelectQuery {
+		q := s.db.NewSelect().Where("s.hidden = ?", false)
+		if ownerID != EveryOwner {
+			q = q.Where("s.owner_id = ?", ownerID)
+		}
+		if page.Query != "" {
+			like := "%" + escapeLike(strings.ToLower(page.Query)) + "%"
+			// The first user message is the oldest item entry carrying the user
+			// role, in the session's own generation.
+			first := s.db.NewSelect().TableExpr("entries AS e").ColumnExpr("1").
+				Where("e.session_id = s.id").Where("e.gen = s.gen").Where("e.kind = ?", string(session.EntryKindItem)).
+				Where("e.seq = (?)", s.db.NewSelect().TableExpr("entries AS e2").ColumnExpr("min(e2.seq)").
+					Where("e2.session_id = s.id").Where("e2.gen = s.gen").Where("e2.kind = ?", string(session.EntryKindItem)).
+					Where(`e2.entry LIKE ?`, `%"role":"user"%`)).
+				Where("lower(e.entry) LIKE ? ESCAPE '\\'", like)
+			q = q.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("lower(s.name) LIKE ? ESCAPE '\\'", like).WhereOr("EXISTS (?)", first)
+			})
+		}
+		return q.OrderExpr("s.updated_at DESC, s.id DESC")
+	}
+	var out []Session
+	if page.Before == "" {
+		var pinned []Session
+		if err := base().Model(&pinned).Where("s.pinned = ?", true).Scan(ctx); err != nil {
+			return nil, fmt.Errorf("listing pinned sessions: %w", err)
+		}
+		out = append(out, pinned...)
+	}
+	q := base().Where("s.pinned = ?", false)
+	if page.Before != "" {
+		cursor := new(Session)
+		err := s.db.NewSelect().Model(cursor).Where("id = ?", page.Before).Where("hidden = ?", false).Scan(ctx)
+		if err == nil && ownerID != EveryOwner && cursor.OwnerID != ownerID {
+			err = sql.ErrNoRows
+		}
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("session cursor %s: %w", page.Before, ErrNotFound)
+			}
+			return nil, fmt.Errorf("resolving session cursor %s: %w", page.Before, err)
+		}
+		q = q.Where("(s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))", cursor.UpdatedAt, cursor.UpdatedAt, cursor.ID)
+	}
+	if page.Limit > 0 {
+		q = q.Limit(page.Limit)
+	}
+	var unpinned []Session
+	if err := q.Model(&unpinned).Scan(ctx); err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+	return append(out, unpinned...), nil
+}
+
 // Get returns the session with the given id, or an ErrNotFound-wrapping error
 // when it doesn't exist.
 func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {

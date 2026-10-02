@@ -4857,12 +4857,21 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List sessions */
+        /**
+         * List sessions
+         * @description Newest first by updated_at. Pinned sessions come whole with the first page; limit counts the unpinned ones and before (a session id from the previous page) continues after it. q matches the name or the first user message, case-insensitively. Without limit the whole list is returned.
+         */
         get: {
             parameters: {
                 query?: {
                     /** @description Every owner's sessions (admin only) */
                     all?: boolean;
+                    /** @description Unpinned sessions per page (0 = all) */
+                    limit?: number;
+                    /** @description Continue after this session id (the last of the previous page) */
+                    before?: string;
+                    /** @description Match the name or the first user message */
+                    q?: string;
                 };
                 header?: never;
                 path?: never;
@@ -4879,8 +4888,26 @@ export interface paths {
                         "application/json": components["schemas"]["handler.sessionView"][];
                     };
                 };
+                /** @description limit is not a non-negative integer */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
                 /** @description all=true by a member */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description before names no session of the caller */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };

@@ -111,3 +111,20 @@
 .sidebar-scroll .session-row [data-component="Tooltip"] {
   display: none !important;
 }
+
+/* The end of a paged list: scrolled into view it loads more; the button is
+   the same ask by keyboard. */
+.sidebar-more {
+    display: flex;
+    justify-content: center;
+    padding: var(--base-size-8);
+}
+.sidebar-more-button {
+    background: none;
+    border: none;
+    color: var(--fgColor-muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--base-text-size-xs);
+}
+.sidebar-more-button:hover:not(:disabled) { color: var(--fgColor-default); }

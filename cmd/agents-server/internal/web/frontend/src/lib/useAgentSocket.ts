@@ -10,6 +10,7 @@ import {
 } from '@/lib/streamReducer';
 import { api, clearToken } from '@/lib/api';
 import { invalidate } from '@/lib/apiCache';
+import { SESSION_LISTS } from '@/lib/sessionPages';
 import { resyncAfterGap, type GapResync } from '@/lib/gapResync';
 import { toast } from '@/lib/toast';
 import { putBackInComposer } from '@/lib/composer';
@@ -890,7 +891,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
     });
 
     ws.on(EV.sessionTitleUpdated, (p: { session_id?: string; title?: string }) => {
-      invalidate('sessions');
+      invalidate(SESSION_LISTS);
       if (p?.session_id && typeof p.title === 'string') eventsRef.current.onTitleUpdated(p.session_id, p.title);
     });
 
@@ -910,7 +911,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       loadedRef.current.clear();
       tracesLoadedRef.current.clear();
       eventsRef.current.onStatus(null);
-      invalidate('sessions');
+      invalidate(SESSION_LISTS);
       const sid = eventsRef.current.activeSession();
       if (!sid || deletedRef.current.has(sid)) return;
       loadTimeline(sid).catch(() => toast.error('Could not refresh the session — reopen it to retry'));
@@ -933,7 +934,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
         // The sidebar's statuses feed the title count, which is read exactly
         // when the tab is hidden: relist now, re-read the rest when seen.
         eventsRef.current.onStatus(null);
-        invalidate('sessions');
+        invalidate(SESSION_LISTS);
         resyncPending = true;
         return;
       }

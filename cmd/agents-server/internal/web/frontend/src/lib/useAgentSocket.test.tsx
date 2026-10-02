@@ -18,6 +18,7 @@ vi.mock('@/lib/composer', () => ({ putBackInComposer: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toast: { error: vi.fn(), info: vi.fn(), success: vi.fn() } }));
 
 import { invalidate } from '@/lib/apiCache';
+import { SESSION_LISTS } from '@/lib/sessionPages';
 import { putBackInComposer } from '@/lib/composer';
 import { toast } from '@/lib/toast';
 import { EV, ERR } from '@/lib/protocol';
@@ -127,7 +128,7 @@ describe('useAgentSocket reconnect', () => {
     // The open conversation was re-read at once; the other was not.
     expect(apiMock.sessions.messages.mock.calls.slice(2).map(c => c[0])).toEqual([S1]);
     expect(t.store[S1].messages.map(m => (m as { content?: string }).content)).toEqual(['before', 'while away']);
-    expect(vi.mocked(invalidate)).toHaveBeenCalledWith('sessions');
+    expect(vi.mocked(invalidate)).toHaveBeenCalledWith(SESSION_LISTS);
     // The other one refetches on its next select instead of serving its stale copy.
     await act(async () => { await t.hook().loadSession(S2); });
     expect(apiMock.sessions.messages.mock.calls.slice(3).map(c => c[0])).toEqual([S2]);
@@ -161,7 +162,7 @@ describe('useAgentSocket reconnect', () => {
     expect(apiMock.sessions.messages).toHaveBeenCalledTimes(1);
     // The sidebar is relisted at once: the title's count is read by exactly
     // the person who is not looking at this tab.
-    expect(invalidate).toHaveBeenCalledWith('sessions');
+    expect(invalidate).toHaveBeenCalledWith(SESSION_LISTS);
     expect(t.events.onStatus).toHaveBeenCalledWith(null);
     visibility = 'visible';
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
@@ -188,7 +189,7 @@ describe('useAgentSocket session status', () => {
     await t.reconnect();
     // The reset comes with the relisting that answers in its place.
     expect(t.events.onStatus).toHaveBeenCalledWith(null);
-    expect(vi.mocked(invalidate)).toHaveBeenCalledWith('sessions');
+    expect(vi.mocked(invalidate)).toHaveBeenCalledWith(SESSION_LISTS);
     await t.unmount();
   });
 });

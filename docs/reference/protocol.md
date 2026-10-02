@@ -151,6 +151,14 @@ immutable afterwards, over the API included
 ([invariant 27](../explanation/workbench-invariants.md)): switching projects
 means starting (or forking into) another session.
 
+`GET /sessions` lists newest first by `updated_at` (id the tiebreaker) and
+pages by keyset: `limit` counts unpinned sessions, `before` (a session id from
+the previous page) continues after it, and the pinned sessions come whole with
+the first page; without `limit` the whole list is returned. `q` matches the
+name or the first user message, case-insensitively; whole transcripts are not
+searched here. A `before` that names no listable session of the caller is
+`404`, the client's cue to start over.
+
 `GET /sessions` and `GET /sessions/:id` carry each session's **derived
 status**, computed server-side from the durable rows and the live runs
 ([invariant 3](../explanation/workbench-invariants.md)) — the first that

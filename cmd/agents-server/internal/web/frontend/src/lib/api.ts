@@ -179,6 +179,16 @@ export const api = {
   },
   sessions: {
     ...crud<S['store.Session']>('/sessions'),
+    // One page of the caller's sessions (lib/sessionPages.ts): limit unpinned
+    // rows after `before`, matching q; no options is the whole list.
+    list: (opts: { limit?: number; before?: string; q?: string } = {}) => {
+      const p = new URLSearchParams();
+      if (opts.limit) p.set('limit', String(opts.limit));
+      if (opts.before) p.set('before', opts.before);
+      if (opts.q) p.set('q', opts.q);
+      const qs = p.toString();
+      return request<S['store.Session'][]>('/sessions' + (qs ? '?' + qs : ''));
+    },
     // Admin: every owner's sessions — existence and recency, never content —
     // and reassigning one (its task sessions follow) to another account.
     listAll: () => request<S['store.Session'][]>('/sessions?all=true'),
