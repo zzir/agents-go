@@ -11,26 +11,44 @@ import (
 // TodoToolName is the tool a Todo-mode agent maintains its list through.
 // Hosts use it to recognize the calls and render the list as a checklist
 // instead of a generic tool card.
+//
+// Deprecated: build a checklist tool with agents.NewTool (see
+// examples/planmode); removed in v0.5.0.
 const TodoToolName = "todo_write"
 
 // TodoStatus is one item's state.
+//
+// Deprecated: build a checklist tool with agents.NewTool (see
+// examples/planmode); removed in v0.5.0.
 type TodoStatus string
 
 // The three todo states. There is no "cancelled": the list is replaced whole
 // on every write, so an abandoned item is simply not in the next list.
 const (
-	TodoPending    TodoStatus = "pending"
+	// Deprecated: build a checklist tool with agents.NewTool (see
+	// examples/planmode); removed in v0.5.0.
+	TodoPending TodoStatus = "pending"
+	// Deprecated: build a checklist tool with agents.NewTool (see
+	// examples/planmode); removed in v0.5.0.
 	TodoInProgress TodoStatus = "in_progress"
-	TodoCompleted  TodoStatus = "completed"
+	// Deprecated: build a checklist tool with agents.NewTool (see
+	// examples/planmode); removed in v0.5.0.
+	TodoCompleted TodoStatus = "completed"
 )
 
 // TodoItem is one entry of the agent's working list.
+//
+// Deprecated: build a checklist tool with agents.NewTool (see
+// examples/planmode); removed in v0.5.0.
 type TodoItem struct {
 	Content string     `json:"content" jsonschema:"The task, as a short imperative phrase."`
 	Status  TodoStatus `json:"status" jsonschema:"pending, in_progress or completed. Empty means pending."`
 }
 
 // DefaultTodoInstructions is the todo preamble.
+//
+// Deprecated: build a checklist tool with agents.NewTool (see
+// examples/planmode); removed in v0.5.0.
 const DefaultTodoInstructions = `Maintain a todo list for MULTI-STEP work with the todo_write tool:
 1. Break the task into concrete steps before starting. Skip the list entirely
    when the task is one or two steps — there it is pure overhead.
@@ -43,6 +61,9 @@ Keep the list current; it is how your progress is tracked.`
 // call replaces the whole list (spec §2.12). The host observes it through
 // OnUpdate or reads the calls off the stream; the middleware renders nothing.
 // It rewrites the ENTRY agent only.
+//
+// Deprecated: build a checklist tool with agents.NewTool (see
+// examples/planmode); removed in v0.5.0.
 type Todo struct {
 	// Instructions overrides the todo preamble (empty = DefaultTodoInstructions).
 	Instructions string

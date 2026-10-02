@@ -1,4 +1,4 @@
-// Command planmode demonstrates the plan/todo workflow middlewares.
+// Command planmode demonstrates plan mode, with a checklist tool beside it.
 //
 // middleware.Plan puts the run into plan mode: the agent explores with
 // read-only tools, submits a plan through submit_plan, and that call pauses
@@ -6,8 +6,9 @@
 // the toolset and the SAME run continues into execution; rejecting it (with a
 // message) sends the model back to planning.
 //
-// middleware.Todo gives the agent a todo_write tool and a preamble telling it
-// to keep a working list; OnUpdate is where a UI would render the checklist.
+// update_checklist is an ordinary tool of this program's own: the agent sends
+// its whole list of steps, and the function is where a UI would render it. It
+// is not read-only, so plan mode refuses it until the plan is approved.
 //
 // The review loop below is the whole integration: an interruption whose tool
 // is middleware.PlanToolName IS the plan review, and the plan text is in the
@@ -33,6 +34,29 @@ type writeArgs struct {
 	Text string `json:"text" jsonschema:"New content."`
 }
 
+type checklistArgs struct {
+	Steps []checklistStep `json:"steps" jsonschema:"The complete checklist. It replaces the previous one entirely."`
+}
+
+type checklistStep struct {
+	Content string `json:"content" jsonschema:"The step, as a short imperative phrase."`
+	Status  string `json:"status" jsonschema:"pending, in_progress or completed."`
+}
+
+// updateChecklist is the agent's working list: each call replaces it whole.
+func updateChecklist(_ context.Context, _ *agents.ToolContext, a checklistArgs) (string, error) {
+	fmt.Println("  [checklist]")
+	for i, step := range a.Steps {
+		switch step.Status {
+		case "pending", "in_progress", "completed":
+		default:
+			return "", fmt.Errorf("step %d has status %q (want pending, in_progress or completed)", i, step.Status)
+		}
+		fmt.Printf("    - [%s] %s\n", step.Status, step.Content)
+	}
+	return fmt.Sprintf("Checklist updated: %d steps.", len(a.Steps)), nil
+}
+
 func main() {
 	ctx := context.Background()
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
@@ -50,24 +74,20 @@ func main() {
 			return "written", nil
 		})
 
+	checklist := agents.NewTool("update_checklist",
+		"Replace your checklist of steps. Send the COMPLETE list every time; keep one step in_progress.",
+		updateChecklist)
+
 	agent := &agents.Agent{
 		Name:         "worker",
 		Model:        "gpt-4.1-mini",
-		Instructions: agents.StaticInstructions("Fix the outdated greeting. Be brief."),
-		Tools:        []*agents.Tool{readFile, writeFile},
+		Instructions: agents.StaticInstructions("Fix the outdated greeting. Keep a checklist of your steps. Be brief."),
+		Tools:        []*agents.Tool{readFile, writeFile, checklist},
 	}
 
 	opts := agents.RunOptions{
-		Model: agents.ModelOptions{Provider: provider},
-		Middlewares: []agents.RunMiddleware{
-			middleware.Plan{},
-			middleware.Todo{OnUpdate: func(_ context.Context, items []middleware.TodoItem) {
-				fmt.Println("  [todo]")
-				for _, it := range items {
-					fmt.Printf("    - [%s] %s\n", it.Status, it.Content)
-				}
-			}},
-		},
+		Model:       agents.ModelOptions{Provider: provider},
+		Middlewares: []agents.RunMiddleware{middleware.Plan{}},
 	}
 
 	res, err := agents.RunSync(ctx, agent, "Update the greeting per the notes.", opts)
