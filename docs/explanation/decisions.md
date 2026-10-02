@@ -1882,3 +1882,23 @@ injection fails the whole run, as a tripped first input does; an answer the
 run reached before a refused follow-up is saved first.
 
 Rules: spec §2.6, §2.11b
+
+### 5.79 A refused final turn keeps the record that its tools ran
+
+Decided 2026-10-03.
+
+**Decision.** When `OnEnd` or an output guardrail fails a final turn that ran
+tools, the turn is saved whole with each tool output replaced by a fixed
+notice.
+
+**Rejected.** Saving nothing: the next run in the session cannot tell the tool
+ran and may repeat its side effect. Saving the real output: what the guardrail
+refused enters the session. Saving the calls without the turn's reasoning and
+message: a provider refuses a replayed call cut from the reasoning it came
+with.
+
+**Cost accepted.** The session holds a call whose result the model never
+sees, and the stream showed an output the store does not hold. The notice is
+fixed English text. A cancelled run still saves nothing.
+
+Rules: spec §2.5

@@ -32,7 +32,7 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 	agent := r.state.agent
 	if agent.OnEnd != nil {
 		if err := agent.OnEnd(ctx, r.rc, finalOutput); err != nil {
-			return nil, err
+			return nil, r.refuseFinalTurn(ctx, err)
 		}
 	}
 	// Output guardrails: run-level ones first, then the producing agent's.
@@ -48,7 +48,7 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 		if gerr != nil {
 			gspan.SetError(gerr.Error(), nil)
 			gspan.Finish()
-			return nil, gerr
+			return nil, r.refuseFinalTurn(ctx, gerr)
 		}
 		gspan.Finish()
 		for _, g := range res {
@@ -72,6 +72,22 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 		r.agentSpan.Set("stopped_early", true)
 	}
 	return res, nil
+}
+
+// refuseFinalTurn records that the refused turn's tools ran and returns cause,
+// first in any join so errors.As still finds a tripwire. A cancelled run writes nothing.
+func (r *runner) refuseFinalTurn(ctx context.Context, cause error) error {
+	if ctx.Err() != nil {
+		return cause
+	}
+	err := r.persistRefusedTurn(ctx)
+	switch {
+	case err == nil:
+		return cause
+	case errors.Is(err, errConsumerStopped):
+		return err
+	}
+	return errors.Join(cause, err)
 }
 
 // recoverMaxTurns gives ErrorHandlers.MaxTurns a chance to turn an overrun

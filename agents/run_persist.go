@@ -29,6 +29,28 @@ func (r *runner) persistUserInput(ctx context.Context) error {
 // persistSessionItems saves the sessionItems produced since the last save, up
 // to safePersistBoundary, from the unfiltered log (spec §2.5).
 func (r *runner) persistSessionItems(ctx context.Context) error {
+	return r.persistTail(ctx, false)
+}
+
+// withheldToolOutput stands in for a tool's output in a final turn the run
+// did not accept — spec §2.5.
+const withheldToolOutput = "Output withheld: the run failed before this result was accepted."
+
+// persistRefusedTurn saves a final turn that failed acceptance, its tool
+// outputs withheld; a turn that ran no tool leaves nothing — spec §2.5.
+func (r *runner) persistRefusedTurn(ctx context.Context) error {
+	ranTool := slices.ContainsFunc(r.sessionItems[r.persistedSessionItems:], func(it *RunItem) bool {
+		return it.Kind == ItemToolCallOutput
+	})
+	if !ranTool {
+		return nil
+	}
+	return r.persistTail(ctx, true)
+}
+
+// persistTail writes the unsaved items; withhold stores each tool output as
+// withheldToolOutput, leaving the run's own items untouched.
+func (r *runner) persistTail(ctx context.Context, withhold bool) error {
 	if r.opts.Conversation.Session == nil {
 		return nil
 	}
@@ -38,6 +60,11 @@ func (r *runner) persistSessionItems(ctx context.Context) error {
 	}
 	toSave := make([]session.Entry, 0, end-r.persistedSessionItems)
 	for _, it := range r.sessionItems[r.persistedSessionItems:end] {
+		if withhold && it.Kind == ItemToolCallOutput {
+			stored := newFunctionCallOutputItem(it.Agent, it.CallID(), withheldToolOutput)
+			stored.NestedUsage = it.NestedUsage
+			it = stored
+		}
 		e, err := EntryFromRunItem(it, r.lastResponseID)
 		if err != nil {
 			return err

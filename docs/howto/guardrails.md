@@ -133,4 +133,9 @@ if errors.As(err, &tw) {
 A panicking guardrail is recovered and reported as that guardrail's error — it
 never crashes the process.
 
+A refused final output is not saved to the session. When the refused turn ran
+a tool (`ToolResult.Terminate`), the turn is saved with the tool's output
+replaced by a notice, so the next run knows the tool already ran
+([spec §2.5](../reference/spec.md#25-session-persistence-boundaries)).
+
 A runnable program covering all of this — one guardrail across three stages, plus a `Blocking` gate — is [examples/guardrails](../../examples/guardrails/main.go).
