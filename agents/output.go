@@ -32,7 +32,6 @@ type dynamicOutputSchema struct {
 	name      string
 	schema    map[string]any
 	strict    bool
-	schemaErr error // deferred strict-normalization failure, surfaced by the runner
 	validator *schemaValidator
 }
 
@@ -41,35 +40,26 @@ type dynamicOutputSchema struct {
 //
 // When strict is true, the schema is normalized to the strict subset via
 // EnsureStrictJSONSchema on a deep copy (the caller's map is not mutated),
-// matching what the SDK does for reflected schemas. If normalization fails,
-// the error surfaces before the first model call of any run using this schema
-// rather than as a 400 from the API.
-func NewDynamicOutputSchema(name string, schema map[string]any, strict bool) OutputSchema {
+// matching what the SDK does for reflected schemas. The schema is data, so one
+// strict mode cannot express is an error, as from NewRawTool.
+func NewDynamicOutputSchema(name string, schema map[string]any, strict bool) (OutputSchema, error) {
 	s := &dynamicOutputSchema{name: name, schema: schema, strict: strict}
 	if strict {
 		normalized, err := ensureStrictSchemaCopy(schema)
 		if err != nil {
-			s.schema = nil
-			s.schemaErr = NewUserError("dynamic output schema %q: strict schema normalization failed: %v", name, err)
-		} else {
-			s.schema = normalized
+			return nil, NewUserError("dynamic output schema %q: strict schema normalization failed: %v", name, err)
 		}
+		s.schema = normalized
 	}
 	s.validator = newSchemaValidator(s.schema)
-	return s
+	return s, nil
 }
-
-// schemaError exposes a deferred strict-normalization failure to the runner.
-func (s *dynamicOutputSchema) schemaError() error { return s.schemaErr }
 
 func (s *dynamicOutputSchema) IsPlainText() bool          { return false }
 func (s *dynamicOutputSchema) Name() string               { return s.name }
 func (s *dynamicOutputSchema) JSONSchema() map[string]any { return s.schema }
 func (s *dynamicOutputSchema) IsStrictJSONSchema() bool   { return s.strict }
 func (s *dynamicOutputSchema) ValidateJSON(raw string) (any, error) {
-	if s.schemaErr != nil {
-		return nil, s.schemaErr
-	}
 	// Validated locally too: the provider was sent the schema, but the output
 	// is what the caller decodes.
 	if err := s.validator.Validate([]byte(raw)); err != nil {

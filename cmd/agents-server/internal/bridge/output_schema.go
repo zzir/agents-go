@@ -23,7 +23,7 @@ func BuildOutputSchema(schemaJSON string) (agents.OutputSchema, error) {
 	if err := CheckStrictOutputSchema(schema); err != nil {
 		return nil, err
 	}
-	return agents.NewDynamicOutputSchema("final_output", schema, true), nil
+	return agents.NewDynamicOutputSchema("final_output", schema, true)
 }
 
 // CheckStrictOutputSchema reports why schema cannot be sent in strict mode, or

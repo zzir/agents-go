@@ -1931,7 +1931,7 @@ Defaults that callers may depend on:
 | Setting | Default | Note |
 |---|---|---|
 | `MaxTurns` | 10 | `MaxTurnsUnlimited` (-1) disables it |
-| Strict schemas | on | Chaining `NonStrict()` relaxes both the advertised schema and local validation, atomically — but only on a tool that got built; an argument type strict mode cannot express at all needs `NewToolNonStrict` ([§5.11](../explanation/decisions.md#511-construction-errors-split-by-data-provenance)) |
+| Strict schemas | on | Chaining `NonStrict()` relaxes both the advertised schema and local validation, atomically — but only on a tool that got built; a type strict mode cannot express at all needs `NewToolNonStrict` or `OutputTypeNonStrict`, and a schema given as data fails its constructor ([§5.11](../explanation/decisions.md#511-construction-errors-split-by-data-provenance)) |
 | Handoff input schemas | strict | `Handoff.NonStrictSchema: true` opts out; the zero value is the strict default |
 | Tool errors | fed back to the model | `DefaultToolErrorFunction`; set the field to `nil` to make them fatal |
 | Tool concurrency | unlimited | Bound with `MaxToolConcurrency` |

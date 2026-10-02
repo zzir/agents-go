@@ -102,10 +102,11 @@ func TestBuildFullAgentBuildsErrorHandlers(t *testing.T) {
 // A structured agent's object fallback survives the decode→handler round trip
 // as a plain Go value the SDK can validate against the output schema.
 func TestBuildErrorHandlersStructuredFallback(t *testing.T) {
-	spec, err := decodeErrorHandlers(
-		`{"invalid_final_output":{"final_output":{"summary":"fallback","ok":true}}}`,
-		agents.NewDynamicOutputSchema("final_output", map[string]any{"type": "object"}, false),
-	)
+	schema, err := agents.NewDynamicOutputSchema("final_output", map[string]any{"type": "object"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := decodeErrorHandlers(`{"invalid_final_output":{"final_output":{"summary":"fallback","ok":true}}}`, schema)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}

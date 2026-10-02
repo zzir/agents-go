@@ -166,8 +166,12 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 				return
 			}
 		}
-		outputSchema = agents.NewDynamicOutputSchema(
+		outputSchema, err = agents.NewDynamicOutputSchema(
 			cmp.Or(req.OutputSchema.Name, "final_output"), req.OutputSchema.Schema, req.OutputSchema.Strict)
+		if err != nil {
+			badRequest(c, err.Error())
+			return
+		}
 	}
 
 	mreq := agents.ModelRequest{

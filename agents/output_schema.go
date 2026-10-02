@@ -17,7 +17,6 @@ type typedOutputSchema[T any] struct {
 	wrapped   bool
 	strict    bool
 	typeName  string
-	schemaErr error // deferred schema-generation failure, surfaced by the runner
 	validator *schemaValidator
 }
 
@@ -28,18 +27,20 @@ type typedOutputSchema[T any] struct {
 // value is transparently wrapped in {"response": <value>} because OpenAI
 // structured outputs require an object at the root; ValidateJSON unwraps it.
 //
-// Strict mode is enabled. Use OutputTypeNonStrict for a relaxed schema.
+// Strict mode is enabled, and a T it cannot express panics, as NewTool does:
+// the schema comes from a Go type, so the failure is a bug a test surfaces.
+// Use OutputTypeNonStrict for a relaxed schema.
 func OutputType[T any]() OutputSchema {
-	return newOutputType[T](true)
+	return newOutputType[T]("OutputType", true)
 }
 
 // OutputTypeNonStrict is like OutputType but disables strict-mode schema
 // normalization, allowing schema features OpenAI strict mode forbids.
 func OutputTypeNonStrict[T any]() OutputSchema {
-	return newOutputType[T](false)
+	return newOutputType[T]("OutputTypeNonStrict", false)
 }
 
-func newOutputType[T any](strict bool) OutputSchema {
+func newOutputType[T any](ctor string, strict bool) OutputSchema {
 	t := reflect.TypeFor[T]()
 	wrapped := !isObjectLike(t)
 
@@ -61,37 +62,21 @@ func newOutputType[T any](strict bool) OutputSchema {
 		schema, err = schemaForType(t, strict)
 	}
 
-	s := &typedOutputSchema[T]{
+	if err != nil {
+		panic(fmt.Sprintf("agents: %s[%s]: schema generation failed: %v", ctor, t, err))
+	}
+	return &typedOutputSchema[T]{
 		schema:    schema,
 		wrapped:   wrapped,
 		strict:    strict,
 		typeName:  t.String(),
 		validator: newSchemaValidator(schema),
 	}
-	if err != nil {
-		// Defer surfacing the error so OutputType stays usable in a struct
-		// literal; the runner checks schemaError before the first model call.
-		s.schemaErr = NewUserError("output schema for %s: %v", t, err)
-		s.schema = nil
-	}
-	return s
 }
-
-// schemaError exposes a deferred schema-generation failure to the runner.
-func (s *typedOutputSchema[T]) schemaError() error { return s.schemaErr }
 
 // wrappedSchema reports whether output sits inside the {"response": ...} envelope
 // (see wrappedOutputSchema).
 func (s *typedOutputSchema[T]) wrappedSchema() bool { return s.wrapped }
-
-// outputSchemaError returns the deferred schema-generation failure of an
-// OutputSchema, if it carries one.
-func outputSchemaError(s OutputSchema) error {
-	if c, ok := s.(interface{ schemaError() error }); ok {
-		return c.schemaError()
-	}
-	return nil
-}
 
 // isObjectLike reports whether a type serializes to a JSON object at the root (a
 // struct or map); pointers are not unwrapped, as a nullable root is rejected.
@@ -107,9 +92,6 @@ func (s *typedOutputSchema[T]) IsStrictJSONSchema() bool   { return s.strict }
 // ValidateJSON parses the model's JSON output into a value of type T (unwrapping
 // the {"response": ...} envelope when used).
 func (s *typedOutputSchema[T]) ValidateJSON(jsonStr string) (any, error) {
-	if s.schemaErr != nil {
-		return nil, s.schemaErr
-	}
 	if s.wrapped {
 		var probe map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(jsonStr), &probe); err != nil {

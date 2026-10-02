@@ -234,15 +234,13 @@ are in [Models](../howto/models.md).
 
 ### 5.11 Construction errors split by data provenance
 
-**Decision.** A tool constructor whose failure can only be a programmer error
-**panics**; one whose input is runtime data **returns an error**. `NewTool`
-and `AgentAsTool` derive their schema from a Go type — deterministic per type,
-so a failure is a bug any test surfaces immediately (the `regexp.MustCompile`
-precedent), and panicking keeps them chainable inside `Agent{Tools: ...}`
-literals. `NewRawTool` takes a schema that is data, so it returns `(*Tool,
-error)`. Output schemas (`OutputType`, `NewDynamicOutputSchema`) still defer
-the failure to the runner — a recorded gap until the next breaking minor; a
-host validates up front with `EnsureStrictJSONSchema`.
+**Decision.** A constructor whose failure can only be a programmer error
+**panics**; one whose input is runtime data **returns an error**. `NewTool`,
+`AgentAsTool` and `OutputType` derive their schema from a Go type —
+deterministic per type, so a failure is a bug any test surfaces immediately
+(the `regexp.MustCompile` precedent), and panicking keeps them chainable
+inside `Agent{...}` literals. `NewRawTool` and `NewDynamicOutputSchema` take a
+schema that is data, so they return an error.
 
 One failure is a shape rather than a bug: strict mode cannot express an `any`
 field or a map with arbitrary keys at all, and `Tool.NonStrict` cannot rescue

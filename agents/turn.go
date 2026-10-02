@@ -104,9 +104,6 @@ func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []InputI
 		return nil, err
 	}
 	outputSchema := agentOutputSchema(agent)
-	if err := outputSchemaError(outputSchema); err != nil {
-		return nil, err
-	}
 	handoffs, err := r.enabledHandoffs(ctx, agent)
 	if err != nil {
 		return nil, err

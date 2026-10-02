@@ -78,7 +78,7 @@ Notes:
 
 - Non-object roots (slices, primitives, pointers) are transparently wrapped in a `{"response": ...}` envelope, because the API requires an object root; `ValidateJSON` unwraps it.
 - `agents.OutputTypeNonStrict[T]()` disables strict-mode schema rewriting for types strict mode cannot express (e.g. maps with arbitrary keys).
-- Schema generation failures (recursive types, `map` roots in strict mode) fail the run with a `*UserError` before any model call.
+- Schema generation failures (recursive types, `map` roots in strict mode) panic in `OutputType`, as they do in `NewTool`: the type is a bug a test surfaces. `NewDynamicOutputSchema` takes a schema as data and returns the error instead.
 
 ## Stopping after tools run
 

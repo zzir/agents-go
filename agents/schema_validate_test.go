@@ -123,7 +123,10 @@ func TestSchemaValidation_DynamicSchemaIsEnforced(t *testing.T) {
 		},
 		"required": []any{"count"},
 	}
-	out := NewDynamicOutputSchema("result", schema, false)
+	out, err := NewDynamicOutputSchema("result", schema, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := out.ValidateJSON(`{"count":"nope"}`); err == nil {
 		t.Error("a type mismatch was accepted by a dynamic schema")

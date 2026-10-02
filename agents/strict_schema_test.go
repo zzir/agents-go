@@ -299,6 +299,29 @@ func TestNewTool_TypelessAnyFieldPanics(t *testing.T) {
 		})
 }
 
+// An output type strict mode cannot express fails where it is built, as a
+// tool's argument type does; the non-strict twin takes it.
+func TestOutputType_TypelessAnyFieldPanics(t *testing.T) {
+	type badOut struct {
+		Data any `json:"data" jsonschema:"some data"`
+	}
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected a construction panic for a tagged any field")
+			}
+			if msg := fmt.Sprint(r); !strings.Contains(msg, "OutputType") || !strings.Contains(msg, "badOut") {
+				t.Errorf("panic should name the constructor and the type, got %q", msg)
+			}
+		}()
+		OutputType[badOut]()
+	}()
+	if OutputTypeNonStrict[badOut]().IsStrictJSONSchema() {
+		t.Error("OutputTypeNonStrict must leave strict mode off")
+	}
+}
+
 // --- NewToolNonStrict builds what NewTool has to reject.
 
 func TestNewToolNonStrict_UnconstrainedFieldGetsASchema(t *testing.T) {
@@ -425,7 +448,8 @@ func TestStrict_NormalizationErrorAdviceFitsRuntimeSchemas(t *testing.T) {
 			return err
 		},
 		"NewDynamicOutputSchema": func(s map[string]any) error {
-			return outputSchemaError(NewDynamicOutputSchema("out", s, true))
+			_, err := NewDynamicOutputSchema("out", s, true)
+			return err
 		},
 	}
 	for schemaName, schema := range schemas {

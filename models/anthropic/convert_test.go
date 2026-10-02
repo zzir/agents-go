@@ -343,10 +343,13 @@ func TestEffortMapsToAdaptiveThinking(t *testing.T) {
 
 	// An explicit max_tokens stands as given, and the effort rides beside a
 	// structured-output format without displacing it.
-	schema := agents.NewDynamicOutputSchema("answer", map[string]any{
+	schema, err := agents.NewDynamicOutputSchema("answer", map[string]any{
 		"type": "object", "properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
 		"required": []any{"ok"}, "additionalProperties": false,
 	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	wire = wireParams(t, testModel(), agents.ModelRequest{
 		Input:        agents.InputItemsFromText("hi"),
 		OutputSchema: schema,
