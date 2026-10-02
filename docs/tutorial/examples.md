@@ -29,7 +29,7 @@ go run ./examples/hello
 | [`examples/branching`](../../examples/branching/main.go) | A session is a tree: branch from an earlier point without deleting the attempt |
 | [`examples/projector`](../../examples/projector/main.go) | `session.Projector`: deciding what the model gets to read |
 | [`examples/tasks`](../../examples/tasks/main.go) | Background sub-agents: spawn, the wake-up debt, and the parent woken with the result |
-| [`examples/middleware`](../../examples/middleware/main.go) | Run middleware: `Retry` + `Approval` policy + evaluator-driven `Loop`, stacked |
+| [`examples/middleware`](../../examples/middleware/main.go) | Run middleware: `Approval` policy + evaluator-driven `Loop`, stacked |
 | [`examples/planmode`](../../examples/planmode/main.go) | Plan mode + a local checklist tool: read-only exploration, a `submit_plan` approval pause, then execution in the same run |
 | [`examples/runcompaction`](../../examples/runcompaction/main.go) | Run-level compaction: a `compaction.Strategy` folding tool results mid-run, at the turn boundary |
 | [`examples/contextmanagement`](../../examples/contextmanagement/main.go) | The context levers: the budget notice, `history_search`/`history_read` over folded history, the model's own memory by scope, and a `new_context` reset |

@@ -57,8 +57,8 @@ func TestHITL_InterruptThenApprove(t *testing.T) {
 
 // The pause snapshot must survive the resume it feeds: ResumeRun adopts a COPY
 // of state.Usage, so the resumed run's accumulation cannot write through into
-// the RunState the caller still holds. A Retry middleware resuming the same
-// state twice would otherwise start its second attempt from the first attempt's
+// the RunState the caller still holds. A middleware resuming the same state
+// twice would otherwise start its second attempt from the first attempt's
 // inflated counters, and re-serializing the state after a resume would persist
 // them.
 func TestHITL_ResumeLeavesPauseStateUsageIntact(t *testing.T) {

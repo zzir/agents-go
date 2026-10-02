@@ -1613,9 +1613,7 @@ run).
   re-sends what the session already holds
   ([§5.44](../explanation/decisions.md#544-middleware-and-sessions-the-session-is-the-memory-not-the-input)).
 - **`Loop` carries only the evaluator's feedback when a `Session` is attached**
-  (the whole attempt otherwise); **`Retry` re-runs with no input once an
-  attempt announced its save** (`ItemsPersistedEvent`,
-  [§2.5](#25-session-persistence-boundaries)) and re-sends the input otherwise.
+  (the whole attempt otherwise).
 - **The public `ResumeRun` applies `opts.Middlewares` exactly as `Run` does.**
   The paused state's agent and input are already decided; a middleware's edits
   to those fields do not apply on resume.

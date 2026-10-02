@@ -84,7 +84,7 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   the loop; abandoning it stops the run. No producer goroutine, no context that
   must be cancelled on early exit.
 - **Middleware** — `agents/middleware.go` defines `RunMiddleware`;
-  `agents/middleware/` ships `Loop`, `Approval`, `Retry`, `Plan`, `Todo`.
+  `agents/middleware/` ships `Loop`, `Approval`, `Plan`, `Todo`.
   Wrapping a whole run belongs here, not in the loop.
 - **Models** — `agents/model.go`; backends are `models/openai` (Responses
   API, the native format) and `models/anthropic` (Messages API, translated in

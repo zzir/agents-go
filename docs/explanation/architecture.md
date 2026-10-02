@@ -34,7 +34,7 @@ Run(ctx, agent, input, opts)
   │
   ├─ input normalization ──────────── once, up front, so every middleware
   │                                    inspects the same item list
-  ├─ middleware chain ─────────────── Loop, Approval, Retry, yours
+  ├─ middleware chain ─────────────── Loop, Approval, Plan, yours
   │
   └─ run loop ─── per turn ──────────┐
        ├─ budget / cancellation check │

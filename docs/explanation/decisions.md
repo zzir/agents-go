@@ -1020,19 +1020,16 @@ pointer already does. The old keys decode past silently, the
 
 **Decision.** With a session attached, a re-entering middleware sends only
 what the session does not yet hold. `Loop` sends the evaluator's feedback
-alone — the attempt it judged completed and is persisted. `Retry` keys on the
-SDK's own announcement: the user-input save emits `ItemsPersistedEvent` like
-every other save that leaves nothing behind, and an attempt that announced one
-stored the input.
+alone — the attempt it judged completed and is persisted. A middleware that
+must know whether an attempt stored its input reads the SDK's own
+announcement: the user-input save emits `ItemsPersistedEvent` like every
+other save that leaves nothing behind.
 
 **Rejected.** Rebuilding the next attempt's input by hand (`Loop` feeding the
-whole attempt back through `ToInputList`, `Retry` re-sending the original
-input) — right without a session and wrong with one: the loop prepends the
-session's history to every attempt and persists the new input ahead of the
-first model call, so the model saw the prompt twice and the prior turns three
-times over. Keying `Retry` on "a session is attached" — a transient failure
-ahead of the save (a session read, a tool listing, a start hook) would then
-retry without the message.
+whole attempt back through `ToInputList`) — right without a session and wrong
+with one: the loop prepends the session's history to every attempt and
+persists the new input ahead of the first model call, so the model saw the
+prompt twice and the prior turns three times over.
 
 **Cost accepted.** Announcing the user-input save widens an existing
 contract; the one consumer that mirrors persisted state from it (the

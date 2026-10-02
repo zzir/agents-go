@@ -183,7 +183,7 @@ mw := agents.RunMiddlewareFunc(func(ctx context.Context, next agents.RunFunc, in
 })
 
 agents.RunSync(ctx, agent, "hi", agents.RunOptions{
-	Middlewares: []agents.RunMiddleware{middleware.Retry{MaxAttempts: 2}, mw},
+	Middlewares: []agents.RunMiddleware{mw},
 })
 ```
 
@@ -199,7 +199,6 @@ refuse before the model is ever called.
 |---|---|
 | `middleware.Loop` | Re-runs the agent until an `Evaluator` accepts the answer, feeding each rejected attempt back with the reason |
 | `middleware.Approval` | Answers approval interruptions from a standing `ApprovalPolicy` and resumes, so the caller only sees the pauses the policy declined |
-| `middleware.Retry` | Re-runs a **failed** run |
 | `middleware.Plan` | Plan mode: read-only exploration, a plan submitted through `submit_plan` pauses for approval, and approval unlocks the toolset in the same run |
 | `middleware.Todo` | **Deprecated, removed in v0.5.0** — give the agent a checklist tool of your own instead ([examples/planmode](../../examples/planmode/main.go)) |
 
@@ -207,7 +206,6 @@ refuse before the model is ever called.
 import "github.com/zzir/agents-go/agents/middleware"
 
 opts.Middlewares = []agents.RunMiddleware{
-	middleware.Retry{MaxAttempts: 3},
 	middleware.Approval{Policy: middleware.AllowTools("read_file", "list_files")},
 	middleware.Loop{Evaluate: func(ctx context.Context, res *agents.RunResult) (middleware.Evaluation, error) {
 		if looksRight(res.FinalOutputString()) {
@@ -238,10 +236,10 @@ durable-resume host persists, are
 [spec §2.12](../reference/spec.md#212-middleware); a runnable program with
 plan mode and such a tool is [examples/planmode](../../examples/planmode/main.go).
 
-`middleware.Retry` re-runs the whole run from the start; `agents.NewRetryModel`
-retries one model call and the run never notices ([Models](models.md)). With a
-session attached, neither `Loop` nor `Retry` re-sends what the session already
-holds ([spec §2.12](../reference/spec.md#212-middleware)).
+Retrying is not a middleware: `agents.NewRetryModel` retries one model call and
+the run never notices ([Models](models.md)). With a session attached, `Loop`
+never re-sends what the session already holds
+([spec §2.12](../reference/spec.md#212-middleware)).
 
 For callbacks tied to a specific agent rather than the whole run, see
 [`Agent.OnStart` / `Agent.OnEnd`](agents.md#per-agent-callbacks).

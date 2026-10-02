@@ -1,9 +1,8 @@
 // Command middleware demonstrates run middleware: policy layered over the run
 // loop instead of built into it.
 //
-// Three of them stack here, outermost first:
+// Two of them stack here, outermost first:
 //
-//	Retry    — re-runs the whole run if it fails outright
 //	Loop     — re-runs the agent until an evaluator accepts the answer
 //	Approval — answers approval pauses from a standing rule and resumes
 //
@@ -56,9 +55,6 @@ func main() {
 	opts := agents.RunOptions{
 		Model: agents.ModelOptions{Provider: provider},
 		Middlewares: []agents.RunMiddleware{
-			// Outermost: a failure the loop could not absorb gets one more go.
-			middleware.Retry{MaxAttempts: 2},
-
 			// Judge the answer, and say why when rejecting it.
 			middleware.Loop{
 				MaxAttempts: 3,
