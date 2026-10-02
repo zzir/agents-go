@@ -66,6 +66,8 @@ type Options struct {
 
 	// MaxRetryAttempts is the number of times to retry a failed list_tools or
 	// call_tool request. 0 (default) means no retries; -1 retries indefinitely.
+	// A retried call_tool may run twice: a transport failure cannot say whether
+	// the server got it.
 	MaxRetryAttempts int
 
 	// RetryBackoffBase is the base delay for exponential backoff between retries
@@ -461,8 +463,8 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	}
 	err := s.runWithRetries(ctx, fetch)
 	if err != nil && s.healed(err, session) {
-		// The list is idempotent, so ask again on the healed connection; a tool
-		// CALL is never repeated (decisions §5.21).
+		// The list is idempotent, so ask again on the healed connection; the
+		// redial never repeats a tool CALL (decisions §5.21).
 		err = s.runWithRetries(ctx, fetch)
 	}
 	if err != nil {

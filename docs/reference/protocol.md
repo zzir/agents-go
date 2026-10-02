@@ -383,7 +383,8 @@ The one transport is streamable HTTP (decisions §5.25), so `config` is
 `{endpoint, headers, auth_mode, oauth_*, max_retry_attempts, retry_backoff_ms,
 use_structured_content}` with `auth_mode` `header` or `oauth` — a raw JSON
 blob the OpenAPI document cannot expand. `max_retry_attempts` retries a failed
-`list_tools`/`call_tool` (`0` never, `-1` without limit), `retry_backoff_ms`
+`list_tools`/`call_tool` (`0` never, `-1` without limit; a retried
+`call_tool` may run twice), `retry_backoff_ms`
 is the base of its exponential backoff (`0` the SDK's 1s), and
 `use_structured_content` takes a result's `structuredContent` alone, for a
 server that fills only that field. A local stdio-only MCP server can join

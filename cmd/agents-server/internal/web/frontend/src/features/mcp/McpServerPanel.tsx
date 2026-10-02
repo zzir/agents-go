@@ -164,7 +164,7 @@ function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAuth }: M
         <Button onClick={handleClearAuth} variant="danger" disabled={clearing}>Clear auth</Button>,
         'Disconnects and deletes the saved OAuth token; the next connect asks for authorization again.',
       )}
-      {fc('Max retry attempts', <TextInput block type="number" min={-1} value={form.max_retry_attempts} placeholder="0" onChange={e => set('max_retry_attempts', e.target.value)} />, '0 = no retries, -1 = retry indefinitely on a failed list_tools/call_tool')}
+      {fc('Max retry attempts', <TextInput block type="number" min={-1} value={form.max_retry_attempts} placeholder="0" onChange={e => set('max_retry_attempts', e.target.value)} />, '0 = no retries, -1 = retry indefinitely; a retried call_tool may run twice')}
       {Number(form.max_retry_attempts.trim() || 0) !== 0 && fc('Retry backoff (ms)', <TextInput block type="number" min={0} value={form.retry_backoff_ms} placeholder="0" onChange={e => set('retry_backoff_ms', e.target.value)} />, 'Base delay for exponential backoff (0 = default 1000ms)')}
       <ToggleRow label="Use structured content" checked={form.use_structured_content} onChange={v => set('use_structured_content', v)}
         description="Use a tool result's structuredContent field exclusively (for servers that only populate it)" />

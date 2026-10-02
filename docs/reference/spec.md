@@ -1884,13 +1884,15 @@ runs, their background tasks, other conversations.
 - **A death is noticed as it happens** — the connection is watched — **and
   healing is throttled**; a heal the throttle skipped is retried once after
   the cooldown.
-- **Only idempotent work is repeated.** `tools/list` is re-issued on the fresh
-  session; a failed tool CALL is reported to the model, never retried by the
-  redial.
+- **The redial repeats only idempotent work.** `tools/list` is re-issued on the
+  fresh session; a failed tool CALL is reported to the model, never retried by
+  the redial.
 - **`MaxRetryAttempts` retries on transport failure only.** An answer the
   server SENT — JSON-RPC parse error, invalid request, unknown method, invalid
   params, the transport's own "rejected" — is not retried, nor is a call made
-  after `Close`. Each attempt reloads the session.
+  after `Close`.
+- **Each attempt reloads the session, and a `tools/call` retried this way may
+  run twice.**
 - **The delay doubles per attempt, capped at 30s, jittered into `[d/2, d]`.**
   `-1` means one attempt every 30s until the caller's context ends.
 - **The MCP client does not share the model layer's `RetryPolicy`**; the
@@ -1908,7 +1910,7 @@ Model-side retry, the counterpart rule:
 
 — see decisions
 [§5.20](../explanation/decisions.md#520-a-shared-connection-is-not-a-callers-to-cancel),
-[§5.21](../explanation/decisions.md#521-a-dead-shared-connection-repairs-itself-and-a-tool-call-is-not-repeated),
+[§5.21](../explanation/decisions.md#521-a-dead-shared-connection-repairs-itself-and-the-redial-never-repeats-a-tool-call),
 [§5.21b](../explanation/decisions.md#521b-an-mcp-retry-waits-on-the-transport-never-on-an-answer),
 [§5.22](../explanation/decisions.md#522-retry-policy-lives-in-one-layer)
 

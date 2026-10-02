@@ -452,16 +452,17 @@ request that is already lost.
 
 Rules: spec §2.16.
 
-### 5.21 A dead shared connection repairs itself, and a tool call is not repeated
+### 5.21 A dead shared connection repairs itself, and the redial never repeats a tool call
 
-**Decision.** Nothing in the go-sdk reconnects, so the connection owns its
-own recovery: given `mcp.Options.Redial`, a session found dead is replaced
-**in place**, so every holder of that server recovers rather than only the
-runs that start afterwards. Death is noticed by watching the connection, not
-by a caller tripping over it; healing is throttled; and only idempotent work
-is repeated — `tools/list` is re-issued, a failed tool CALL is reported to the
-model, because a dead line cannot say whether the server ran the tool, and
-running a write twice is worse than reporting it once.
+**Decision.** Nothing in the go-sdk re-establishes a dead session (it only
+resumes an interrupted SSE stream), so the connection owns its own recovery:
+given `mcp.Options.Redial`, a session found dead is replaced **in place**, so
+every holder of that server recovers rather than only the runs that start
+afterwards. Death is noticed by watching the connection, not by a caller
+tripping over it; healing is throttled; and the redial repeats only idempotent
+work — `tools/list` is re-issued, a failed tool CALL is reported to the model,
+because a dead line cannot say whether the server ran the tool, and running a
+write twice is worse than reporting it once.
 
 **Rejected.** Reconnecting without `Redial` — only the configuration's owner
 can rebuild a transport (an `*exec.Cmd` is spent once; an endpoint needs its
