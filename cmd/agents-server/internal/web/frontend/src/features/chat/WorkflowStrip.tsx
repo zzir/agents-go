@@ -4,6 +4,7 @@ import { WorkflowIcon } from '@primer/octicons-react';
 import { useChatActions, useChatBackground } from '@/features/chat/ChatSessionContext';
 import { useDecisionHold } from '@/features/chat/useDecisionHold';
 import { STEP_APPROVAL_TOOL } from '@/lib/protocol';
+import { activates } from '@/lib/activation';
 import './workflow.css';
 
 // A running step can sit for minutes on a slow model; a live elapsed clock says
@@ -58,7 +59,7 @@ export function WorkflowStrip() {
       {live.map(it => (
         <div key={it.id} className="wf-bar" role="button" tabIndex={0}
           onClick={() => inspectTask(it.id)}
-          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inspectTask(it.id); } }}>
+          onKeyDown={e => { if (activates(e)) { e.preventDefault(); inspectTask(it.id); } }}>
           <WorkflowIcon size={14} />
           <span className="wf-bar-name">{it.label}</span>
           {it.status === 'failed' ? (

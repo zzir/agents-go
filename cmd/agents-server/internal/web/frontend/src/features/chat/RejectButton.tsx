@@ -30,6 +30,7 @@ export function RejectButton({ onReject, disabled, kind }: RejectButtonProps): R
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState('');
   const boxRef = useRef<HTMLTextAreaElement>(null);
+  const menuRef = useRef<HTMLButtonElement>(null);
   // After the menu closes it hands focus back to its anchor; the box takes it
   // a tick later.
   useEffect(() => {
@@ -39,6 +40,8 @@ export function RejectButton({ onReject, disabled, kind }: RejectButtonProps): R
   }, [asking]);
 
   const close = () => { setAsking(false); setReason(''); };
+  // Cancelling hands focus back to the control that opened the box.
+  const cancel = () => { close(); menuRef.current?.focus(); };
   const send = () => {
     const typed = reason.trim();
     close();
@@ -48,8 +51,9 @@ export function RejectButton({ onReject, disabled, kind }: RejectButtonProps): R
   return (
     <>
       <ButtonGroup>
-        <Button size="small" variant="danger" disabled={disabled} onClick={() => onReject()}>Reject</Button>
-        <ActionMenu>
+        {/* With the box open, Reject sends what was typed in it. */}
+        <Button size="small" variant="danger" disabled={disabled} onClick={send}>Reject</Button>
+        <ActionMenu anchorRef={menuRef}>
           <ActionMenu.Anchor>
             <IconButton icon={TriangleDownIcon} size="small" variant="danger" aria-label="More ways to reject" disabled={disabled} />
           </ActionMenu.Anchor>
@@ -74,9 +78,11 @@ export function RejectButton({ onReject, disabled, kind }: RejectButtonProps): R
           onKeyDown={e => {
             // The row around it may open on Enter or Space; typing is not that.
             e.stopPropagation();
-            if (e.key === 'Escape') { e.preventDefault(); close(); return; }
-            // An IME's Enter confirms the composition, never the rejection.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
+            // An IME's Enter confirms the composition and its Escape cancels it;
+            // keyCode 229 is how Safari marks the Enter after compositionend.
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+            if (e.key === 'Escape') { e.preventDefault(); cancel(); return; }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
           }}
         />
       )}

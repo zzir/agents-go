@@ -18,6 +18,7 @@ import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { STEP_APPROVAL_TOOL } from '@/lib/protocol';
 import { isLive, statusDot } from '@/lib/status';
+import { activates } from '@/lib/activation';
 import { useCopy, useNowTicker } from '@/lib/hooks';
 
 // This is the panel behind the top bar's Tasks button. It holds both kinds of
@@ -66,7 +67,7 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
           <div className="task-group-title">{g.title}</div>
           {g.items.map(it => (
             <div key={it.id} className="task-row" onClick={() => onOpen(it.id)} role="button" tabIndex={0}
-              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(it.id); } }}>
+              onKeyDown={e => { if (activates(e)) { e.preventDefault(); onOpen(it.id); } }}>
               <div className="task-row-head">
                 {statusDot(it.status)}
                 {/* A sequence is marked; a task is the unmarked default. */}

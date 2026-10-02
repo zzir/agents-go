@@ -91,12 +91,31 @@ describe('ToolCallCard approval', () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, '  use staging ');
       box.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    // An IME's Enter confirms the composition; Shift+Enter is a new line.
+    // An IME's Enter confirms the composition — Safari marks the one after
+    // compositionend with keyCode 229 alone — and its Escape cancels the
+    // composition, not the box; Shift+Enter is a new line.
     key('Enter', { isComposing: true });
+    key('Enter', { keyCode: 229 });
+    key('Escape', { isComposing: true });
     key('Enter', { shiftKey: true });
     expect(m.reject).not.toHaveBeenCalled();
+    expect(m.host.querySelector('textarea')).not.toBeNull();
     key('Enter');
     expect(m.reject.mock.calls).toEqual([['c1', 'use staging']]);
+    m.unmount();
+  });
+
+  // A reason typed and then the Reject button clicked: the reason goes with it.
+  it('Reject sends the reason the open box holds', () => {
+    const m = mount(pending('exec_command', { cmd: 'make deploy' }));
+    m.click('Reject with reason…');
+    const box = m.host.querySelector('textarea') as HTMLTextAreaElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, 'wrong target');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    m.click('Reject');
+    expect(m.reject.mock.calls).toEqual([['c1', 'wrong target']]);
     m.unmount();
   });
 
