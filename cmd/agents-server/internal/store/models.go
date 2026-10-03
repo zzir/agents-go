@@ -201,6 +201,8 @@ type HTTPMcpConfig struct {
 	McpRetryConfig // max_retry_attempts / retry_backoff_ms
 	// UseStructuredContent takes a tool result's structuredContent alone, for servers that fill only that field.
 	UseStructuredContent bool `json:"use_structured_content,omitempty"`
+	// ReadOnlyTools are the tools of this server plan mode lets the model call while planning, by the server's own name.
+	ReadOnlyTools []string `json:"read_only_tools,omitempty"`
 }
 
 // Skill is one stored SKILL.md document (decisions §5.26). Name and Description

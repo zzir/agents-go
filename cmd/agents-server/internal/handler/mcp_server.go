@@ -8,6 +8,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -529,8 +530,13 @@ func writeOAuthCallbackPage(c *gin.Context, status, errMsg string) {
 }
 
 type mcpToolInfo struct {
+	// Name is the tool as an agent sees it: the server's prefix and the tool's own name.
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// OriginalName is the tool's own name on the server, the form read_only_tools lists.
+	OriginalName string `json:"original_name"`
+	// ReadOnlyHint is the server's own claim that the tool only observes; a hint, never trusted on its own.
+	ReadOnlyHint bool `json:"read_only_hint,omitempty"`
 }
 
 // Tools responds with the tools exposed by the connected MCP server. A
@@ -565,8 +571,9 @@ func (h *McpServerHandler) Tools(c *gin.Context) {
 		return
 	}
 	items := make([]mcpToolInfo, len(tools))
+	prefix := mcpservers.ToolPrefix(srv.Name())
 	for i, t := range tools {
-		items[i] = mcpToolInfo{Name: t.Name, Description: t.Description}
+		items[i] = mcpToolInfo{Name: t.Name, Description: t.Description, OriginalName: strings.TrimPrefix(t.Name, prefix), ReadOnlyHint: t.ReadOnly}
 	}
 	c.JSON(http.StatusOK, items)
 }

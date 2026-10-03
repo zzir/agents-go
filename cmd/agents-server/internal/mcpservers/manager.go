@@ -294,11 +294,15 @@ func (m *Manager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServer
 	return m.finishConnect(cfg.ID, gen, srv, cerr)
 }
 
+// ToolPrefix is what a server's tool names carry in front when exposed to an
+// agent: the server's name and a double underscore.
+func ToolPrefix(serverName string) string { return serverName + "__" }
+
 // buildMcpOptions is the one place every connection's mcp.Options is assembled,
 // so a new option cannot be missed on the OAuth path.
 func buildMcpOptions(name string, retry store.McpRetryConfig, useStructuredContent bool) mcp.Options {
 	opts := mcp.Options{
-		ToolNamePrefix:       name + "__",
+		ToolNamePrefix:       ToolPrefix(name),
 		MaxRetryAttempts:     retry.MaxRetryAttempts,
 		UseStructuredContent: useStructuredContent,
 		// One fetch, then memory: every turn lists each server's tools, and a

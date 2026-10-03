@@ -6,6 +6,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -126,6 +127,9 @@ type BuildResult struct {
 	// PlanPhase is set when built in plan mode: the run starts read-only and the
 	// approved submit_plan unlocks it (spec §2.12).
 	PlanPhase *middleware.PlanPhase
+	// PlanReadOnly are the MCP tools, by exposed name, the entry agent's
+	// servers' configs let plan mode call — invariant 89.
+	PlanReadOnly []string
 
 	// ReasoningItemIDPolicy controls whether reasoning-item ids survive across
 	// turns (default preserve). Derived: Behavior stores it as a string.
@@ -287,7 +291,8 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 			result.Agent = entry
 			mark = bucketToolsSince(result.Agent, mark, store.ToolSourceChecklist, &result.Profile)
 		}
-		result.Agent, result.PlanPhase = middleware.Plan{}.Apply(result.Agent)
+		plan := middleware.Plan{ReadOnlyTools: append(slices.Clone(middleware.DefaultReadOnlyTools), result.PlanReadOnly...)}
+		result.Agent, result.PlanPhase = plan.Apply(result.Agent)
 		bucketToolsSince(result.Agent, mark, store.ToolSourcePlan, &result.Profile)
 	}
 	return result, nil
@@ -401,7 +406,11 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 
 	// MCP servers — a server not connected is skipped. Their tools are not
 	// measured here: asking is a network call (see the Context handler).
-	result.Profile.MCPServerIDs = attachMCPServers(ctx, deps, agent, spec, bc.ownerID)
+	attached := attachMCPServers(ctx, deps, agent, spec, bc.ownerID)
+	for _, a := range attached {
+		result.Profile.MCPServerIDs = append(result.Profile.MCPServerIDs, a.id)
+	}
+	result.PlanReadOnly = planReadOnlyNames(attached)
 
 	mark := len(agent.Tools)
 
@@ -492,24 +501,55 @@ func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agen
 
 // attachMCPServers wires the selected MCP servers, skipping any not connected
 // or not visible to the owner (decisions §5.29); returns the ids attached.
-func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) []string {
-	var attached []string
+// attachedMCP is one server wired onto an agent: its row id, its name (the
+// tool prefix) and the tools its config lets plan mode call.
+type attachedMCP struct {
+	id, name string
+	readOnly []string
+}
+
+func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) []attachedMCP {
+	var attached []attachedMCP
 	for _, id := range spec.Tools {
-		if ownerID != "" && deps.McpServers != nil {
+		var row *store.McpServerConfig
+		if deps.McpServers != nil {
 			cfg, err := deps.McpServers.Get(ctx, id)
-			if err != nil || !store.Visible(cfg.Scope, cfg.OwnerID, ownerID, false) {
+			if err != nil || (ownerID != "" && !store.Visible(cfg.Scope, cfg.OwnerID, ownerID, false)) {
 				logging.Ctx(ctx).Debug("MCP server not visible to this session, skipping", "mcp_id", id)
 				continue
 			}
+			row = cfg
 		}
-		if srv := deps.McpManager.Get(id); srv != nil {
-			agent.MCPServers = append(agent.MCPServers, srv)
-			attached = append(attached, id)
-		} else {
+		srv := deps.McpManager.Get(id)
+		if srv == nil {
 			logging.Ctx(ctx).Debug("MCP server not connected, skipping", "mcp_id", id)
+			continue
 		}
+		agent.MCPServers = append(agent.MCPServers, srv)
+		a := attachedMCP{id: id, name: srv.Name()}
+		if row != nil {
+			var hc store.HTTPMcpConfig
+			if json.Unmarshal(row.Config, &hc) == nil {
+				a.readOnly = hc.ReadOnlyTools
+			}
+		}
+		attached = append(attached, a)
 	}
 	return attached
+}
+
+// planReadOnlyNames turns each server's read_only_tools into the names the
+// agent sees them by — the one list plan mode admits an MCP tool from.
+func planReadOnlyNames(servers []attachedMCP) []string {
+	var out []string
+	for _, s := range servers {
+		for _, n := range s.readOnly {
+			if n != "" {
+				out = append(out, mcpservers.ToolPrefix(s.name)+n)
+			}
+		}
+	}
+	return out
 }
 
 // attachSandboxTools attaches the bound project's sandbox tools. NO PROJECT,

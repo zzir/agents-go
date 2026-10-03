@@ -37,7 +37,12 @@ interface McpServerConfig {
   max_retry_attempts?: number;
   retry_backoff_ms?: number;
   use_structured_content?: boolean;
+  // The server's tools plan mode may call while planning, by their own names.
+  read_only_tools?: string[];
 }
+
+// A tool as GET /mcp-servers/:id/tools lists it.
+interface McpTool { name: string; description?: string; original_name: string; read_only_hint?: boolean }
 
 // Lifecycle status derived by the backend — the panel renders it verbatim and
 // keeps no state model of its own (POST /connect + polling move it along).
@@ -67,6 +72,7 @@ interface McpFormData {
   max_retry_attempts: string;
   retry_backoff_ms: string;
   use_structured_content: boolean;
+  read_only_tools: string[];
 }
 
 interface McpFormProps {
@@ -78,7 +84,7 @@ interface McpFormProps {
   onClearAuth?: () => Promise<boolean>;
 }
 
-function flatten(s: Partial<McpServer>): McpFormData {
+export function flatten(s: Partial<McpServer>): McpFormData {
   const c = s.config || {};
   return {
     name: s.name || '', enabled: s.enabled !== false,
@@ -91,13 +97,14 @@ function flatten(s: Partial<McpServer>): McpFormData {
     max_retry_attempts: numberDraft(c.max_retry_attempts),
     retry_backoff_ms: numberDraft(c.retry_backoff_ms),
     use_structured_content: c.use_structured_content || false,
+    read_only_tools: c.read_only_tools || [],
   };
 }
 
 // Throws on invalid JSON in the Args / Headers fields, or a retry number that
 // is not one, so the caller can block the save and surface it — parsing to
 // an empty value and saving anyway silently discarded whatever the user typed.
-function pack(form: McpFormData): Partial<McpServer> {
+export function pack(form: McpFormData): Partial<McpServer> {
   const base: Partial<McpServer> = { name: form.name, enabled: form.enabled };
   const config: McpServerConfig = { endpoint: form.endpoint };
   if (form.auth_mode === 'header' || !form.auth_mode) {
@@ -117,14 +124,34 @@ function pack(form: McpFormData): Partial<McpServer> {
   if (retries) config.max_retry_attempts = retries;
   if (backoff) config.retry_backoff_ms = backoff;
   if (form.use_structured_content) config.use_structured_content = true;
+  if (form.read_only_tools.length > 0) config.read_only_tools = form.read_only_tools;
   return { ...base, config };
 }
 
-function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAuth }: McpFormProps) {
+// readOnlyHinted picks the tools a server marks read-only, in listing order:
+// the list a person adopts with one click, as a statement of trust in the
+// server's hints — the hints alone admit nothing (invariant 89).
+export function readOnlyHinted(tools: McpTool[]): string[] {
+  return tools.filter(t => t.read_only_hint).map(t => t.original_name);
+}
+
+export function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAuth }: McpFormProps) {
   const [form, setForm] = useState<McpFormData>(flatten(initial || {}));
   const [authCleared, setAuthCleared] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const set = (k: keyof McpFormData, v: string | boolean | number) => setForm(prev => ({ ...prev, [k]: v }));
+  const set = (k: keyof McpFormData, v: string | boolean | number | string[]) => setForm(prev => ({ ...prev, [k]: v }));
+  // The server's tools, asked for while it is connected: the list to pick
+  // the plan-mode allowance from. Disconnected, the saved names show as they are.
+  const connected = initial?.status === 'connected';
+  const [tools, setTools] = useState<McpTool[] | null>(null);
+  useEffect(() => {
+    if (!connected || !initial?.id) return;
+    let stale = false;
+    (api.mcpServers.tools(initial.id) as Promise<McpTool[]>).then(t => { if (!stale) setTools(t); }).catch(() => { if (!stale) setTools([]); });
+    return () => { stale = true; };
+  }, [connected, initial?.id]);
+  const toggleReadOnly = (name: string, on: boolean) =>
+    set('read_only_tools', on ? [...form.read_only_tools.filter(n => n !== name), name] : form.read_only_tools.filter(n => n !== name));
   const isOAuth = form.auth_mode === 'oauth';
   const isHeader = form.auth_mode === 'header';
   const canClearAuth = !!onClearAuth && !authCleared && isOAuth && !!initial?.has_oauth_token;
@@ -168,6 +195,35 @@ function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAuth }: M
       {Number(form.max_retry_attempts.trim() || 0) !== 0 && fc('Retry backoff (ms)', <TextInput block type="number" min={0} value={form.retry_backoff_ms} placeholder="0" onChange={e => set('retry_backoff_ms', e.target.value)} />, 'Base delay for exponential backoff (0 = default 1000ms)')}
       <ToggleRow label="Use structured content" checked={form.use_structured_content} onChange={v => set('use_structured_content', v)}
         description="Use a tool result's structuredContent field exclusively (for servers that only populate it)" />
+      {/* Plan mode admits an MCP tool only by name (invariant 89): the names
+          are picked here, per tool, with the server's own hints one click
+          away as a choice a person makes, never a default. */}
+      {(initial?.id) && (
+        <div className="form-group">
+          <div className="form-group-title">Allowed while planning</div>
+          {connected && tools === null && <div className="FormControl-caption">Asking the server for its tools…</div>}
+          {connected && tools && tools.length === 0 && <div className="FormControl-caption">The server lists no tools.</div>}
+          {connected && tools && tools.length > 0 && (
+            <>
+              <div className="form-checkbox-group">
+                {tools.map(t => (
+                  <ToggleRow key={t.original_name} label={t.original_name} checked={form.read_only_tools.includes(t.original_name)}
+                    onChange={v => toggleReadOnly(t.original_name, v)}
+                    description={(t.read_only_hint ? 'Marked read-only by the server. ' : '') + (t.description || '')} />
+                ))}
+              </div>
+              <Button size="small" onClick={() => set('read_only_tools', readOnlyHinted(tools))} disabled={readOnlyHinted(tools).length === 0}>
+                Select the ones the server marks read-only
+              </Button>
+            </>
+          )}
+          {!connected && (
+            <div className="FormControl-caption">
+              {form.read_only_tools.length > 0 ? 'Saved: ' + form.read_only_tools.join(', ') + ' — connect the server to change the list.' : 'Connect the server to pick which of its tools plan mode may call.'}
+            </div>
+          )}
+        </div>
+      )}
       <ToggleRow label="Enabled" checked={form.enabled} onChange={v => set('enabled', v)} />
       <FormActions
         saving={saving}

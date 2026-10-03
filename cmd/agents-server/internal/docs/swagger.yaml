@@ -856,7 +856,17 @@ components:
         description:
           type: string
         name:
+          description: 'Name is the tool as an agent sees it: the server''s prefix
+            and the tool''s own name.'
           type: string
+        original_name:
+          description: OriginalName is the tool's own name on the server, the form
+            read_only_tools lists.
+          type: string
+        read_only_hint:
+          description: ReadOnlyHint is the server's own claim that the tool only observes;
+            a hint, never trusted on its own.
+          type: boolean
       type: object
     handler.memoryReq:
       properties:

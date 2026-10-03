@@ -8457,7 +8457,12 @@ export interface components {
         };
         "handler.mcpToolInfo": {
             description?: string;
+            /** @description Name is the tool as an agent sees it: the server's prefix and the tool's own name. */
             name?: string;
+            /** @description OriginalName is the tool's own name on the server, the form read_only_tools lists. */
+            original_name?: string;
+            /** @description ReadOnlyHint is the server's own claim that the tool only observes; a hint, never trusted on its own. */
+            read_only_hint?: boolean;
         };
         "handler.memoryReq": {
             content?: string;

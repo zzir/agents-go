@@ -514,3 +514,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     Anthropic prefixes replays to an Anthropic backend and a Responses-format
     one to a Responses backend, never the other way; with no backend set every
     switch drops it (`store/item_json.go`).
+89. **An MCP tool is usable while planning only when its server's config
+    names it.** `HTTPMcpConfig.ReadOnlyTools` lists the tool's own name; the
+    build prefixes each with the server's name and adds them to `Plan`'s
+    allow-list (`bridge/agent.go`, `planReadOnlyNames`). The server's
+    `readOnlyHint` admits nothing on its own — decisions §5.53.

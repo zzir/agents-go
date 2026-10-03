@@ -417,8 +417,14 @@ Connect button), which for an OAuth server may answer with an `authorize_url`
 instead of a connection. Disabling disconnects, and a disabled server cannot
 be connected (`409`) — agents pick tools by live connection, so the toggle is
 a hard off switch. `GET /mcp-servers/:id/tools` lists what a connected server
-exposes; a server that exists but is not connected is `409`, unlike the `404`
-of one the caller cannot see.
+exposes — each tool's exposed `name`, its `original_name` on the server and
+the server's `read_only_hint`; a server that exists but is not connected is
+`409`, unlike the `404` of one the caller cannot see. The config's
+`read_only_tools` names, by `original_name`, the tools of this server plan
+mode lets the model call while planning; nothing else admits an MCP tool
+there, the server's hint included — the UI offers the hinted ones as a list a
+person adopts with a click. A change to the list saves like any config change
+and reconnects the server in the background.
 
 Every read endpoint reports one derived `status` per server: `disabled`,
 `connecting` (handshake in flight), `authorizing` (OAuth popup pending user
