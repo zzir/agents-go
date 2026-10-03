@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"net"
 	"os/exec"
 	"slices"
 	"strings"
@@ -66,8 +67,8 @@ type Options struct {
 
 	// MaxRetryAttempts is the number of times to retry a failed list_tools or
 	// call_tool request. 0 (default) means no retries; -1 retries indefinitely.
-	// A retried call_tool may run twice: a transport failure cannot say whether
-	// the server got it.
+	// A call_tool is retried only when the connection could not be made, so a
+	// tool never runs twice; a list_tools retries any transport failure.
 	MaxRetryAttempts int
 
 	// RetryBackoffBase is the base delay for exponential backoff between retries
@@ -509,18 +510,32 @@ var errServerClosed = errors.New("server is closed")
 
 // retryable reports whether err is worth another attempt: a transport failure
 // is; an answer the server sent, or a call after Close, is not (spec §2.16).
+// The transport's own "rejected" counts as an answer unless a failed dial is
+// behind it.
 func retryable(err error) bool {
 	if errors.Is(err, errServerClosed) {
 		return false
 	}
 	if wire, ok := errors.AsType[*jsonrpc.Error](err); ok {
 		switch wire.Code {
+		case codeRejected:
+			return neverSent(err)
 		case codeParseError, codeInvalidRequest, codeMethodNotFound,
-			codeInvalidParams, codeClientClosing, codeRejected:
+			codeInvalidParams, codeClientClosing:
 			return false
 		}
 	}
 	return true
+}
+
+// neverSent reports whether err proves the request never left: the dial
+// failed. Any other failure may have reached the server.
+func neverSent(err error) bool {
+	if errors.Is(err, errServerClosed) {
+		return false
+	}
+	op, ok := errors.AsType[*net.OpError](err)
+	return ok && op.Op == "dial"
 }
 
 // retryBackoff is the delay before the next attempt: base doubled per attempt,
@@ -537,6 +552,11 @@ func retryBackoff(base time.Duration, attempt int) time.Duration {
 // runWithRetries retries RETRYABLE failures up to MaxRetryAttempts times (-1
 // indefinitely, 0 never) with retryBackoff between attempts.
 func (s *Server) runWithRetries(ctx context.Context, fn func() error) error {
+	return s.runWithRetriesIf(ctx, retryable, fn)
+}
+
+// runWithRetriesIf is runWithRetries with its own notion of a retryable error.
+func (s *Server) runWithRetriesIf(ctx context.Context, retryIf func(error) bool, fn func() error) error {
 	base := s.opts.RetryBackoffBase
 	if base <= 0 {
 		base = time.Second
@@ -548,7 +568,7 @@ func (s *Server) runWithRetries(ctx context.Context, fn func() error) error {
 			return nil
 		}
 		attempts++
-		if !retryable(err) {
+		if !retryIf(err) {
 			return err
 		}
 		if s.opts.MaxRetryAttempts != -1 && attempts > s.opts.MaxRetryAttempts {
@@ -627,9 +647,11 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 			})
 			defer span.Finish()
 
+			// A call is repeated only when it never left (spec §2.16): a
+			// failure after the dial may have run the tool.
 			var result *mcpsdk.CallToolResult
 			session := s.session.Load()
-			if err := s.runWithRetries(ctx, func() error {
+			if err := s.runWithRetriesIf(ctx, neverSent, func() error {
 				var e error
 				if s.closed.Load() {
 					return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: server %q: %w", s.name, errServerClosed))
@@ -639,8 +661,7 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 				})
 				return e
 			}); err != nil {
-				// Repair the connection but do NOT repeat the call: a dead line cannot
-				// say whether the server ran it (decisions §5.21).
+				// Repair the connection but do NOT repeat the call (decisions §5.21).
 				s.healed(err, session)
 				span.SetError(err.Error(), nil)
 				// A transport/protocol failure is fed back to the model via the

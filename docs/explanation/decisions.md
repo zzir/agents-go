@@ -472,17 +472,24 @@ Rules: spec §2.16.
 reloads the session, so a connection the watcher healed carries the next try
 — and never an answer the server sent (a JSON-RPC error means it understood
 the request and refused it; the same bytes earn the same refusal) or a call
-after `Close`. The delay is capped and jittered to match the model layer's
-timing, so a server shared by many runs is not retried in lockstep. The two
-bounds are what let `-1` be a real setting rather than a footgun: one attempt
-per cap until the caller's context ends, with the errors that could never
-succeed leaving on the first try.
+after `Close`. A `tools/call` is held to more: it is repeated only when the
+dial failed, the one failure that proves the request never left; a cut after
+the send, a deadline, the transport's "rejected" with any other cause may all
+have run the tool, and are reported. The delay is capped and jittered to match
+the model layer's timing, so a server shared by many runs is not retried in
+lockstep; the two bounds are what let `-1` be a real setting rather than a
+footgun.
 
 **Rejected.** Sharing the model layer's `RetryPolicy` — its `DefaultRetryIf`
 (retry everything but cancellation) is exactly the policy that made an
 infinite MCP retry indistinguishable from a hang; one knob with two defaults
 serves neither. An uncapped exponent — a one-second base sleeps half an hour
-by the twelfth attempt.
+by the twelfth attempt. Retrying a call on the tool's `readOnlyHint` — an
+outside claim (§5.53).
+
+**Cost accepted.** A call the server never received because the connection
+died after the dial is not retried either; the model hears about it and
+decides.
 
 Rules: spec §2.16.
 

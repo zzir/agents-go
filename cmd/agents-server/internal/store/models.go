@@ -177,7 +177,7 @@ type McpServerConfig struct {
 
 // McpRetryConfig is the per-request retry settings embedded in HTTPMcpConfig.
 type McpRetryConfig struct {
-	// MaxRetryAttempts retries a failed list_tools/call_tool; 0 disables, -1 retries indefinitely; a retried call_tool may run twice.
+	// MaxRetryAttempts retries a failed list_tools/call_tool; 0 disables, -1 retries indefinitely; a call_tool is retried only when the connection could not be made.
 	MaxRetryAttempts int `json:"max_retry_attempts,omitempty"`
 	// RetryBackoffMs is the base delay for exponential backoff; 0 leaves the SDK default (1s).
 	RetryBackoffMs int `json:"retry_backoff_ms,omitempty"`

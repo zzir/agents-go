@@ -1881,10 +1881,11 @@ runs, their background tasks, other conversations.
   the redial.
 - **`MaxRetryAttempts` retries on transport failure only.** An answer the
   server SENT — JSON-RPC parse error, invalid request, unknown method, invalid
-  params, the transport's own "rejected" — is not retried, nor is a call made
-  after `Close`.
-- **Each attempt reloads the session, and a `tools/call` retried this way may
-  run twice.**
+  params — is not retried, nor is a call made after `Close`; the transport's
+  own "rejected" is retried only when a failed dial is behind it.
+- **A `tools/call` is retried only when it never left**: the dial failed. Any
+  other failure may have run the tool and is reported to the model instead;
+  `tools/list` retries every transport failure. Each attempt reloads the session.
 - **The delay doubles per attempt, capped at 30s, jittered into `[d/2, d]`.**
   `-1` means one attempt every 30s until the caller's context ends.
 - **The MCP client does not share the model layer's `RetryPolicy`**; the
