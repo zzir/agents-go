@@ -16,10 +16,12 @@ import (
 // on each call — plan mode's whole point is what the model can SEE per phase.
 type recordingModel struct {
 	scriptedModel
-	toolsPerCall [][]string
+	toolsPerCall  [][]string
+	systemPerCall []string
 }
 
 func (m *recordingModel) record(req agents.ModelRequest) {
+	m.systemPerCall = append(m.systemPerCall, req.SystemInstructions)
 	names := make([]string, 0, len(req.Tools)+len(req.Handoffs))
 	for _, t := range req.Tools {
 		names = append(names, t.Name)
@@ -120,6 +122,44 @@ func TestPlan_ApproveUnlocksExecutionInTheSameRun(t *testing.T) {
 	}
 	if slices.Contains(last, "locked_write") {
 		t.Fatalf("unlock resurrected a host-disabled tool: %v", last)
+	}
+}
+
+// The unlock changes the request prefix a backend may bind reasoning to:
+// the preamble leaves the system text, submit_plan leaves the tool list and
+// the handoffs appear. Pinned so the cost stays known (decisions §5.53).
+func TestPlan_UnlockChangesThePrefix(t *testing.T) {
+	model := &recordingModel{responses: []*agents.ModelResponse{
+		resp(toolCallArgs(t, PlanToolName, "c1", `{"plan":"p"}`)),
+		resp(message(t, "done")),
+	}}
+	agent := &agents.Agent{
+		Name:         "a",
+		ModelImpl:    model,
+		Instructions: agents.StaticInstructions("Be brief."),
+		Tools:        []*agents.Tool{noopTool("read_file", nil), noopTool("write_file", nil)},
+		Handoffs:     []agents.Handoff{agents.HandoffTo(&agents.Agent{Name: "other"})},
+	}
+	res, err := agents.RunSync(context.Background(), agent, "go", agents.RunOptions{Middlewares: []agents.RunMiddleware{Plan{}}})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	res.State.Approve(res.Interruptions[0], false)
+	if _, err := agents.ResumeRunSync(context.Background(), res.State, agents.RunOptions{}); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if len(model.systemPerCall) != 2 {
+		t.Fatalf("calls = %d, want 2", len(model.systemPerCall))
+	}
+	planning, executing := model.systemPerCall[0], model.systemPerCall[1]
+	if !strings.Contains(planning, "PLAN MODE") || !strings.HasSuffix(strings.TrimSpace(planning), "Be brief.") {
+		t.Fatalf("planning system text = %q, want the preamble ahead of the agent's own", planning)
+	}
+	if executing != "Be brief." {
+		t.Fatalf("executing system text = %q, want the agent's own alone", executing)
+	}
+	if slices.Equal(model.toolsPerCall[0], model.toolsPerCall[1]) {
+		t.Fatalf("the tool list did not change across the unlock: %v", model.toolsPerCall[0])
 	}
 }
 

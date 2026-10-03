@@ -1596,6 +1596,9 @@ targets keep their own toolset.
 - **Handoffs ARE hidden while planning** (`Handoff.IsEnabled`). The gate
   composes with the predicate it wraps, so unlocking never resurrects a
   handoff the host itself disabled.
+- **The unlock edits the prefix**: the preamble leaves the system text and
+  `submit_plan` the tool list as the handoffs appear, a change a
+  prefix-binding backend answers by dropping the planning-phase reasoning ([§2.15](#215-the-model-adapter-contract)).
 - **A first-party tool's `ReadOnly` is trusted; an MCP tool's is not.** An MCP
   tool is admitted while planning only when the caller named it in
   `ReadOnlyTools` (`DefaultReadOnlyTools` when nil), never on the server's

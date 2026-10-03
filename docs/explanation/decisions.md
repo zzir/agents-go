@@ -1195,30 +1195,25 @@ a refusal naming `submit_plan`, as a normal tool OUTPUT.
 
 **Decision.** A model carries priors about tool NAMES and reaches for them
 unprompted: a hidden tool gets called anyway, and "tool not found" teaches it
-nothing about the phase — it cannot tell a gated tool from one this session
-never had. The refusal is an output because an error without
+nothing about the phase. The refusal is an output because an error without
 `FailureErrorFunction` aborts the run, and a phase decision is not a failure.
 Handoffs are the deliberate asymmetry, hidden via `Handoff.IsEnabled`: a
 target's full toolset is a side door out of plan mode, and a model has no
-priors about THIS agent's handoff targets, so hiding one wastes no turn. An
-MCP tool's `readOnlyHint` is a claim an outside server makes about itself,
-and "nothing changes until you approve" cannot rest on it; admission is by
-the caller's `ReadOnlyTools` name, a statement of trust that is the caller's
-to make. The refusal outranks approval because the approval partition runs
-before a tool invokes: a gate on `OnInvoke` alone would pause a human over a
-call the phase then refuses, so `Apply` translates `ApproveTools` into
-per-tool predicates the phase can suppress. `PlanPhase` is per run because
-the SDK has no notion of a session; `OnUnlock` exists so a host can keep its
-own record and `Unlock` before the run. `Plan.Apply` is unconditional so a
-host decides plan mode outside the agent and still rebuilds the same agent
-for a durable resume — a rebuild happens AFTER the unlock and must carry the
-`submit_plan` the paused state names. The host persists the UNLOCK, as the
-unlock's precondition: the approval ledger records approvals whose execution
-then failed, and tool output text can be rewritten by a guardrail.
-
-Only a PERSON turns plan mode on: the gate's value is "a human looks before
-anything changes", and a model that judges "simple, no plan needed" is the
-failure the gate exists to catch.
+priors about THIS agent's handoff targets, so hiding one wastes no turn; the
+cost is on the request prefix — the unlock changes the system text and the
+tool list at once, which a backend that binds reasoning to its prefix answers
+by dropping the thinking produced while planning (spec §2.15). An MCP tool's
+`readOnlyHint` is a claim an outside server makes about itself; admission is
+by the caller's `ReadOnlyTools` name. The refusal outranks approval because
+the approval partition runs before a tool invokes, so `Apply` translates
+`ApproveTools` into per-tool predicates the phase can suppress. `PlanPhase`
+is per run because the SDK has no notion of a session; `OnUnlock` lets a
+host keep its own record and `Unlock` before the run; `Plan.Apply` is
+unconditional so the same agent is rebuilt for a durable resume, which must
+carry the `submit_plan` the paused state names. The host persists the UNLOCK
+as its precondition: the approval ledger records approvals whose execution
+then failed. Only a PERSON turns plan mode on: a model that judges "simple,
+no plan needed" is the failure the gate exists to catch.
 
 **Rejected.** Hiding gated tools. A second pause mechanism for plan review:
 `submit_plan` is an ordinary approval-gated tool. A session-scoped phase in
