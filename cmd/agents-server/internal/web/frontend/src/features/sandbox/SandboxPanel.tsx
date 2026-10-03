@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button, TextInput, Textarea, Label, Select, Stack } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { ToggleRow } from '@/components/ToggleRow';
@@ -111,6 +111,26 @@ interface FormState {
   max_read_file_bytes: string;
 }
 
+// WORKING_AGREEMENT is the prompt a button offers, never a default: it is
+// model-facing text in every request on the sandbox, so the operator opts in.
+export const WORKING_AGREEMENT = `Working agreement for this sandbox:
+- If /workspace/AGENTS.md exists, read it before anything else (CLAUDE.md when it does not) and follow it.
+- Read a file before changing it; prefer apply_patch for edits.
+- Run the project's tests before reporting success, and say what you ran.`;
+
+// insertAt puts snippet into text at the caret, on its own lines; empty text
+// takes it whole. Returns the new text and where the caret lands.
+export function insertAt(text: string, caret: number, snippet: string): { text: string; caret: number } {
+  if (!text) return { text: snippet, caret: snippet.length };
+  const at = Math.max(0, Math.min(caret, text.length));
+  const before = text.slice(0, at);
+  const after = text.slice(at);
+  const lead = before && !before.endsWith('\n') ? '\n' : '';
+  const tail = after && !after.startsWith('\n') ? '\n' : '';
+  const inserted = lead + snippet + tail;
+  return { text: before + inserted + after, caret: at + lead.length + snippet.length };
+}
+
 export function flatten(s: Partial<SandboxRow>): FormState {
   const c = (s.config || {}) as DockerShape & E2BShape;
   const type = (s.type as SandboxType) || 'docker';
@@ -195,6 +215,13 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
   const remote = form.type === 'docker' && form.host.startsWith('ssh://');
   const frozen = !!initial && !!inUse;
   const frozenNote = frozen ? ' Frozen while projects live on it.' : ' Freezes once a project lives on it.';
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const insertAgreement = () => {
+    const el = promptRef.current;
+    const next = insertAt(form.prompt, el?.selectionStart ?? form.prompt.length, WORKING_AGREEMENT);
+    set('prompt', next.text);
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(next.caret, next.caret); });
+  };
 
   return (
     <Stack gap="normal">
@@ -286,10 +313,12 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
           description={'Off means expiry destroys the working tree; services without snapshots (Alibaba Cloud) need it off.' + frozenNote} />
       )}
       {form.type === 'e2b' && <ToggleRow label="Allow outbound network access" checked={form.allow_internet} disabled={frozen} onChange={v => set('allow_internet', v)} description={frozenNote.trim()} />}
-      {fc('Prompt',
-        <Textarea block rows={3} value={form.prompt} onChange={e => set('prompt', e.target.value)}
-          placeholder="e.g. Python 3.12 and Node 20 are installed. No outbound network; use the vendored packages." />,
-        'Appended to the agent\'s instructions for any session working on this sandbox — what the image has, how to use it. Edits reach the next run without replacing the container.',
+      {fc('Prompt', <>
+        <Textarea ref={promptRef} block rows={3} value={form.prompt} onChange={e => set('prompt', e.target.value)}
+          placeholder="e.g. Python 3.12 and Node 20 are installed. No outbound network; use the vendored packages." />
+        <div className="form-field-action"><Button size="small" onClick={insertAgreement}>Insert working agreement</Button></div>
+      </>,
+        'Appended to the agent\'s instructions for any session working on this sandbox — what the image has, how to use it. Edits reach the next run without replacing the container. The agreement is a starting point to edit: read AGENTS.md first, read before changing, test before reporting.',
       )}
       {fc('Max read_file bytes',
         <TextInput block type="text" inputMode="numeric" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,

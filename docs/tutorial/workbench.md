@@ -98,8 +98,11 @@ sandbox. This chapter and the ones after it are optional.
 
 1. **Settings → Sandboxes** → **+ Add**: type `docker` with this machine's daemon
    (leave the host empty) or a remote one over SSH, an image, and — if you
-   like — a **prompt** describing the machine. Or type `e2b` for any service
-   speaking the E2B API. **Test** runs `echo ok` in a throw-away container.
+   like — a **prompt** describing the machine. It starts empty; **Insert
+   working agreement** drops in a starting point (read `AGENTS.md` first,
+   read before changing, test before reporting) for you to edit. Or type
+   `e2b` for any service speaking the E2B API. **Test** runs `echo ok` in a
+   throw-away container.
 2. In a session, the composer's **Project** picker creates a project on
    that sandbox — one user's working tree, mounted at `/workspace`. The first
    run binds the session to it for good.

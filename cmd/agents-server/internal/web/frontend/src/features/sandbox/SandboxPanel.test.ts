@@ -6,7 +6,28 @@ vi.mock('@primer/react', () => ({}));
 vi.mock('@primer/react/experimental', () => ({}));
 vi.mock('@/lib/hooks', () => ({ useApi: () => ({}), useCrud: () => ({}) }));
 vi.mock('@/lib/api', () => ({ api: {} }));
-import { flatten, pack } from '@/features/sandbox/SandboxPanel';
+import { WORKING_AGREEMENT, flatten, insertAt, pack } from '@/features/sandbox/SandboxPanel';
+
+describe('the working agreement', () => {
+  // Opt-in: a new sandbox's prompt is empty until the button is pressed.
+  it('is not a default', () => {
+    expect(flatten({}).prompt).toBe('');
+    expect(flatten({ type: 'e2b' }).prompt).toBe('');
+    expect(WORKING_AGREEMENT).toContain('/workspace/AGENTS.md');
+  });
+
+  it('fills an empty prompt whole', () => {
+    expect(insertAt('', 0, WORKING_AGREEMENT)).toEqual({ text: WORKING_AGREEMENT, caret: WORKING_AGREEMENT.length });
+  });
+
+  // Existing text stays; the agreement lands at the caret on its own lines.
+  it('inserts at the caret without overwriting', () => {
+    expect(insertAt('Python 3.12.', 12, 'A')).toEqual({ text: 'Python 3.12.\nA', caret: 14 });
+    expect(insertAt('one\ntwo', 4, 'A')).toEqual({ text: 'one\nA\ntwo', caret: 5 });
+    expect(insertAt('onetwo', 3, 'A')).toEqual({ text: 'one\nA\ntwo', caret: 5 });
+    expect(insertAt('x', 99, 'A').text).toBe('x\nA');
+  });
+});
 
 describe('SandboxPanel flatten / pack', () => {
   it('round-trips a remote docker row, ssh fields included', () => {

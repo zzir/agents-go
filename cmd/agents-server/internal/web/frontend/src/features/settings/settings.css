@@ -12,6 +12,10 @@
   color: var(--fgColor-muted);
 }
 
+/* A small action under a field, before its caption. */
+.form-field-action {
+  margin-top: var(--base-size-8);
+}
 .form-caption-error {
   color: var(--fgColor-danger);
 }
