@@ -54,3 +54,4 @@ export function useIsAdmin(): boolean | null {
   const { me, loading } = useMe();
   return loading ? null : me?.role === 'admin';
 }
+

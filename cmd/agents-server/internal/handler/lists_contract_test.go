@@ -26,7 +26,7 @@ func TestListsNeverNull(t *testing.T) {
 	// listVisible-backed lists and the hand-written ones both flow through
 	// nonNilList; a session id with no traces exercises the trace path.
 	engine.GET("/agents", testAgentConfigHandler(db).List)
-	engine.GET("/providers", NewProviderHandler(store.NewProviderStore(db)).List)
+	engine.GET("/providers", NewProviderHandler(store.NewProviderStore(db), nil).List)
 	engine.GET("/workflows", NewWorkflowHandler(store.NewWorkflowStore(db), store.NewAgentConfigStore(db), store.NewSessionStore(db), nil).List)
 	engine.GET("/mcp-servers", NewMcpServerHandler(store.NewMcpServerStore(db), nil, nil, "").List)
 	engine.GET("/memories", NewMemoryHandler(store.NewMemoryStore(db), store.NewSessionStore(db), store.NewAgentConfigStore(db), store.NewSharedEntryStore(db)).List)

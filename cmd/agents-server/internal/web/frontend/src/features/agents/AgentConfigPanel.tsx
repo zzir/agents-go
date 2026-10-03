@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { TextInput, Textarea, FormControl, Checkbox, Select, Stack, Link, Button, IconButton } from '@primer/react';
 import { XIcon } from '@primer/octicons-react';
 import { openSettingsTab } from '@/features/settings/settingsLink';
@@ -77,6 +77,23 @@ export const APPROVABLE_TOOLS: { group: string; tools: string[] }[] = [
 // toggleListEntry adds or removes one name, keeping the rest in place.
 export function toggleListEntry(list: string[], name: string, on: boolean): string[] {
   return on ? (list.includes(name) ? list : [...list, name]) : list.filter(t => t !== name);
+}
+
+// A model as the provider lists it (GET /providers/:id/models).
+export interface ProviderModel { id: string; display_name?: string; context_window?: number; thinking_types?: string[] }
+
+// modelPrefill is what picking a listed model fills in beside the name: the
+// context window when the box is empty, and — on an Anthropic backend — the
+// thinking mode, a budget only for a model that takes no adaptive thinking.
+export function modelPrefill(model: ProviderModel | undefined, form: { context_window: string; thinking_mode: string }, backend: string): Partial<{ context_window: string; thinking_mode: string }> {
+  const out: Partial<{ context_window: string; thinking_mode: string }> = {};
+  if (!model) return out;
+  if (!form.context_window.trim() && model.context_window) out.context_window = String(model.context_window);
+  if (backend === 'anthropic' && model.thinking_types?.length) {
+    const budgetOnly = model.thinking_types.includes('enabled') && !model.thinking_types.includes('adaptive');
+    out.thinking_mode = budgetOnly ? 'budget' : '';
+  }
+  return out;
 }
 
 // danglingRefs returns the selected ids no listed row carries: rows deleted,
@@ -299,6 +316,12 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   // registry. An agent with no provider runs on the built-in openai default.
   const selectedProvider = (providers || []).find(p => p.id === form.provider_id);
   const meta = providerMeta(selectedProvider?.type ?? '');
+  // The selected provider's live model list; a provider that cannot list
+  // (no key, a ChatGPT login) leaves the box free text.
+  const modelListId = useId();
+  const { data: providerModels } = useApi<ProviderModel[]>(
+    () => form.provider_id ? (api.providers.models(form.provider_id) as Promise<ProviderModel[]>).catch(() => [] as ProviderModel[]) : Promise.resolve([] as ProviderModel[]),
+    [form.provider_id], form.provider_id ? 'provider-models:' + form.provider_id : undefined);
   const unsupported = providerFacts(providerTypes, selectedProvider?.type)?.unsupported ?? [];
   const providerHint = unsupported.length > 0
     ? `Fails loudly on this backend — leave unset: ${unsupported.slice(0, 6).join(', ')}${unsupported.length > 6 ? ` +${unsupported.length - 6} more` : ''}`
@@ -410,7 +433,20 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
 
       <div className="form-group">
         <div className="form-group-title">Model</div>
-        {fc('Model', <TextInput value={form.model} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('model', e.target.value)} block />, 'Required — the name the endpoint knows the model by')}
+        {/* The provider's live list offers names; the box still takes any. A
+            listed model fills in what the provider knows about it. */}
+        {fc('Model', <>
+          <TextInput value={form.model} list={modelListId} onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+            const name = e.target.value;
+            const picked = (providerModels || []).find(m => m.id === name);
+            setForm(prev => ({ ...prev, model: name, ...modelPrefill(picked, prev, meta.type) }));
+          }} block />
+          <datalist id={modelListId}>
+            {(providerModels || []).map(m => <option key={m.id} value={m.id}>{m.display_name && m.display_name !== m.id ? m.display_name : undefined}</option>)}
+          </datalist>
+        </>, providerModels && providerModels.length > 0
+          ? `Required — pick from the ${providerModels.length} models the provider lists, or type a name`
+          : 'Required — the name the endpoint knows the model by')}
         {fc('Context window',
           <TextInput block type="number" min={0} step={1000} value={form.context_window} placeholder="0"
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('context_window', e.target.value)} />,

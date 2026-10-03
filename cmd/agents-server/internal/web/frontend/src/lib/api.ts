@@ -370,6 +370,10 @@ export const api = {
     ...crud<S['store.Provider']>('/providers'),
     setScope: setScope('/providers'),
     setOwner: setOwner('/providers'),
+    // The provider's live model list (cached ten minutes server-side).
+    models: (id: string) => request<S['providers.ModelInfo'][]>(`/providers/${id}/models`),
+    // Lists the models with the stored key; a model name is looked up in the list.
+    test: (id: string, model?: string) => request<S['handler.providerTestResp']>(`/providers/${id}/test`, { method: 'POST', body: JSON.stringify(model ? { model } : {}) }),
   },
   // Projects carry a name, a template and an environment; the target is fixed
   // at creation. A delete refuses (409) while sessions still bind one, and

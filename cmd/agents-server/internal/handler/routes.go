@@ -182,6 +182,8 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		providers.PUT("/:id", h.Providers.Update)
 		providers.DELETE("/:id", h.Providers.Delete)
 		providers.POST("/:id/scope", h.Providers.SetScope)
+		providers.GET("/:id/models", h.Providers.Models)
+		providers.POST("/:id/test", h.Providers.Test)
 		providers.PUT("/:id/owner", admin, h.Providers.SetOwner)
 		// The OAuth flow belongs to the endpoint, not to any one agent —
 		// signing a private provider into ChatGPT is its owner's act.

@@ -210,7 +210,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Memories:   handler.NewMemoryHandler(st.Memories, st.Sessions, st.AgentConfigs, st.Entries),
 			Settings:   handler.NewSettingHandler(st.Settings),
 			Skills:     handler.NewSkillHandler(st.Skills, st.SettingReader),
-			Providers:  handler.NewProviderHandler(st.Providers),
+			Providers:  handler.NewProviderHandler(st.Providers, st.SettingReader),
 			Workflows:  handler.NewWorkflowHandler(st.Workflows, st.AgentConfigs, st.Sessions, svc.Runner),
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, st.Workflows, st.AgentConfigs, svc.Scheduler),
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),

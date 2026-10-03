@@ -3969,6 +3969,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/providers/{id}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a provider's models
+         * @description Asks the provider which models the stored key may use — its live answer, cached for ten minutes per saved row, never kept in the database. An OpenAI-shaped backend names models only; an Anthropic one adds the context window, the output ceiling and the thinking forms. 409 for a provider with no API key to ask with (a ChatGPT login), 502 when the provider refuses or cannot be reached.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Provider ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["providers.ModelInfo"][];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description no API key to list with */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description the provider refused or is unreachable */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/providers/{id}/owner": {
         parameters: {
             query?: never;
@@ -4074,6 +4143,71 @@ export interface paths {
                 };
                 /** @description name collision in the target scope, or referencing agents block the demote */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/providers/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test a provider
+         * @description Lists the provider's models with the stored key — no tokens are spent — and reports how many it has; with a model in the body, whether the listing names it. A ChatGPT-login provider reports whether it is logged in instead. 502 when the key is refused or the endpoint cannot be reached; the detail never repeats the key.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Provider ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description A model to look for */
+            requestBody?: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.providerTestReq"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.providerTestResp"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description the key was refused or the endpoint is unreachable */
+                502: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -8438,6 +8572,19 @@ export interface components {
             scope?: string;
             type?: string;
         };
+        "handler.providerTestReq": {
+            /** @description Model, when given, is checked against the listing. */
+            model?: string;
+        };
+        "handler.providerTestResp": {
+            /** @description Detail says what was checked; it never carries the key. */
+            detail?: string;
+            /** @description ModelCount is how many models the provider listed. */
+            model_count?: number;
+            /** @description ModelFound, with a model in the request, says whether the listing names it. */
+            model_found?: boolean;
+            ok?: boolean;
+        };
         "handler.rebuildReq": {
             /** @description SessionID is the caller's session, bound to this project, to leave the rebuilt note on; left out, no note is written. */
             session_id?: string;
@@ -8630,6 +8777,17 @@ export interface components {
         };
         "providers.ChatGPTLoginResult": {
             authorize_url?: string;
+        };
+        "providers.ModelInfo": {
+            /** @description ContextWindow is the model's input context in tokens. */
+            context_window?: number;
+            /** @description DisplayName is the provider's human-readable name, when it gives one. */
+            display_name?: string;
+            id?: string;
+            /** @description MaxOutputTokens is the ceiling of max_tokens for the model. */
+            max_output_tokens?: number;
+            /** @description ThinkingTypes lists the thinking forms the model takes ("adaptive", "enabled"). */
+            thinking_types?: string[];
         };
         "providers.TypeInfo": {
             /**

@@ -6,7 +6,7 @@ vi.mock('@primer/react', () => ({}));
 vi.mock('@primer/react/experimental', () => ({}));
 vi.mock('@/lib/hooks', () => ({ useApi: () => ({}), useCrud: () => ({}) }));
 vi.mock('@/lib/api', () => ({ api: {} }));
-import { APPROVABLE_TOOLS, CONFIG_GROUPS, danglingNote, danglingRefs, flattenConfig, legacyFallbackProvider, nestConfig, resolveFallbackEntry, toggleListEntry } from '@/features/agents/AgentConfigPanel';
+import { APPROVABLE_TOOLS, CONFIG_GROUPS, danglingNote, danglingRefs, flattenConfig, legacyFallbackProvider, modelPrefill, nestConfig, resolveFallbackEntry, toggleListEntry } from '@/features/agents/AgentConfigPanel';
 
 describe('flattenConfig / nestConfig', () => {
   // A distinct value per grouped key, so a key that fell out or landed in the
@@ -127,5 +127,24 @@ describe('danglingRefs', () => {
   it('words the note for one and for several', () => {
     expect(danglingNote(1, 'skill')).toBe('1 selected skill no longer exists or cannot be referenced here — saving removes it.');
     expect(danglingNote(3, 'MCP server')).toBe('3 selected MCP servers no longer exist or cannot be referenced here — saving removes them.');
+  });
+});
+
+describe('modelPrefill', () => {
+  const claude = { id: 'claude-x', context_window: 200000, thinking_types: ['adaptive', 'enabled'] };
+  const haiku = { id: 'claude-haiku', context_window: 200000, thinking_types: ['enabled'] };
+  const gpt = { id: 'gpt-x' };
+
+  it('fills an empty context window from the listing and leaves a typed one alone', () => {
+    expect(modelPrefill(claude, { context_window: '', thinking_mode: '' }, 'anthropic').context_window).toBe('200000');
+    expect(modelPrefill(claude, { context_window: '128000', thinking_mode: '' }, 'anthropic').context_window).toBeUndefined();
+    expect(modelPrefill(gpt, { context_window: '', thinking_mode: '' }, 'openai')).toEqual({});
+    expect(modelPrefill(undefined, { context_window: '', thinking_mode: '' }, 'anthropic')).toEqual({});
+  });
+
+  it('picks the thinking mode on Anthropic: a budget only for a model without adaptive thinking', () => {
+    expect(modelPrefill(haiku, { context_window: '1', thinking_mode: '' }, 'anthropic').thinking_mode).toBe('budget');
+    expect(modelPrefill(claude, { context_window: '1', thinking_mode: 'budget' }, 'anthropic').thinking_mode).toBe('');
+    expect(modelPrefill(haiku, { context_window: '1', thinking_mode: '' }, 'openai').thinking_mode).toBeUndefined();
   });
 });

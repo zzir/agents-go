@@ -1124,3 +1124,8 @@ img.user-avatar {
   font-size: var(--base-text-size-xs);
   word-break: break-all;
 }
+
+/* Provider Test connection: the button and its one-line answer. */
+.provider-test { display: flex; align-items: center; gap: var(--base-size-8); flex-wrap: wrap; }
+.provider-test-ok { color: var(--fgColor-success); }
+.provider-test-bad { color: var(--fgColor-danger); }

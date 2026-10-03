@@ -43,6 +43,8 @@ const EMPTY: ProviderFormData = { name: '', type: '', auth_mode: '', api_key: ''
 
 interface ProviderFormProps {
   initial?: ProviderFormData | null;
+  // The saved row being edited; Test runs against what is stored.
+  providerId?: string;
   onSave: (form: ProviderFormData) => void;
   onCancel?: (() => void) | null;
   onDelete?: (() => void) | null;
@@ -50,9 +52,30 @@ interface ProviderFormProps {
   providerTypes: ProviderTypeInfo[] | null;
 }
 
-function ProviderForm({ initial, onSave, onCancel, onDelete, saving, providerTypes }: ProviderFormProps) {
+// testOutcome is what one Test connection answered, in a line.
+type TestOutcome = { ok: boolean; text: string };
+
+function ProviderForm({ initial, providerId, onSave, onCancel, onDelete, saving, providerTypes }: ProviderFormProps) {
   const [form, setForm] = useState<ProviderFormData>(initial || EMPTY);
   const set = (k: keyof ProviderFormData, v: string) => setForm(prev => ({ ...prev, [k]: v }));
+  // Test connection lists the provider's models with the STORED key: the
+  // answer is a count or the status the provider gave, never the key.
+  const [testing, setTesting] = useState(false);
+  const [tested, setTested] = useState<TestOutcome | null>(null);
+  const dirty = !!initial && (form.api_key !== initial.api_key || form.base_url !== initial.base_url || form.type !== initial.type || form.auth_mode !== initial.auth_mode);
+  const runTest = async () => {
+    if (!providerId) return;
+    setTesting(true);
+    setTested(null);
+    try {
+      const r = await api.providers.test(providerId);
+      setTested({ ok: !!r.ok, text: r.ok ? `Connected — ${r.model_count ?? 0} models listed` : (r.detail || 'Not connected') });
+    } catch (e) {
+      setTested({ ok: false, text: (e as Error).message || 'Not connected' });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const meta = providerMeta(form.type);
   const authModesFor = (value: string) =>
@@ -109,6 +132,14 @@ function ProviderForm({ initial, onSave, onCancel, onDelete, saving, providerTyp
           onChange={e => set('base_url', e.target.value)} placeholder={meta.defaultBaseURL + ' (leave empty for default)'} />)}
       </>}
 
+      {providerId && (
+        <div className="provider-test">
+          <Button size="small" onClick={runTest} disabled={testing || dirty}>{testing ? 'Testing…' : 'Test connection'}</Button>
+          {dirty
+            ? <span className="FormControl-caption">Save first — the test uses the stored key and endpoint</span>
+            : tested && <span className={'FormControl-caption provider-test-result ' + (tested.ok ? 'provider-test-ok' : 'provider-test-bad')}>{tested.text}</span>}
+        </div>
+      )}
       <FormActions saving={saving} onSave={() => onSave(form)} onCancel={onCancel} onDelete={onDelete} />
     </Stack>
   );
@@ -180,11 +211,18 @@ export function ProviderPanel() {
     api_key: p.api_key || '', base_url: p.base_url || '',
   });
 
-  const form = adding ? <ProviderForm saving={saving} onSave={save} onCancel={cancel} providerTypes={providerTypes} />
+  // A saved provider has one natural next step; said once, as a toast.
+  const saveAndHint = async (f: ProviderFormData) => {
+    const ok = await save(f);
+    if (ok && adding) toast.info(`Saved. Next: create an agent with ${f.name || 'this provider'} under Agents`);
+    return ok;
+  };
+  const form = adding ? <ProviderForm saving={saving} onSave={saveAndHint} onCancel={cancel} providerTypes={providerTypes} />
     : editing ? (
       <ProviderForm saving={saving}
         initial={toForm(editing)}
-        onSave={save}
+        providerId={editing.id}
+        onSave={saveAndHint}
         onCancel={cancel}
         onDelete={async () => { if (await remove(editing.id, editing.name)) cancel(); }}
         providerTypes={providerTypes}

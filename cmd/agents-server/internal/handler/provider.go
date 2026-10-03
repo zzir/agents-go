@@ -1,26 +1,221 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
+	"time"
 
+	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/gin-gonic/gin"
+	openaisdk "github.com/openai/openai-go/v3"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // ProviderHandler serves CRUD endpoints for provider endpoints and their
 // credentials — the ONLY surface a model-API key crosses.
 type ProviderHandler struct {
-	store *store.ProviderStore
+	store    *store.ProviderStore
+	settings *settings.Reader
+	models   modelListCache
 }
 
-// NewProviderHandler returns a handler backed by the given store.
-func NewProviderHandler(s *store.ProviderStore) *ProviderHandler {
-	return &ProviderHandler{store: s}
+// NewProviderHandler returns a handler backed by the given store; cfg supplies
+// the proxy the model listing goes through (nil: none).
+func NewProviderHandler(s *store.ProviderStore, cfg *settings.Reader) *ProviderHandler {
+	return &ProviderHandler{store: s, settings: cfg}
+}
+
+// modelListCache keeps a provider's live model list for modelListTTL, keyed by
+// the row and its last change, so an edited key asks again.
+type modelListCache struct {
+	mu      sync.Mutex
+	entries map[string]modelListEntry
+}
+
+type modelListEntry struct {
+	models []providers.ModelInfo
+	at     time.Time
+}
+
+const modelListTTL = 10 * time.Minute
+
+func (c *modelListCache) get(key string) ([]providers.ModelInfo, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok || time.Since(e.at) > modelListTTL {
+		return nil, false
+	}
+	return e.models, true
+}
+
+func (c *modelListCache) put(key string, models []providers.ModelInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = map[string]modelListEntry{}
+	}
+	c.entries[key] = modelListEntry{models: models, at: time.Now()}
+}
+
+// errModelListNeedsKey is a listing asked of a provider with no API key to
+// ask with — a ChatGPT login's token does not list models.
+var errModelListNeedsKey = errors.New("model listing needs an API key")
+
+// listModels answers the provider's live model list, from the cache when
+// fresh; the error is the backend's, with the key never in it.
+func (h *ProviderHandler) listModels(ctx context.Context, pv *store.Provider) ([]providers.ModelInfo, error) {
+	if pv.AuthMode == providers.AuthModeChatGPTLogin || pv.APIKey == "" {
+		return nil, errModelListNeedsKey
+	}
+	def, err := providers.DefFor(pv.Type)
+	if err != nil || def.ListModels == nil {
+		return nil, fmt.Errorf("provider type %q lists no models", pv.Type)
+	}
+	key := pv.ID + "@" + pv.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	if models, ok := h.models.get(key); ok {
+		return models, nil
+	}
+	var hc *http.Client
+	if h.settings != nil {
+		hc = h.settings.ProxyClient(ctx)
+	}
+	models, err := def.ListModels(ctx, pv.APIKey, pv.BaseURL, hc)
+	if err != nil {
+		return nil, providerFailure(err)
+	}
+	if models == nil {
+		models = []providers.ModelInfo{}
+	}
+	h.models.put(key, models)
+	return models, nil
+}
+
+// providerFailure is what a failed listing tells the caller: the status the
+// provider answered, or that it could not be reached — never the URL, the
+// body or the key.
+func providerFailure(err error) error {
+	if oe, ok := errors.AsType[*openaisdk.Error](err); ok && oe.Response != nil {
+		return fmt.Errorf("the provider answered %d %s", oe.Response.StatusCode, http.StatusText(oe.Response.StatusCode))
+	}
+	if ae, ok := errors.AsType[*anthropicsdk.Error](err); ok && ae.Response != nil {
+		return fmt.Errorf("the provider answered %d %s", ae.Response.StatusCode, http.StatusText(ae.Response.StatusCode))
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") {
+		return errors.New("the endpoint did not answer in time")
+	}
+	return errors.New("the endpoint could not be reached")
+}
+
+// Models answers the provider's live model list.
+//
+//	@Summary		List a provider's models
+//	@Description	Asks the provider which models the stored key may use — its live answer, cached for ten minutes per saved row, never kept in the database. An OpenAI-shaped backend names models only; an Anthropic one adds the context window, the output ceiling and the thinking forms. 409 for a provider with no API key to ask with (a ChatGPT login), 502 when the provider refuses or cannot be reached.
+//	@Tags			providers
+//	@Produce		json
+//	@Param			id	path		string	true	"Provider ID"
+//	@Success		200	{array}		providers.ModelInfo
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		409	{object}	ErrorResponse	"no API key to list with"
+//	@Failure		502	{object}	ErrorResponse	"the provider refused or is unreachable"
+//	@Security		BearerAuth
+//	@Router			/providers/{id}/models [get]
+func (h *ProviderHandler) Models(c *gin.Context) {
+	pv, ok := gatedRow(c, h.store.CrudStore, providerScope, visibleRow)
+	if !ok {
+		return
+	}
+	models, err := h.listModels(c.Request.Context(), pv)
+	if err != nil {
+		if errors.Is(err, errModelListNeedsKey) {
+			conflict(c, err.Error())
+			return
+		}
+		upstreamError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, models)
+}
+
+// providerTestReq is Test's optional body.
+type providerTestReq struct {
+	// Model, when given, is checked against the listing.
+	Model string `json:"model,omitempty"`
+}
+
+// providerTestResp is what a provider test answers.
+type providerTestResp struct {
+	OK bool `json:"ok"`
+	// Detail says what was checked; it never carries the key.
+	Detail string `json:"detail,omitempty"`
+	// ModelCount is how many models the provider listed.
+	ModelCount int `json:"model_count,omitempty"`
+	// ModelFound, with a model in the request, says whether the listing names it.
+	ModelFound *bool `json:"model_found,omitempty"`
+}
+
+// Test checks the provider's key and endpoint by listing its models.
+//
+//	@Summary		Test a provider
+//	@Description	Lists the provider's models with the stored key — no tokens are spent — and reports how many it has; with a model in the body, whether the listing names it. A ChatGPT-login provider reports whether it is logged in instead. 502 when the key is refused or the endpoint cannot be reached; the detail never repeats the key.
+//	@Tags			providers
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string			true	"Provider ID"
+//	@Param			body	body		providerTestReq	false	"A model to look for"
+//	@Success		200		{object}	providerTestResp
+//	@Failure		404		{object}	ErrorResponse
+//	@Failure		502		{object}	ErrorResponse	"the key was refused or the endpoint is unreachable"
+//	@Security		BearerAuth
+//	@Router			/providers/{id}/test [post]
+func (h *ProviderHandler) Test(c *gin.Context) {
+	pv, ok := gatedRow(c, h.store.CrudStore, providerScope, visibleRow)
+	if !ok {
+		return
+	}
+	var req providerTestReq
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			badRequest(c, err.Error())
+			return
+		}
+	}
+	if pv.AuthMode == providers.AuthModeChatGPTLogin {
+		if pv.ChatGPTToken == "" {
+			c.JSON(http.StatusOK, providerTestResp{OK: false, Detail: "chatgpt_not_logged_in"})
+			return
+		}
+		c.JSON(http.StatusOK, providerTestResp{OK: true, Detail: "chatgpt_logged_in"})
+		return
+	}
+	models, err := h.listModels(c.Request.Context(), pv)
+	if err != nil {
+		upstreamError(c, err)
+		return
+	}
+	resp := providerTestResp{OK: true, Detail: fmt.Sprintf("listed %d models", len(models)), ModelCount: len(models)}
+	if req.Model != "" {
+		found := false
+		for _, m := range models {
+			if m.ID == req.Model {
+				found = true
+				break
+			}
+		}
+		resp.ModelFound = &found
+		if !found {
+			resp.Detail += "; " + req.Model + " is not among them"
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // providerReq is the request body for Create and Update; the id, the

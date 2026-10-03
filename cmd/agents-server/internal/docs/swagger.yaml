@@ -1059,6 +1059,27 @@ components:
         type:
           type: string
       type: object
+    handler.providerTestReq:
+      properties:
+        model:
+          description: Model, when given, is checked against the listing.
+          type: string
+      type: object
+    handler.providerTestResp:
+      properties:
+        detail:
+          description: Detail says what was checked; it never carries the key.
+          type: string
+        model_count:
+          description: ModelCount is how many models the provider listed.
+          type: integer
+        model_found:
+          description: ModelFound, with a model in the request, says whether the listing
+            names it.
+          type: boolean
+        ok:
+          type: boolean
+      type: object
     handler.rebuildReq:
       properties:
         session_id:
@@ -1417,6 +1438,28 @@ components:
       properties:
         authorize_url:
           type: string
+      type: object
+    providers.ModelInfo:
+      properties:
+        context_window:
+          description: ContextWindow is the model's input context in tokens.
+          type: integer
+        display_name:
+          description: DisplayName is the provider's human-readable name, when it
+            gives one.
+          type: string
+        id:
+          type: string
+        max_output_tokens:
+          description: MaxOutputTokens is the ceiling of max_tokens for the model.
+          type: integer
+        thinking_types:
+          description: ThinkingTypes lists the thinking forms the model takes ("adaptive",
+            "enabled").
+          items:
+            type: string
+          type: array
+          uniqueItems: false
       type: object
     providers.TypeInfo:
       properties:
@@ -5002,6 +5045,53 @@ paths:
       summary: ChatGPT logout
       tags:
       - providers
+  /providers/{id}/models:
+    get:
+      description: Asks the provider which models the stored key may use — its live
+        answer, cached for ten minutes per saved row, never kept in the database.
+        An OpenAI-shaped backend names models only; an Anthropic one adds the context
+        window, the output ceiling and the thinking forms. 409 for a provider with
+        no API key to ask with (a ChatGPT login), 502 when the provider refuses or
+        cannot be reached.
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/providers.ModelInfo'
+                type: array
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: no API key to list with
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: the provider refused or is unreachable
+      security:
+      - BearerAuth: []
+      summary: List a provider's models
+      tags:
+      - providers
   /providers/{id}/owner:
     put:
       parameters:
@@ -5081,6 +5171,54 @@ paths:
       security:
       - BearerAuth: []
       summary: Change a provider's scope
+      tags:
+      - providers
+  /providers/{id}/test:
+    post:
+      description: Lists the provider's models with the stored key — no tokens are
+        spent — and reports how many it has; with a model in the body, whether the
+        listing names it. A ChatGPT-login provider reports whether it is logged in
+        instead. 502 when the key is refused or the endpoint cannot be reached; the
+        detail never repeats the key.
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.providerTestReq'
+                description: A model to look for
+                summary: body
+        description: A model to look for
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.providerTestResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: the key was refused or the endpoint is unreachable
+      security:
+      - BearerAuth: []
+      summary: Test a provider
       tags:
       - providers
   /runs/{id}:

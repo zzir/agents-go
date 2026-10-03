@@ -533,6 +533,17 @@ registered backends as machine facts — `type`, `auth_modes`, `unsupported`
 request features — from the registry validation and construction derive from,
 so the UI's capability hints cannot drift from what the build enforces.
 
+`GET /providers/:id/models` is the provider's own answer to "which models may
+this key use", asked live and cached for ten minutes per saved row — never a
+table of this project's, never written to the database. An OpenAI-shaped
+backend names models only; an Anthropic one adds the context window, the
+output ceiling and the thinking forms. A provider with no API key to ask with
+(a ChatGPT login) is `409`; a refused key or an unreachable endpoint is `502`.
+`POST /providers/:id/test` runs that listing with the stored key — no tokens
+spent — and answers `{ok, detail, model_count}`, plus `model_found` when the
+body names a `model`; a ChatGPT-login provider answers whether it is logged in.
+Neither detail ever repeats the key, the URL or the provider's response body.
+
 ### Workflows — `/api/v1/workflows`
 
 A workflow is a FIXED, ordered sequence of steps run on ONE session; which

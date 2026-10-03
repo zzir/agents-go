@@ -33,6 +33,7 @@ import { adoptNewSessionPrefs, clearSessionPrefs } from '@/lib/drafts';
 import { toast } from '@/lib/toast';
 import { putBackInComposer } from '@/lib/composer';
 import { MeContext, useMeLoader } from '@/lib/me';
+import { useAuthMode } from '@/lib/authMode';
 import { useNarrow } from '@/lib/hooks';
 import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
 import { resendEdited } from '@/lib/editResend';
@@ -109,6 +110,8 @@ function App() {
   const meState = useMeLoader(authed);
   const me = meState.me;
   const isAdmin = meState.loading ? null : me?.role === 'admin';
+  // Token mode is one person: the Members tab has nobody to list.
+  const authMode = useAuthMode();
   const [checking, setChecking] = useState(true);
   // The initial auth check failed at the network level (server unreachable), as
   // opposed to resolving "not authenticated". Without this the app would sit on
@@ -962,7 +965,7 @@ function App() {
         {/* The sidebar relists on close: the admin panels delete and reassign
             conversations. */}
         {settingsOpen && (
-          <PanelDialog title="Settings" tabs={SETTINGS_TABS} adminTabs={isAdmin ? ADMIN_TABS : undefined} readOnly={isAdmin === null ? null : !isAdmin} initialTab={settingsTab}
+          <PanelDialog title="Settings" tabs={SETTINGS_TABS} adminTabs={isAdmin ? (authMode === 'token' ? ADMIN_TABS.filter(t => t.key !== 'members') : ADMIN_TABS) : undefined} readOnly={isAdmin === null ? null : !isAdmin} initialTab={settingsTab}
             onTabChange={setSettingsTab} onClose={closeSettings} />
         )}
         {/* Lost-connection pill: the socket announces a drop here, not only at

@@ -3,12 +3,15 @@
 package providers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 
+	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 	antoption "github.com/anthropics/anthropic-sdk-go/option"
+	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/zzir/agents-go/agents"
@@ -47,6 +50,22 @@ type Def struct {
 	// Capabilities is the adapter's own unsupported-feature declaration,
 	// served to config UIs via Types.
 	Capabilities modelkit.Capabilities
+	// ListModels asks the backend which models the key may use — a live
+	// answer from the provider, never a table of this project's.
+	ListModels func(ctx context.Context, apiKey, baseURL string, hc *http.Client) ([]ModelInfo, error)
+}
+
+// ModelInfo is one model a provider lists; what a backend does not report stays zero.
+type ModelInfo struct {
+	ID string `json:"id"`
+	// DisplayName is the provider's human-readable name, when it gives one.
+	DisplayName string `json:"display_name,omitempty"`
+	// ContextWindow is the model's input context in tokens.
+	ContextWindow int64 `json:"context_window,omitempty"`
+	// MaxOutputTokens is the ceiling of max_tokens for the model.
+	MaxOutputTokens int64 `json:"max_output_tokens,omitempty"`
+	// ThinkingTypes lists the thinking forms the model takes ("adaptive", "enabled").
+	ThinkingTypes []string `json:"thinking_types,omitempty"`
 }
 
 var providerDefs = []Def{
@@ -55,6 +74,7 @@ var providerDefs = []Def{
 		AuthModes:    []string{AuthModeChatGPTLogin},
 		Build:        newOpenAIModelProvider,
 		Capabilities: openaiProvider.Capabilities(),
+		ListModels:   listOpenAIModels,
 	},
 	{
 		Type: TypeAnthropic,
@@ -62,10 +82,11 @@ var providerDefs = []Def{
 			return newAnthropicModelProvider(apiKey, baseURL, proxyClient)
 		},
 		Capabilities: anthropicProvider.Capabilities(),
+		ListModels:   listAnthropicModels,
 	},
 }
 
-func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
+func openaiOptions(apiKey, baseURL string, hc *http.Client) []option.RequestOption {
 	var opts []option.RequestOption
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
@@ -73,11 +94,62 @@ func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, p
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
+	if hc != nil {
+		opts = append(opts, option.WithHTTPClient(hc))
+	}
+	return opts
+}
+
+func anthropicOptions(apiKey, baseURL string, hc *http.Client) []antoption.RequestOption {
+	var opts []antoption.RequestOption
+	if apiKey != "" {
+		opts = append(opts, antoption.WithAPIKey(apiKey))
+	}
+	if baseURL != "" {
+		opts = append(opts, antoption.WithBaseURL(baseURL))
+	}
+	if hc != nil {
+		opts = append(opts, antoption.WithHTTPClient(hc))
+	}
+	return opts
+}
+
+// listOpenAIModels reads GET /models; the Responses-shaped listing names
+// models only, so the window and output ceiling stay unknown.
+func listOpenAIModels(ctx context.Context, apiKey, baseURL string, hc *http.Client) ([]ModelInfo, error) {
+	client := openaisdk.NewClient(append(openaiOptions(apiKey, baseURL, hc), option.WithMaxRetries(0))...)
+	var out []ModelInfo
+	it := client.Models.ListAutoPaging(ctx)
+	for it.Next() {
+		out = append(out, ModelInfo{ID: it.Current().ID})
+	}
+	return out, it.Err()
+}
+
+// listAnthropicModels reads GET /v1/models, which carries each model's
+// window, output ceiling and the thinking forms it takes.
+func listAnthropicModels(ctx context.Context, apiKey, baseURL string, hc *http.Client) ([]ModelInfo, error) {
+	client := anthropicsdk.NewClient(append(anthropicOptions(apiKey, baseURL, hc), antoption.WithMaxRetries(0))...)
+	var out []ModelInfo
+	it := client.Models.ListAutoPaging(ctx, anthropicsdk.ModelListParams{})
+	for it.Next() {
+		m := it.Current()
+		info := ModelInfo{ID: m.ID, DisplayName: m.DisplayName, ContextWindow: m.MaxInputTokens, MaxOutputTokens: m.MaxTokens}
+		if m.Capabilities.Thinking.Types.Adaptive.Supported {
+			info.ThinkingTypes = append(info.ThinkingTypes, "adaptive")
+		}
+		if m.Capabilities.Thinking.Types.Enabled.Supported {
+			info.ThinkingTypes = append(info.ThinkingTypes, "enabled")
+		}
+		out = append(out, info)
+	}
+	return out, it.Err()
+}
+
+func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
+	opts := openaiOptions(apiKey, baseURL, proxyClient)
 	if creds != nil {
 		opts = append(opts, option.WithMiddleware(newChatGPTMiddleware(creds.AccountID)))
-	}
-	if proxyClient != nil {
-		opts = append(opts, option.WithHTTPClient(proxyClient))
 	}
 	p := openaiProvider.NewProvider(opts...)
 	if creds != nil {
@@ -90,17 +162,7 @@ func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, p
 }
 
 func newAnthropicModelProvider(apiKey, baseURL string, proxyClient *http.Client) agents.ModelProvider {
-	var opts []antoption.RequestOption
-	if apiKey != "" {
-		opts = append(opts, antoption.WithAPIKey(apiKey))
-	}
-	if baseURL != "" {
-		opts = append(opts, antoption.WithBaseURL(baseURL))
-	}
-	if proxyClient != nil {
-		opts = append(opts, antoption.WithHTTPClient(proxyClient))
-	}
-	return anthropicProvider.NewProvider(opts...)
+	return anthropicProvider.NewProvider(anthropicOptions(apiKey, baseURL, proxyClient)...)
 }
 
 // ThinkingModeBudget is the behavior.thinking_mode value that sends an

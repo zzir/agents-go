@@ -28,8 +28,8 @@ Download `agents-server` from [Releases](https://github.com/zzir/agents-go/relea
 ./agents-server
 ```
 
-Open `http://127.0.0.1:9527`, paste the token it printed, and add a provider key and an agent in Settings. Nothing here
-needs Docker.
+Open `http://127.0.0.1:9527`, paste the token it printed, and in Settings add a provider key (**Test connection** checks
+it), then an agent with a model picked from the provider's live list. Nothing here needs Docker.
 
 1. **Say something.** The reply streams in. **Context** shows what the model was sent; **Traces** shows every call with
    tokens and latency.

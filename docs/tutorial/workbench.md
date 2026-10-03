@@ -48,9 +48,13 @@ Everything you configure lives in one place: **Settings**, in the account
 menu at the sidebar's foot, opens the hub — a dialog with a panel per thing.
 
 1. **Providers** → **+ Add**: an OpenAI or Anthropic API key, a ChatGPT
-   sign-in, or any Responses-compatible endpoint by base URL. Save.
-2. **Agents** → **+ Add**: a name, the provider you just made, a model, and
-   instructions. Leave the rest at its defaults. Save.
+   sign-in, or any Responses-compatible endpoint by base URL. Save, then open
+   it again and **Test connection**: it lists the provider's models with the
+   stored key, so a wrong key fails here, not in your first chat.
+2. **Agents** → **+ Add**: a name, the provider you just made, a model picked
+   from the list the provider answers (or typed — the box takes any name; an
+   Anthropic model fills in its context window), and instructions. Leave the
+   rest at its defaults. Save.
 
 That is enough to talk. **New** (the sidebar's + button) opens an empty
 composer; pick the agent, type, and your first message makes the session

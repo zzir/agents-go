@@ -2,6 +2,7 @@ import { lazy, Suspense, useMemo, useState, type ComponentType, type LazyExoticC
 import { Loading } from '@/components/Loading';
 import { ScopeFilterContext } from '@/components/ScopeFilter';
 import { useIsAdmin } from '@/lib/me';
+import { useAuthMode } from '@/lib/authMode';
 import type { ScopedEntity } from '@/features/admin/ScopedRowsPanel';
 import './settings.css';
 
@@ -14,12 +15,14 @@ const PANEL: Record<Exclude<ScopedEntity, 'workflows'>, LazyExoticComponent<Comp
 };
 
 // ScopedEntityPanel is one scoped entity's tab: ONE list, an admin's widened
-// by the "Mine | All" filter that opens on Mine (invariant 61).
+// by the "Mine | All" filter that opens on Mine (invariant 61); token mode
+// is one person, so the filter does not show there.
 export function ScopedEntityPanel({ entity }: { entity: Exclude<ScopedEntity, 'workflows'> }) {
   const isAdmin = useIsAdmin();
+  const team = useAuthMode() !== 'token';
   const [mine, setMine] = useState(true);
   const Panel = PANEL[entity];
-  const filter = useMemo(() => (isAdmin ? { mine, setMine } : null), [isAdmin, mine]);
+  const filter = useMemo(() => (isAdmin && team ? { mine, setMine } : null), [isAdmin, team, mine]);
   return (
     <ScopeFilterContext value={filter}>
       <Suspense fallback={<Loading kind="panel" />}><Panel /></Suspense>
