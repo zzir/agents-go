@@ -127,9 +127,12 @@ type BuildResult struct {
 	// PlanPhase is set when built in plan mode: the run starts read-only and the
 	// approved submit_plan unlocks it (spec §2.12).
 	PlanPhase *middleware.PlanPhase
-	// PlanReadOnly are the MCP tools, by exposed name, the entry agent's
-	// servers' configs let plan mode call — invariant 89.
+	// PlanReadOnly are the MCP tools, by exposed name, this agent's servers'
+	// configs let plan mode call — invariant 89.
 	PlanReadOnly []string
+	// Approval is the config's mode and tool list, applied to every built
+	// agent's tools — invariant 90.
+	Approval store.ApprovalGroup
 
 	// ReasoningItemIDPolicy controls whether reasoning-item ids survive across
 	// turns (default preserve). Derived: Behavior stores it as a string.
@@ -279,20 +282,26 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		result.RunGuardrails = result.Agent.Guardrails
 		result.Agent.Guardrails = nil
 	}
+	// The checklist is the ENTRY agent's, chat only.
+	if !background && result.Agent != nil && result.Behavior.Checklist {
+		mark := len(result.Agent.Tools)
+		// A clone: the entry agent may also be a handoff target of its own graph.
+		entry := result.Agent.Clone()
+		entry.Tools = append(slices.Clone(entry.Tools), checklistTool())
+		result.Agent = entry
+		bucketToolsSince(result.Agent, mark, store.ToolSourceChecklist, &result.Profile)
+	}
+	// Approval modes cover EVERY built agent, background runs included, once
+	// every tool is attached (invariant 90).
+	for _, r := range bc.cache {
+		applyApprovalMode(r)
+	}
 	// Plan rewrites the ENTRY agent at BUILD time (spec §2.12), last so its
-	// gate covers the task tools and the checklist; unconditional (invariant
-	// 33); never background.
+	// gate covers the task tools, the checklist and the mode's predicates;
+	// unconditional (invariant 33); never background.
 	if !background && result.Agent != nil {
 		mark := len(result.Agent.Tools)
-		if result.Behavior.Checklist {
-			// A clone: the entry agent may also be a handoff target of its own graph.
-			entry := result.Agent.Clone()
-			entry.Tools = append(slices.Clone(entry.Tools), checklistTool())
-			result.Agent = entry
-			mark = bucketToolsSince(result.Agent, mark, store.ToolSourceChecklist, &result.Profile)
-		}
-		plan := middleware.Plan{ReadOnlyTools: append(slices.Clone(middleware.DefaultReadOnlyTools), result.PlanReadOnly...)}
-		result.Agent, result.PlanPhase = plan.Apply(result.Agent)
+		result.Agent, result.PlanPhase = result.plan().Apply(result.Agent)
 		bucketToolsSince(result.Agent, mark, store.ToolSourcePlan, &result.Profile)
 	}
 	return result, nil
@@ -382,7 +391,11 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	}
 
 	var approveCommands bool
-	agent.ApproveTools, approveCommands = splitApproveTools(spec.ApproveTools)
+	agent.ApproveTools, approveCommands = splitApproveTools(spec.Approval.ApproveTools)
+	// A mode that asks puts exec_command behind the per-command gate whether
+	// or not the list names it (invariant 90).
+	approveCommands = approveCommands || spec.Approval.Asks()
+	result.Approval = spec.Approval
 	agent.OutputType = spec.OutputType
 
 	// Stored prompt
@@ -440,7 +453,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 // per-command session gate and is kept OUT of the SDK's ApproveTools.
 func splitApproveTools(names []string) (approveTools []string, approveCommands bool) {
 	for _, name := range names {
-		if name == "exec_command" {
+		if name == execCommandToolName {
 			approveCommands = true
 			continue
 		}

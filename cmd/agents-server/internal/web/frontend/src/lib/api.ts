@@ -257,8 +257,9 @@ export const api = {
     setScope: setScope('/agents'),
     setOwner: setOwner('/agents'),
     // The agent's CURRENT tool surface as schema-only definitions — what the
-    // bridge would hand the model right now (sandbox tools excluded). Backs
-    // the Replay dialog's tool picker.
+    // bridge would hand the model right now, each with its source and
+    // read-only flag. Backs the Replay dialog's tool picker and the editor's
+    // approval list.
     tools: (id: string | number) => request(`/agents/${id}/tools`),
   },
   mcpServers: {

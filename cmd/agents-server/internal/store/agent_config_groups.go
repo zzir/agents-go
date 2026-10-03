@@ -167,8 +167,22 @@ type SessionGroup struct {
 
 // ApprovalGroup holds the HITL approval selection.
 type ApprovalGroup struct {
-	// ApproveTools names the tools that pause for approval before each call; ["*"] means every tool.
+	// Mode is when the agent's tool calls pause for approval: never (only the listed tools), on_change (every tool plan mode would deny), always (every tool). Empty reads as never.
+	Mode string `json:"approval_mode,omitempty"`
+	// ApproveTools names tools that pause for approval before each call in every mode; ["*"] means every tool.
 	ApproveTools StringList `json:"approve_tools,omitempty"`
+}
+
+// Approval modes.
+const (
+	ApprovalModeNever    = "never"
+	ApprovalModeOnChange = "on_change"
+	ApprovalModeAlways   = "always"
+)
+
+// Asks reports whether the mode itself raises approvals (on_change or always).
+func (g ApprovalGroup) Asks() bool {
+	return g.Mode == ApprovalModeOnChange || g.Mode == ApprovalModeAlways
 }
 
 // StringList is a list field: a JSON array on the API, JSON text in the

@@ -46,7 +46,7 @@ PostgreSQL and teams.
 - **Traces**: model, tool, handoff and guardrail spans with tokens, latency and errors. No backend to run.
 - **Replay**: re-run a generation with another prompt, model, settings or tools, diffed against the original. No session is touched.
 - **Fork**: regenerate, edit a message, or branch at any turn: the parent kept, the other branch a click away. Project files are shared, not copied.
-- **Approvals**: every tool call visible. Approve a command once, trust that command, or trust the session — or reject with a reason. A session waiting on you is flagged in every tab.
+- **Approvals**: every tool call visible. Per agent: never ask, ask before changes, or always ask; approve a command once, trust that command, or trust the session — or reject with a reason. A session waiting on you is flagged in every tab.
 - **Sandboxes**: a Docker container here or on a remote daemon, or any E2B-compatible service. Optional.
 
 Also: MCP servers with OAuth, Agent Skills, background tasks, workflows, image

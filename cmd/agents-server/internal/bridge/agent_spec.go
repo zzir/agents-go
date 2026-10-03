@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zzir/agents-go/agents"
@@ -23,8 +24,8 @@ type AgentSpec struct {
 	ModelSettings *agents.ModelSettings
 	// OutputType is nil when no structured-output schema is configured.
 	OutputType agents.OutputSchema
-	// ApproveTools is the HITL approval tool-name list (nil when unset/empty).
-	ApproveTools []string
+	// Approval is the HITL selection: the mode and the tool-name list (nil when unset/empty).
+	Approval store.ApprovalGroup
 	// Tools is the selected MCP server id list (nil when unset).
 	Tools []string
 	// Skills is the per-agent skill selection (stored ids); SkillsSet tells an
@@ -194,7 +195,17 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 		spec.OutputType = os
 	}
 
-	spec.ApproveTools = ac.Approval.ApproveTools
+	switch ac.Approval.Mode {
+	case "", store.ApprovalModeNever, store.ApprovalModeOnChange, store.ApprovalModeAlways:
+	default:
+		return nil, fmt.Errorf("approval mode %q: use never, on_change, always, or leave it unset", ac.Approval.Mode)
+	}
+	// "*" would route exec_command around its per-command gate (invariant 90);
+	// a mode that asks already covers every tool it means to.
+	if ac.Approval.Asks() && slices.Contains(ac.Approval.ApproveTools, "*") {
+		return nil, fmt.Errorf("approve_tools %q: with approval mode %s, name the tools to add or leave the list empty", "*", ac.Approval.Mode)
+	}
+	spec.Approval = ac.Approval
 	spec.Tools = ac.Tools
 	spec.Handoffs = ac.Handoffs
 	// A nil selection is "every skill"; an explicit [] is none.

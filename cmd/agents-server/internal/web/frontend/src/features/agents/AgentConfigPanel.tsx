@@ -34,7 +34,7 @@ export const CONFIG_GROUPS: Record<string, string[]> = {
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['prompt_id', 'prompt_version', 'history_limit'],
-  approval: ['approve_tools'],
+  approval: ['approval_mode', 'approve_tools'],
   compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt', 'compaction_mode'],
   memory: ['memory_tools', 'memory_agent_write', 'history_tools'],
 };
@@ -64,19 +64,46 @@ export function nestConfig(flat: Record<string, unknown>): Record<string, unknow
   return out;
 }
 
-// The built-in tools an operator gates behind approval, by the group that
-// carries them. MCP tools (server__tool) and anything else go in the Other list.
-export const APPROVABLE_TOOLS: { group: string; tools: string[] }[] = [
-  { group: 'Sandbox', tools: ['exec_command', 'apply_patch', 'write_file', 'read_file', 'list_files'] },
-  { group: 'Subagents', tools: ['spawn_task', 'task_status', 'task_stop', 'task_retry'] },
-  { group: 'Memory', tools: ['memory_write', 'memory_append', 'memory_read', 'memory_search'] },
-  { group: 'History', tools: ['history_search', 'history_read', 'new_context'] },
-  { group: 'Other', tools: ['todo_write', 'read_skill'] },
-];
-
 // toggleListEntry adds or removes one name, keeping the rest in place.
 export function toggleListEntry(list: string[], name: string, on: boolean): string[] {
   return on ? (list.includes(name) ? list : [...list, name]) : list.filter(t => t !== name);
+}
+
+// The approval modes, as the segmented control shows them, and what each
+// one does in a line.
+export const APPROVAL_MODES = [['never', 'Never ask'], ['on_change', 'Ask before changes'], ['always', 'Always ask']] as const;
+const APPROVAL_MODE_HINTS: Record<string, string> = {
+  never: 'Nothing pauses unless listed under Advanced.',
+  on_change: 'Writes pause first, the same tools plan mode refuses; reads run freely.',
+  always: 'Every call pauses until you approve it, MCP tools included.',
+};
+
+// One tool of the agent's surface (GET /agents/:id/tools).
+export interface AgentToolInfo { name: string; description?: string; read_only?: boolean; source?: string }
+
+// initialApproval reads a stored agent's approval settings into the form. A
+// row from before the mode field reads as never, or as always when its list
+// said "*", which the mode replaces.
+export function initialApproval(stored: { approval_mode?: string; approve_tools?: string[] } | undefined): { approval_mode: string; approve_tools: string[] } {
+  const list = stored?.approve_tools ?? [];
+  const approval_mode = stored?.approval_mode || (list.includes('*') ? 'always' : 'never');
+  return { approval_mode, approve_tools: list.filter(t => t !== '*') };
+}
+
+// approvalSuggestions is what "Also ask for these tools" can still add under
+// a mode: the tools the mode does not ask about on its own. submit_plan asks
+// by itself and is never offered.
+export function approvalSuggestions(tools: AgentToolInfo[] | null | undefined, mode: string, listed: string[]): string[] {
+  return (tools ?? [])
+    .filter(t => t.source !== 'plan' && !listed.includes(t.name))
+    .filter(t => mode === 'never' || (mode === 'on_change' && !!t.read_only))
+    .map(t => t.name);
+}
+
+// approvalListHint is the list's caption: the mode it adds to, by its label.
+export function approvalListHint(mode: string): string {
+  const label = APPROVAL_MODES.find(([v]) => v === mode)?.[1] ?? 'Never ask';
+  return `Asked in every mode, on top of it (now: ${label}).`;
 }
 
 // A model as the provider lists it (GET /providers/:id/models).
@@ -181,6 +208,7 @@ interface AgentFormData {
   subagents: boolean;
   vision: boolean;
   override_system_prompt: boolean;
+  approval_mode: string;
   approve_tools: string[];
   compaction_enabled: boolean;
   compaction_threshold_tokens: string;
@@ -279,11 +307,12 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
       // New agents default to a bounded fan-out; an existing agent keeps its
       // stored value (0 = unlimited) via the spread below.
       handoff_input_filter: '', max_tool_concurrency: initial ? '' : '8',
-      tool_not_found_behavior: '', reasoning_item_id_policy: '', thinking_mode: '', thinking_binding: true, workflow_authoring: false, checklist: false, subagents: true, vision: false, override_system_prompt: false, approve_tools: [],
+      tool_not_found_behavior: '', reasoning_item_id_policy: '', thinking_mode: '', thinking_binding: true, workflow_authoring: false, checklist: false, subagents: true, vision: false, override_system_prompt: false,
       compaction_enabled: false, compaction_threshold_tokens: '',
       compaction_window: '', compaction_model: '', compaction_prompt: '', compaction_mode: '',
       memory_tools: false, memory_agent_write: false, history_tools: false,
       ...stored,
+      ...initialApproval(stored as { approval_mode?: string; approve_tools?: string[] }),
     };
   });
   const [reasoningEffort, setReasoningEffort] = useState(initMs.reasoning?.effort || '');
@@ -306,11 +335,11 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const summaryMode = !form.compaction_mode || form.compaction_mode === 'summary';
   const resetImplied = !!form.compaction_enabled && (form.compaction_mode === 'reset' || form.compaction_mode === 'hybrid');
   const approveList = form.approve_tools || [];
-  const approveAll = approveList.includes('*');
-  const approveKnown = new Set(APPROVABLE_TOOLS.flatMap(g => g.tools));
-  // Names the checklist does not know (an MCP server's tool) are edited as tokens.
-  const approveOthers = approveList.filter(t => t !== '*' && !approveKnown.has(t));
-  const setApproveOthers = (others: string[]) => set('approve_tools', [...approveList.filter(t => t === '*' || approveKnown.has(t)), ...others]);
+  // The saved agent's tool surface, for the list's suggestions; a new agent
+  // has none yet, and the field takes any name.
+  const { data: agentTools } = useApi<AgentToolInfo[]>(
+    () => initial?.id ? (api.agents.tools(initial.id) as Promise<AgentToolInfo[]>).catch(() => [] as AgentToolInfo[]) : Promise.resolve([] as AgentToolInfo[]),
+    [initial?.id], initial?.id ? 'agent-tools:' + initial.id : undefined);
   // The backend's facts follow the REFERENCED provider: wording from the
   // static table, machine facts (unsupported features) from the server's
   // registry. An agent with no provider runs on the built-in openai default.
@@ -655,33 +684,19 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           description={(resetImplied ? 'On while compaction is in reset or hybrid mode. ' : '') + 'history_search and history_read find turns that compaction folded out of the context.'} />
       </div>
 
-      {/* The checklist edits the list in place; names it does not know (an
-          MCP tool) are tokens below it. */}
       <div className="form-group">
         <div className="form-group-title">Approvals</div>
-        <ToggleRow label="Every tool waits for approval" checked={approveAll} onChange={v => set('approve_tools', toggleListEntry(approveList, '*', v))}
-          description="Each call pauses until you approve it — MCP tools included." />
-        <div className="approve-grid">
-          {APPROVABLE_TOOLS.map(g => (
-            <div key={g.group} className="approve-group">
-              <div className="approve-group-title">{g.group}</div>
-              {g.tools.map(t => (
-                <FormControl key={t} disabled={approveAll}>
-                  <Checkbox checked={approveAll || approveList.includes(t)} disabled={approveAll}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('approve_tools', toggleListEntry(approveList, t, e.target.checked))} />
-                  <FormControl.Label><code>{t}</code></FormControl.Label>
-                </FormControl>
-              ))}
-            </div>
-          ))}
-        </div>
-        <div className="FormControl-caption">A checked tool pauses before every call until you approve it; exec_command's card also offers trusting that command, or every command, for the session.</div>
-        {fc('Other tools', <TokenListInput ariaLabel="Other tools that wait for approval" placeholder="server__tool"
-          values={approveOthers} onChange={setApproveOthers} />, "Names the checklist does not know, such as an MCP server's tool (server__tool)")}
+        {seg('Approval mode', form.approval_mode, APPROVAL_MODES, v => set('approval_mode', v), APPROVAL_MODE_HINTS[form.approval_mode])}
       </div>
 
       <Disclosure variant="plain" className="advanced-toggle" label="Advanced">
         <div className="advanced-section">
+          <div className="form-group">
+            <div className="form-group-title">Approvals</div>
+            {fc('Also ask for these tools', <TokenListInput ariaLabel="Also ask for these tools" placeholder="tool name, or server__tool"
+              values={approveList} onChange={v => set('approve_tools', v)}
+              suggestions={approvalSuggestions(agentTools, form.approval_mode, approveList)} />, approvalListHint(form.approval_mode))}
+          </div>
           <div className="form-group">
             <div className="form-group-title">Behavior</div>
             {fc('Max turns', <TextInput block type="number" min={0} value={form.max_turns} placeholder="0" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('max_turns', e.target.value)} />, '0 = SDK default (10)')}

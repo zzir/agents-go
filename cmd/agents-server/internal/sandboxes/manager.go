@@ -565,6 +565,14 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool,
 	return tools, releaseTools, nil
 }
 
+// ToolSurface describes the sandbox tools without a sandbox: the constructors
+// SandboxTools uses, so names and ReadOnly flags cannot drift. Not callable.
+func ToolSurface() []*agents.Tool {
+	tools := []*agents.Tool{sandbox.CodeTool(nil, sandbox.CodeToolConfig{})}
+	tools = append(tools, sandbox.FileTools(nil, sandbox.FileToolConfig{})...)
+	return append(tools, sandbox.ApplyPatchTool(nil, sandbox.FileToolConfig{}))
+}
+
 // buildSandbox hands spec to its target type's backend, with the callback a
 // remote backend needs to remember what it provisioned.
 func (m *Manager) buildSandbox(spec Spec) (sandbox.Sandbox, error) {

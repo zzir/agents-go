@@ -381,7 +381,7 @@ export interface paths {
         };
         /**
          * Agent tool surface
-         * @description Schema-only definitions (name, description, parameters) of every tool the agent would carry right now, excluding sandbox tools (no sandbox is selected). Tools are never executed from here.
+         * @description Schema-only definitions (name, description, parameters, read_only, source) of every tool the agent would carry right now; the sandbox tools are listed as a bound project would add them. Tools are never executed from here.
          */
         get: {
             parameters: {
@@ -8519,6 +8519,10 @@ export interface components {
             parameters?: {
                 [key: string]: unknown;
             };
+            /** @description ReadOnly reports a tool plan mode leaves usable, which "ask before changes" does not ask about. */
+            read_only?: boolean;
+            /** @description Source is where the tool comes from: sandbox, skills, tasks, workflows, context, checklist, or mcp:<server>. */
+            source?: string;
         };
         "handler.projectDeleteResp": {
             deleted?: boolean;
@@ -8880,7 +8884,9 @@ export interface components {
             updated_at?: string;
         };
         "store.ApprovalGroup": {
-            /** @description ApproveTools names the tools that pause for approval before each call; ["*"] means every tool. */
+            /** @description Mode is when the agent's tool calls pause for approval: never (only the listed tools), on_change (every tool plan mode would deny), always (every tool). Empty reads as never. */
+            approval_mode?: string;
+            /** @description ApproveTools names tools that pause for approval before each call in every mode; ["*"] means every tool. */
             approve_tools?: string[];
         };
         "store.AuditEvent": {

@@ -15,6 +15,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -62,6 +63,10 @@ type playgroundTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	// ReadOnly reports a tool plan mode leaves usable, which "ask before changes" does not ask about.
+	ReadOnly bool `json:"read_only,omitempty"`
+	// Source is where the tool comes from: sandbox, skills, tasks, workflows, context, checklist, or mcp:<server>.
+	Source string `json:"source,omitempty"`
 }
 
 // playgroundSchema mirrors the generation span's output_schema record.
@@ -309,11 +314,11 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 
 // AgentTools returns the agent's CURRENT tool surface as schema-only
 // definitions (bridge built-ins, connected MCP servers' tools, the skills
-// reader) for the Replay dialog's tool picker. No sandbox is selected, so
-// sandbox tools reach a replay only via the traced request.
+// reader, and the sandbox tools a project would add) for the Replay dialog's
+// tool picker and the agent editor's approval list.
 //
 //	@Summary		Agent tool surface
-//	@Description	Schema-only definitions (name, description, parameters) of every tool the agent would carry right now, excluding sandbox tools (no sandbox is selected). Tools are never executed from here.
+//	@Description	Schema-only definitions (name, description, parameters, read_only, source) of every tool the agent would carry right now; the sandbox tools are listed as a bound project would add them. Tools are never executed from here.
 //	@Tags			agents
 //	@Produce		json
 //	@Param			id	path		string	true	"Agent config ID"
@@ -348,12 +353,20 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 	if built.PlanPhase != nil {
 		_ = built.PlanPhase.Unlock() // a fresh build has no hook armed; cannot fail
 	}
-	describe := func(t *agents.Tool) playgroundTool {
-		return playgroundTool{Name: t.Name, Description: t.Description, Parameters: t.ParamsJSONSchema}
+	readOnly := built.ReadOnlySet()
+	describe := func(t *agents.Tool, source string, fromMCP bool) playgroundTool {
+		return playgroundTool{Name: t.Name, Description: t.Description, Parameters: t.ParamsJSONSchema,
+			ReadOnly: readOnly.Admits(t, fromMCP), Source: source}
 	}
 	out := make([]playgroundTool, 0, len(built.Agent.Tools))
-	for _, t := range built.Agent.Tools {
-		out = append(out, describe(t))
+	// No project is bound here, so the sandbox tools are described from their
+	// constructors, in the slot a bound project would give them.
+	for _, t := range sandboxes.ToolSurface() {
+		out = append(out, describe(t, store.ToolSourceSandbox, false))
+	}
+	sources := toolSources(built.Profile.Tools, len(built.Agent.Tools))
+	for i, t := range built.Agent.Tools {
+		out = append(out, describe(t, sources[i], false))
 	}
 	// A server whose listing fails is skipped rather than failing the
 	// endpoint: one broken server should not blank a picker.
@@ -365,10 +378,26 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 			continue
 		}
 		for _, t := range tools {
-			out = append(out, describe(t))
+			out = append(out, describe(t, store.ToolSourceMCP+srv.Name(), true))
 		}
 	}
 	c.JSON(http.StatusOK, out)
+}
+
+// toolSources names each of n positional tools after the bucket that added
+// it; a tool past the buckets' count has none.
+func toolSources(buckets []store.ToolBucket, n int) []string {
+	out := make([]string, n)
+	i := 0
+	for _, b := range buckets {
+		for range b.Count {
+			if i < n {
+				out[i] = b.Source
+			}
+			i++
+		}
+	}
+	return out
 }
 
 // playgroundUsage extracts token usage from a streamed final response,

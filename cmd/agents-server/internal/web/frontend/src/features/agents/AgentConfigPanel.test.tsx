@@ -6,7 +6,7 @@ vi.mock('@primer/react', () => ({}));
 vi.mock('@primer/react/experimental', () => ({}));
 vi.mock('@/lib/hooks', () => ({ useApi: () => ({}), useCrud: () => ({}) }));
 vi.mock('@/lib/api', () => ({ api: {} }));
-import { APPROVABLE_TOOLS, CONFIG_GROUPS, danglingNote, danglingRefs, flattenConfig, legacyFallbackProvider, modelPrefill, nestConfig, resolveFallbackEntry, toggleListEntry } from '@/features/agents/AgentConfigPanel';
+import { APPROVAL_MODES, CONFIG_GROUPS, approvalListHint, approvalSuggestions, danglingNote, danglingRefs, flattenConfig, initialApproval, legacyFallbackProvider, modelPrefill, nestConfig, resolveFallbackEntry, toggleListEntry } from '@/features/agents/AgentConfigPanel';
 
 describe('flattenConfig / nestConfig', () => {
   // A distinct value per grouped key, so a key that fell out or landed in the
@@ -53,26 +53,49 @@ describe('flattenConfig / nestConfig', () => {
   });
 });
 
-describe('approve tools checklist', () => {
-  it('toggles one name in place, once', () => {
-    expect(toggleListEntry([], 'exec_command', true)).toEqual(['exec_command']);
-    expect(toggleListEntry(['exec_command'], 'exec_command', true)).toEqual(['exec_command']);
-    expect(toggleListEntry(['exec_command', 'srv__tool'], 'exec_command', false)).toEqual(['srv__tool']);
-    expect(toggleListEntry(['exec_command'], 'exec_command', false)).toEqual([]);
+describe('toggleListEntry', () => {
+  it('toggles one id in place, once', () => {
+    expect(toggleListEntry([], 'a', true)).toEqual(['a']);
+    expect(toggleListEntry(['a'], 'a', true)).toEqual(['a']);
+    expect(toggleListEntry(['a', 'b'], 'a', false)).toEqual(['b']);
+  });
+});
+
+describe('approval modes', () => {
+  const tools = [
+    { name: 'read_file', read_only: true, source: 'sandbox' },
+    { name: 'write_file', source: 'sandbox' },
+    { name: 'exec_command', source: 'sandbox' },
+    { name: 'docs__search', read_only: true, source: 'mcp:docs' },
+    { name: 'submit_plan', source: 'plan' },
+  ];
+
+  it('offers the three modes', () => {
+    expect(APPROVAL_MODES.map(([v]) => v)).toEqual(['never', 'on_change', 'always']);
   });
 
-  // "*" joins the list rather than replacing it, so switching it off again
-  // restores the names that were checked before.
-  it('keeps the checked names under "every tool"', () => {
-    const all = toggleListEntry(['exec_command'], '*', true);
-    expect(all).toEqual(['exec_command', '*']);
-    expect(toggleListEntry(all, '*', false)).toEqual(['exec_command']);
+  // A row from before the field reads as never; one whose list said "*"
+  // reads as always, and the mode replaces the "*".
+  it('reads a stored agent into a mode', () => {
+    expect(initialApproval(undefined)).toEqual({ approval_mode: 'never', approve_tools: [] });
+    expect(initialApproval({ approve_tools: ['write_file'] })).toEqual({ approval_mode: 'never', approve_tools: ['write_file'] });
+    expect(initialApproval({ approve_tools: ['*', 'exec_command'] })).toEqual({ approval_mode: 'always', approve_tools: ['exec_command'] });
+    expect(initialApproval({ approval_mode: 'on_change', approve_tools: [] })).toEqual({ approval_mode: 'on_change', approve_tools: [] });
   });
 
-  it('lists each built-in name once', () => {
-    const names = APPROVABLE_TOOLS.flatMap(g => g.tools);
-    expect(new Set(names).size).toBe(names.length);
-    expect(names).toContain('exec_command');
+  // The list can only add a question: under never every tool is on offer,
+  // under on_change only the reads the mode lets through, under always
+  // nothing. submit_plan asks by itself and is never offered.
+  it('suggests what the mode does not already ask about', () => {
+    expect(approvalSuggestions(tools, 'never', ['write_file'])).toEqual(['read_file', 'exec_command', 'docs__search']);
+    expect(approvalSuggestions(tools, 'on_change', [])).toEqual(['read_file', 'docs__search']);
+    expect(approvalSuggestions(tools, 'always', [])).toEqual([]);
+    expect(approvalSuggestions(null, 'never', [])).toEqual([]);
+  });
+
+  it('names the current mode in the list caption', () => {
+    expect(approvalListHint('on_change')).toContain('now: Ask before changes');
+    expect(approvalListHint('')).toContain('now: Never ask');
   });
 });
 

@@ -519,3 +519,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     build prefixes each with the server's name and adds them to `Plan`'s
     allow-list (`bridge/agent.go`, `planReadOnlyNames`). The server's
     `readOnlyHint` admits nothing on its own — decisions §5.53.
+90. **Plan's refusal outranks the approval mode, which outranks the list.**
+    A planning call is refused in `OnInvoke` and asks no one; past that, the
+    agent's `approval.approval_mode` decides per tool (`on_change` asks for
+    exactly what `BuildResult.ReadOnlySet` does not admit, `always` for all,
+    `exec_command` always through its per-command gate), and `approve_tools`
+    can only add a question (`bridge/approval_mode.go`) — decisions §5.85.

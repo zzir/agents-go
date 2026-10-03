@@ -230,6 +230,10 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 	if !stampCreateScope(c, &ac.Scope, &ac.OwnerID) {
 		return
 	}
+	// A new agent's approval mode is explicit; empty is only how older rows read.
+	if ac.Approval.Mode == "" {
+		ac.Approval.Mode = store.ApprovalModeNever
+	}
 	if !h.validateAgentConfig(c, &ac) {
 		return
 	}

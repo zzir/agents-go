@@ -330,7 +330,8 @@ a trigger's turn leaves the pause standing (a trigger's turn is refused), and
 a background task's paused run is its task's to stop.
 
 **exec_command session approval.** An agent whose `approve_tools` includes
-`exec_command` gates each shell command through a per-session trust store
+`exec_command`, or whose `approval.approval_mode` is `on_change` or
+`always`, gates each shell command through a per-session trust store
 that the approve body's `scope` (REST and `tool.approve` alike) widens:
 `once`, `same` or `all`. Trust is in-memory and per session — it survives
 interrupt/resume and resets on restart — and matching is exact, so approving
@@ -365,7 +366,15 @@ change) and the top-level JSON blobs. **The list fields are JSON arrays**
 (decisions §5.67): `tools` (MCP server ids), `handoffs` (agent ids),
 `approval.approve_tools` (tool names, or `["*"]`) and `skills` (skill ids) —
 `skills` is the one whose absence means something: `null`/omitted gives the
-agent every skill its scope can see, `[]` none. Beyond the shape, a write checks:
+agent every skill its scope can see, `[]` none. `approval.approval_mode` is
+`never`, `on_change` or `always` (invariant 90): a create without one is
+written as `never`, a row from before the field reads as empty and behaves
+as `never`, another value is `400`, and `"*"` in `approve_tools` beside
+`on_change` or `always` is `400`. `GET /agents/:id/tools` lists the surface
+a run would carry, each tool with its `source` (`sandbox`, `skills`, `tasks`,
+`workflows`, `context`, `checklist`, `plan`, or `mcp:<server>`) and
+`read_only` as plan mode and `on_change` see it; the sandbox tools are listed
+as a bound project would add them. Beyond the shape, a write checks:
 `avatar` is a path into the UI's built-in catalog (anything else, an external
 URL included, is `400`); a `resilience.fallback_models` entry is
 `{provider_id, model}` — the provider must exist and be one the agent may

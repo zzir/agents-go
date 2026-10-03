@@ -2022,3 +2022,33 @@ first request after the upgrade thinks from scratch. An instruction edit
 costs the conversation its earlier thinking, as the API would have.
 
 Rules: spec §2.15.
+
+### 5.85 An agent's approvals are a mode, not a checklist
+
+Decided 2026-10-03.
+
+**Decision.** An agent asks in one of three modes: `never` (only the tools
+its list names), `on_change` (every tool plan mode would refuse), `always`
+(every tool). "A change" is plan mode's own answer, `Plan.ReadOnlySet().Admits`
+over the same read-only names the build hands `Plan` — so the set the mode
+asks about and the set planning denies are one set, including which MCP
+tools count (invariant 89). The mode is installed per tool, on every built
+agent, handoff targets and background runs included; `exec_command` keeps its
+per-command gate in every mode that asks, so trusting a command still means
+something. The per-tool list only ever adds a question. A new agent is
+`never`; an empty mode is how older rows read, and means the same.
+
+**Rejected.** The 18-box checklist of built-in tool names: hard-coded, so it
+missed every tool added after it, and MCP tools were a text box beside it.
+Writing `always` as `approve_tools: ["*"]`: the runner's `"*"` answers for
+`exec_command` too and routes it around the per-command gate. Trusting an
+MCP tool's `readOnlyHint` for "a change" (§5.53). A mode that exempts
+listed tools: a list that both adds and removes questions reads two ways.
+Defaulting new agents to `on_change`: a run nobody is watching would pause on
+its first write.
+
+**Cost accepted.** `on_change` asks about a session memory note or a
+checklist update, as plan mode refuses them. A tool's own predicate still runs
+under a mode (for its error), then is overruled.
+
+Rules: invariant 90; spec §2.12.
