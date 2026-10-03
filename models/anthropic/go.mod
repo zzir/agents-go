@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/anthropics/anthropic-sdk-go v1.61.0
 	github.com/openai/openai-go/v3 v3.42.0
-	github.com/zzir/agents-go v0.0.0
+	github.com/zzir/agents-go v0.5.0
 )
 
 require (

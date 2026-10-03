@@ -20,11 +20,11 @@ require (
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
 	github.com/uptrace/bun/driver/pgdriver v1.2.18
 	github.com/uptrace/bun/driver/sqliteshim v1.2.18
-	github.com/zzir/agents-go v0.0.0
-	github.com/zzir/agents-go/mcp v0.0.0
-	github.com/zzir/agents-go/models/anthropic v0.0.0
-	github.com/zzir/agents-go/sandbox/docker v0.0.0
-	github.com/zzir/agents-go/skills v0.0.0
+	github.com/zzir/agents-go v0.5.0
+	github.com/zzir/agents-go/mcp v0.5.0
+	github.com/zzir/agents-go/models/anthropic v0.5.0
+	github.com/zzir/agents-go/sandbox/docker v0.5.0
+	github.com/zzir/agents-go/skills v0.5.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/time v0.15.0
 )

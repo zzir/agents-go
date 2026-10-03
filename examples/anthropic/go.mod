@@ -3,8 +3,8 @@ module github.com/zzir/agents-go/examples/anthropic
 go 1.27.0
 
 require (
-	github.com/zzir/agents-go v0.0.0
-	github.com/zzir/agents-go/models/anthropic v0.0.0
+	github.com/zzir/agents-go v0.5.0
+	github.com/zzir/agents-go/models/anthropic v0.5.0
 )
 
 require (
