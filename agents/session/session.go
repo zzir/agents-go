@@ -128,7 +128,7 @@ type Repo interface {
 	Create(ctx context.Context, opts CreateOptions) (*Session, error)
 	Open(ctx context.Context, id string) (*Session, error)
 	// List returns session metadata newest first, cut to ListOptions.Limit; every
-	// implementation owes the same answer (spec §2.5e2, agentstest.RepoConformance).
+	// implementation owes the same answer (spec §2.5e2, sessiontest.RepoConformance).
 	List(ctx context.Context, opts ListOptions) ([]Metadata, error)
 	Delete(ctx context.Context, id string) error
 }

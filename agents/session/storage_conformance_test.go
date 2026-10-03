@@ -4,11 +4,11 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/internal/agentstest"
+	"github.com/zzir/agents-go/agents/session/sessiontest"
 )
 
 func TestInMemoryStorageConformance(t *testing.T) {
-	agentstest.StorageConformance(t, func(*testing.T) session.Storage {
+	sessiontest.StorageConformance(t, func(*testing.T) session.Storage {
 		return session.NewInMemoryStorage("mem")
 	})
 }
@@ -17,7 +17,7 @@ func TestInMemoryStorageConformance(t *testing.T) {
 // It ran neither conformance suite until now, which is how it came to be the
 // one repo whose handle kept writing into a session that had been deleted.
 func TestInMemoryRepoConformance(t *testing.T) {
-	agentstest.RepoConformance(t, func(*testing.T) agentstest.RepoUnderTest {
-		return agentstest.RepoUnderTest{Repo: session.NewInMemoryRepo()}
+	sessiontest.RepoConformance(t, func(*testing.T) sessiontest.RepoUnderTest {
+		return sessiontest.RepoUnderTest{Repo: session.NewInMemoryRepo()}
 	})
 }

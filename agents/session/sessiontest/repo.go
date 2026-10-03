@@ -1,4 +1,4 @@
-package agentstest
+package sessiontest
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 )
 
@@ -77,7 +76,7 @@ func repoWrite(t *testing.T, sess *session.Session, text string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.AppendItems(context.Background(), []agents.InputItem{item}, agents.Source{}); err != nil {
+	if err := sess.AppendItems(context.Background(), []session.InputItem{item}, session.Source{}); err != nil {
 		t.Fatalf("append %q: %v", text, err)
 	}
 }
@@ -186,7 +185,7 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	werr := stale.AppendItems(ctx, []agents.InputItem{item}, agents.Source{})
+	werr := stale.AppendItems(ctx, []session.InputItem{item}, session.Source{})
 	if werr == nil || !errors.Is(werr, session.ErrNotFound) {
 		t.Fatalf("a write through a handle to a deleted session must refuse with ErrSessionNotFound, got: %v", werr)
 	}

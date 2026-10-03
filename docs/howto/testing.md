@@ -68,5 +68,9 @@ on purpose — a test that stubs out the run loop is testing the stub.
   `modelkit/conformancetest` — the golden matrix every in-repo backend passes —
   plus tests against the provider's wire format. A scripted fake is a consumer
   of the `Model` interface, not a conformance suite for it.
+- **Writing a session backend?** Run `agents/session/sessiontest` against it:
+  `StorageConformance` for the `session.Storage`, `RepoConformance` for the
+  `session.Repo` ([spec §2.5e2](../reference/spec.md#25e2-the-entry-lifecycle-contract));
+  `examples/testing/storage_test.go` shows the two calls.
 
 The worked version of this page is [examples/testing](../../examples/testing) — a scripted model, the agent's real tool, and a test that asserts both the answer and that the script was fully consumed. It needs no API key: `go test ./examples/testing`.

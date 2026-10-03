@@ -1,10 +1,9 @@
-package agentstest
+package sessiontest
 
 import (
 	"context"
 	"testing"
 
-	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 )
 
@@ -56,7 +55,7 @@ func storageItem(t *testing.T, text string) session.Entry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := session.NewItemEntry(item, agents.Source{})
+	e, err := session.NewItemEntry(item, session.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}

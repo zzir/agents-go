@@ -6,12 +6,12 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/internal/agentstest"
+	"github.com/zzir/agents-go/agents/session/sessiontest"
 	"github.com/zzir/agents-go/sessions"
 )
 
 func TestSQLRepoConformance(t *testing.T) {
-	agentstest.RepoConformance(t, func(t *testing.T) agentstest.RepoUnderTest {
+	sessiontest.RepoConformance(t, func(t *testing.T) sessiontest.RepoUnderTest {
 		t.Helper()
 		_, db, err := sessions.NewSQLite("file:"+filepath.Join(t.TempDir(), "r.db"), "unused")
 		if err != nil {
@@ -21,7 +21,7 @@ func TestSQLRepoConformance(t *testing.T) {
 		if err := sessions.CreateSchema(context.Background(), db); err != nil {
 			t.Fatal(err)
 		}
-		return agentstest.RepoUnderTest{
+		return sessiontest.RepoUnderTest{
 			Repo: sessions.NewRepo(db),
 			Direct: func(id string) (*session.Session, error) {
 				return session.NewSession(sessions.New(db, id)), nil

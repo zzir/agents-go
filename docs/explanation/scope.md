@@ -65,7 +65,7 @@ Beyond the non-goals in [§1.2](#12-non-goals):
 | A built-in default model | The SDK does not guess which model you want. With none configured, `Model` returns a `*UserError`. |
 | Implicit model-parameter injection (e.g. reasoning defaults for a model family) | Explicit beats implicit. Set `ModelSettings` yourself. |
 | A free-form request passthrough dict | `ExtraBody` / `ExtraHeaders` / `ExtraQuery` cover it, and they are typed. |
-| Redis / encrypted session backends | Implement `session.Storage`. The SDK ships in-memory and SQL (SQLite/PostgreSQL). |
+| Redis / encrypted session backends | Implement `session.Storage` and run `agents/session/sessiontest` against it. The SDK ships in-memory and SQL (SQLite/PostgreSQL). |
 | A pop/undo storage primitive | A run never pops (entries are append-only, spec §2.5b), and a host that wants "undo" has its own deletion primitive against its own store. |
 | The Responses WebSocket transport, and a `Model` connection-lifecycle hook (`Close`) | Only the HTTP Responses transport is implemented; a `Model` has no lifecycle the runner manages. |
 | A REPL and graph visualization | Not an SDK concern. |

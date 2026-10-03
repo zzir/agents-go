@@ -85,7 +85,9 @@ that does not exist is `session.ErrNotFound`, never an empty session.
 `AtomicReplacer` (swap the whole history in one step — what a fork uses) and
 `CompactionAware` (compact its own history after a run) are optional
 interfaces a store may implement; a wrapper that claims one delivers it or
-refuses ([spec §2.5c](../reference/spec.md#25c-session-layering)).
+refuses ([spec §2.5c](../reference/spec.md#25c-session-layering)). A store of
+your own runs `agents/session/sessiontest` from its tests
+([Testing](testing.md)).
 
 ## Projection: what the model reads
 

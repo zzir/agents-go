@@ -2067,3 +2067,25 @@ natively.
 directly, outside this project's traces, replay and approvals.
 
 Rules: [scope §1.2](scope.md#12-non-goals).
+
+### 5.87 The session conformance suites are public
+
+Decided 2026-10-03.
+
+**Decision.** `agents/session/sessiontest` carries `StorageConformance` and
+`RepoConformance`, the suites the SDK's own session backends pass, so a
+backend written outside the repository (scope §3 tells its author to
+implement `session.Storage`) runs the same checks from its tests. The fake
+model and the run-level assertion helpers stay in `internal/agentstest`:
+§5.23 still holds for them.
+
+**Rejected.** Leaving the suites internal: the contract in spec §2.5e2 is then
+checked only for the backends in this repository, and the Redis or encrypted
+store the scope points people at is written against prose. A conformance
+check for atomic batch appends: no backend can prove the negative from the
+outside, so it stays a documented contract.
+
+**Cost accepted.** One more public package to keep compatible; its surface is
+two functions and one struct.
+
+Rules: spec §2.5e2.

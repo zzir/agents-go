@@ -5,12 +5,12 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/agents/session/sessiontest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
-	"github.com/zzir/agents-go/internal/agentstest"
 )
 
 func TestServerRepoConformance(t *testing.T) {
-	agentstest.RepoConformance(t, func(t *testing.T) agentstest.RepoUnderTest {
+	sessiontest.RepoConformance(t, func(t *testing.T) sessiontest.RepoUnderTest {
 		t.Helper()
 		db, err := store.NewSQLiteDB("file:" + store.NewID() + "?mode=memory&cache=shared")
 		if err != nil {
@@ -21,7 +21,7 @@ func TestServerRepoConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 		sessions := store.NewSessionStore(db)
-		return agentstest.RepoUnderTest{
+		return sessiontest.RepoUnderTest{
 			Repo: store.NewSessionRepoAdapter(sessions, func(ref session.Ref) session.Storage {
 				return store.NewEntryStoreFor(db, ref)
 			}),

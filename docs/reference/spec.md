@@ -597,7 +597,7 @@ when its answer is right.
 - **A listing is that record's order, newest first**; `ListOptions.Limit` cuts
   from the newest end, after the hidden filter, and a non-positive limit is no
   limit. It is a plain count, not a `Cursor`. Sessions sharing a time may come
-  back in either order. *Shared contract (`internal/agentstest.RepoConformance`);
+  back in either order. *Shared contract (`sessiontest.RepoConformance`);
   ordering per backend.*
 
 #### What must be one step

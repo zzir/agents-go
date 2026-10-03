@@ -129,10 +129,12 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   state is claimed by compare-and-set.
 - **Fan-out** — `agents/fanout.go`: one producer, many consumers, per-subscriber
   buffers. A dropped event is reported as a `*GapError`, never silent.
-- **Test doubles** — `internal/agentstest` is the shared harness + conformance
-  suites (test infrastructure, not API — decisions §5.23). The `agents` package
-  cannot import it (cycle), which is why `agents/run_test.go` has its own
-  unexported `fakeModel`.
+- **Test doubles** — `internal/agentstest` is the shared harness (the fake
+  model and run assertions; test infrastructure, not API — decisions §5.23).
+  The `agents` package cannot import it (cycle), which is why
+  `agents/run_test.go` has its own unexported `fakeModel`. The conformance
+  suites a backend runs are public: `agents/session/sessiontest`,
+  `sandbox/sandboxtest`, `models/modelkit/conformancetest`.
 
 ## Design decisions (deliberate — don't "fix" without cause)
 

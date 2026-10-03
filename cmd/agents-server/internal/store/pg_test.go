@@ -8,25 +8,25 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/internal/agentstest"
+	"github.com/zzir/agents-go/agents/session/sessiontest"
 )
 
 func TestPGEntryStoreConformance(t *testing.T) {
-	agentstest.StorageConformance(t, func(t *testing.T) session.Storage {
+	sessiontest.StorageConformance(t, func(t *testing.T) session.Storage {
 		t.Helper()
 		return NewEntryStoreFor(pgTestDB(t), session.Direct(NewID()))
 	})
 }
 
 func TestPGRepoConformance(t *testing.T) {
-	agentstest.RepoConformance(t, func(t *testing.T) agentstest.RepoUnderTest {
+	sessiontest.RepoConformance(t, func(t *testing.T) sessiontest.RepoUnderTest {
 		t.Helper()
 		db := pgTestDB(t)
 		sessions := NewSessionStore(db)
 		// Every id column is uuid-typed on PostgreSQL: the suite's literal
 		// names become memoized UUIDs.
 		ids := map[string]string{}
-		return agentstest.RepoUnderTest{
+		return sessiontest.RepoUnderTest{
 			Repo: NewSessionRepoAdapter(sessions, func(ref session.Ref) session.Storage {
 				return NewEntryStoreFor(db, ref)
 			}),

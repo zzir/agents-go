@@ -6,12 +6,12 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/internal/agentstest"
+	"github.com/zzir/agents-go/agents/session/sessiontest"
 	"github.com/zzir/agents-go/sessions"
 )
 
 func TestSQLSessionConformance(t *testing.T) {
-	agentstest.StorageConformance(t, func(t *testing.T) session.Storage {
+	sessiontest.StorageConformance(t, func(t *testing.T) session.Storage {
 		t.Helper()
 		_, db, err := sessions.NewSQLite("file:"+filepath.Join(t.TempDir(), "c.db"), "unused")
 		if err != nil {

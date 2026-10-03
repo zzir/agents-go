@@ -128,6 +128,7 @@ its own module, the heavy dependency that makes it one. Signatures live on
 | `sandbox` | root | `Sandbox` interface + `CodeTool` + `apply_patch` + the local backend (three backends in all: local, `sandbox/docker`, `sandbox/e2b`; each hosts persistent shells and terminals) |
 | `sandbox/e2b` | root | E2B-compatible cloud backend (HTTP only, so it needs no module) |
 | `sandbox/sandboxtest` | root | conformance suite every `Sandbox` backend runs against |
+| `agents/session/sessiontest` | root | conformance suites every `session.Storage` and `session.Repo` run against |
 | `mcp` | own — modelcontextprotocol/go-sdk and the seven indirect requirements it brought | Model Context Protocol client |
 | `models/anthropic` | own — anthropic-sdk-go | Anthropic Messages API backend (translated to Responses) |
 | `sandbox/docker` | own — the Docker client, x/crypto/ssh for remote daemons | Docker sandbox backend |
