@@ -30,7 +30,7 @@ Requires Go 1.27+.
 go test -race ./...                   # race detector is ON in CI — keep it green
 go test -race ./agents -run TestName  # single test
 golangci-lint run                     # CI uses golangci-lint v2.13
-./scripts/schema-compat.sh v0.4.4     # does HEAD open a database that tag created? (the release header's line)
+./scripts/schema-compat.sh v0.4.4     # does HEAD open a database that tag created? (the release header's line; --pg <DSN> checks PostgreSQL too)
 ./scripts/release-check.sh v0.5.1     # before tagging: a patch that breaks exported API is refused (decisions §5.8)
 ./scripts/release-prep.sh v0.5.1      # release commit: every go.mod requires the version; prints the lockstep tag commands
 ./scripts/consumer-smoke.sh v0.5.1    # after the tags are pushed: go get and build every module as a consumer

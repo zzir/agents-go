@@ -11,6 +11,19 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # The schema note checks PostgreSQL too; the database is wiped by the probe.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: agents_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,7 +74,7 @@ jobs:
 
       # One line for the release header; the script exits 0 whatever it finds.
       - name: Workbench schema note
-        run: echo "SCHEMA_NOTE=$(./scripts/schema-compat.sh "$PREV_TAG")" >> "$GITHUB_ENV"
+        run: echo "SCHEMA_NOTE=$(./scripts/schema-compat.sh "$PREV_TAG" --pg 'postgres://postgres:test@localhost:5432/agents_test?sslmode=disable')" >> "$GITHUB_ENV"
 
       - uses: goreleaser/goreleaser-action@v6
         with:

@@ -184,5 +184,6 @@ files with `GET /api/v1/projects/:id/export`, memories with
 `GET /api/v1/memories`; sessions, users, tokens and the audit log have no
 export. Back up the database file (or dump the PostgreSQL database) before any
 upgrade. Each release's notes open with whether it refuses the previous
-release's database; `./scripts/schema-compat.sh <tag>` answers the same for a
-checkout.
+release's database, on SQLite and PostgreSQL; `./scripts/schema-compat.sh
+<tag> [--pg <DSN>]` answers the same for a checkout (the PostgreSQL database
+named is wiped first, so point it at a throwaway one).
