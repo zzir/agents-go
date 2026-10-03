@@ -206,26 +206,63 @@ function App() {
     runCheck();
   }, [runCheck]);
 
-  // The URL names the view only. A `#/settings/:tab` fragment is a one-shot
-  // deep link: opening the dialog re-runs this and writes the view back, so a
-  // reload never lands on the overlay with the conversation underneath lost.
+  // The URL names the view, and Settings as `?settings=<tab>` over it. A move
+  // between views or Settings opening is a history entry (Back returns from
+  // it); a lens or a Settings tab replaces the entry in place.
+  const writtenViewRef = useRef<string | null>(null);
+  const settingsWasOpenRef = useRef(settingsOpen);
+  // Whether the entry on screen is the one Settings pushed, so closing it
+  // goes Back instead of leaving a dead entry; set when the close is that.
+  const settingsPushedRef = useRef(false);
+  const closingBackRef = useRef(false);
   useEffect(() => {
-    writeHash(activeSession, activePanel, hubTab);
-  }, [activeSession, activePanel, hubTab, settingsOpen]);
+    const view = hubTab ? 'hub:' + hubTab : 'session:' + (activeSession || '');
+    const viewMoved = writtenViewRef.current !== null && writtenViewRef.current !== view;
+    writtenViewRef.current = view;
+    const opening = settingsOpen && !settingsWasOpenRef.current;
+    settingsWasOpenRef.current = settingsOpen;
+    if (closingBackRef.current) {
+      // The close went Back: the popped entry is the view already.
+      closingBackRef.current = false;
+      return;
+    }
+    if (viewMoved) settingsPushedRef.current = false;
+    if (opening) settingsPushedRef.current = true;
+    writeHash(activeSession, activePanel, hubTab, settingsOpen ? (settingsTab ?? '') : null, viewMoved || opening);
+  }, [activeSession, activePanel, hubTab, settingsOpen, settingsTab]);
+
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    setSettingsTab(undefined);
+    setSettingsReloadKey(k => k + 1);
+    setSessionReloadKey(k => k + 1);
+    if (settingsPushedRef.current && readHash().settings != null) {
+      settingsPushedRef.current = false;
+      closingBackRef.current = true;
+      window.history.back();
+    }
+  }, []);
 
   // A lens belongs to a conversation: none open, none shown.
   useEffect(() => {
     if (!activeSession) setActivePanel(null);
   }, [activeSession]);
 
+  // The URL is read back on every navigation — a link, Back or Forward (both
+  // hashchange and popstate fire; the handler is idempotent). The settings
+  // parameter opens or closes the dialog over the view the rest names.
   useEffect(() => {
     const onHash = () => {
       const { sessionId, panel, hub, settings } = readHash();
-      // A settings fragment only opens the dialog; the view underneath stays.
       if (settings != null) {
         setSettingsTab(settings || undefined);
         setSettingsOpen(true);
-        return;
+      } else {
+        setSettingsOpen(open => {
+          if (open) { setSettingsTab(undefined); setSettingsReloadKey(k => k + 1); setSessionReloadKey(k => k + 1); }
+          return false;
+        });
+        settingsPushedRef.current = false;
       }
       setHubTab(hub);
       if (hub) return; // the conversation beside the hub stays as it was
@@ -233,7 +270,11 @@ function App() {
       setActivePanel(prev => panelKey(prev) === panelKey(panel) ? prev : panel);
     };
     window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
+    window.addEventListener('popstate', onHash);
+    return () => {
+      window.removeEventListener('hashchange', onHash);
+      window.removeEventListener('popstate', onHash);
+    };
   }, []);
 
   // A link in rendered markdown opens elsewhere; the page stays.
@@ -880,7 +921,7 @@ function App() {
             conversations. */}
         {settingsOpen && (
           <PanelDialog title="Settings" tabs={SETTINGS_TABS} adminTabs={isAdmin ? ADMIN_TABS : undefined} readOnly={isAdmin === null ? null : !isAdmin} initialTab={settingsTab}
-            onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); setSettingsReloadKey(k => k + 1); setSessionReloadKey(k => k + 1); }} />
+            onTabChange={setSettingsTab} onClose={closeSettings} />
         )}
         {/* Lost-connection pill: the socket announces a drop here, not only at
             the moment a send fails. */}

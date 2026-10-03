@@ -28,19 +28,22 @@ function TabLoadError() {
 // is a member's dialog (shared configuration is theirs to read, not write);
 // null is "not known yet", so the nav shows and the panel waits rather than
 // flashing the read-only note at an admin.
-export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onClose }: {
+export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onTabChange, onClose }: {
   title: string;
   tabs: DialogTab[];
   adminTabs?: DialogTab[];
   readOnly?: boolean | null;
   // Which tab opens selected; falls back to the first when unset or unknown.
   initialTab?: string;
+  // The tab a person selected, for the URL to carry.
+  onTabChange?: (tab: string) => void;
   onClose: () => void;
 }) {
   const known = !!initialTab && [...tabs, ...(adminTabs || [])].some(t => t.key === initialTab);
   const [tab, setTab] = useState(known ? initialTab : tabs[0].key);
   // A later deep link to another tab selects it while the dialog stays open.
   useEffect(() => { if (known) setTab(initialTab); }, [initialTab, known]);
+  const selectTab = (key: string) => { setTab(key); onTabChange?.(key); };
   // Keep-alive (invariant 51): a tab's panel is loaded on first visit and
   // then STAYS mounted (hidden). The value is the loaded component, or
   // TabLoadError if its chunk 404'd.
@@ -73,7 +76,7 @@ export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onCl
     <PrimerNavList.Item
       key={t.key}
       aria-current={tab === t.key ? 'page' : undefined}
-      onClick={() => setTab(t.key)}
+      onClick={() => selectTab(t.key)}
     >
       <PrimerNavList.LeadingVisual><t.icon size={16} /></PrimerNavList.LeadingVisual>
       {t.label}

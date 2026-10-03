@@ -356,7 +356,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     sections, what runs are built from, then an admin's entries after a
     divider. A scoped entity's tab is one list — every member's rows for an
     admin, "Mine | All" only narrowing and opening on Mine (`ScopedEntityPanel.tsx`);
-    `#/settings/:tab` is a one-shot deep link the URL underneath keeps naming.
+    `?settings=<tab>` on the view's own URL opens it: pushed on open, so Back closes it and a reload reopens it over the same view.
 62. **A span's payload is content-addressed per session, and lives and dies
     with the session's trace.** Payload elements are stored once per session
     in `trace_blobs` under their sha256, so delete, fork and retention are
