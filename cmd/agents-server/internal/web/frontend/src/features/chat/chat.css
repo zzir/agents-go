@@ -118,6 +118,11 @@
 }
 
 /* Turn-level actions (copy, regenerate, duration) — uses Primer IconButton */
+/* One decision for a pause of several calls, above the per-call cards' row. */
+.turn-approve-all {
+  display: flex;
+  margin-top: var(--base-size-8);
+}
 .turn-actions {
   display: flex;
   gap: 0;

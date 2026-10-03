@@ -30,6 +30,8 @@ export interface ChatSessionState {
 
 export interface ChatActions {
   approve?: (toolCallId: string, scope?: string) => void;
+  // Approves the given pending calls of one pause at once, resuming once.
+  approveAll?: (toolCallIds: string[]) => void;
   // reason, when given, is what the model reads as the rejected call's output.
   reject?: (toolCallId: string, reason?: string) => void;
   fork?: (messageId: string) => void;

@@ -169,6 +169,11 @@ export const TASK_KIND_WORKFLOW = 'workflow';
 // the execution.
 export const STEP_APPROVAL_TOOL = 'start_step';
 
+// The decisions Approve all leaves to a person one by one (mirror of the
+// bridge's perCallApprovals): a plan, a workflow definition, a memory the
+// model proposes.
+export const PER_CALL_APPROVALS = new Set(['submit_plan', 'save_workflow', 'memory_write', 'memory_append']);
+
 // WorkflowState is a workflow task's `state`: the definition snapshot and where
 // the sequence stands (mirror of store.WorkflowState).
 export interface WorkflowState {

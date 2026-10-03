@@ -4,6 +4,7 @@ import { useCopy } from '@/lib/hooks';
 import { ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, AlertIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { type TurnPart, type ErrorPart, type CancelledPart, type Branches } from '@/lib/timeline';
+import { PER_CALL_APPROVALS } from '@/lib/protocol';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TextContent } from '@/features/chat/TextContent';
 import { ProcessTimeline } from '@/features/chat/ProcessTimeline';
@@ -114,7 +115,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
   // Live-run state applies to the live turn only — every read below is gated
   // on isLive.
   const { running, compacting, projectBound } = useChatSession();
-  const { regenerate, fork, switchBranch, openSettings } = useChatActions();
+  const { regenerate, fork, switchBranch, openSettings, approveAll } = useChatActions();
   // On a bound session the attempts and forks share the project's files,
   // and the controls say so (decisions §5.28).
   const shared = projectBound ? SHARED_FILES_COPY : null;
@@ -122,7 +123,10 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
   const { copied, copy } = useCopy();
   // A turn paused on a decision offers no fork, regenerate or attempt switch:
   // the decision is what it waits for, and a branch here would abandon it.
-  const awaitingDecision = parts.some(p => p.type === 'tools' && p.toolCalls.some(tc => tc.needs_approval && !tc.status));
+  const pendingCalls = parts.flatMap(p => p.type === 'tools' ? p.toolCalls.filter(tc => tc.needs_approval && !tc.status) : []);
+  const awaitingDecision = pendingCalls.length > 0;
+  // Two or more calls a person need not confirm one by one: one Approve all.
+  const batchIds = pendingCalls.filter(tc => !PER_CALL_APPROVALS.has(tc.tool_name)).map(tc => tc.tool_call_id);
 
   const { segments, notices } = useMemo(() => buildSegments(parts), [parts]);
 
@@ -188,6 +192,11 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
       {/* The bar shows for anything a person can act on: a failed or
           cancelled turn with no assistant text still regenerates, forks and
           switches attempts — only Copy needs text. */}
+      {!isLive && batchIds.length >= 2 && approveAll && (
+        <div className="turn-approve-all">
+          <Button size="small" variant="primary" onClick={() => approveAll(batchIds)}>Approve all ({batchIds.length})</Button>
+        </div>
+      )}
       {!isLive && (turnText || canRegen || (messageId && fork) || (branches && branches.tips.length > 1)) && (
         <div className="turn-actions">
           {!awaitingDecision && branches && branches.tips.length > 1 && switchBranch && (

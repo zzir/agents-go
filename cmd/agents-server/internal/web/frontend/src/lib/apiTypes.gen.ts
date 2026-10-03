@@ -5191,6 +5191,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/approvals/approve-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve every pending call of the session's pause
+         * @description Approves, once each, every tool call the session's own run is paused on — a plan, a workflow save and a memory proposal excepted, which stay for a decision each — and resumes the run once. Background tasks' pauses are not covered: they are answered on the task. 404 when the session has no pause of its own, 400 when every call of it is one confirmed one by one, 409 while the run is live.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Session ID */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.approveAllResp"];
+                    };
+                };
+                /** @description nothing approve-all may take */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description session already has an active run */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Internal Server Error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/branch": {
         parameters: {
             query?: never;
@@ -8141,6 +8219,11 @@ export interface components {
         "handler.approvalResultResp": {
             run_id?: string;
             status?: string;
+        };
+        "handler.approveAllResp": {
+            /** @description Approved counts the calls approved; the pause's other calls (a plan, a workflow save, a memory proposal) stay for a decision each. */
+            approved?: number;
+            run_id?: string;
         };
         "handler.approveReq": {
             scope?: string;

@@ -308,6 +308,17 @@ oldest first. Each names the session to open (`session_id` — the parent's
 for a task's call) and when it expires. It is read-only and the caller's
 alone, with no `all=true`; a decision is made on the call itself.
 
+`POST /sessions/:id/approvals/approve-all` answers one pause in one go: every
+call the session's **own** run is paused on is approved once each and the run
+resumes once — a plan (`submit_plan`), a workflow save (`save_workflow`) and
+a memory proposal (`memory_write`, `memory_append`) are left out and stay for
+a decision each, and a background task's pause is not touched (it is answered
+on the task). It answers `{run_id, approved}`; a session with no pause of its
+own is `404`, a pause made only of the excepted calls is `400`, and a live run
+is `409` like any decision. A decision made call by call on the same pause
+resumes the run per call; the first to land claims the pause, and a second
+decision on it finds it gone (`404`) or a new pause.
+
 **A newer message wins over a pause.** A run paused for approval is
 abandoned when the session takes a new message (`POST /sessions/:id/runs`,
 `run.create`) or when the paused run is cancelled (`POST /runs/:id/cancel`,

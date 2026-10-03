@@ -81,6 +81,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		owned.GET("/traces/:span_id", h.Traces.GetBySpan)
 		owned.POST("/runs", h.Runs.Create)
 		owned.GET("/approvals", h.Approvals.ListBySession)
+		owned.POST("/approvals/approve-all", h.Approvals.ApproveAll)
 		owned.GET("/tasks", h.Tasks.ListBySession)
 		owned.GET("/memory", h.Memories.ListSession)
 		owned.GET("/memory/*key", h.Memories.ReadSession)

@@ -219,6 +219,9 @@ export const api = {
     memory: (id: string | number) => request<S['handler.SessionMemoryInfo'][]>(`/sessions/${id}/memory`),
     memoryKey: (id: string | number, key: string) => request<S['store.Memory']>(`/sessions/${id}/memory/${key.split('/').map(encodeURIComponent).join('/')}`),
     approvals: (id: string | number) => request(`/sessions/${id}/approvals`),
+    // Approves every call of the session's own pause at once (the per-call
+    // kinds excepted, see PER_CALL_APPROVALS) and resumes the run once.
+    approveAll: (id: string | number) => request<{ run_id: string; approved: number }>(`/sessions/${id}/approvals/approve-all`, { method: 'POST' }),
     // Moves the session's active branch to an entry. Append-only: the
     // abandoned attempt stays recorded and can be switched back to.
     branch: (id: string | number, entryId: string) => request<{ leaf: string; previous_leaf: string }>(`/sessions/${id}/branch`, { method: 'POST', body: JSON.stringify({ entry_id: entryId }) }),

@@ -107,6 +107,27 @@ describe('TurnBlock controls', () => {
     unmount();
   });
 
+  // A pause of two or more calls offers one Approve all, counting only the
+  // calls a person need not confirm one by one.
+  it('offers Approve all for a pause of several calls, a plan left out', () => {
+    const approveAll = vi.fn();
+    const calls = (names: string[]) => names.map((n, i) => ({ tool_call_id: 'c' + i, tool_name: n, arguments: '{}', output: null, status: null, needs_approval: true }));
+    const render = (names: string[]) => mount(
+      <ChatSessionProvider session={{ sessionId: 's1', running: false, compacting: false, agentAvatars: {} }} actions={{ ...actions, approveAll }} tasks={{ items: [], lookups: { retryableByCallId: {}, liveTaskStatusByCallId: {}, liveTaskLabelByCallId: {}, taskLabelById: {} } }}>
+        <TurnBlock parts={[{ type: 'tools', toolCalls: calls(names) }]} streaming={null} reasoning={null} isLive={false} prompt={null} />
+      </ChatSessionProvider>,
+    );
+    const a = render(['exec_command', 'write_file', 'submit_plan']);
+    const button = a.host.querySelector('.turn-approve-all button') as HTMLButtonElement | null;
+    expect(button?.textContent).toBe('Approve all (2)');
+    act(() => button!.click());
+    expect(approveAll).toHaveBeenCalledWith(['c0', 'c1']);
+    a.unmount();
+    const b = render(['exec_command']);
+    expect(b.host.querySelector('.turn-approve-all')).toBeNull();
+    b.unmount();
+  });
+
   it('keeps the plain words on an unbound session', () => {
     const { host, unmount } = turn({ sessionId: 's1', running: false, compacting: false, agentAvatars: {} });
     const got = labels(host);

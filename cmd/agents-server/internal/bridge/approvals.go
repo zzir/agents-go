@@ -212,17 +212,94 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		return "", "", err
 	}
-
-	// Once the pending row is deleted, bailing out half-done strands the run:
-	// every MUTATION below runs detached from the request's cancellation; reads do not.
-	mctx := context.WithoutCancel(ctx)
-
 	// A workflow step waiting to START has no run to resume: the decision
 	// starts the step's run or ends the execution.
 	if pending.Kind == store.ApprovalKindStep {
 		runID, err = r.resolveStepApproval(ctx, pending, approve, reason)
 		return runID, pending.SessionID, err
 	}
+	var item *agents.ToolApprovalItem
+	d := approvalDecision{apply: func(state *agents.RunState) error {
+		if item = findApprovalItem(state, toolCallID); item == nil {
+			return fmt.Errorf("tool call %s not found in run state", toolCallID)
+		}
+		if approve {
+			state.Approve(item, false)
+		} else {
+			state.Reject(item, false, reason)
+		}
+		return nil
+	}}
+	if approve {
+		d.trust = func(trustSession, runID string) { r.applyCommandTrust(scope, item, trustSession, runID) }
+	}
+	runID, err = r.resolvePending(ctx, pending, d, onDone)
+	return runID, pending.SessionID, err
+}
+
+// perCallApprovals are the decisions ApproveAll leaves to a person one by
+// one: a plan, a workflow definition, a memory the model proposes.
+var perCallApprovals = map[string]bool{
+	middleware.PlanToolName: true, WorkflowSaveToolName: true, "memory_write": true, "memory_append": true,
+}
+
+// ErrNothingToApproveAll is ApproveAll on a pause whose every call is one a
+// person confirms one by one.
+var ErrNothingToApproveAll = errors.New("every call of this pause is confirmed one by one")
+
+// ApproveAll approves, once each, every call of the session's own pause except
+// the perCallApprovals, and resumes the run once; n is how many it approved.
+// A session with no pause of its own is ErrNotFound.
+func (r *Runner) ApproveAll(ctx context.Context, sessionID string, onDone func(*RunOutcome)) (runID string, n int, err error) {
+	if r.Deps.PendingApprovals == nil {
+		return "", 0, errors.New("approvals are not persisted")
+	}
+	rows, err := r.Deps.PendingApprovals.ListBySession(ctx, sessionID)
+	if err != nil {
+		return "", 0, err
+	}
+	var pending *store.PendingApproval
+	for i := range rows {
+		if rows[i].Kind == "" {
+			pending = &rows[i]
+			break
+		}
+	}
+	if pending == nil {
+		return "", 0, fmt.Errorf("session %s has no pause of its own: %w", sessionID, store.ErrNotFound)
+	}
+	d := approvalDecision{apply: func(state *agents.RunState) error {
+		for _, item := range state.Interruptions {
+			if perCallApprovals[item.ToolName] {
+				continue
+			}
+			state.Approve(item, false)
+			n++
+		}
+		if n == 0 {
+			return ErrNothingToApproveAll
+		}
+		return nil
+	}}
+	runID, err = r.resolvePending(ctx, pending, d, onDone)
+	return runID, n, err
+}
+
+// approvalDecision is what a resolve applies to a pause's restored state:
+// apply decides the calls (an error refuses the resolve before anything is
+// claimed), trust writes standing command trust once the claim held.
+type approvalDecision struct {
+	apply func(state *agents.RunState) error
+	trust func(trustSession, runID string)
+}
+
+// resolvePending restores the pause's state, applies the decision, claims the
+// row and resumes the run under the same id — the one path every decision on
+// a tool-call pause takes.
+func (r *Runner) resolvePending(ctx context.Context, pending *store.PendingApproval, d approvalDecision, onDone func(*RunOutcome)) (runID string, err error) {
+	// Once the pending row is deleted, bailing out half-done strands the run:
+	// every MUTATION below runs detached from the request's cancellation; reads do not.
+	mctx := context.WithoutCancel(ctx)
 
 	// A RunState outside the SDK's decode window is discarded (else every retry
 	// 500s); the check is the SDK's window, so an additive bump still resumes.
@@ -231,7 +308,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 			logging.Ctx(ctx).Error("discarding stale pending approval", "error", delErr, "run_id", pending.RunID)
 		}
 		r.PublishSessionStatus(mctx, pending.SessionID)
-		return "", pending.SessionID, &StaleApprovalStateError{RunID: pending.RunID, HaveVersion: v, WantVersion: agents.RunStateSchemaVersion}
+		return "", &StaleApprovalStateError{RunID: pending.RunID, HaveVersion: v, WantVersion: agents.RunStateSchemaVersion}
 	}
 
 	// A pending approval may belong to a background task's child session — its
@@ -240,16 +317,16 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if err != nil {
 		// Rebuilding a task run as a chat run would hand it the task tools and
 		// skip its reclaim; refuse rather than guess.
-		return "", pending.SessionID, err
+		return "", err
 	}
 	// The rebuild carries the owner's role like the original build did.
 	sess, err := r.Deps.Sessions.Get(ctx, pending.SessionID)
 	if err != nil {
-		return "", pending.SessionID, err
+		return "", err
 	}
 	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.ProjectID, taskMeta != nil, sess.OwnerID)
 	if err != nil {
-		return "", pending.SessionID, fmt.Errorf("rebuilding agent: %w", err)
+		return "", fmt.Errorf("rebuilding agent: %w", err)
 	}
 	// The rebuilt agent IS the resumed run's executor (ResumeRun), so its
 	// sandbox reference lives as long as that run: the segment releases it
@@ -262,28 +339,21 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	}()
 	state, err := agents.RunStateFromJSON([]byte(pending.State), registry)
 	if err != nil {
-		return "", pending.SessionID, fmt.Errorf("restoring run state: %w", err)
+		return "", fmt.Errorf("restoring run state: %w", err)
 	}
 	// Restore the phase from the session's column (invariant 33), or a pause
 	// after the plan ended resumes without write tools; a failed read retries.
 	resumeRef, refErr := store.RefFor(ctx, r.db, pending.SessionID)
 	if refErr != nil {
-		return "", pending.SessionID, fmt.Errorf("resolving session for plan phase: %w", refErr)
+		return "", fmt.Errorf("resolving session for plan phase: %w", refErr)
 	}
 	resumeStore := store.NewEntryStoreFor(r.db, resumeRef)
 	resumeStore.SetRunID(pending.RunID)
 	if err := r.restorePlanPhase(ctx, rebuilt.PlanPhase, resumeStore, resumeRef, sess.OwnerID); err != nil {
-		return "", pending.SessionID, err
+		return "", err
 	}
-
-	item := findApprovalItem(state, toolCallID)
-	if item == nil {
-		return "", pending.SessionID, fmt.Errorf("tool call %s not found in run state", toolCallID)
-	}
-	if approve {
-		state.Approve(item, false)
-	} else {
-		state.Reject(item, false, reason)
+	if err := d.apply(state); err != nil {
+		return "", err
 	}
 
 	// Wait for the paused segment's postRun (it marks the task input_required,
@@ -295,25 +365,25 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if taskMeta != nil && taskMeta.TaskID != "" {
 		outcome, cerr := r.Deps.Tasks.ClaimApprovalWorking(mctx, taskMeta.TaskID, pending.RunID)
 		if cerr != nil {
-			return "", pending.SessionID, fmt.Errorf("reclaiming task %s: %w", taskMeta.TaskID, cerr)
+			return "", fmt.Errorf("reclaiming task %s: %w", taskMeta.TaskID, cerr)
 		}
 		switch outcome {
 		case store.ClaimTaken:
-			return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", store.ErrNotFound)
+			return "", fmt.Errorf("claiming pending approval: %w", store.ErrNotFound)
 		case store.ClaimTaskNotPaused:
 			// Terminal: void. A different attempt: stale (the row stays and
 			// refuses). Still this attempt, not paused yet: not ready, retry.
 			cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID)
 			if gerr == nil && !isTerminalTaskStatus(cur.Status) {
 				if cur.RunID != pending.RunID {
-					return "", pending.SessionID, &StaleApprovalAttemptError{TaskID: taskMeta.TaskID, ApprovalRunID: pending.RunID, CurrentRunID: cur.RunID}
+					return "", &StaleApprovalAttemptError{TaskID: taskMeta.TaskID, ApprovalRunID: pending.RunID, CurrentRunID: cur.RunID}
 				}
-				return "", pending.SessionID, &ApprovalNotReadyError{RunID: pending.RunID}
+				return "", &ApprovalNotReadyError{RunID: pending.RunID}
 			}
-			return "", pending.SessionID, &ApprovalVoidError{TaskID: taskMeta.TaskID}
+			return "", &ApprovalVoidError{TaskID: taskMeta.TaskID}
 		}
 	} else if err := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); err != nil {
-		return "", pending.SessionID, fmt.Errorf("claiming pending approval: %w", err)
+		return "", fmt.Errorf("claiming pending approval: %w", err)
 	}
 
 	// The continuation reopens the SAME run id.
@@ -327,8 +397,8 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		}
 		// Standing trust (same_command, all) is written HERE: after the claim
 		// held, before the launch, so the loser of two decisions widens nothing.
-		if approve {
-			r.applyCommandTrust(scope, item, trustSessionID(pending.SessionID, taskMeta), pending.RunID)
+		if d.trust != nil {
+			d.trust(trustSessionID(pending.SessionID, taskMeta), pending.RunID)
 		}
 		return nil
 	}
@@ -336,13 +406,13 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 	if errors.Is(err, errResumeStopped) {
 		// Stopped between the claim and the launch: nothing ran, nothing to
 		// restore. A 409 like a terminal run's, not a 500.
-		return "", pending.SessionID, ErrRunNotResumable{RunID: pending.RunID, Status: RunCancelled}
+		return "", ErrRunNotResumable{RunID: pending.RunID, Status: RunCancelled}
 	}
 	if err != nil {
 		// A session mid-delete gets nothing back: the cascade removes the rows,
 		// and one restored after it would be an orphan.
 		if _, deleting := errors.AsType[ErrSessionDeleting](err); deleting {
-			return "", pending.SessionID, err
+			return "", err
 		}
 		// Give the approval back so the decision can be retried; for a task the
 		// row and its input_required go back in ONE write (Pause).
@@ -353,7 +423,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 		} else {
 			r.restorePendingApproval(mctx, pending)
 		}
-		return "", pending.SessionID, err
+		return "", err
 	}
 	handedOff = true
 	// Working again: tell the clients — the run's own run.started follows.
@@ -362,7 +432,7 @@ func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve
 			r.publishTaskUpdated(mctx, t)
 		}
 	}
-	return runID, pending.SessionID, nil
+	return runID, nil
 }
 
 // ErrSessionAwaitingApproval refuses a machine-started turn on a session whose

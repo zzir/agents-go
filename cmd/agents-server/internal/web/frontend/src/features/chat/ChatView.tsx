@@ -101,6 +101,8 @@ export interface ChatViewActions {
   onSend: (text: string, agentConfigId: string, projectId?: string, attachments?: AttachmentMeta[]) => void;
   onCancel: (graceful?: boolean) => boolean;
   onApprove?: (id: string, scope?: string) => void;
+  // Approves every listed pending call of the session's pause at once.
+  onApproveAll?: (toolCallIds: string[]) => void;
   onReject?: (id: string, reason?: string) => void;
   // Queues a message on the session's live run: a steer, or a follow-up.
   // False when there was no run to queue on: the text stays in the box.
@@ -174,7 +176,7 @@ export function ChatView({
     liveRunId, tasks, tasksLoaded, tasksError, taskView, queued,
   } = state;
   const {
-    onSend, onCancel, onApprove, onReject, onInject, onFork, onSwitchBranch, onCompact, onRegenerate,
+    onSend, onCancel, onApprove, onApproveAll, onReject, onInject, onFork, onSwitchBranch, onCompact, onRegenerate,
     onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen, onSettingsOpen, onRetryTasks,
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
@@ -499,10 +501,10 @@ export function ChatView({
     [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, projectBound],
   );
   const turnActions = useMemo<ChatActions>(() => ({
-    approve: onApprove, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
+    approve: onApprove, approveAll: onApproveAll, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
     regenerate: onRegenerate ? handleRegen : undefined,
     openTrace, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan, openSettings: onSettingsOpen, retryTasks: onRetryTasks,
-  }), [onApprove, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen, onRetryTasks]);
+  }), [onApprove, onApproveAll, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen, onRetryTasks]);
 
   const topBar = (
     <ChatTopBar

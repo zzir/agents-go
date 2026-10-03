@@ -145,6 +145,41 @@ func (h *ApprovalHandler) Reject(c *gin.Context) {
 	h.resolve(c, false, bridge.ApprovalOnce, req.Reason)
 }
 
+// approveAllResp names the resumed run and how many calls were approved.
+type approveAllResp struct {
+	RunID string `json:"run_id"`
+	// Approved counts the calls approved; the pause's other calls (a plan, a workflow save, a memory proposal) stay for a decision each.
+	Approved int `json:"approved"`
+}
+
+// ApproveAll approves every call of the session's own pause at once.
+//
+//	@Summary		Approve every pending call of the session's pause
+//	@Description	Approves, once each, every tool call the session's own run is paused on — a plan, a workflow save and a memory proposal excepted, which stay for a decision each — and resumes the run once. Background tasks' pauses are not covered: they are answered on the task. 404 when the session has no pause of its own, 400 when every call of it is one confirmed one by one, 409 while the run is live.
+//	@Tags			approvals
+//	@Produce		json
+//	@Param			id	path		string	true	"Session ID"
+//	@Success		202	{object}	approveAllResp
+//	@Failure		400	{object}	ErrorResponse	"nothing approve-all may take"
+//	@Failure		404	{object}	ErrorResponse
+//	@Failure		409	{object}	ErrorResponse	"session already has an active run"
+//	@Failure		500	{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/sessions/{id}/approvals/approve-all [post]
+func (h *ApprovalHandler) ApproveAll(c *gin.Context) {
+	server.SetAuditDetail(c, "approve-all")
+	runID, n, err := h.runner.ApproveAll(c.Request.Context(), c.Param("id"), nil)
+	if err != nil {
+		if errors.Is(err, bridge.ErrNothingToApproveAll) {
+			badRequest(c, err.Error())
+			return
+		}
+		h.resolveError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, approveAllResp{RunID: runID, Approved: n})
+}
+
 // approveReq is the optional body of an approve request. Scope extends an
 // exec_command decision: "once" (default), "same" (this exact command), "all".
 type approveReq struct {

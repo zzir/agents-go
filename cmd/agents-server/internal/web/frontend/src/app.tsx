@@ -637,6 +637,20 @@ function App() {
     }
   }, [updateToolCall, wsRef]);
 
+  // One decision for a whole pause: the cards show approved at once; a
+  // refusal puts them back, since the pause is still there to answer.
+  const handleApproveAll = useCallback(async (toolCallIds: string[]) => {
+    const sid = activeSessionRef.current;
+    if (!sid) return;
+    for (const id of toolCallIds) updateToolCall(id, { status: 'approved' });
+    try {
+      await api.sessions.approveAll(sid);
+    } catch (e) {
+      for (const id of toolCallIds) updateToolCall(id, { status: null });
+      toast.error((e as Error).message || 'Could not approve the pending calls');
+    }
+  }, [updateToolCall]);
+
   const handleReject = useCallback((toolCallId: string, reason?: string) => {
     if (!wsRef.current) return;
     updateToolCall(toolCallId, { status: 'rejected' });
@@ -779,11 +793,11 @@ function App() {
   // One object of callbacks, rebuilt only when one of them is; the memo'd
   // view compares it by reference.
   const chatActions = useMemo<ChatViewActions>(() => ({
-    onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onReject: handleReject, onInject: handleInject, onFork: handleFork,
+    onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onApproveAll: handleApproveAll, onReject: handleReject, onInject: handleInject, onFork: handleFork,
     onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
     onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask, onLoadSpan: handleLoadSpan,
     onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings, onRetryLoad: handleRetryLoad, onRetryTasks: handleRetryTasks,
-  }), [handleSend, handleCancel, handleApprove, handleReject, handleInject, handleFork, handleSwitchBranch, handleCompact,
+  }), [handleSend, handleCancel, handleApprove, handleApproveAll, handleReject, handleInject, handleFork, handleSwitchBranch, handleCompact,
     handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad, handleRetryTasks]);
 
   // A signature that moves with any execution in any conversation (every

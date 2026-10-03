@@ -56,9 +56,9 @@ func authzRig(t *testing.T) rig {
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	agents := store.NewAgentConfigStore(db)
-	deps := &bridge.AgentDeps{AgentConfigs: agents, Sessions: sessions, Traces: store.NewTraceStore(db)}
-	runner := bridge.NewRunner(t.Context(), db, deps)
 	tasks, approvals, triggers := store.NewTaskStore(db), store.NewPendingApprovalStore(db), store.NewTriggerStore(db)
+	deps := &bridge.AgentDeps{AgentConfigs: agents, Sessions: sessions, Traces: store.NewTraceStore(db), PendingApprovals: approvals}
+	runner := bridge.NewRunner(t.Context(), db, deps)
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
 	s.RegisterAPI(Handlers{
 		Authz:     AuthzDeps{Sessions: sessions, Tasks: tasks, Approvals: approvals, Triggers: triggers, Hub: runner.Hub()},
@@ -113,6 +113,7 @@ func TestSessionSubtreesAreTheOwnersAlone(t *testing.T) {
 		{http.MethodPost, "/api/v1/tasks/" + task.ID + "/dismiss"},
 		{http.MethodPost, "/api/v1/approvals/call_1/approve"},
 		{http.MethodPost, "/api/v1/approvals/call_1/reject"},
+		{http.MethodPost, "/api/v1/sessions/" + sess.ID + "/approvals/approve-all"},
 		{http.MethodGet, "/api/v1/triggers/" + trg.ID},
 		{http.MethodDelete, "/api/v1/triggers/" + trg.ID},
 		{http.MethodPost, "/api/v1/triggers/" + trg.ID + "/fire"},
@@ -131,6 +132,18 @@ func TestSessionSubtreesAreTheOwnersAlone(t *testing.T) {
 	// The owner reaches them (whatever each then answers about its state).
 	if rec := serve(engine, as(memberUser, http.MethodGet, "/api/v1/triggers/"+trg.ID, "")); rec.Code != http.StatusOK {
 		t.Fatalf("owner GET trigger = %d", rec.Code)
+	}
+	// Approve all: the owner's pause here holds no state to resume, which
+	// is the bridge's own refusal, not the gate's.
+	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/sessions/"+sess.ID+"/approvals/approve-all", "")); rec.Code == http.StatusNotFound {
+		t.Fatalf("owner approve-all = 404 (%s), want the bridge's answer", rec.Body.String())
+	}
+	other := &store.Session{OwnerID: memberUser.ID, ID: store.NewID(), Name: "quiet"}
+	if err := sessions.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/sessions/"+other.ID+"/approvals/approve-all", "")); rec.Code != http.StatusNotFound {
+		t.Fatalf("approve-all on a session with no pause = %d, want 404", rec.Code)
 	}
 	if rec := serve(engine, as(memberUser, http.MethodPost, "/api/v1/tasks/"+task.ID+"/dismiss", "")); rec.Code != http.StatusOK {
 		t.Fatalf("owner dismiss task = %d %s", rec.Code, rec.Body.String())
