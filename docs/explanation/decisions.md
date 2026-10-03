@@ -2053,3 +2053,21 @@ checklist update, as plan mode refuses them. A tool's own predicate still runs
 under a mode (for its error), then is overruled.
 
 Rules: invariant 90; spec §2.12.
+
+### 5.86 Hosted harnesses are not wrapped
+
+Decided 2026-10-03.
+
+**Decision.** The SDK ships no `Model` adapter or wrapper package for a hosted
+harness (the OpenAI Agents API, the Codex app-server), and the server does not
+speak their wire protocols.
+
+**Rejected.** An Agents API adapter: the loop would run twice, and approvals
+and guardrails would gate only the outer one. Codex app-server compatibility:
+a large surface that changes often; a terminal client is cheaper written
+natively.
+
+**Cost accepted.** Someone who wants a hosted feature uses the hosted service
+directly, outside this project's traces, replay and approvals.
+
+Rules: [scope §1.2](scope.md#12-non-goals).

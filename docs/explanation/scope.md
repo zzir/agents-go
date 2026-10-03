@@ -49,6 +49,9 @@ path, and a change that puts them back is a scope change, not an edit.
 | **Realtime and voice** | A different interaction model, out of scope. |
 | **Graph orchestration as the multi-agent primitive** | Handoffs already cover "switch agent at runtime". Graph orchestration, if ever needed, layers *on top* — see [§5.1](decisions.md#51-handoffs-stay-graph-orchestration-does-not-replace-them). |
 | **Growing workflows: a canvas editor, new step types, an expression language** | A workflow is a trigger target and a task kind — a fixed sequence edited as data, its graph view read-only; fan-out and join are [§3](#3-capabilities-deliberately-not-provided). |
+| **A terminal or IDE coding agent** | The workbench runs the agent you configured and shows what each call saw; it is not an editor's assistant. |
+| **A hosted service** | Local first: one binary on your machine, your keys, your data. |
+| **Codex app-server compatibility; an Agents API `Model` adapter** | The loop would run twice and the approvals would gate only the outer one; the app-server surface is large and changes often — [§5.86](decisions.md#586-hosted-harnesses-are-not-wrapped). |
 | **The SDK reporting to the workbench** | `cmd/agents-server` (the workbench) depends on the SDK; the SDK knows nothing of the workbench. A program written against the SDK runs on its own, with the SDK's session stores and tracing `Processor`s — no trace-ingest endpoint, no remote `session.Storage` pointing at the server, no "register my program" bridge. The workbench runs the agents configured in it; the SDK runs agents in your program. Two consumers of one core, one dependency edge. Decided 2026-08-24 with the positioning "Go agents. Local first."; revisit only if the workbench's own debug loop (traces, replay, fork) turns out to need data a configured agent cannot produce. |
 
 ---
