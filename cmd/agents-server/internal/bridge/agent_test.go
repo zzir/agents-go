@@ -237,9 +237,9 @@ func TestBuildFullAgentOverridesSystemPrompt(t *testing.T) {
 	}
 }
 
-// The checklist is the agent's choice (behavior.checklist), off by default,
-// and a chat run's alone: a background run keeps no list nobody watches.
-func TestChecklistIsOptInAndChatOnly(t *testing.T) {
+// The checklist is the agent's choice (behavior.checklist), off by default;
+// on, chat and background runs alike carry it (invariant 91).
+func TestChecklistIsOptIn(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
@@ -271,8 +271,12 @@ func TestChecklistIsOptInAndChatOnly(t *testing.T) {
 	if !got {
 		t.Fatal("behavior.checklist did not give the chat run todo_write")
 	}
-	if got, _ := has(listed, true); got {
-		t.Error("a background run was given todo_write")
+	// A background run keeps it: there the list is the live progress signal.
+	if got, _ := has(listed, true); !got {
+		t.Error("a background run of an agent with the checklist was not given todo_write")
+	}
+	if got, _ := has(plain, true); got {
+		t.Error("a background run of an agent without the checklist was given todo_write")
 	}
 	// It is a tool and nothing else: no preamble rides in the instructions,
 	// and the Context panel sizes it under its own source.
@@ -322,7 +326,7 @@ func TestChecklistIsRefusedWhilePlanning(t *testing.T) {
 // backend that does not enforce the enum is answered with an error, the whole
 // list refused.
 func TestChecklistStatusIsAnEnum(t *testing.T) {
-	tool := checklistTool()
+	tool := checklistTool(nil)
 	schema, _ := json.Marshal(tool.ParamsJSONSchema)
 	if !strings.Contains(string(schema), `"enum":["pending","in_progress","completed"]`) {
 		t.Fatalf("schema = %s, want status as an enum", schema)

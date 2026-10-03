@@ -18,6 +18,13 @@ const (
 	ApprovedPlanSource = "plan_approval"
 )
 
+// ChecklistKey is the session memory a run's todo_write keeps its latest
+// list under, and ChecklistSource its Metadata.
+const (
+	ChecklistKey    = "checklist.md"
+	ChecklistSource = "checklist"
+)
+
 // Who may write a scope over the API, and whether the model may.
 const (
 	MemoryWriteAdmin        = "admin"

@@ -72,6 +72,9 @@ type AgentDeps struct {
 	// MemoryTools is set by NewRunner and builds the memory_* tools when the
 	// config opts in (memory.memory_tools); chat runs only.
 	MemoryTools func(ctx context.Context, ownerID string, built *BuildResult) []*agents.Tool
+	// KeepChecklist is set by NewRunner and keeps a run's checklist under its
+	// own session's checklist.md (invariant 91).
+	KeepChecklist func(ctx context.Context, sessionID, ownerID, markdown string) error
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -154,6 +157,9 @@ type BuildResult struct {
 	// releaseSandbox drops every sandbox-instance reference this build acquired
 	// (entry and handoff targets, folded into one); nil without a sandbox.
 	releaseSandbox func()
+	// runSessionID is the session the run on this build writes, set by the
+	// runner before the run starts; empty on a build that serves no run.
+	runSessionID string
 }
 
 // Release drops the build's hold on its sandbox instance. Every builder MUST
@@ -283,12 +289,21 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		result.RunGuardrails = result.Agent.Guardrails
 		result.Agent.Guardrails = nil
 	}
-	// The checklist is the ENTRY agent's, chat only.
-	if !background && result.Agent != nil && result.Behavior.Checklist {
+	// The checklist is the ENTRY agent's, on chat and background runs alike:
+	// in the background it is the live progress signal (invariant 91).
+	if result.Agent != nil && result.Behavior.Checklist {
 		mark := len(result.Agent.Tools)
+		keep := func(ctx context.Context, markdown string) {
+			if deps.KeepChecklist == nil || result.runSessionID == "" {
+				return
+			}
+			if err := deps.KeepChecklist(ctx, result.runSessionID, ownerID, markdown); err != nil {
+				logging.Ctx(ctx).Warn("keeping the checklist", "error", err, "session_id", result.runSessionID)
+			}
+		}
 		// A clone: the entry agent may also be a handoff target of its own graph.
 		entry := result.Agent.Clone()
-		entry.Tools = append(slices.Clone(entry.Tools), checklistTool())
+		entry.Tools = append(slices.Clone(entry.Tools), checklistTool(keep))
 		result.Agent = entry
 		bucketToolsSince(result.Agent, mark, store.ToolSourceChecklist, &result.Profile)
 	}

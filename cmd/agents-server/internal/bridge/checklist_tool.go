@@ -22,9 +22,33 @@ const checklistDescription = "Keep a checklist of the steps of multi-step work. 
 // The item states; anything else refuses the whole list.
 var checklistStatuses = []string{"pending", "in_progress", "completed"}
 
+// checklistItem is one step as the model sends it.
+type checklistItem struct {
+	Content string `json:"content"`
+	Status  string `json:"status"`
+}
+
+// checklistMarkdown renders the list as a task list: [x] done, [ ] pending,
+// [~] in progress.
+func checklistMarkdown(todos []checklistItem) string {
+	var b strings.Builder
+	for _, it := range todos {
+		switch it.Status {
+		case "completed":
+			b.WriteString("- [x] " + it.Content + "\n")
+		case "in_progress":
+			b.WriteString("- [~] " + it.Content + " (in progress)\n")
+		default:
+			b.WriteString("- [ ] " + it.Content + "\n")
+		}
+	}
+	return b.String()
+}
+
 // checklistTool builds todo_write: its schema carries the status enum, and the
-// call validates what the schema can only ask for — decisions §5.82.
-func checklistTool() *agents.Tool {
+// call validates what the schema can only ask for — decisions §5.82. keep, when
+// set, receives each accepted list rendered as markdown.
+func checklistTool(keep func(ctx context.Context, markdown string)) *agents.Tool {
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -44,12 +68,9 @@ func checklistTool() *agents.Tool {
 		"required": []string{"todos"},
 	}
 	tool, err := agents.NewRawTool(ChecklistToolName, checklistDescription, schema,
-		func(_ context.Context, _ *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
+		func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			var args struct {
-				Todos []struct {
-					Content string `json:"content"`
-					Status  string `json:"status"`
-				} `json:"todos"`
+				Todos []checklistItem `json:"todos"`
 			}
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 				return agents.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
@@ -63,6 +84,9 @@ func checklistTool() *agents.Tool {
 					return agents.ToolResult{}, fmt.Errorf("item %d has status %q (want pending, in_progress or completed)", i, it.Status)
 				}
 				counts[it.Status]++
+			}
+			if keep != nil {
+				keep(ctx, checklistMarkdown(args.Todos))
 			}
 			return agents.ToolResult{Content: []agents.ToolOutputContent{agents.ToolOutputText{Text: fmt.Sprintf(
 				"Checklist updated: %d items (%d completed, %d in progress, %d pending).",

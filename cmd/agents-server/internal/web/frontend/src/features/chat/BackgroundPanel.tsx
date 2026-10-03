@@ -1,10 +1,11 @@
-import { useState, useMemo, memo } from 'react';
+import { useEffect, useState, useMemo, memo } from 'react';
 import { Button, IconButton, useConfirm } from '@primer/react';
 import { ArrowLeftIcon, StackIcon, CopyIcon, CheckIcon, WorkflowIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
 import { Loading } from '@/components/Loading';
 import { LoadError } from '@/components/LoadError';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
+import { CHECKLIST_KEY, CHECKLIST_TOOL, latestChecklist } from '@/lib/checklist';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
 import { useAsyncMarkdown } from '@/lib/markdown';
@@ -206,6 +207,21 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
     () => (item.kind === 'workflow' ? stepRows(item.state, item.status, view?.traceRuns as Record<string, TraceEventData[]> | undefined) : []),
     [item.kind, item.state, item.status, view?.traceRuns],
   );
+  // The task's checklist as its run last wrote it (the child session's
+  // checklist.md, invariant 91), re-read as the transcript grows; absent
+  // when the run keeps none.
+  const taskChecklist = useMemo(() => latestChecklist(view?.messages || []), [view?.messages]);
+  const [checklistMd, setChecklistMd] = useState<string | null>(null);
+  const childSessionId = view?.childSessionId;
+  const transcriptLen = view?.messages.length || 0;
+  useEffect(() => {
+    if (!childSessionId) return;
+    let alive = true;
+    api.sessions.memoryKey(childSessionId, CHECKLIST_KEY)
+      .then(m => { if (alive) setChecklistMd(m.content || null); })
+      .catch(() => { if (alive) setChecklistMd(null); });
+    return () => { alive = false; };
+  }, [childSessionId, transcriptLen, item.status]);
 
   return (
     <SidePanel icon={item.kind === 'workflow' ? WorkflowIcon : StackIcon} title={item.label} onClose={onClose} storageKey="inspectorWidth">
@@ -279,6 +295,12 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
         <Loading kind="panel" />
       ) : tab === 'transcript' ? (
         <div className="task-view">
+          {checklistMd && (
+            <div className="task-view-checklist">
+              <div className="task-view-checklist-title">Checklist</div>
+              <MdBlock text={checklistMd} />
+            </div>
+          )}
           {view.messages.map((m, i) => {
             if (m.role === 'user') {
               return <div key={i} className="task-view-user">{m.content}</div>;
@@ -300,7 +322,10 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
                     case 'tools':
                       // A foreign transcript: approvals still route by call id, but the
                       // task offers (inspect/retry) belong to the parent's cards only.
-                      return part.toolCalls.map(tc => <ToolCallCard key={tc.tool_call_id} toolCall={tc} live={live} />);
+                      return part.toolCalls.map(tc => (
+                        <ToolCallCard key={tc.tool_call_id} toolCall={tc} live={live}
+                          stale={tc.tool_name === CHECKLIST_TOOL && !!taskChecklist && tc.tool_call_id !== taskChecklist.callId} />
+                      ));
                     case 'error':
                       return <div key={j} className="task-view-error">{part.content}</div>;
                     case 'cancelled':

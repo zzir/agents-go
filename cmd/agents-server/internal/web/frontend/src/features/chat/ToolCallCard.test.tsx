@@ -40,7 +40,7 @@ const SESSION: ChatSessionState = { sessionId: 's1', running: true, compacting: 
 const noop = () => {};
 const resolve = async () => {};
 
-function mount(toolCall: ToolCall) {
+function mount(toolCall: ToolCall, stale?: boolean) {
   const approve = vi.fn();
   const reject = vi.fn();
   const actions: ChatActions = { approve, reject, openTrace: noop, inspectTask: noop, retryTask: resolve, stopTask: resolve, dismissTask: resolve };
@@ -50,7 +50,7 @@ function mount(toolCall: ToolCall) {
   act(() => {
     root.render(
       <ChatSessionProvider session={SESSION} actions={actions} tasks={deriveChatTasks({})}>
-        <ToolCallCard toolCall={toolCall} live />
+        <ToolCallCard toolCall={toolCall} live stale={stale} />
       </ChatSessionProvider>,
     );
   });
@@ -206,5 +206,25 @@ describe('ToolCallCard approval', () => {
     const m = mount(pending('exec_command', { cmd: 'make test', workdir: 'src' }));
     expect(m.host.querySelector('.disclosure-body pre')?.textContent).toBe('cd src && make test');
     m.unmount();
+  });
+});
+
+describe('ToolCallCard checklist', () => {
+  const done = (): ToolCall => ({
+    tool_call_id: 'c1', tool_name: 'todo_write', status: 'completed', output: 'ok',
+    arguments: JSON.stringify({ todos: [{ content: 'read it', status: 'completed' }, { content: 'fix it', status: 'in_progress' }] }),
+  } as ToolCall);
+
+  // The newest list opens on its own; an older one is history and stays folded
+  // behind its "1/2 done".
+  it('opens the newest checklist and folds a stale one', () => {
+    const fresh = mount(done());
+    expect(fresh.host.querySelector('.disclosure-header')?.getAttribute('aria-expanded')).toBe('true');
+    expect(fresh.host.querySelectorAll('.ToolCallCard-todo').length).toBe(2);
+    fresh.unmount();
+    const old = mount(done(), true);
+    expect(old.host.querySelector('.disclosure-header')?.getAttribute('aria-expanded')).toBe('false');
+    expect(old.host.textContent).toContain('1/2 done');
+    old.unmount();
   });
 });

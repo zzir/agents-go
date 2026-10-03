@@ -392,9 +392,11 @@ history (spec §2.5g) — the threshold predicts, this reacts.
 Plan mode is NOT an agent setting: it rides on the run request (`plan`) and
 belongs to the session, which reports it as `planning`
 ([invariant 33](../explanation/workbench-invariants.md)). The checklist IS
-one, `behavior.checklist`, off by default — on, chat runs get `todo_write`,
-which plan mode refuses while planning
-([decisions §5.82](../explanation/decisions.md#582-a-checklist-belongs-to-whoever-renders-it));
+one, `behavior.checklist`, off by default — on, chat and background runs get
+`todo_write`, which plan mode refuses while planning; each accepted list is
+the run's session memory `checklist.md`
+([decisions §5.82](../explanation/decisions.md#582-a-checklist-belongs-to-whoever-renders-it),
+[invariant 91](../explanation/workbench-invariants.md));
 so is workflow authoring, `behavior.workflow_authoring`, off by default
 ([invariant 39](../explanation/workbench-invariants.md)).
 `behavior.override_system_prompt` sends the agent's `instructions` alone —

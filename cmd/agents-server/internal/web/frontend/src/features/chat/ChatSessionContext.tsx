@@ -1,4 +1,5 @@
 import { createContext, useContext, useRef, type Context, type ReactNode } from 'react';
+import type { Checklist } from '@/lib/checklist';
 import type { RunDiagnostic } from '@/lib/protocol';
 import { backgroundItems, type BackgroundItem } from '@/lib/background';
 import { taskRetryable, type TaskState } from '@/lib/useAgentSocket';
@@ -28,6 +29,9 @@ export interface ChatSessionState {
   projectBound?: boolean;
   // Whether the session's own run waits on a decision: no branch is offered.
   pendingDecision?: boolean;
+  // The newest todo_write on the timeline (lib/checklist.ts): the chip above
+  // the composer shows it, and only its card opens by default.
+  checklist?: Checklist | null;
 }
 
 export interface ChatActions {

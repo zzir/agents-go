@@ -28,6 +28,8 @@ import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import type { AttachmentMeta } from '@/lib/attachments';
 import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
+import { ChecklistChip } from '@/features/chat/ChecklistChip';
+import { latestChecklist } from '@/lib/checklist';
 import { TraceDrawer, lastGenerationSpan } from '@/features/chat/TracePanel';
 import { ReplayDialog } from '@/features/chat/ReplayDialog';
 import { ContextPanel } from '@/features/chat/ContextPanel';
@@ -521,9 +523,12 @@ export function ChatView({
     return m;
   }, [agentConfigs]);
   const projectBound = !!sessionBinding?.projectId;
+  // state.messages is the typed timeline; ChatMessage is this file's looser
+  // read of the same rows.
+  const checklist = useMemo(() => latestChecklist(state.messages), [state.messages]);
   const session = useMemo<ChatSessionState>(
-    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, agentNames, tasksError, projectBound, pendingDecision: !!ownPending }),
-    [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, projectBound, ownPending],
+    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, agentNames, tasksError, projectBound, pendingDecision: !!ownPending, checklist }),
+    [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, projectBound, ownPending, checklist],
   );
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, approveAll: onApproveAll, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
@@ -839,6 +844,7 @@ export function ChatView({
         <ChatToc items={tocItems} scrollElRef={chatElRef} onJump={jumpToMsg} />
         </div>
         <WorkflowStrip />
+        <ChecklistChip />
         {/* Mounted empty: a live region announces what is added to it, not
             what it arrives holding. */}
         <div className="chat-queued" aria-live="polite">

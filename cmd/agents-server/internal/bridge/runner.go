@@ -90,20 +90,36 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	deps.WorkflowTools = r.workflowTools
 	deps.HistoryTools = r.historyTools
 	deps.MemoryTools = r.memoryTools
+	deps.KeepChecklist = r.keepChecklist
 	return r
 }
 
-// keepApprovedPlan writes plan under the session's reserved key, replacing
-// the plan an earlier approval kept.
-func (r *Runner) keepApprovedPlan(ctx context.Context, ref session.Ref, ownerID, plan string) error {
+// keepSessionMemory writes content under one of the keys the workbench keeps
+// in a session's memory, replacing what an earlier write kept there.
+func (r *Runner) keepSessionMemory(ctx context.Context, ref session.Ref, ownerID, key, content, source, writtenBy string) error {
 	if r.Deps.Memories == nil {
 		return nil
 	}
 	sc := store.SessionMemoryScope(ref)
 	return r.Deps.Memories.Upsert(ctx, &store.Memory{
-		ScopeKind: sc.Kind, ScopeID: sc.ID, Gen: sc.Gen, Key: store.ApprovedPlanKey, Content: plan,
-		Metadata: store.ApprovedPlanSource, WrittenBy: store.MemoryWrittenByUser, OwnerID: ownerID,
+		ScopeKind: sc.Kind, ScopeID: sc.ID, Gen: sc.Gen, Key: key, Content: content,
+		Metadata: source, WrittenBy: writtenBy, OwnerID: ownerID,
 	}, nil)
+}
+
+// keepApprovedPlan keeps the plan a person approved (invariant 87).
+func (r *Runner) keepApprovedPlan(ctx context.Context, ref session.Ref, ownerID, plan string) error {
+	return r.keepSessionMemory(ctx, ref, ownerID, store.ApprovedPlanKey, plan, store.ApprovedPlanSource, store.MemoryWrittenByUser)
+}
+
+// keepChecklist is AgentDeps.KeepChecklist: the list's latest state, under
+// the session of the run that wrote it (invariant 91).
+func (r *Runner) keepChecklist(ctx context.Context, sessionID, ownerID, markdown string) error {
+	ref, err := store.RefFor(ctx, r.db, sessionID)
+	if err != nil {
+		return err
+	}
+	return r.keepSessionMemory(ctx, ref, ownerID, store.ChecklistKey, markdown, store.ChecklistSource, store.MemoryWrittenByModel)
 }
 
 // Tasks exposes the task manager so handlers and the startup path can reach it.
@@ -464,6 +480,9 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		// This segment is the build's only holder.
 		defer built.Release()
 	}
+	// The session THIS run writes: a task's is its own, not the parent's the
+	// run context names (trustSessionID).
+	built.runSessionID = sessionID
 
 	agent := built.Agent
 	provider := built.Provider

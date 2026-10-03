@@ -1946,9 +1946,10 @@ Rules: [invariant 16](workbench-invariants.md)
 Decided 2026-10-03.
 
 **Decision.** The workbench owns `todo_write`: a tool of its own, on an
-agent's chat runs when `behavior.checklist` is set, off by default, refused
-while the session plans. The SDK ships no checklist: its `middleware.Todo`
-lost its one consumer here.
+agent's runs when `behavior.checklist` is set, off by default, refused
+while the session plans — background runs too, where it is the live progress
+signal, each accepted list kept as the run's session `checklist.md`. The SDK
+ships no checklist: its `middleware.Todo` lost its one consumer here.
 
 **Rejected.** On for every chat agent, as since 2026-08 ("when a job is worth
 tracking is the model's judgement"): the judgement needs the tool listed on
@@ -1965,7 +1966,7 @@ it by hand, per agent rather than per model: the project keeps no table of
 model capabilities (scope §1.2). An agent that had `todo_write` loses it until
 the switch is turned on. Revisit when the checklist benchmark reports.
 
-Rules: [invariant 34](workbench-invariants.md), [invariant 67](workbench-invariants.md)
+Rules: [invariant 34](workbench-invariants.md), [invariant 67](workbench-invariants.md), [invariant 91](workbench-invariants.md)
 
 ### 5.83 A stateful request is not replayed into the dark, and an attempt has its own clock
 

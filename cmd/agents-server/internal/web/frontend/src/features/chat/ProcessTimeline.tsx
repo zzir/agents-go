@@ -4,6 +4,7 @@ import { ArrowSwitchIcon, ChevronRightIcon } from '@primer/octicons-react';
 import { DIAGNOSTIC_LABELS, type RunDiagnostic } from '@/lib/protocol';
 import type { TurnPart } from '@/lib/timeline';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
+import { CHECKLIST_TOOL } from '@/lib/checklist';
 import { useChatSession, useChatActions } from '@/features/chat/ChatSessionContext';
 import { AgentAvatar } from '@/components/AgentAvatar';
 
@@ -75,7 +76,7 @@ interface ProcessTimelineProps {
 export function ProcessTimeline({ parts, live, reasoning, textStreaming }: ProcessTimelineProps) {
   // The live run's state (compaction, diagnostics) belongs to the executing
   // group only; a settled group shows none of it.
-  const { compacting, diagnostics } = useChatSession();
+  const { compacting, diagnostics, checklist } = useChatSession();
   const { inspectTask, retryTask } = useChatActions();
   // null = auto (open while live, closed once done); true/false = user override.
   const [expanded, setExpanded] = useState<boolean | null>(null);
@@ -145,7 +146,8 @@ export function ProcessTimeline({ parts, live, reasoning, textStreaming }: Proce
             if (p.type === 'handoff') return <TimelineHandoff key={'pt-' + i} part={p} />;
             if (p.type === 'tools') {
               return p.toolCalls.map(tc => (
-                <ToolCallCard key={tc.tool_call_id} toolCall={tc} live={live} onInspectTask={inspectTask} onRetryTask={retryTask} />
+                <ToolCallCard key={tc.tool_call_id} toolCall={tc} live={live} onInspectTask={inspectTask} onRetryTask={retryTask}
+                  stale={tc.tool_name === CHECKLIST_TOOL && !!checklist && tc.tool_call_id !== checklist.callId} />
               ));
             }
             return null;

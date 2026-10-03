@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Button, Label } from '@primer/react';
 import { StatusLabel } from '@/lib/status';
-import { ToolsIcon, StackIcon, SyncIcon, CheckIcon, DotFillIcon, CircleIcon } from '@primer/octicons-react';
+import { ToolsIcon, StackIcon, SyncIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { useAsyncMarkdown } from '@/lib/markdown';
 import { type ToolCall } from '@/lib/timeline';
@@ -10,6 +10,8 @@ import { RejectButton, type RejectHandle } from '@/features/chat/RejectButton';
 import { ToolOutputBody } from '@/features/chat/ToolOutputBody';
 import { WorkflowSpecBody } from '@/features/chat/WorkflowSpecBody';
 import { parseWorkflowSpec, type WorkflowSpec } from '@/lib/workflowArgs';
+import { CHECKLIST_TOOL, parseChecklist, type ChecklistItem } from '@/lib/checklist';
+import { ChecklistItems } from '@/features/chat/ChecklistItems';
 
 interface ToolCallCardProps {
   toolCall: ToolCall;
@@ -20,13 +22,14 @@ interface ToolCallCardProps {
   // session does not track. Absent = no offer.
   onInspectTask?: (taskId: string) => void;
   onRetryTask?: (taskId: string) => void;
+  // A checklist card that is not the timeline's newest: it stays folded, the
+  // "3/5 done" in its header being all it still says (lib/checklist.ts).
+  stale?: boolean;
 }
-
-interface TodoRow { content: string; status: string }
 
 type ArgBody =
   | { kind: 'patch' | 'command' | 'json' | 'markdown'; text: string }
-  | { kind: 'todos'; text: string; todos: TodoRow[] }
+  | { kind: 'todos'; text: string; todos: ChecklistItem[] }
   | { kind: 'workflow'; text: string; spec: WorkflowSpec }
   | { kind: 'memory'; text: string; scope: string; key: string; append: boolean };
 
@@ -59,11 +62,9 @@ function primaryArg(toolName: string, args: string): ArgBody {
       // and the text exactly as it would land.
       return { kind: 'memory', text: parsed.text, scope: typeof parsed.scope === 'string' && parsed.scope ? parsed.scope : 'session', key: typeof parsed.key === 'string' ? parsed.key : '', append: toolName === 'memory_append' };
     }
-    if (toolName === 'todo_write' && Array.isArray(parsed.todos)) {
-      const todos = (parsed.todos as Array<{ content?: string; status?: string }>)
-        .filter(td => td && typeof td.content === 'string')
-        .map(td => ({ content: td.content as string, status: td.status || 'pending' }));
-      return { kind: 'todos', text: '', todos };
+    if (toolName === CHECKLIST_TOOL) {
+      const todos = parseChecklist(args);
+      if (todos) return { kind: 'todos', text: '', todos };
     }
     return { kind: 'json', text: JSON.stringify(parsed, null, 2) };
   } catch {
@@ -162,7 +163,7 @@ function mcpArgSummary(args: string): { text: string; mono: boolean } | null {
   }
 }
 
-export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: ToolCallCardProps) {
+export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale }: ToolCallCardProps) {
   const { tool_call_id, tool_name, arguments: args, needs_approval, status, output, task, progress } = toolCall;
   const { approve: onApprove, reject: onReject } = useChatActions();
   const { retryableByCallId, liveTaskStatusByCallId, liveTaskLabelByCallId, taskLabelById } = useChatTaskLookups();
@@ -341,9 +342,9 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
       as="div"
       label={headerLabel}
       forceOpen={pendingApproval || (!output && !!progress) || undefined}
-      // The checklist IS the information; a collapsed "3/5 done" hides the
-      // items the user tracks progress by.
-      defaultOpen={body.kind === 'todos'}
+      // The newest checklist IS the information; an older one is history,
+      // its header count enough.
+      defaultOpen={body.kind === 'todos' && !stale}
       className="ToolCallCard"
     >
       {body.kind === 'patch' ? (
@@ -362,18 +363,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
           <pre className="ToolCallCard-memory-text">{body.text}</pre>
         </div>
       ) : body.kind === 'todos' ? (
-        <ul className="ToolCallCard-todos">
-          {body.todos.map((td, i) => (
-            <li key={i} className={'ToolCallCard-todo ToolCallCard-todo--' + td.status}>
-              <span className="ToolCallCard-todo-icon">
-                {td.status === 'completed' ? <CheckIcon size={14} />
-                  : td.status === 'in_progress' ? <DotFillIcon size={14} />
-                  : <CircleIcon size={12} />}
-              </span>
-              {td.content}
-            </li>
-          ))}
-        </ul>
+        <ChecklistItems items={body.todos} />
       ) : (
         <pre>{body.text}</pre>
       )}

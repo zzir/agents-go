@@ -203,11 +203,12 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     decision. The phase is the materialized `sessions.planning` column,
     cleared by an approved `submit_plan`, copied by a fork (decisions §5.53).
 34. **A background run is built without what only a chat has, and is told
-    nobody is reading.** No plan mode (a person's switch, invariant 33),
-    checklist, task tools, memory or history tools, or workflow authoring;
-    `BackgroundInstructions` is its suffix. A trigger's turn and a wake-up are
-    chat runs. Background is "a task's child session", a FAILED lookup an
-    error; a chat run drops the task tools only via `behavior.subagents: false`.
+    nobody is reading.** No plan mode (a person's switch, invariant 33), task
+    tools, memory or history tools, or workflow authoring; the checklist comes
+    along when the agent has one (invariant 91); `BackgroundInstructions` is
+    its suffix. A trigger's turn and a wake-up are chat runs. Background is "a
+    task's child session", a FAILED lookup an error; a chat run drops the task
+    tools only via `behavior.subagents: false`.
 35. **A step's approval is answerable from the session that asked.**
     `GET /sessions/:id/approvals` includes the approvals paused inside this
     session's tasks, tagged with their task, so the chat is the one approval
@@ -526,3 +527,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     exactly what `BuildResult.ReadOnlySet` does not admit, `always` for all,
     `exec_command` always through its per-command gate), and `approve_tools`
     can only add a question (`bridge/approval_mode.go`) — decisions §5.85.
+91. **A checklist's latest state is its run's session `checklist.md`.** Each
+    accepted `todo_write` writes the list, as markdown, under the session of
+    the run that made the call — a task's own, never the parent's its run
+    context names (`bridge/agent.go`, `Runner.keepChecklist`); the task lens
+    reads it from there, and a reset carries it along. The write is best
+    effort: a failure is logged and the call succeeds — decisions §5.82.

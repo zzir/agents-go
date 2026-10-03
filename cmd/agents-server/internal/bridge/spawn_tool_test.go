@@ -380,10 +380,10 @@ func TestDescribeTaskStateSaysTheStep(t *testing.T) {
 	}
 }
 
-// A workflow STEP is a background run: no plan mode, no checklist, no task
-// tools (spawn_task included). Plan mode is a restraint only a person turns
-// on (invariant 33), and nobody started a step by typing.
-func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
+// workflowStepTools runs a one-step workflow on an agent with the checklist
+// switch as given and returns the tools its step was offered.
+func workflowStepTools(t *testing.T, checklist bool) []string {
+	t.Helper()
 	ctx := context.Background()
 	var offered []string
 	srv := recordToolsModel(t, &offered)
@@ -394,6 +394,7 @@ func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name: "planner", Model: "gpt-test",
 		ProviderID: testProvider(t, runner.db, "endpoint", "k", srv.URL),
+		Behavior:   store.BehaviorGroup{Checklist: checklist},
 	}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
@@ -420,9 +421,30 @@ func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
 	if done, _ := awaitWorkflow(t, runner, info.TaskID, 15*time.Second); done.Status != "completed" {
 		t.Fatalf("status = %q (%s), want completed — a step must not stop for a plan review", done.Status, done.Summary)
 	}
+	return offered
+}
+
+// A workflow STEP is a background run: no plan mode, no task tools
+// (spawn_task included), and no checklist unless the agent turned it on.
+// Plan mode is a restraint only a person turns on (invariant 33), and nobody
+// started a step by typing.
+func TestWorkflowStepIsBuiltAsABackgroundRun(t *testing.T) {
+	offered := workflowStepTools(t, false)
 	for _, name := range []string{"submit_plan", "todo_write", "spawn_task", "task_status"} {
 		if slices.Contains(offered, name) {
 			t.Errorf("a workflow step was offered %q; its toolset = %v", name, offered)
 		}
+	}
+}
+
+// With the switch on, a step keeps its checklist: in the background it is
+// the live progress signal (invariant 91).
+func TestWorkflowStepCarriesTheChecklistWhenOn(t *testing.T) {
+	offered := workflowStepTools(t, true)
+	if !slices.Contains(offered, ChecklistToolName) {
+		t.Fatalf("a step of an agent with the checklist was not offered todo_write; its toolset = %v", offered)
+	}
+	if slices.Contains(offered, "submit_plan") {
+		t.Fatal("the checklist brought plan mode along")
 	}
 }
