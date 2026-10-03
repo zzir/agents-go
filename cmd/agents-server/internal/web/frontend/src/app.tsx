@@ -35,6 +35,7 @@ import { putBackInComposer } from '@/lib/composer';
 import { MeContext, useMeLoader } from '@/lib/me';
 import { useNarrow } from '@/lib/hooks';
 import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
+import { resendEdited } from '@/lib/editResend';
 import { frameTooLarge } from '@/lib/messageSize';
 import { installExternalLinkOpener } from '@/lib/externalLinks';
 
@@ -774,6 +775,33 @@ function App() {
     }
   }, [activeSession, wsRef, reloadTimeline]);
 
+  // Editing a sent message: the branch moves to the message's parent and the
+  // edited text runs there; the send failing rolls the branch back.
+  const handleEditResend = useCallback(async (parentId: string, text: string, agentConfigId: string, projectId?: string, attachmentIds?: string[]) => {
+    const sid = activeSession;
+    if (!sid || !wsRef.current) return;
+    if (!wsRef.current.isConnected()) {
+      toast.error('Connection lost, reconnecting — message not sent');
+      return;
+    }
+    try {
+      const outcome = await resendEdited({
+        branch: entryId => api.sessions.branch(sid, entryId),
+        reload: () => reloadTimeline(sid),
+        send: input => {
+          const payload: Record<string, unknown> = { session_id: sid, input, agent_config_id: agentConfigId };
+          if (projectId) payload.project_id = projectId;
+          if (attachmentIds?.length) payload.attachment_ids = attachmentIds;
+          return wsRef.current!.send(EV.runCreate, payload);
+        },
+      }, parentId, text);
+      if (outcome === 'rolled_back') toast.error('Connection lost, reconnecting — message not sent');
+      if (outcome === 'stranded') toast.error('Connection lost, reconnecting — the earlier attempt is in the attempt switcher');
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not resend the message');
+    }
+  }, [activeSession, wsRef, reloadTimeline]);
+
   // A trace row opening its payload: fetched into the active session's state
   // (the panel showing it), from the session whose rows hold the span.
   const handleLoadSpan = useCallback((spanSessionId: string, runId: string, spanId: string): Promise<void> => {
@@ -794,11 +822,11 @@ function App() {
   // view compares it by reference.
   const chatActions = useMemo<ChatViewActions>(() => ({
     onSend: handleSend, onCancel: handleCancel, onApprove: handleApprove, onApproveAll: handleApproveAll, onReject: handleReject, onInject: handleInject, onFork: handleFork,
-    onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate,
+    onSwitchBranch: handleSwitchBranch, onCompact: handleCompact, onRegenerate: handleRegenerate, onEditResend: handleEditResend,
     onWatchTask: watchTask, onUnwatchTask: unwatchTask, onPatchTask: patchTask, onLoadSpan: handleLoadSpan,
     onPanelChange: setActivePanel, onTerminalOpen: handleTerminalOpen, onSettingsOpen: handleOpenSettings, onRetryLoad: handleRetryLoad, onRetryTasks: handleRetryTasks,
   }), [handleSend, handleCancel, handleApprove, handleApproveAll, handleReject, handleInject, handleFork, handleSwitchBranch, handleCompact,
-    handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad, handleRetryTasks]);
+    handleRegenerate, handleEditResend, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad, handleRetryTasks]);
 
   // A signature that moves with any execution in any conversation (every
   // connection hears every session's task.updated), for the hub's Runs view

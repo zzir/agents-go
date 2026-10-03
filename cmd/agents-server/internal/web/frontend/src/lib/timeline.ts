@@ -203,6 +203,11 @@ interface UserEntry {
   // Set on a live bubble the run read from its queue (run.injected's index):
   // it shares its run id with the prompt, so the id alone does not name it.
   injected?: number;
+  // parentId is the entry this message continues from — where an edit
+  // branches; absent on the first message and on a bubble not yet stored.
+  parentId?: string;
+  // Sibling attempts at this point: the message as edited and resent.
+  branches?: Branches;
 }
 
 // WorkflowStartedNote is the data of a started note: a workflow's start (which
@@ -384,7 +389,10 @@ function assemble(
       finishTurn();
       // An image-only message has no text — the attachments alone earn the bubble.
       if (e.content || e.attachments?.length) {
-        timeline.push({ role: 'user', content: e.content || '', messageId: e.id, entryId: e.entry_id, runId: e.run_id, attachments: e.attachments });
+        timeline.push({
+          role: 'user', content: e.content || '', messageId: e.id, entryId: e.entry_id, runId: e.run_id, attachments: e.attachments,
+          parentId: e.parent_id, branches: e.entry_id ? forks.get(e.entry_id) : undefined,
+        });
       }
       continue;
     }

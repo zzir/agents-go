@@ -19,7 +19,7 @@
 //      'completed' — per-call status is not persisted; the rejection notice
 //      survives in the call's output text.
 import { describe, it, expect } from 'vitest';
-import { buildTimeline, findToolCall, rowKeys, type EntryView, type TimelineEntry, type TurnEntry } from '@/lib/timeline';
+import { buildTimeline, findToolCall, rowKeys, type Branches, type EntryView, type TimelineEntry, type TurnEntry } from '@/lib/timeline';
 import {
   ensureLiveTurn, mergeLiveTail, appendInjected, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, applyTaskTerminal, startTaskAttempt, syncTaskCard, appendHandoffPart,
@@ -769,6 +769,28 @@ describe('stream/replay isomorphism', () => {
     // The tip is the attempt's last CONTENT entry — e2, not the leaf marker
     // e3 that the switch away from it appended.
     expect(turn.branches).toEqual({ parentId: 'e1', tips: ['e2', 'e4'], active: 1 });
+  });
+
+  it('branching: an edited user message is a sibling attempt', () => {
+    // A first exchange, then the second message edited and resent: the edit
+    // is a second child of the first answer, and its bubble carries the switch.
+    const timeline = buildTimeline([
+      { id: "1", entry_id: 'e1', kind: 'item', role: 'user', content: 'hi', on_path: true },
+      { id: "2", entry_id: 'e2', parent_id: 'e1', kind: 'item', role: 'assistant', content: 'hello', display: { kind: 'message', text: 'hello' }, on_path: true },
+      { id: "3", entry_id: 'e3', parent_id: 'e2', kind: 'item', role: 'user', content: 'do X', on_path: false },
+      { id: "4", entry_id: 'e4', parent_id: 'e3', kind: 'item', role: 'assistant', content: 'did X', display: { kind: 'message', text: 'did X' }, on_path: false },
+      { id: "5", entry_id: 'e5', parent_id: 'e2', kind: 'item', role: 'user', content: 'do Y instead', on_path: true },
+      { id: "6", entry_id: 'e6', parent_id: 'e5', kind: 'item', role: 'assistant', content: 'did Y', display: { kind: 'message', text: 'did Y' }, on_path: true },
+    ]);
+    expect(timeline.map(m => m.role)).toEqual(['user', 'turn', 'user', 'turn']);
+    const edited = timeline[2] as { content: string; parentId?: string; branches?: Branches };
+    expect(edited.content).toBe('do Y instead');
+    expect(edited.parentId).toBe('e2');
+    expect(edited.branches).toEqual({ parentId: 'e2', tips: ['e4', 'e6'], active: 1 });
+    // The first message has no parent to branch at, and no siblings.
+    const first = timeline[0] as { parentId?: string; branches?: Branches };
+    expect(first.parentId).toBeUndefined();
+    expect(first.branches).toBeUndefined();
   });
 
   it('branching: an abandoned only-child is pruned before the new attempt exists', () => {

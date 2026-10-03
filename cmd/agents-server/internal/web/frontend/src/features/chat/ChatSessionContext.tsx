@@ -26,6 +26,8 @@ export interface ChatSessionState {
   // Whether the session is bound to a project: its forks and attempts then
   // share that project's files, and the controls say so.
   projectBound?: boolean;
+  // Whether the session's own run waits on a decision: no branch is offered.
+  pendingDecision?: boolean;
 }
 
 export interface ChatActions {
@@ -38,6 +40,8 @@ export interface ChatActions {
   switchBranch?: (tipEntryId: string) => void;
   // Branches back to the user ENTRY id and runs again.
   regenerate?: (userEntryId: string, userContent: string) => void;
+  // Branches to the message's parent and runs the edited text (lib/editResend.ts).
+  editResend?: (userEntryId: string, parentId: string, text: string, attachmentIds?: string[]) => void;
   openTrace: (runId: string) => void;
   // Opens the replay dialog on the run's last model call.
   replayRun?: (runId: string) => void;
