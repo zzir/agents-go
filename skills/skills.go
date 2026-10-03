@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // nameRe enforces the spec's name rules: lowercase alphanumerics in

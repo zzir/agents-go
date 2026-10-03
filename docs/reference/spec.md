@@ -1952,7 +1952,7 @@ Whichever is taken, it belongs in §5 before v1.0.0 is tagged.
 
 ### 6.2 The `skills` module fails §5.7's own test
 
-The `skills` module's only non-root direct dependency is `gopkg.in/yaml.v3`,
+The `skills` module's only non-root direct dependency is `go.yaml.in/yaml/v3`,
 which brings zero transitive requirements — not the heavy dependency §5.7
 makes the sole justification for a submodule. Folding `skills` back into the
 root module is the consistent move. Folding keeps the import path but deletes

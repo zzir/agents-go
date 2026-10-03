@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/zzir/agents-go v0.0.0
-	gopkg.in/yaml.v3 v3.0.1
+	go.yaml.in/yaml/v3 v3.0.5
 )
 
 require (
