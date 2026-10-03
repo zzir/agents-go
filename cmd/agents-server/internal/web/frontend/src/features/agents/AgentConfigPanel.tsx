@@ -33,7 +33,7 @@ export const CONFIG_GROUPS: Record<string, string[]> = {
   behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'checklist', 'subagents', 'vision', 'override_system_prompt', 'thinking_mode', 'thinking_binding'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
-  session: ['prompt_id', 'prompt_version', 'history_limit'],
+  session: ['history_limit'],
   approval: ['approval_mode', 'approve_tools'],
   compaction: ['compaction_enabled', 'compaction_threshold_tokens', 'compaction_window', 'compaction_model', 'compaction_prompt', 'compaction_mode'],
   memory: ['memory_tools', 'memory_agent_write', 'history_tools'],
@@ -194,8 +194,6 @@ interface AgentFormData {
   guardrails: string;
   output_schema: string;
   error_handlers: string;
-  prompt_id: string;
-  prompt_version: string;
   history_limit: string;
   handoff_input_filter: string;
   max_tool_concurrency: string;
@@ -303,7 +301,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
       retry_enabled: false, retry_policy: '',
       fallback_models: [],
       guardrails: '', output_schema: '', error_handlers: '',
-      prompt_id: '', prompt_version: '', history_limit: '',
+      history_limit: '',
       // New agents default to a bounded fan-out; an existing agent keeps its
       // stored value (0 = unlimited) via the spread below.
       handoff_input_filter: '', max_tool_concurrency: initial ? '' : '8',
@@ -757,8 +755,6 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
           <div className="form-group">
             <div className="form-group-title">Session</div>
             {fc('History limit', <TextInput block type="number" min={0} value={form.history_limit} placeholder="0" onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('history_limit', e.target.value)} />, 'Max recent session items loaded per turn (0 = full history)')}
-            {fc('Stored prompt ID', <TextInput value={form.prompt_id || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_id', e.target.value)} placeholder="prompt_abc123" block />, 'OpenAI stored prompt ID — deprecated: OpenAI shuts stored prompts down on 2026-11-30')}
-            {form.prompt_id && fc('Prompt version', <TextInput value={form.prompt_version || ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => set('prompt_version', e.target.value)} placeholder="Optional version pin" block />)}
           </div>
 
         </div>

@@ -158,9 +158,6 @@ type GuardrailGroup struct {
 // SessionGroup holds session/prompt settings. There is no
 // use_previous_response_id: the SDK refuses to combine it with a session.
 type SessionGroup struct {
-	// PromptID is an OpenAI stored prompt's id; deprecated, OpenAI shuts stored prompts down on 2026-11-30.
-	PromptID      string `json:"prompt_id,omitempty"`
-	PromptVersion string `json:"prompt_version,omitempty"`
 	// HistoryLimit caps how many recent session items each turn loads (0 = all).
 	HistoryLimit int `json:"history_limit,omitempty"`
 }

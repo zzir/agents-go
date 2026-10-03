@@ -427,14 +427,6 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	result.Approval = spec.Approval
 	agent.OutputType = spec.OutputType
 
-	// Stored prompt
-	if ac.Session.PromptID != "" {
-		agent.Prompt = agents.StaticPrompt(agents.Prompt{ //nolint:staticcheck // SA1019: until the stored Prompt surface is removed
-			ID:      ac.Session.PromptID,
-			Version: ac.Session.PromptVersion,
-		})
-	}
-
 	// Provider + retry/fallback decorators.
 	proxyClient := deps.Settings.ProxyClient(ctx)
 	result.Provider, result.ProviderType, result.PrefixBound, err = resolveProvider(ctx, deps, ac, spec, proxyClient)
