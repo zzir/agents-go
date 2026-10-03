@@ -1,4 +1,5 @@
-import '@primer/css/dist/primer.css'
+import '@primer/css/dist/base.css'
+import '@primer/css/dist/markdown.css'
 import '@primer/primitives/dist/css/functional/themes/light.css'
 import '@primer/primitives/dist/css/functional/themes/dark.css'
 import '@primer/primitives/dist/css/primitives.css'

@@ -658,6 +658,33 @@ a:hover {
     display: none;
 }
 
+/* The three rules the app used from Primer CSS's full bundle, copied from
+   @primer/css 22.3.0 (utilities.css, forms.css, buttons.css) now that only
+   its base and markdown layers are imported. */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: rect(0 0 0 0);
+    overflow-wrap: normal;
+    border: 0;
+}
+.form-group { margin: 15px 0; }
+.btn-octicon {
+    display: inline-block;
+    padding: 5px;
+    margin-left: 5px;
+    line-height: 1;
+    color: var(--fgColor-muted);
+    vertical-align: middle;
+    background: rgba(0, 0, 0, 0);
+    border: 0;
+    box-shadow: none;
+}
+.btn-octicon:hover { color: var(--fgColor-accent); }
+
 /* Every direct child of a group gets breathing room, not just FormControls —
    JSON fields, checkbox groups and standalone captions were rendering flush
    against their neighbors. Adjacent margins collapse, so this composes with

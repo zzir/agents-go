@@ -95,7 +95,10 @@ describe('SessionList', () => {
     // A failed or idle conversation carries no marker.
     expect(text('Gamma')).toBe('Gamma');
     expect(text('Delta')).toBe('Delta');
+    // The words are for a screen reader: the sr-only class is what keeps them
+    // off the screen, and the app defines it itself (globals.css).
     expect(host.querySelector('li .sr-only')).not.toBeNull();
+    expect([...host.querySelectorAll('li .sr-only')].every(e => e.classList.contains('sr-only'))).toBe(true);
     unmount();
   });
 
