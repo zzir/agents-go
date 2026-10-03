@@ -241,6 +241,7 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 	} else if rejected {
 		out = msg
 	}
+	out = capToolOutput(out, r.opts.Exec.ToolOutputLimit)
 
 	outputItem := newFunctionCallOutputItem(agent, run.Call.CallID, out)
 	// The tool's own view of its call: UI data, renderer, error flag, straight

@@ -73,6 +73,14 @@ t.FailureErrorFunction = nil // a tool error now aborts the whole run
 t.Timeout = 30 * time.Second
 ```
 
+### Output size
+
+The runner caps the text a tool result sends to the model at 64 KiB per text part: a longer one keeps its head and tail around an `[omitted N bytes]` marker; image and file parts pass through ([spec §2.7b](../reference/spec.md#27b-tool-results)). `RunOptions.Exec.ToolOutputLimit` raises the cap, or `-1` removes it:
+
+```go
+opts := agents.RunOptions{Exec: agents.ExecOptions{ToolOutputLimit: 256 << 10}} // or -1 for no cap
+```
+
 ### Conditionally enabling tools
 
 `IsEnabled` decides per run whether the tool is offered to the model:

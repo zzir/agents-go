@@ -10,6 +10,10 @@ import (
 // DefaultMaxTurns is the turn budget applied when RunOptions.Exec.MaxTurns is zero.
 const DefaultMaxTurns = 10
 
+// DefaultToolOutputLimit is the cap, in bytes, on the text a tool result sends
+// to the model when RunOptions.Exec.ToolOutputLimit is zero.
+const DefaultToolOutputLimit = 64 << 10
+
 // MaxTurnsUnlimited disables the turn budget when set as
 // RunOptions.Exec.MaxTurns: the run loops until a final output, a finishing
 // handoff or cancellation. A model that never finishes loops forever.
@@ -187,6 +191,12 @@ type ExecOptions struct {
 	// history saved. A predicate, not a producer: the final output is the
 	// turn's last message text, else its last tool output (spec §2.3c).
 	ShouldStopAfterTurn func(ctx context.Context, tr *TurnResult) (bool, error)
+
+	// ToolOutputLimit caps, in bytes, the text a tool result sends to the
+	// model: a longer text keeps its head and tail around an "[omitted N
+	// bytes]" marker; image and file parts are untouched. Zero means
+	// DefaultToolOutputLimit, negative means no cap (spec §2.7b).
+	ToolOutputLimit int
 }
 
 // ObserveOptions configures tracing for a run.

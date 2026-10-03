@@ -918,6 +918,9 @@ A tool returns a `ToolResult`, not a bare value; a plain value (string, struct,
   every tool in it asks.
 - **`IsError` marks a failure for renderers; the content still reaches the
   model.** A tool error handled by `FailureErrorFunction` sets it automatically.
+- **A text part past `ExecOptions.ToolOutputLimit` reaches the model elided**:
+  its head and tail around an `[omitted N bytes]` marker, after the output
+  guardrails; image and file parts are untouched, and a negative limit disables the cap.
 - **A multimodal output displays as the wire content list.** `Display().Output`
   of a `ToolOutputContent` / `[]ToolOutputContent` result is the JSON of the
   Responses `function_call_output` content list (`input_text` / `input_image` /
@@ -1926,6 +1929,7 @@ Defaults that callers may depend on:
 | Handoff input schemas | strict | `Handoff.NonStrictSchema: true` opts out; the zero value is the strict default |
 | Tool errors | fed back to the model | `DefaultToolErrorFunction`; set the field to `nil` to make them fatal |
 | Tool concurrency | unlimited | Bound with `MaxToolConcurrency` |
+| `ToolOutputLimit` | 64 KiB per text part | `DefaultToolOutputLimit`; `-1` disables; applies to every tool, a sandbox tool's own cap included ([§2.7b](#27b-tool-results)) |
 | Input guardrails | concurrent with the model call | `Blocking: true` makes one a gate; injected input always blocking |
 | Session persistence | after each turn | Final turn is written after output guardrails pass |
 | `Plan.ReadOnlyTools` | `read_file`, `list_files`, `task_status` | `DefaultReadOnlyTools`, when the field is nil; a tool declaring `Tool.ReadOnly` is admitted beside them |

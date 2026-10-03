@@ -174,6 +174,7 @@ func nestedRunOptions(parent *RunContext) RunOptions {
 		opts.Exec.MaxToolConcurrency = parent.inheritedOpts.Exec.MaxToolConcurrency
 		opts.Exec.ToolNotFoundBehavior = parent.inheritedOpts.Exec.ToolNotFoundBehavior
 		opts.Exec.PreApprovalToolInputGuardrails = parent.inheritedOpts.Exec.PreApprovalToolInputGuardrails
+		opts.Exec.ToolOutputLimit = parent.inheritedOpts.Exec.ToolOutputLimit
 		// Inherit the sensitive-data gate so a parent that disabled span
 		// content cannot have it re-enabled by a nested agent-as-tool run.
 		opts.Observe.IncludeSensitiveData = parent.inheritedOpts.Observe.IncludeSensitiveData
