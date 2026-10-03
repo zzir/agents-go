@@ -2084,3 +2084,30 @@ outside, so it stays a documented contract.
 two functions and one struct.
 
 Rules: spec §2.5e2.
+
+### 5.88 Deferred tools reach the wire as a shorter list
+
+Decided 2026-10-03.
+
+**Decision.** A deferred tool is withheld by the runner: `ModelRequest.Tools`
+carries the disclosed tools only, and no adapter renders a provider-native
+deferral (OpenAI's `defer_loading` with a client `tool_search`, Anthropic's
+`defer_loading` with the tool-addition beta). When a producer appears, the
+runner's own retrieval matches by literal name, as §5.61 does, never by
+a model-side search.
+
+**Rejected.** Adapter-rendered deferral: the two providers' mechanics differ
+and both are still moving, and each disclosure is a prefix edit on either
+path until a native form is adopted. Turning the feature off for Anthropic
+alone: the filter is backend-agnostic, and the prefix cost is the same one
+§5.77 and §5.84 already absorb. Removing the surface now: it is the one
+mechanism spec §2.7i specifies, and it is tested.
+
+**Cost accepted.** Every disclosure changes the tools array: a prompt-cache
+miss on OpenAI, dropped reasoning on a prefix-binding backend. Nothing in
+this repository produces a deferred tool. Reopened when a producer appears
+(a tool catalog past what one listing bears) or a provider's native deferral
+settles; absent either by the next breaking minor, the surface goes under the
+zero-consumer rule.
+
+Rules: spec §2.7i.

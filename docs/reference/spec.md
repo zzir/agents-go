@@ -1069,6 +1069,10 @@ A tool marked `Deferred: true` is withheld from the model until some
   cross-process one included ([§2.1](#21-the-run-loop)).
 - **It does not override `IsEnabled`.**
 - **Naming an unknown tool is ignored.**
+- **A withheld tool is absent from `ModelRequest.Tools`**; no adapter renders a
+  provider-side deferral.
+
+— see [decisions §5.88](../explanation/decisions.md#588-deferred-tools-reach-the-wire-as-a-shorter-list)
 
 ### 2.7g Tool progress
 
