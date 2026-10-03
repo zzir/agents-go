@@ -1054,6 +1054,9 @@ Tool arguments, handoff input and structured outputs are validated against the
   fails the run rather than being fed back.
 - `EnsureStrictJSONSchema` is the OpenAI strict-mode *transformer*, a
   different job from validation.
+- **Conversion is linear in the schema.** A node is made strict once however
+  many `$ref`s with sibling keys reach it; a schema past 65536 nodes, or a
+  `$ref` chain past 64 hops, is an error rather than a stall.
 
 ### 2.7i Progressive tool disclosure
 

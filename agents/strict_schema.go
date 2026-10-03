@@ -5,9 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
+)
+
+// The bounds on one conversion: a node is strictened once however many $refs
+// reach it, so a legitimate schema never nears either.
+const (
+	strictMaxNodes   = 1 << 16
+	strictMaxRefHops = 64
 )
 
 // emptyStrictSchema is the canonical empty object schema OpenAI strict mode
@@ -33,10 +41,18 @@ func EnsureStrictJSONSchema(schema map[string]any) (map[string]any, error) {
 	if len(schema) == 0 {
 		return emptyStrictSchema(), nil
 	}
-	if err := ensureStrict(schema, nil, schema); err != nil {
+	w := &strictWalk{root: schema, seen: make(map[uintptr]bool)}
+	if err := w.ensureStrict(schema, nil); err != nil {
 		return nil, err
 	}
 	return schema, nil
+}
+
+// strictWalk is one conversion: the root the $refs resolve against and the
+// maps already made strict (an unraveled $ref shares its target's maps).
+type strictWalk struct {
+	root map[string]any
+	seen map[uintptr]bool
 }
 
 // ensureStrictSchemaCopy runs EnsureStrictJSONSchema on a JSON round-trip copy of
@@ -80,7 +96,35 @@ func isUnconstrainedSchema(node map[string]any) bool {
 	return true
 }
 
-func ensureStrict(node map[string]any, path []string, root map[string]any) error {
+func (w *strictWalk) ensureStrict(node map[string]any, path []string) error {
+	id := reflect.ValueOf(node).Pointer()
+	if w.seen[id] {
+		return nil
+	}
+	if len(w.seen) >= strictMaxNodes {
+		return fmt.Errorf("schema has more than %d nodes (path=%s)", strictMaxNodes, strings.Join(path, "/"))
+	}
+	w.seen[id] = true
+	hops := 0
+	for {
+		unraveled, err := w.strictenOnce(node, path)
+		if err != nil {
+			return err
+		}
+		if !unraveled {
+			return nil
+		}
+		// The merged-in keys need the same pass; a $ref chain that keeps
+		// producing a $ref is cut rather than followed forever.
+		if hops++; hops > strictMaxRefHops {
+			return fmt.Errorf("$ref chain longer than %d at path=%s", strictMaxRefHops, strings.Join(path, "/"))
+		}
+	}
+}
+
+// strictenOnce makes node strict and reports whether it unraveled a $ref,
+// which leaves node with keys this pass has not seen.
+func (w *strictWalk) strictenOnce(node map[string]any, path []string) (bool, error) {
 	// Recurse into $defs and definitions.
 	for _, defsKey := range []string{"$defs", "definitions"} {
 		if defs, ok := node[defsKey].(map[string]any); ok {
@@ -89,8 +133,8 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 				if !ok {
 					continue
 				}
-				if err := ensureStrict(ds, append(path, defsKey, name), root); err != nil {
-					return err
+				if err := w.ensureStrict(ds, append(path, defsKey, name)); err != nil {
+					return false, err
 				}
 			}
 		}
@@ -101,7 +145,7 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 		if _, has := node["additionalProperties"]; !has {
 			node["additionalProperties"] = false
 		} else if isTruthy(node["additionalProperties"]) {
-			return fmt.Errorf(
+			return false, fmt.Errorf(
 				"additionalProperties should not be set to true for object types in a strict schema "+
 					"(path=%s); if you need open objects, turn strict off where this schema was "+
 					"built — for a Go type that means NewToolNonStrict / OutputTypeNonStrict",
@@ -127,31 +171,31 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 			ps, ok := prop.(map[string]any)
 			if !ok {
 				if _, isBool := prop.(bool); isBool {
-					return errUnconstrainedSchema(fmt.Sprintf("property %q", key), append(path, "properties", key))
+					return false, errUnconstrainedSchema(fmt.Sprintf("property %q", key), append(path, "properties", key))
 				}
 				continue
 			}
-			if err := ensureStrict(ps, append(path, "properties", key), root); err != nil {
-				return err
+			if err := w.ensureStrict(ps, append(path, "properties", key)); err != nil {
+				return false, err
 			}
 			// A property that still constrains nothing after normalization (the map
 			// form of an any/interface{} field) would 400 at request time; reject it.
 			if isUnconstrainedSchema(ps) {
-				return errUnconstrainedSchema(fmt.Sprintf("property %q", key), append(path, "properties", key))
+				return false, errUnconstrainedSchema(fmt.Sprintf("property %q", key), append(path, "properties", key))
 			}
 		}
 	}
 
 	// Array items.
 	if items, ok := node["items"].(map[string]any); ok {
-		if err := ensureStrict(items, append(path, "items"), root); err != nil {
-			return err
+		if err := w.ensureStrict(items, append(path, "items")); err != nil {
+			return false, err
 		}
 		if isUnconstrainedSchema(items) {
-			return errUnconstrainedSchema("array items", append(path, "items"))
+			return false, errUnconstrainedSchema("array items", append(path, "items"))
 		}
 	} else if _, isBool := node["items"].(bool); isBool {
-		return errUnconstrainedSchema("array items", append(path, "items"))
+		return false, errUnconstrainedSchema("array items", append(path, "items"))
 	}
 
 	// Unions.
@@ -161,8 +205,8 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 			if !ok {
 				continue
 			}
-			if err := ensureStrict(vs, append(path, "anyOf", strconv.Itoa(i)), root); err != nil {
-				return err
+			if err := w.ensureStrict(vs, append(path, "anyOf", strconv.Itoa(i))); err != nil {
+				return false, err
 			}
 		}
 	}
@@ -172,8 +216,8 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 		existing, _ := node["anyOf"].([]any)
 		for i, variant := range oneOf {
 			if vs, ok := variant.(map[string]any); ok {
-				if err := ensureStrict(vs, append(path, "oneOf", strconv.Itoa(i)), root); err != nil {
-					return err
+				if err := w.ensureStrict(vs, append(path, "oneOf", strconv.Itoa(i))); err != nil {
+					return false, err
 				}
 			}
 			existing = append(existing, variant)
@@ -186,8 +230,8 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 	if allOf, ok := node["allOf"].([]any); ok {
 		if len(allOf) == 1 {
 			if only, ok := allOf[0].(map[string]any); ok {
-				if err := ensureStrict(only, append(path, "allOf", "0"), root); err != nil {
-					return err
+				if err := w.ensureStrict(only, append(path, "allOf", "0")); err != nil {
+					return false, err
 				}
 				maps.Copy(node, only)
 			}
@@ -195,8 +239,8 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 		} else {
 			for i, entry := range allOf {
 				if es, ok := entry.(map[string]any); ok {
-					if err := ensureStrict(es, append(path, "allOf", strconv.Itoa(i)), root); err != nil {
-						return err
+					if err := w.ensureStrict(es, append(path, "allOf", strconv.Itoa(i))); err != nil {
+						return false, err
 					}
 				}
 			}
@@ -210,9 +254,9 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 
 	// Unravel a $ref that carries sibling keys.
 	if ref, ok := node["$ref"].(string); ok && len(node) > 1 {
-		resolved, err := resolveRef(root, ref)
+		resolved, err := resolveRef(w.root, ref)
 		if err != nil {
-			return err
+			return false, err
 		}
 		delete(node, "$ref")
 		// Node's own keys take priority over the resolved schema's.
@@ -221,10 +265,10 @@ func ensureStrict(node map[string]any, path []string, root map[string]any) error
 				node[k] = v
 			}
 		}
-		return ensureStrict(node, path, root)
+		return true, nil
 	}
 
-	return nil
+	return false, nil
 }
 
 // sortAnyStrings sorts a slice of any whose elements are strings, in place, keeping

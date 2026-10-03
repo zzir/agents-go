@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These cases pin the strict-mode conversion: each is a schema shape the OpenAI
@@ -213,6 +215,59 @@ func TestStrict_ChainedRefWithSiblingKeys(t *testing.T) {
 	}
 	if _, has := a["$ref"]; has {
 		t.Errorf("a.$ref should be fully resolved: %v", a)
+	}
+}
+
+// A node is made strict once however many $refs reach it: a chain where each
+// level references the next twice with sibling keys is linear work, not 2^n.
+func TestStrict_RefFanOutIsLinear(t *testing.T) {
+	const depth = 24
+	defs := map[string]any{"L24": map[string]any{"type": "string"}}
+	for i := depth - 1; i >= 0; i-- {
+		next := "#/$defs/L" + strconv.Itoa(i+1)
+		defs["L"+strconv.Itoa(i)] = map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"a": map[string]any{"$ref": next, "description": "a"},
+				"b": map[string]any{"$ref": next, "description": "b"},
+			},
+		}
+	}
+	schema := map[string]any{"$defs": defs, "type": "object", "properties": map[string]any{"root": map[string]any{"$ref": "#/$defs/L0", "description": "root"}}}
+	start := time.Now()
+	got, err := EnsureStrictJSONSchema(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("conversion took %v: the fan-out is being re-walked", took)
+	}
+	root := got["properties"].(map[string]any)["root"].(map[string]any)
+	if root["type"] != "object" || root["additionalProperties"] != false {
+		t.Fatalf("root = %v, want a strict object", root)
+	}
+}
+
+// Two $refs with sibling keys pointing at each other resolve to nothing a
+// strict schema can send: an error comes back promptly, the walk never loops.
+func TestStrict_CyclicRefWithSiblingKeysErrors(t *testing.T) {
+	schema := map[string]any{
+		"$defs": map[string]any{
+			"A": map[string]any{"$ref": "#/$defs/B", "description": "a"},
+			"B": map[string]any{"$ref": "#/$defs/A", "description": "b"},
+		},
+		"type":       "object",
+		"properties": map[string]any{"x": map[string]any{"$ref": "#/$defs/A", "title": "x"}},
+	}
+	done := make(chan error, 1)
+	go func() { _, err := EnsureStrictJSONSchema(schema); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a cyclic $ref pair converted without error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cyclic $ref never returned")
 	}
 }
 
