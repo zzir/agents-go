@@ -1597,6 +1597,9 @@ targets keep their own toolset.
   tool is admitted while planning only when the caller named it in
   `ReadOnlyTools` (`DefaultReadOnlyTools` when nil), never on the server's
   `readOnlyHint` alone. Nothing checks that a read-only tool behaves.
+- **The read-only set is an exported predicate.** `Plan.ReadOnlySet().Admits`
+  is the one answer to "usable while planning"; a host that asks before
+  changes asks exactly the tools plan mode denies.
 - **The refusal outranks approval.** A gated call needs NO approval while
   planning — not the tool's own predicate, and not the agent's `ApproveTools`
   listing, which `Apply` translates into per-tool predicates (MCP tools and

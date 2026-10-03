@@ -219,6 +219,38 @@ func TestDefaultReadOnlyToolsRefuseAChecklist(t *testing.T) {
 	}
 }
 
+// The exported predicate answers exactly as the gates do: a first-party flag
+// or a listed name admits; an MCP tool's flag never does.
+func TestReadOnlySetAdmits(t *testing.T) {
+	flagged := noopTool("search", nil)
+	flagged.ReadOnly = true
+	plain := noopTool("write", nil)
+	listed := noopTool("read_file", nil)
+
+	set := Plan{}.ReadOnlySet() // nil ReadOnlyTools → DefaultReadOnlyTools
+	for _, tc := range []struct {
+		tool    *agents.Tool
+		fromMCP bool
+		want    bool
+	}{
+		{flagged, false, true},
+		{flagged, true, false},
+		{plain, false, false},
+		{plain, true, false},
+		{listed, false, true},
+		{listed, true, true},
+	} {
+		if got := set.Admits(tc.tool, tc.fromMCP); got != tc.want {
+			t.Errorf("Admits(%s, fromMCP=%v) = %v, want %v", tc.tool.Name, tc.fromMCP, got, tc.want)
+		}
+	}
+	// An explicit empty list admits names nowhere; the first-party flag still counts.
+	none := Plan{ReadOnlyTools: []string{}}.ReadOnlySet()
+	if none.Admits(listed, false) || !none.Admits(flagged, false) {
+		t.Fatal("an empty ReadOnlyTools must drop the names and keep the flag")
+	}
+}
+
 // fakeMCP lists a fixed set of tools.
 type fakeMCP struct{ tools []*agents.Tool }
 

@@ -224,7 +224,9 @@ tracing, error handlers) are [spec §2.12](../reference/spec.md#212-middleware).
 **Plan mode** (`middleware.Plan`) splits a run in two: while planning, a tool
 that is not read-only (`Tool.ReadOnly`, or named in `ReadOnlyTools`) stays in
 the toolset but refuses when called, handoffs are hidden, and no approval is
-raised. `submit_plan` is always approval-gated, and that pause IS the plan
+raised. `plan.ReadOnlySet().Admits(tool, fromMCP)` is that decision as a
+predicate, for a host that wants to show or reuse it (an MCP tool is admitted
+by name only). `submit_plan` is always approval-gated, and that pause IS the plan
 review — `Approve` unlocks the full toolset and the same run continues,
 `Reject`'s message sends the model back to planning. A checklist is an
 ordinary tool of your own, which plan mode refuses like any other write. Plan

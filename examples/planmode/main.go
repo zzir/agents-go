@@ -85,10 +85,22 @@ func main() {
 		Tools:        []*agents.Tool{readFile, writeFile, checklist},
 	}
 
+	plan := middleware.Plan{}
 	opts := agents.RunOptions{
 		Model:       agents.ModelOptions{Provider: provider},
-		Middlewares: []agents.RunMiddleware{middleware.Plan{}},
+		Middlewares: []agents.RunMiddleware{plan},
 	}
+
+	// The same predicate the gate uses, so a host can say up front which
+	// tools stay usable while planning (and, in its own UI, which it asks about).
+	readOnly := plan.ReadOnlySet()
+	fmt.Print("usable while planning:")
+	for _, t := range agent.Tools {
+		if readOnly.Admits(t, false) {
+			fmt.Printf(" %s", t.Name)
+		}
+	}
+	fmt.Println()
 
 	res, err := agents.RunSync(ctx, agent, "Update the greeting per the notes.", opts)
 	if err != nil {

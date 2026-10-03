@@ -33,6 +33,32 @@ Do not attempt any modification while planning — those tools are listed but
 disabled, and answer with a refusal until your plan is approved. If your plan
 is rejected, revise it using the feedback and submit again.`
 
+// ReadOnlySet is the tool names plan mode admits while planning, beside every
+// first-party tool that declares Tool.ReadOnly. Admits is the ONE predicate
+// the plan gate and a host's "ask before changes" approval share — spec §2.12.
+type ReadOnlySet map[string]bool
+
+// Admits reports whether t is usable while planning: a first-party tool by
+// its own ReadOnly flag or a listed name, an MCP tool (fromMCP) by a listed
+// name only — its flag is the server's readOnlyHint, an outside claim.
+func (s ReadOnlySet) Admits(t *agents.Tool, fromMCP bool) bool {
+	return (!fromMCP && t.ReadOnly) || s[t.Name]
+}
+
+// ReadOnlySet is the set p plans with: ReadOnlyTools, or DefaultReadOnlyTools
+// when nil.
+func (p Plan) ReadOnlySet() ReadOnlySet {
+	names := p.ReadOnlyTools
+	if names == nil {
+		names = DefaultReadOnlyTools
+	}
+	set := make(ReadOnlySet, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return set
+}
+
 // Plan puts a run into plan mode: the agent explores with read-only tools,
 // submits a plan through submit_plan (an approval pause, like any gated tool),
 // and only an approved plan unlocks the rest of the toolset — in the SAME run,
@@ -108,14 +134,7 @@ func (p Plan) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 // switch the gates share. Run uses it per run; a host that rebuilds an agent
 // for a durable resume calls it at build time (spec §2.12).
 func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
-	names := p.ReadOnlyTools
-	if names == nil {
-		names = DefaultReadOnlyTools
-	}
-	readOnly := make(map[string]bool, len(names))
-	for _, n := range names {
-		readOnly[n] = true
-	}
+	readOnly := p.ReadOnlySet()
 
 	// The phase flag every gate shares. Atomic because tools may run
 	// concurrently within a turn.
@@ -128,7 +147,7 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	out.ApproveTools = nil
 	tools := make([]*agents.Tool, 0, len(out.Tools)+1)
 	for _, t := range out.Tools {
-		if t.ReadOnly || readOnly[t.Name] {
+		if readOnly.Admits(t, false) {
 			tools = append(tools, keepListedApproval(t, listed(t.Name)))
 			continue
 		}
@@ -275,7 +294,7 @@ func approvalListMatcher(names []string) func(string) bool {
 type planMCP struct {
 	inner    agents.MCPServer
 	phase    *PlanPhase
-	readOnly map[string]bool
+	readOnly ReadOnlySet
 	listed   func(string) bool
 }
 
@@ -291,9 +310,7 @@ func (m planMCP) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 	// slice. Gates check the phase per CALL, so one wrapping serves both phases.
 	out := make([]*agents.Tool, 0, len(tools))
 	for _, t := range tools {
-		// By NAME only, never the tool's own ReadOnly: on an MCP tool that is
-		// the server's readOnlyHint, an outside claim (spec §2.12).
-		if m.readOnly[t.Name] {
+		if m.readOnly.Admits(t, true) {
 			out = append(out, keepListedApproval(t, m.listed(t.Name)))
 			continue
 		}
