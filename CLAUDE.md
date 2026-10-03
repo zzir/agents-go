@@ -258,6 +258,10 @@ non-goals, §3 capabilities not provided). The two that come up most:
   and read
   the reason. Independent evolution is fine; silent reversal of a recorded
   decision is not.
+- **A model-facing default states its gain.** A tool, preamble or reminder the
+  workbench adds to every model call by default names its measured benefit, or
+  it is opt-in — see decisions §5.82 (the checklist). The task tools, on by
+  default since before this rule, are the one standing exception.
 
 ## Comments
 
