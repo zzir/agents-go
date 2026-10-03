@@ -19,6 +19,7 @@ import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { STEP_APPROVAL_TOOL } from '@/lib/protocol';
 import { isLive, statusDot } from '@/lib/status';
+import { requestedBy } from '@/lib/background';
 import { activates } from '@/lib/activation';
 import { useCopy, useNowTicker } from '@/lib/hooks';
 
@@ -41,7 +42,7 @@ const GROUPS: Array<{ title: string; match: (s: BackgroundItem['status']) => boo
 // the duration (ticking while live). Rows open the detail lens.
 export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
   const items = useChatBackground();
-  const { tasksError } = useChatSession();
+  const { tasksError, agentNames } = useChatSession();
   const { approve: onApprove, reject: onReject, inspectTask: onOpen, stopTask, retryTask, retryTasks } = useChatActions();
   const { held, decide } = useDecisionHold();
   const hasActive = items.some(it => isLive(it.status));
@@ -90,6 +91,7 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
                     <>
                       <Button size="small" variant="primary" disabled={held(it.pendingCallId)} onClick={() => decide(it.pendingCallId!, () => onApprove(it.pendingCallId!))}>Approve</Button>
                       <RejectButton kind={it.pendingToolName === STEP_APPROVAL_TOOL ? 'step' : undefined} disabled={held(it.pendingCallId)} onReject={reason => decide(it.pendingCallId!, () => onReject(it.pendingCallId!, reason))} />
+                      <span className="task-row-activity">{requestedBy(it, agentNames)}</span>
                     </>
                   )}
                   {it.activity && <span className="task-row-activity">{it.activity}</span>}

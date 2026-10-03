@@ -22,9 +22,11 @@ export interface BackgroundItem {
   // measurable middle.
   progress?: number;
   attempt?: number;
-  // The approval it is stuck on, answerable from the row.
+  // The approval it is stuck on, answerable from the row, and the agent that
+  // asked: the paused run's when known, else the task's own.
   pendingCallId?: string;
   pendingToolName?: string;
+  requestedBy?: string;
   retryable: boolean;
   // Hidden from the chat strip, still listed in the panel; a retry clears it.
   dismissed?: boolean;
@@ -69,6 +71,7 @@ export function taskItem(t: TaskState): BackgroundItem {
     attempt: t.attempt,
     pendingCallId: t.pendingCallId,
     pendingToolName: t.pendingToolName,
+    requestedBy: t.pendingAgentId || t.agentConfigId,
     retryable: taskRetryable(t),
     dismissed: t.dismissed,
     state: workflow ? t.state : undefined,
@@ -172,4 +175,11 @@ export function stepRows(state: WorkflowState | undefined, status: TaskStatus, t
       durationMs: isFinite(t0) ? Math.max(t1 - t0, 0) : (isFinite(logged) ? Math.max(logged, 0) : undefined),
     };
   });
+}
+
+// requestedBy says who asked for the decision a paused task waits on: the
+// task by label and the agent by name (its id when the name is not loaded).
+export function requestedBy(it: Pick<BackgroundItem, 'label' | 'requestedBy'>, agentNames?: Record<string, string>): string {
+  const agent = it.requestedBy ? (agentNames?.[it.requestedBy] || it.requestedBy.slice(0, 8)) : '';
+  return 'Requested by ' + it.label + (agent ? ' · ' + agent : '');
 }

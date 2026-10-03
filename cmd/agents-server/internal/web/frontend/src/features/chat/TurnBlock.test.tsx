@@ -93,6 +93,20 @@ describe('TurnBlock controls', () => {
     unmount();
   });
 
+  // A turn waiting on a decision offers no branch: forking, regenerating or
+  // switching attempts there would abandon the pause.
+  it('hides fork, regenerate and the attempt switch while a call awaits a decision', () => {
+    const { host, unmount } = mount(
+      <ChatSessionProvider session={{ sessionId: 's1', running: false, compacting: false, agentAvatars: {} }} actions={actions} tasks={{ items: [], lookups: { retryableByCallId: {}, liveTaskStatusByCallId: {}, liveTaskLabelByCallId: {}, taskLabelById: {} } }}>
+        <TurnBlock parts={[{ type: 'tools', toolCalls: [{ tool_call_id: 'c1', tool_name: 'exec_command', arguments: '{}', output: null, status: null, needs_approval: true }] }]}
+          streaming={null} reasoning={null} isLive={false} prompt={{ entryId: 'e1', content: 'go' }} messageId="m1" branches={{ parentId: 'e1', tips: ['a', 'b'], active: 0 }} />
+      </ChatSessionProvider>,
+    );
+    const got = labels(host);
+    expect(got.some(l => l?.startsWith('Fork') || l?.startsWith('Regenerate') || l?.includes('attempt'))).toBe(false);
+    unmount();
+  });
+
   it('keeps the plain words on an unbound session', () => {
     const { host, unmount } = turn({ sessionId: 's1', running: false, compacting: false, agentAvatars: {} });
     const got = labels(host);

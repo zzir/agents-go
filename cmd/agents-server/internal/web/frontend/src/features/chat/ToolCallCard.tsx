@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Button, Label } from '@primer/react';
 import { StatusLabel } from '@/lib/status';
 import { ToolsIcon, StackIcon, SyncIcon, CheckIcon, DotFillIcon, CircleIcon } from '@primer/octicons-react';
@@ -6,7 +6,7 @@ import { Disclosure } from '@/components/Disclosure';
 import { useAsyncMarkdown } from '@/lib/markdown';
 import { type ToolCall } from '@/lib/timeline';
 import { useChatActions, useChatTaskLookups } from '@/features/chat/ChatSessionContext';
-import { RejectButton } from '@/features/chat/RejectButton';
+import { RejectButton, type RejectHandle } from '@/features/chat/RejectButton';
 import { ToolOutputBody } from '@/features/chat/ToolOutputBody';
 import { WorkflowSpecBody } from '@/features/chat/WorkflowSpecBody';
 import { parseWorkflowSpec, type WorkflowSpec } from '@/lib/workflowArgs';
@@ -246,6 +246,27 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
     cardRef.current?.querySelector<HTMLElement>('.disclosure-header')?.focus();
     send();
   };
+  // With focus on the card (its header or a button in it), y approves — once,
+  // for a command — and n opens the reason box; a field inside keeps its keys.
+  const rejectRef = useRef<RejectHandle>(null);
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || !pendingApproval) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if (e.key === 'y') {
+        e.preventDefault();
+        el.querySelector<HTMLElement>('.disclosure-header')?.focus();
+        onApprove?.(tool_call_id, 'once');
+      } else if (e.key === 'n') {
+        e.preventDefault();
+        rejectRef.current?.ask();
+      }
+    };
+    el.addEventListener('keydown', onKey);
+    return () => el.removeEventListener('keydown', onKey);
+  }, [pendingApproval, tool_call_id, onApprove]);
   // A card with live output opens itself: a spinner the user has to click to
   // see through defeats the point of streaming it.
 
@@ -396,7 +417,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask }: Too
               {tool_name === 'submit_plan' ? 'Approve plan' : tool_name === 'save_workflow' ? 'Save workflow' : 'Approve'}
             </Button>
           )}
-          <RejectButton kind={tool_name === 'submit_plan' ? 'plan' : undefined} onReject={reason => decide(() => onReject && onReject(tool_call_id, reason))} />
+          <RejectButton ref={rejectRef} kind={tool_name === 'submit_plan' ? 'plan' : undefined} onReject={reason => decide(() => onReject && onReject(tool_call_id, reason))} />
         </div>
       )}
     </Disclosure>

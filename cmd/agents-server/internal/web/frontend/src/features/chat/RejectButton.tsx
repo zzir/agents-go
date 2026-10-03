@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { ActionList, ActionMenu, Button, ButtonGroup, IconButton, Textarea } from '@primer/react';
 import { TriangleDownIcon } from '@primer/octicons-react';
 
@@ -21,13 +21,17 @@ const REASON_COPY = {
   plan: { ask: 'Keep planning…', placeholder: 'What should change? The model revises the plan — Enter sends, Esc cancels' },
 };
 
+// RejectHandle opens the reason box from outside — the card's `n` key.
+export interface RejectHandle { ask: () => void }
+
 // RejectButton is an approval's reject control: the plain rejection one click
 // away, and behind the menu a reason — what the model reads as the rejected
 // call's output. The reason box is a sibling of the buttons, so a wrapping
 // row gives it a line of its own.
-export function RejectButton({ onReject, disabled, kind }: RejectButtonProps): ReactElement {
+export const RejectButton = forwardRef<RejectHandle, RejectButtonProps>(function RejectButton({ onReject, disabled, kind }, ref) {
   const copy = REASON_COPY[kind || 'call'];
   const [asking, setAsking] = useState(false);
+  useImperativeHandle(ref, () => ({ ask: () => { if (!disabled) setAsking(true); } }), [disabled]);
   const [reason, setReason] = useState('');
   const boxRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLButtonElement>(null);
@@ -88,4 +92,4 @@ export function RejectButton({ onReject, disabled, kind }: RejectButtonProps): R
       )}
     </>
   );
-}
+});

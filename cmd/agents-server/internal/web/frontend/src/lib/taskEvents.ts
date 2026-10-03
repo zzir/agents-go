@@ -44,9 +44,13 @@ export interface TaskState {
   updatedAt?: number;
   lastTool?: string;
   summary?: string;
-  // The child run's pending approval, surfaced on the parent's task chip.
+  // The child run's pending approval, surfaced on the parent's task chip, and
+  // the agent whose run asked (the task's, or the paused step's).
   pendingCallId?: string;
   pendingToolName?: string;
+  pendingAgentId?: string;
+  // The agent the task runs as.
+  agentConfigId?: string;
   // Hidden from the chat strip (the panel still lists it); a retry clears it.
   dismissed?: boolean;
 }
@@ -73,6 +77,7 @@ export interface TaskViewState {
 export function taskStateFromRow(row: TaskRow): TaskState {
   return {
     taskId: row.task_id, label: row.label || '', kind: row.kind, state: row.state, toolCallId: row.tool_call_id,
+    agentConfigId: row.agent_config_id,
     childSessionId: row.child_session_id, parentRunId: row.parent_run_id,
     status: (row.status || 'working') as TaskStatus, attempt: row.attempt,
     maxAttempts: row.max_attempts, summary: row.summary, dismissed: row.dismissed,
@@ -122,6 +127,7 @@ export function seedTaskRows(s: SessionState, rows: TaskRow[]): SessionState {
         toolCallId: cur.toolCallId || row.tool_call_id,
         childSessionId: cur.childSessionId || row.child_session_id,
         parentRunId: cur.parentRunId || row.parent_run_id,
+        agentConfigId: cur.agentConfigId || row.agent_config_id,
         attempt: cur.attempt || row.attempt,
         maxAttempts: row.max_attempts ?? cur.maxAttempts,
         summary: cur.summary ?? row.summary,
@@ -178,6 +184,7 @@ export function mergeTaskRows(s: SessionState, rows: TaskRow[]): SessionState {
 // GET /sessions/:id/approvals lists it.
 export interface TaskPendingApproval {
   task_id?: string;
+  agent_config_id?: string;
   tool_calls?: Array<{ tool_call_id: string; tool_name: string }>;
 }
 
@@ -190,7 +197,7 @@ export function withPendingTaskApprovals(s: SessionState, pending: TaskPendingAp
     const tc = (p.tool_calls || [])[0];
     if (!p.task_id || !tc) continue;
     const cur = tasks[p.task_id] || { taskId: p.task_id, label: '', status: 'input_required' as const };
-    tasks[p.task_id] = { ...cur, status: 'input_required', pendingCallId: tc.tool_call_id, pendingToolName: tc.tool_name };
+    tasks[p.task_id] = { ...cur, status: 'input_required', pendingCallId: tc.tool_call_id, pendingToolName: tc.tool_name, pendingAgentId: p.agent_config_id || cur.pendingAgentId };
   }
   return { ...s, tasks };
 }
@@ -386,12 +393,14 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
           toolCallId: cur?.toolCallId || p.tool_call_id,
           childSessionId: cur?.childSessionId || p.child_session_id,
           parentRunId: cur?.parentRunId || p.parent_run_id,
+          agentConfigId: p.agent_config_id || cur?.agentConfigId,
           createdAt: cur?.createdAt || updated,
           updatedAt: updated,
           // A task that moved on (a new step, a retry) has no decision pending;
           // only a pause keeps the approval the run events attached.
           pendingCallId: paused ? (p.pending_call_id || cur?.pendingCallId) : undefined,
           pendingToolName: paused ? (p.pending_tool_name || cur?.pendingToolName) : undefined,
+          pendingAgentId: paused ? cur?.pendingAgentId : undefined,
           // Live again clears a dismissal — a retry brings the row back; a
           // terminal row carries the flag as the server has it (a dismissal
           // made in another window arrives here), else what this one knows.

@@ -159,6 +159,29 @@ describe('ToolCallCard approval', () => {
     c.unmount();
   });
 
+  // With the card focused, y approves (once, for a command) and n opens the
+  // reason box; a key typed into the box itself is text, not a decision.
+  it('takes y and n from the keyboard while the card has focus', () => {
+    const m = mount(pending('exec_command', { cmd: 'ls' }));
+    const header = m.host.querySelector('.disclosure-header') as HTMLElement;
+    const key = (el: Element, key: string) => act(() => { el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); });
+    header.focus();
+    key(header, 'n');
+    const box = m.host.querySelector('textarea');
+    expect(box).not.toBeNull();
+    key(box!, 'y');
+    key(box!, 'n');
+    expect(m.approve).not.toHaveBeenCalled();
+    key(header, 'y');
+    expect(m.approve).toHaveBeenCalledWith('c1', 'once');
+    expect(document.activeElement).toBe(header);
+    m.unmount();
+    const other = mount(pending('write_file', { path: 'a' }));
+    key(other.host.querySelector('.disclosure-header')!, 'y');
+    expect(other.approve).toHaveBeenCalledWith('c1', 'once');
+    other.unmount();
+  });
+
   // The decision unmounts the buttons; focus lands on the card's header, not
   // on <body>.
   it('moves focus to the card before a decision unmounts its buttons', () => {

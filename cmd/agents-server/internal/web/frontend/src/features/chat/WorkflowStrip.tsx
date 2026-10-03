@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Button, Label } from '@primer/react';
 import { WorkflowIcon } from '@primer/octicons-react';
-import { useChatActions, useChatBackground } from '@/features/chat/ChatSessionContext';
+import { useChatActions, useChatBackground, useChatSession } from '@/features/chat/ChatSessionContext';
+import { requestedBy } from '@/lib/background';
 import { useDecisionHold } from '@/features/chat/useDecisionHold';
 import { STEP_APPROVAL_TOOL } from '@/lib/protocol';
 import { activates } from '@/lib/activation';
@@ -26,6 +27,7 @@ function elapsed(ms: number): string {
 export function WorkflowStrip() {
   const items = useChatBackground();
   const { approve, reject, inspectTask, stopTask, retryTask, dismissTask } = useChatActions();
+  const { agentNames } = useChatSession();
   // One flag per execution with a request in flight: two bars worked at once
   // must not free each other's buttons.
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
@@ -83,10 +85,11 @@ export function WorkflowStrip() {
             </>
           ) : it.status === 'input_required' && it.pendingCallId ? (
             <>
-              <span className="wf-bar-step">
+              <span className="wf-bar-step" title={requestedBy(it, agentNames)}>
                 {it.pendingToolName === STEP_APPROVAL_TOOL
                   ? <>{it.activity} is waiting to start — run it?</>
                   : <>{it.activity} needs your decision: <code>{it.pendingToolName}</code></>}
+                {it.requestedBy && <> · {agentNames?.[it.requestedBy] || it.requestedBy.slice(0, 8)}</>}
               </span>
               <span className="wf-bar-actions" onClick={e => e.stopPropagation()}>
                 <Button size="small" variant="primary" disabled={busy.has(it.id) || held(it.pendingCallId)}

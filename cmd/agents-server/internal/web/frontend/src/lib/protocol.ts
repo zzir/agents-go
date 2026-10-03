@@ -198,6 +198,8 @@ export interface TaskRow {
   child_session_id?: string;
   kind?: string;
   label?: string;
+  // The agent the task runs as — who a decision it waits on is requested by.
+  agent_config_id?: string;
   status?: string;
   attempt?: number;
   max_attempts?: number;

@@ -488,10 +488,15 @@ export function ChatView({
     for (const a of agentConfigs || []) if (a.avatar) m[a.id] = a.avatar;
     return m;
   }, [agentConfigs]);
+  const agentNames = useMemo<Record<string, string>>(() => {
+    const m: Record<string, string> = {};
+    for (const a of agentConfigs || []) m[a.id] = a.name;
+    return m;
+  }, [agentConfigs]);
   const projectBound = !!sessionBinding?.projectId;
   const session = useMemo<ChatSessionState>(
-    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, tasksError, projectBound }),
-    [sessionId, running, compacting, agentAvatars, diagnostics, tasksError, projectBound],
+    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, agentNames, tasksError, projectBound }),
+    [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, projectBound],
   );
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,

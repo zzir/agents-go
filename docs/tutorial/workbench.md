@@ -99,7 +99,9 @@ Now the agent has `read_file`, `write_file`, `list_files`, `apply_patch` and
 `exec_command`. Tick `exec_command` in the agent's **Approvals** checklist and
 every command pauses for you: approve this call, trust this exact command for
 the session, or trust every command. **Reject** can carry a reason, which the
-model reads as that call's result. A session waiting on you is marked in the
+model reads as that call's result. With the card focused (Tab reaches it),
+`y` approves this call and `n` opens the reason box; a turn waiting on a
+decision offers no fork or regenerate until it is made. A session waiting on you is marked in the
 sidebar of every tab and counted in the page title; the account menu's
 **Notify me when a session needs me** adds a desktop notification while the
 page is in the background. The top

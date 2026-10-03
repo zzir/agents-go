@@ -120,6 +120,9 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
   const shared = projectBound ? SHARED_FILES_COPY : null;
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const { copied, copy } = useCopy();
+  // A turn paused on a decision offers no fork, regenerate or attempt switch:
+  // the decision is what it waits for, and a branch here would abandon it.
+  const awaitingDecision = parts.some(p => p.type === 'tools' && p.toolCalls.some(tc => tc.needs_approval && !tc.status));
 
   const { segments, notices } = useMemo(() => buildSegments(parts), [parts]);
 
@@ -187,7 +190,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
           switches attempts — only Copy needs text. */}
       {!isLive && (turnText || canRegen || (messageId && fork) || (branches && branches.tips.length > 1)) && (
         <div className="turn-actions">
-          {branches && branches.tips.length > 1 && switchBranch && (
+          {!awaitingDecision && branches && branches.tips.length > 1 && switchBranch && (
             <span className="branch-switcher">
               <IconButton
                 icon={ChevronLeftIcon}
@@ -218,7 +221,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
               style={copied ? { color: 'var(--fgColor-success)' } : undefined}
             />
           )}
-          {messageId && fork && (
+          {!awaitingDecision && messageId && fork && (
             <IconButton
               icon={RepoForkedIcon}
               variant="invisible"
@@ -227,7 +230,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
               onClick={() => fork(String(messageId))}
             />
           )}
-          {!running && canRegen && (
+          {!running && !awaitingDecision && canRegen && (
             <IconButton
               icon={SyncIcon}
               variant="invisible"
