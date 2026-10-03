@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback, useRef } from 'react';
-import { IconButton, useOnEscapePress } from '@primer/react';
-import { MoonIcon, SidebarExpandIcon, SunIcon, ThreeBarsIcon } from '@primer/octicons-react';
-import { useTheme } from '@/theme/ThemeProvider';
+import { ActionList, ActionMenu, IconButton, useOnEscapePress } from '@primer/react';
+import { DeviceDesktopIcon, MoonIcon, SidebarExpandIcon, SunIcon, ThreeBarsIcon } from '@primer/octicons-react';
+import { useTheme, type ThemePreference } from '@/theme/ThemeProvider';
 import { useNarrow, useResizablePane } from '@/lib/hooks';
 import { UserMenu } from '@/layout/UserMenu';
 
@@ -24,7 +24,24 @@ interface AppShellProps {
 }
 
 export function AppShell({ onSettingsOpen, sidebarPane, railActions, sidebarOpen, onSidebarToggle, children }: AppShellProps) {
-  const { theme, toggle } = useTheme();
+  const { theme, preference, setPreference } = useTheme();
+  // Light, dark, or the system's: one menu behind the current theme's icon.
+  const themeMenu = (size?: 'small') => (
+    <ActionMenu>
+      <ActionMenu.Anchor>
+        <IconButton icon={preference === 'system' ? DeviceDesktopIcon : theme === 'day' ? SunIcon : MoonIcon} variant="invisible" size={size} aria-label="Theme" />
+      </ActionMenu.Anchor>
+      <ActionMenu.Overlay>
+        <ActionList selectionVariant="single">
+          {(['light', 'dark', 'system'] as ThemePreference[]).map(p => (
+            <ActionList.Item key={p} selected={preference === p} onSelect={() => setPreference(p)}>
+              {p === 'light' ? 'Light' : p === 'dark' ? 'Dark' : 'System'}
+            </ActionList.Item>
+          ))}
+        </ActionList>
+      </ActionMenu.Overlay>
+    </ActionMenu>
+  );
   const narrow = useNarrow();
   const closeSidebar = useCallback(() => onSidebarToggle(false), [onSidebarToggle]);
   // The drawer is a CSS shift with no dialog behind it, so Escape is wired
@@ -50,7 +67,7 @@ export function AppShell({ onSettingsOpen, sidebarPane, railActions, sidebarOpen
         <header className="mobile-header">
           <IconButton ref={menuButtonRef} icon={ThreeBarsIcon} variant="invisible" aria-label="Open sidebar" onClick={() => onSidebarToggle(true)} />
           <div className="mobile-header-actions">
-            <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" aria-label="Toggle theme" onClick={toggle} />
+            {themeMenu()}
             <UserMenu onSettingsOpen={onSettingsOpen} compact align="end" />
           </div>
         </header>
@@ -70,7 +87,7 @@ export function AppShell({ onSettingsOpen, sidebarPane, railActions, sidebarOpen
               {!narrow && (
                 <div className="sidebar-footer">
                   <UserMenu onSettingsOpen={onSettingsOpen} />
-                  <IconButton icon={theme === 'day' ? MoonIcon : SunIcon} variant="invisible" size="small" aria-label="Toggle theme" onClick={toggle} />
+                  {themeMenu('small')}
                 </div>
               )}
             </div>

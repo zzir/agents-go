@@ -14,7 +14,9 @@
        mount for live toggling. -->
   <script>
     (function () {
-      var d = localStorage.getItem('theme') === 'dark';
+      var p = 'system';
+      try { p = localStorage.getItem('theme') || 'system'; } catch (e) {}
+      var d = p === 'dark' || (p !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
       var h = document.documentElement;
       h.setAttribute('data-color-mode', d ? 'dark' : 'light');
       h.setAttribute('data-dark-theme', 'dark');

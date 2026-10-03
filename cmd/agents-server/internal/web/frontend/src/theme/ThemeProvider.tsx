@@ -1,39 +1,73 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import { ThemeProvider as PrimerThemeProvider, BaseStyles } from '@primer/react';
 
+// The person's choice: a theme, or the system's. Stored under localStorage
+// 'theme' as 'light' | 'dark' | 'system' (an older 'light'/'dark' reads as is).
+export type ThemePreference = 'light' | 'dark' | 'system';
+
 interface ThemeContextValue {
+  // The resolved theme Primer is given.
   theme: 'day' | 'night';
-  toggle: () => void;
+  preference: ThemePreference;
+  setPreference: (p: ThemePreference) => void;
 }
 
-const ThemeContext = createContext<ThemeContextValue>({ theme: 'day', toggle: () => {} });
+const ThemeContext = createContext<ThemeContextValue>({ theme: 'day', preference: 'system', setPreference: () => {} });
 
 export function useTheme(): ThemeContextValue {
   return useContext(ThemeContext);
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<'day' | 'night'>(() => {
-    return (localStorage.getItem('theme') === 'dark' ? 'night' : 'day');
-  });
+const DARK_QUERY = '(prefers-color-scheme: dark)';
 
-  const toggle = useCallback(() => {
-    setTheme(t => {
-      const next = t === 'day' ? 'night' : 'day';
-      localStorage.setItem('theme', next === 'night' ? 'dark' : 'light');
-      return next;
-    });
+// readPreference reads the stored choice; storage that throws or holds
+// anything else is the default, system.
+export function readPreference(): ThemePreference {
+  try {
+    const v = localStorage.getItem('theme');
+    return v === 'light' || v === 'dark' || v === 'system' ? v : 'system';
+  } catch {
+    return 'system';
+  }
+}
+
+function systemDark(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia(DARK_QUERY).matches;
+}
+
+// resolveTheme is the theme a preference means right now.
+export function resolveTheme(p: ThemePreference, dark: boolean): 'day' | 'night' {
+  if (p === 'system') return dark ? 'night' : 'day';
+  return p === 'dark' ? 'night' : 'day';
+}
+
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const [preference, setPreferenceState] = useState<ThemePreference>(readPreference);
+  const [dark, setDark] = useState(systemDark);
+  const setPreference = useCallback((p: ThemePreference) => {
+    setPreferenceState(p);
+    try { localStorage.setItem('theme', p); } catch { /* a private window: the choice lasts the page */ }
   }, []);
 
+  // The system's theme, followed live while the preference is system.
   useEffect(() => {
-    const dark = theme === 'night';
+    if (typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia(DARK_QUERY);
+    const onChange = (e: MediaQueryListEvent) => setDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  const theme = resolveTheme(preference, dark);
+  useEffect(() => {
+    const isDark = theme === 'night';
     // Keep <html data-color-mode> in sync so consumers keyed off it stay live:
     // syntax.css ([data-color-mode="dark"] .hljs-*) flips code colors for free
     // (pure CSS, no re-render), and MermaidBlock's MutationObserver fires so
-    // diagrams re-render with the new theme. theme-init.js only sets it once.
-    document.documentElement.setAttribute('data-color-mode', dark ? 'dark' : 'light');
+    // diagrams re-render with the new theme.
+    document.documentElement.setAttribute('data-color-mode', isDark ? 'dark' : 'light');
 
-    const color = dark ? '#0d1117' : '#ffffff';
+    const color = isDark ? '#0d1117' : '#ffffff';
     const old = document.querySelector('meta[name="theme-color"]');
     if (old) old.remove();
     const meta = document.createElement('meta');
@@ -45,7 +79,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   return (
     <PrimerThemeProvider colorMode={theme} preventSSRMismatch>
       <BaseStyles>
-        <ThemeContext.Provider value={{ theme, toggle }}>
+        <ThemeContext.Provider value={{ theme, preference, setPreference }}>
           {children}
         </ThemeContext.Provider>
       </BaseStyles>
