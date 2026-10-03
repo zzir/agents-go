@@ -37,22 +37,6 @@ agent.Instructions = func(ctx context.Context, rc *agents.RunContext, a *agents.
 
 `agents.StaticInstructions("...")` wraps the fixed-string case.
 
-## Stored prompts
-
-**Deprecated.** `Agent.Prompt`, `PromptProvider` and `StaticPrompt` carry `Deprecated:` and leave in the next breaking minor ([decisions §5.3](../explanation/decisions.md#53-instructions-and-prompt-both-stay-both-are-func-types)).
-
-Instead of (or alongside) inline `Instructions`, an agent can reference an [OpenAI stored prompt](https://platform.openai.com/docs/guides/prompting) via `Agent.Prompt`. The prompt's id, optional version, and variable substitutions are sent as the Responses API `prompt` parameter:
-
-```go
-agent.Prompt = agents.StaticPrompt(agents.Prompt{
-	ID:        "pmpt_abc123",
-	Version:   "2",                                   // optional
-	Variables: map[string]any{"tone": "concise"},     // optional string substitutions
-})
-```
-
-`Agent.Prompt` is a func type too — assign `func(ctx, rc, agent) (*agents.Prompt, error)` to compute the prompt per run from the [run context](running_agents.md#local-context). `StaticPrompt` hands every run its own copy of the `Prompt`, `Variables` map included, so rewriting a variable for one run neither leaks into later runs nor races with concurrent ones. Only the OpenAI Responses backend accepts `Prompt`; another backend rejects it with a `*UserError` ([spec §2.15](../reference/spec.md#215-the-model-adapter-contract)). OpenAI shuts reusable prompt objects (`v1/prompts`) down on 2026-11-30 — move the prompt text into `Instructions` before then ([deprecations](https://developers.openai.com/api/docs/deprecations)). This is distinct from MCP server prompts (`server.Session().GetPrompt(...)`, see [MCP](mcp.md)), which fetch prompt *text* to use as instructions.
-
 ## Structured output types
 
 By default agents produce plain text (`string`). Set `OutputType` to request a typed result, validated against a reflected JSON schema in strict mode:

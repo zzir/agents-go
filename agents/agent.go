@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"fmt"
 )
 
 // Instructions produces the system prompt for an agent, computed per run.
@@ -59,15 +58,6 @@ type Agent struct {
 
 	// Instructions is the system prompt. May be nil for no system prompt.
 	Instructions Instructions
-
-	// Prompt, when set, configures the agent to use an OpenAI stored prompt
-	// (the Responses API `prompt` parameter). It is independent of Instructions;
-	// both may be set. Only the OpenAI Responses backend honors it.
-	//
-	// Deprecated: OpenAI shuts reusable prompt objects down on 2026-11-30, and
-	// the OpenAI Responses backend is the only one that honors a Prompt; put
-	// the text in Instructions. Removed in the next breaking minor.
-	Prompt PromptProvider
 
 	// Handoffs are the sub-agents (or explicit Handoff values) this agent may
 	// delegate to.
@@ -134,20 +124,4 @@ func (a *Agent) systemPrompt(ctx context.Context, rc *RunContext) (string, error
 		return "", nil
 	}
 	return a.Instructions(ctx, rc, a)
-}
-
-// resolvePrompt resolves the agent's stored-prompt configuration for the run, or
-// nil when the agent has none. A prompt without an ID is an error.
-func (a *Agent) resolvePrompt(ctx context.Context, rc *RunContext) (*Prompt, error) {
-	if a.Prompt == nil {
-		return nil, nil
-	}
-	p, err := a.Prompt(ctx, rc, a)
-	if err != nil {
-		return nil, err
-	}
-	if p != nil && p.ID == "" {
-		return nil, fmt.Errorf("agent %q: prompt ID is required", a.Name)
-	}
-	return p, nil
 }

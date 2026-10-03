@@ -482,7 +482,6 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 	} else {
 		out := r.callModelOnce(ctx, turn, snapshot, ModelRequest{
 			SystemInstructions: snapshot.Instructions,
-			Prompt:             snapshot.Prompt,
 			Input:              modelInput,
 			Settings:           snapshot.Settings,
 			Tools:              tools,

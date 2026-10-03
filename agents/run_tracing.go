@@ -114,9 +114,6 @@ func (r *runner) startGenerationSpan(agent *Agent, req ModelRequest) *tracing.Sp
 			"strict": req.OutputSchema.IsStrictJSONSchema(),
 		})
 	}
-	if req.Prompt != nil {
-		span.Set("prompt", *req.Prompt)
-	}
 	if req.PreviousResponseID != "" {
 		span.Set("previous_response_id", req.PreviousResponseID)
 	}

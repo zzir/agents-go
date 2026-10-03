@@ -16,7 +16,6 @@ type TurnSnapshot struct {
 	Model        Model
 	Settings     *ModelSettings
 	Instructions string
-	Prompt       *Prompt
 	Tools        []*Tool
 	Handoffs     []Handoff
 	OutputSchema OutputSchema
@@ -99,10 +98,6 @@ func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []InputI
 	if err != nil {
 		return nil, err
 	}
-	prompt, err := agent.resolvePrompt(ctx, r.rc)
-	if err != nil {
-		return nil, err
-	}
 	outputSchema := agentOutputSchema(agent)
 	handoffs, err := r.enabledHandoffs(ctx, agent)
 	if err != nil {
@@ -117,7 +112,6 @@ func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []InputI
 		Model:        model,
 		Settings:     r.resolveSettings(agent),
 		Instructions: instructions,
-		Prompt:       prompt,
 		Tools:        tools,
 		Handoffs:     handoffs,
 		OutputSchema: outputSchema,

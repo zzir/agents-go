@@ -80,7 +80,6 @@ var unsupportedFeatures = []modelkit.Feature{
 	modelkit.FeatureReasoningSummary,
 	modelkit.FeaturePreviousResponseID,
 	modelkit.FeatureConversationID,
-	modelkit.FeaturePrompt,
 }
 
 // Capabilities declares this adapter's unsupported request features, for

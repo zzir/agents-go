@@ -32,7 +32,6 @@ const (
 	FeatureTopLogprobs          Feature = "top_logprobs"
 	FeaturePreviousResponseID   Feature = "previous_response_id"
 	FeatureConversationID       Feature = "conversation_id"
-	FeaturePrompt               Feature = "prompt"
 	FeatureOutputSchema         Feature = "output_schema"
 )
 
@@ -61,7 +60,6 @@ var featureSet = map[Feature]func(agents.ModelRequest) bool{
 	FeatureTopLogprobs:          func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.TopLogprobs != nil },
 	FeaturePreviousResponseID:   func(r agents.ModelRequest) bool { return r.PreviousResponseID != "" },
 	FeatureConversationID:       func(r agents.ModelRequest) bool { return r.ConversationID != "" },
-	FeaturePrompt:               func(r agents.ModelRequest) bool { return r.Prompt != nil },
 	FeatureOutputSchema:         func(r agents.ModelRequest) bool { return r.OutputSchema != nil && !r.OutputSchema.IsPlainText() },
 }
 

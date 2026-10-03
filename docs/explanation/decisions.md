@@ -46,14 +46,13 @@ rename is a breaking change batched into a window users absorb once, and the
 next window is the next breaking minor (§5.8); an openai-go major, if one
 comes, rides in it (§5.5b).
 
-### 5.3 `Instructions` and `Prompt` both stay; both are func types
+### 5.3 `Instructions` is a func type
 
-**Decision.** `Prompt` (a server-stored template with a version and variables)
-is a Responses API capability, not a porting artifact; the two compose — a
-stored prompt provides the base, instructions append. Both are **func types**:
-`StaticInstructions` / `StaticPrompt` cover the fixed case, `WrapInstructions`
-composes, and resolution (nil handling, prompt-ID validation) is the runner's
-job behind unexported entry points, not API surface.
+**Decision.** `Instructions` is a **func type**: `StaticInstructions` covers
+the fixed case, `WrapInstructions` composes, and resolution (nil handling) is
+the runner's job behind unexported entry points, not API surface. The
+stored-`Prompt` half was retired 2026-10-03 (v0.5.0) with OpenAI's shutdown of
+reusable prompts (2026-11-30); prompt text lives in `Instructions`.
 
 **Rejected.** Single-method interfaces with `...Func` adapters — their only
 implementations were unexported types in this package, a plug point nothing
@@ -63,10 +62,8 @@ same rule collapsed `tasks.AgentResolver`, `Launcher`, `Stopper` and
 single-method injection point is a func type unless a second method is
 already in sight.
 
-**Cost accepted.** OpenAI shuts reusable prompt objects down on 2026-11-30,
-and its Responses backend is the only adapter that honors `Prompt`.
-`Agent.Prompt` carries `Deprecated:` as a provider-shutdown notice, not the
-pre-v1 cycle §5.8 rejects, and leaves in the next breaking minor.
+**Cost accepted.** A program that bound a stored prompt pastes its text into
+`Instructions`; variables become string formatting on the caller's side.
 
 ### 5.4 A tool is a struct, not an interface
 
@@ -1547,10 +1544,9 @@ session plans, the suffix a background run is told nobody reads through. A
 handoff target decides for itself.
 
 **Rejected.** Falling back to the global prompt when the agent's text is
-empty — the empty case is the point: an agent driven by a stored prompt
-(`session.prompt_id`) or by nothing at all has no other way to say so, and
-"empty means inherit" leaves it inexpressible. A per-agent copy of the global
-text — a second home that drifts.
+empty — the empty case is the point: an agent meant to run on nothing but its
+tools has no other way to say so, and "empty means inherit" leaves it
+inexpressible. A per-agent copy of the global text — a second home that drifts.
 
 **Cost accepted.** An overriding agent with nothing written runs with no
 system prompt at all; the switch's caption says so.

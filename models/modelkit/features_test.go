@@ -191,10 +191,6 @@ func TestRejectRequestLevelFeatures(t *testing.T) {
 	if err := Reject("prov", req, FeatureConversationID); err == nil {
 		t.Fatal("expected error for conversation_id")
 	}
-	req = agents.ModelRequest{Prompt: &agents.Prompt{ID: "p"}}
-	if err := Reject("prov", req, FeaturePrompt); err == nil {
-		t.Fatal("expected error for prompt")
-	}
 }
 
 func TestRejectReasoningSummaryIsSeparateFromReasoning(t *testing.T) {

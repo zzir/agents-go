@@ -38,7 +38,7 @@ when it bears on this project, not a review of every release:
 | 2026-04-15 | openai-agents-python | v0.14.0 | Sandbox agents (`SandboxAgent`, manifests, unix-local, Docker and hosted providers; predates the baseline) | declined | No agent subtype: a `Sandbox` behind tools any agent can hold ([migration](migration_from_python.md#api-mapping)) |
 | 2026-04-15 | openai-agents-python | v0.14.0 | Workspace tar snapshot and rehydrate | deferred | Candidate: an import beside `ExportTar`, for a fork that copies files |
 | 2026-04-15 | openai-agents-python | v0.14.0 | Manifest seeding, `view_image` | deferred | No consumer |
-| 2026-06-03 | OpenAI API | deprecations | Reusable prompt objects and `v1/prompts` shut down 2026-11-30 | adapted | `Agent.Prompt` deprecated (86b11158); it leaves in the next breaking minor (decisions §5.3) |
+| 2026-06-03 | OpenAI API | deprecations | Reusable prompt objects and `v1/prompts` shut down 2026-11-30 | adapted | `Agent.Prompt` deprecated (86b11158), removed in v0.5.0 (`refactor(agents)!: remove Agent.Prompt`; decisions §5.3) |
 | 2026-07-17 | openai-agents-python | v0.18.3 | Configurable task and turn spans | deferred | When the UI groups traces by turn |
 | 2026-07-17 | openai-agents-python | v0.18.3 | Strict schema conversion bounds `$ref` expansion | deferred | Candidate: `EnsureStrictJSONSchema` unravels a `$ref` with sibling keys without a bound — a chain twenty definitions deep takes about a second, and each level doubles it |
 | 2026-07-27 | openai-agents-python | v0.19.0 | Programmatic Tool Calling | declined | A hosted executor (scope §1.2, provider-hosted tools; decisions §5.4) |

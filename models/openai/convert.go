@@ -148,24 +148,3 @@ func applySettings(params *responses.ResponseNewParams, s *agents.ModelSettings,
 		}
 	}
 }
-
-// convertPrompt translates an agents.Prompt into the prompt parameter; a
-// non-string variable is a *UserError rather than silently stringified.
-func convertPrompt(p *agents.Prompt) (responses.ResponsePromptParam, error) {
-	out := responses.ResponsePromptParam{ID: p.ID}
-	if p.Version != "" {
-		out.Version = oai.String(p.Version)
-	}
-	if len(p.Variables) > 0 {
-		out.Variables = make(map[string]responses.ResponsePromptVariableUnionParam, len(p.Variables))
-		for k, v := range p.Variables {
-			s, ok := v.(string)
-			if !ok {
-				return responses.ResponsePromptParam{}, agents.NewUserError(
-					"prompt variable %q has unsupported type %T: only string values are supported", k, v)
-			}
-			out.Variables[k] = responses.ResponsePromptVariableUnionParam{OfString: oai.String(s)}
-		}
-	}
-	return out, nil
-}
