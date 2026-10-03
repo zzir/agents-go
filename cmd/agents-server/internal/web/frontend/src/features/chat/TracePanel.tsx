@@ -39,6 +39,16 @@ export interface TraceEventData {
   attachments?: AttachmentMeta[];
 }
 
+// lastGenerationSpan is a run's newest model call: what a replay reopens and
+// what the trace lands on when opened from the run's turn.
+export function lastGenerationSpan(events?: TraceEventData[]): TraceEventData | undefined {
+  if (!events) return undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].kind === 'span' && events[i].type === 'generation') return events[i];
+  }
+  return undefined;
+}
+
 // Span type → icon + color, mirroring the SDK's typed span constructors.
 const SPAN_META: Record<string, { color: string; icon: Icon }> = {
   agent:      { color: 'var(--fgColor-open)',      icon: DependabotIcon },
@@ -263,8 +273,11 @@ function spanHasDetails(s: TraceEventData): boolean {
 // up when siblings on the same level are expandable.
 // loadSpan fetches the row's payload when the listing left it out; opening the
 // row asks once, and the parent swaps the whole span in.
-function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNode; depth: number; range: TimeRange | null; alignChevron: boolean; loadSpan?: (spanId: string) => Promise<void> }) {
-  const [open, setOpen] = useState(false);
+function SpanRow({ node, depth, range, alignChevron, loadSpan, focusSpanId }: { node: SpanNode; depth: number; range: TimeRange | null; alignChevron: boolean; loadSpan?: (spanId: string) => Promise<void>; focusSpanId?: string }) {
+  // The span the trace was opened on starts open and marked.
+  const focused = !!focusSpanId && node.span.span_id === focusSpanId;
+  const [open, setOpen] = useState(focused);
+  useEffect(() => { if (focused) setOpen(true); }, [focused]);
   // The payload fetch of an opened row: pending, done, or failed — a live span
   // not yet ended has no stored row. Reset on close, so reopening asks again;
   // never asked twice while open, whatever the answer.
@@ -315,7 +328,7 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
   return (
     <>
       <div
-        className={'trace-span' + (hasData ? ' trace-span-clickable' : '')}
+        className={'trace-span' + (hasData ? ' trace-span-clickable' : '') + (focused ? ' trace-span-focus' : '')}
         style={{ '--d': depth } as CSSProperties}
         role={hasData ? 'button' : undefined}
         tabIndex={hasData ? 0 : undefined}
@@ -389,7 +402,7 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan }: { node: SpanNod
                 {JSON.stringify(s.data, null, 2)}
               </pre>
       )}
-      {shown.map((c, i) => <SpanRow key={c.span.span_id || i} node={c} depth={depth + 1} range={range} alignChevron={childExpandable} loadSpan={loadSpan} />)}
+      {shown.map((c, i) => <SpanRow key={c.span.span_id || i} node={c} depth={depth + 1} range={range} alignChevron={childExpandable} loadSpan={loadSpan} focusSpanId={focusSpanId} />)}
     </>
   );
 }
@@ -425,9 +438,11 @@ interface TraceRunProps {
   // payload — the chat's own by default; an inspected task's child session
   // for the task inspector.
   payloadSessionId?: string;
+  // The span to open and mark, when the trace was opened on one.
+  focusSpanId?: string;
 }
 
-export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle, onJump, payloadSessionId }: TraceRunProps) {
+export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle, onJump, payloadSessionId, focusSpanId }: TraceRunProps) {
   const ref = useRef<HTMLDivElement>(null);
   const { loadSpan } = useChatActions();
   const { sessionId } = useChatSession();
@@ -515,7 +530,7 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
       {parts.map(p => (
         <div key={p.key} className="trace-run-segment" style={p.range ? { '--trace-step': ((tickStep(p.range.total) / p.range.total) * 100).toFixed(2) + '%' } as CSSProperties : undefined}>
           {p.label && <div className="trace-segment-label">{p.label}</div>}
-          {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} loadSpan={p.loadSpan} />)}
+          {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} loadSpan={p.loadSpan} focusSpanId={focusSpanId} />)}
         </div>
       ))}
     </Disclosure>
@@ -526,6 +541,8 @@ interface TraceDrawerProps {
   traceRuns: Record<string, TraceEventData[]>;
   liveRunId: string | null;
   activeRunId: string | null;
+  // The span to land on inside the active run (its last model call).
+  focusSpanId?: string;
   runLabels: Record<string, string>;
   // Runs belonging to an abandoned branch — the answer was regenerated and the
   // session moved on. Listed, but marked: their work is real history, it is
@@ -541,7 +558,7 @@ interface TraceDrawerProps {
   messageRunIds?: Set<string>;
 }
 
-export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, staleRuns, runParents, onClose, onJumpToRun, messageRunIds }: TraceDrawerProps) {
+export function TraceDrawer({ traceRuns, liveRunId, activeRunId, focusSpanId, runLabels, staleRuns, runParents, onClose, onJumpToRun, messageRunIds }: TraceDrawerProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // One card per conversation exchange: a run plus the wake-up runs its tasks
   // triggered, in chronological (insertion) order. rootOf routes expand/live
@@ -613,6 +630,7 @@ export function TraceDrawer({ traceRuns, liveRunId, activeRunId, runLabels, stal
           isExpanded={!!expanded[rootId]}
           onToggle={() => toggle(rootId)}
           onJump={onJumpToRun && messageRunIds && messageRunIds.has(rootId) ? () => onJumpToRun(rootId) : undefined}
+          focusSpanId={segments.some(s => s.runId === activeRunId) ? focusSpanId : undefined}
         />
       ))}
     </SidePanel>

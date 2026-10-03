@@ -28,9 +28,11 @@ type partialTurn struct {
 	// its last write; the failed attempt took them back.
 	injected []string
 	// annRole is the trailing marker's kind, "cancelled" or "error", and annMsg
-	// its optional detail. Empty annRole writes no marker.
+	// its optional detail; code is the error's run.error code. Empty annRole
+	// writes no marker.
 	annRole string
 	annMsg  string
+	code    string
 	// partialReasoning and partialText are the in-flight turn's streamed
 	// thinking and narration.
 	partialReasoning string
@@ -112,10 +114,16 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 		if t.annRole == "cancelled" {
 			d.Kind = agents.DisplayCancelled
 		}
-		// A guardrail block carries its name and stage so a reload rebuilds the
-		// typed "Blocked by guardrail X" card instead of a generic error.
-		if t.guardrail != "" {
-			d.Extra = map[string]any{"guardrail": t.guardrail, "stage": t.stage}
+		// The code and, for a guardrail block, its name and stage ride in the
+		// extra so a reload rebuilds the same card the live event drew.
+		if t.code != "" || t.guardrail != "" {
+			d.Extra = map[string]any{}
+			if t.code != "" {
+				d.Extra["code"] = t.code
+			}
+			if t.guardrail != "" {
+				d.Extra["guardrail"], d.Extra["stage"] = t.guardrail, t.stage
+			}
 		}
 		src := agents.Source{Type: agents.SourceErrorHandler}
 		if t.guardrail != "" {

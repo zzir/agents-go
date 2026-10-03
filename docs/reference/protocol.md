@@ -985,6 +985,8 @@ not know renders as a generic error.
 | `persist_error` | workbench | The turn or the pause could not be written to the session |
 | `stream_error` | workbench | A fresh run's segment failed before the SDK classified the error |
 | `resume_error` | workbench | A resumed run's segment failed before the SDK classified the error |
+| `provider_error` | workbench | The model provider answered a segment's request with an HTTP error the SDK did not classify (an invalid key, a 5xx) |
+| `context_overflow` | workbench | A segment's request did not fit the model's context and the run did not recover by compaction |
 | `guardrail_tripwire` | SDK | A guardrail tripped; `guardrail` and `stage` name it |
 | `max_turns_exceeded` | SDK | The run hit its turn limit |
 | `model_behavior` | SDK | The model produced something the loop cannot act on (a malformed call, an unknown tool) |

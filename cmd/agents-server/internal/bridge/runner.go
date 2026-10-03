@@ -423,7 +423,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 			return failCancelled(turn)
 		}
 		gerr := runErrorFor(runID, err, code)
-		turn.annRole, turn.annMsg = "error", err.Error()
+		turn.annRole, turn.annMsg, turn.code = "error", err.Error(), gerr.Code
 		turn.guardrail, turn.stage = gerr.Guardrail, gerr.Stage
 		r.savePartialTurn(turn)
 		sendEvent(protocol.EventRunError, gerr)

@@ -27,6 +27,8 @@ interface ItemDisplay {
 // the stored entry's display, the live run.tool_result event, and the ToolCall
 // both fold it into. One name, so the three cannot drift.
 interface DisplayExtra {
+  // On an error annotation: the run.error code.
+  code?: string;
   guardrail?: string;
   stage?: string;
   // On a tool_call an abandoned pause never ran: the run.cancelled reason.
@@ -151,6 +153,8 @@ interface TextPart {
 interface ErrorPart {
   type: 'error';
   content: string;
+  // The run.error code, the same live and after a reload (invariant 16).
+  code?: string;
   guardrail?: string;
   stage?: string;
 }
@@ -430,7 +434,7 @@ function assemble(
         if (!e.content) continue;
         ensureTurn();
         anchor(e);
-        turn!.parts.push({ type: 'error', content: e.content, guardrail: d.extra?.guardrail, stage: d.extra?.stage });
+        turn!.parts.push({ type: 'error', content: e.content, code: d.extra?.code, guardrail: d.extra?.guardrail, stage: d.extra?.stage });
         continue;
       }
       case DISPLAY.cancelled: {

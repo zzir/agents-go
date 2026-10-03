@@ -28,7 +28,8 @@ import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import type { AttachmentMeta } from '@/lib/attachments';
 import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
-import { TraceDrawer } from '@/features/chat/TracePanel';
+import { TraceDrawer, lastGenerationSpan } from '@/features/chat/TracePanel';
+import { ReplayDialog } from '@/features/chat/ReplayDialog';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
 import { NewProjectDialog, useProjectMenu } from '@/features/chat/ProjectControls';
@@ -374,6 +375,22 @@ export function ChatView({
     onPanelChange({ kind: 'trace' });
     setTraceActiveRun(runId);
   }, [onPanelChange]);
+  // The trace opened from a turn lands on that run's last model call.
+  const traceFocusSpan = useMemo(() => traceActiveRun ? lastGenerationSpan(traceRuns[traceActiveRun])?.span_id : undefined, [traceActiveRun, traceRuns]);
+
+  // Replay from a turn: the run's last model call, its payload fetched when
+  // the listing left it out, then the same dialog the trace offers.
+  const [replayRunId, setReplayRunId] = useState<string | null>(null);
+  const replaySpan = replayRunId ? lastGenerationSpan(traceRuns[replayRunId]) : undefined;
+  const replayRun = useCallback((runId: string) => {
+    if (!lastGenerationSpan(traceRuns[runId])) { toast.info('No model call is recorded for this turn'); return; }
+    setReplayRunId(runId);
+  }, [traceRuns]);
+  useEffect(() => {
+    if (!replayRunId || !replaySpan?.payloadOmitted || !replaySpan.span_id || !onLoadSpan || !sessionId) return;
+    onLoadSpan(sessionId, replayRunId, replaySpan.span_id).catch(() => { toast.error('Could not load the model call'); setReplayRunId(null); });
+  }, [replayRunId, replaySpan, onLoadSpan, sessionId]);
+  const compact = useMemo(() => onCompact ? () => { void onCompact(); } : undefined, [onCompact]);
 
   const inspectTask = useCallback((taskId: string) => {
     onPanelChange({ kind: 'task', taskId });
@@ -503,8 +520,8 @@ export function ChatView({
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, approveAll: onApproveAll, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
     regenerate: onRegenerate ? handleRegen : undefined,
-    openTrace, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan, openSettings: onSettingsOpen, retryTasks: onRetryTasks,
-  }), [onApprove, onApproveAll, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen, onRetryTasks]);
+    openTrace, replayRun, compact, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan, openSettings: onSettingsOpen, retryTasks: onRetryTasks,
+  }), [onApprove, onApproveAll, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, replayRun, compact, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen, onRetryTasks]);
 
   const topBar = (
     <ChatTopBar
@@ -658,6 +675,7 @@ export function ChatView({
             duration={turnDuration}
             messageId={m.messageId}
             branches={m.branches}
+            runId={rid || undefined}
           />
         );
       }
@@ -694,6 +712,7 @@ export function ChatView({
           traceRuns={traceRuns}
           liveRunId={liveRunId}
           activeRunId={traceActiveRun}
+          focusSpanId={traceFocusSpan}
           runLabels={runLabels}
           staleRuns={staleRuns}
           runParents={traceRunParents}
@@ -835,6 +854,10 @@ export function ChatView({
       </div>
 
       {sidePanels}
+      {/* Replay from a turn: open once the model call's payload is in hand. */}
+      {replayRunId && replaySpan && !replaySpan.payloadOmitted && replaySpan.data && (
+        <ReplayDialog data={replaySpan.data} attachments={replaySpan.attachments} onClose={() => setReplayRunId(null)} />
+      )}
     </div>
   );
 }

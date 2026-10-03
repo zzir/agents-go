@@ -39,6 +39,10 @@ export interface ChatActions {
   // Branches back to the user ENTRY id and runs again.
   regenerate?: (userEntryId: string, userContent: string) => void;
   openTrace: (runId: string) => void;
+  // Opens the replay dialog on the run's last model call.
+  replayRun?: (runId: string) => void;
+  // Folds the session now (POST /compact).
+  compact?: () => void;
   inspectTask: (taskId: string) => void;
   retryTask: (taskId: string) => Promise<void>;
   stopTask: (taskId: string) => Promise<void>;

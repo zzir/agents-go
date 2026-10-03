@@ -4,6 +4,9 @@ import (
 	"errors"
 	"strings"
 
+	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
+	openaisdk "github.com/openai/openai-go/v3"
+
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
@@ -72,18 +75,36 @@ type streamedPartial struct {
 func (p *streamedPartial) Text() string      { return p.text.String() }
 func (p *streamedPartial) Reasoning() string { return p.reasoning.String() }
 
-// runErrorFor builds the run.error: the SDK's code when it classified err, else the
-// caller's transport fallback; a guardrail tripwire adds its name and stage.
+// runErrorFor builds the run.error: the SDK's code when it classified err, else
+// what the workbench can tell of a segment failure (the context overflowed, the
+// provider answered an error), else the caller's transport fallback; a
+// guardrail tripwire adds its name and stage.
 func runErrorFor(runID string, err error, fallback string) protocol.RunError {
 	e := protocol.RunError{RunID: runID, Code: fallback, Message: err.Error()}
 	if code := agents.CodeOf(err); code != agents.CodeUnknown {
 		e.Code = string(code)
+	} else if fallback == protocol.CodeStreamError || fallback == protocol.CodeResumeError {
+		if agents.DetectContextOverflow(err) {
+			e.Code = protocol.CodeContextOverflow
+		} else if isProviderError(err) {
+			e.Code = protocol.CodeProviderError
+		}
 	}
 	if tw, ok := errors.AsType[*agents.GuardrailTripwireError](err); ok {
 		e.Guardrail = tw.Result.Guardrail.Name
 		e.Stage = string(tw.Stage())
 	}
 	return e
+}
+
+// isProviderError reports an HTTP error answered by one of the two provider
+// SDKs, wrapped as the adapters wrap it.
+func isProviderError(err error) bool {
+	if _, ok := errors.AsType[*openaisdk.Error](err); ok {
+		return true
+	}
+	_, ok := errors.AsType[*anthropicsdk.Error](err)
+	return ok
 }
 
 // agentIDs maps built agent names to config ids (BuildResult.AgentIDs); the

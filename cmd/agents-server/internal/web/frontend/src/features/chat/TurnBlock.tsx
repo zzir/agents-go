@@ -1,10 +1,10 @@
 import { useCallback, useMemo, memo } from 'react';
 import { Button, IconButton } from '@primer/react';
 import { useCopy } from '@/lib/hooks';
-import { ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, AlertIcon, StopIcon, ShieldIcon } from '@primer/octicons-react';
+import { ChevronRightIcon, ChevronLeftIcon, RepoForkedIcon, CopyIcon, CheckIcon, SyncIcon, AlertIcon, StopIcon, ShieldIcon, PlayIcon } from '@primer/octicons-react';
 import { Disclosure } from '@/components/Disclosure';
 import { type TurnPart, type ErrorPart, type CancelledPart, type Branches } from '@/lib/timeline';
-import { PER_CALL_APPROVALS } from '@/lib/protocol';
+import { ERR, PER_CALL_APPROVALS } from '@/lib/protocol';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TextContent } from '@/features/chat/TextContent';
 import { ProcessTimeline } from '@/features/chat/ProcessTimeline';
@@ -36,7 +36,40 @@ export function endpointTrouble(message: string): boolean {
   return /no API key configured|names provider|provider \S+: not found|provider \S+ is out of the agent's scope/i.test(message);
 }
 
-export function ErrorCard({ message, guardrail, stage, onOpenProviders }: { message: string; guardrail?: string; stage?: string; onOpenProviders?: () => void }) {
+// ERROR_TITLES is the card's first line per run.error code (protocol.md,
+// "Run error codes"): what failed, in words; the raw text waits in Details.
+export const ERROR_TITLES: Record<string, string> = {
+  [ERR.configError]: 'The agent could not be built from its configuration',
+  [ERR.maxTurns]: 'The run hit its turn limit',
+  [ERR.modelRefusal]: 'The model refused to answer',
+  [ERR.toolLoop]: 'A tool was called in a loop',
+  [ERR.toolTimeout]: 'A tool ran out of time',
+  [ERR.sandboxExec]: 'The sandbox could not run the command',
+  [ERR.mcp]: 'An MCP server call failed',
+  [ERR.sessionBusy]: 'The session already had a run going',
+  [ERR.providerError]: 'The model provider answered with an error',
+  [ERR.contextOverflow]: 'The conversation no longer fits the model\'s context',
+};
+
+export function errorTitle(code?: string): string {
+  return (code && ERROR_TITLES[code]) || 'The run failed';
+}
+
+interface ErrorCardProps {
+  message: string;
+  code?: string;
+  guardrail?: string;
+  stage?: string;
+  onOpenProviders?: () => void;
+  // Runs the turn again (the regenerate), when the turn can be.
+  onRetry?: () => void;
+  // Opens the trace on this run's failing span.
+  onOpenSpan?: () => void;
+  // Folds the session, offered when the context overflowed.
+  onCompact?: () => void;
+}
+
+export function ErrorCard({ message, code, guardrail, stage, onOpenProviders, onRetry, onOpenSpan, onCompact }: ErrorCardProps) {
   // A guardrail block is not a system failure — render it as a distinct
   // "blocked" state.
   if (guardrail) {
@@ -48,14 +81,17 @@ export function ErrorCard({ message, guardrail, stage, onOpenProviders }: { mess
       </Disclosure>
     );
   }
+  const actions = [
+    onRetry && <Button key="retry" size="small" onClick={onRetry}>Retry</Button>,
+    code === ERR.contextOverflow && onCompact && <Button key="compact" size="small" onClick={onCompact}>Compact</Button>,
+    onOpenProviders && endpointTrouble(message) && <Button key="providers" size="small" onClick={onOpenProviders}>Open Providers</Button>,
+    onOpenSpan && <Button key="span" size="small" variant="invisible" onClick={onOpenSpan}>Open failing span</Button>,
+  ].filter(Boolean);
   return (
-    <Disclosure icon={AlertIcon} label="Error" variant="danger" className="error-card">
+    <Disclosure icon={AlertIcon} label={errorTitle(code)} variant="danger" className="error-card">
+      <div className="error-card-details">Details</div>
       <pre className="error-card-body">{message}</pre>
-      {onOpenProviders && endpointTrouble(message) && (
-        <div className="error-card-actions">
-          <Button size="small" onClick={onOpenProviders}>Open Providers</Button>
-        </div>
-      )}
+      {actions.length > 0 && <div className="error-card-actions">{actions}</div>}
     </Disclosure>
   );
 }
@@ -109,13 +145,16 @@ interface TurnBlockProps {
   messageId?: string | number;
   // Sibling attempts at this point.
   branches?: Branches;
+  // The run that produced the turn, when known: the trace and the replay
+  // open on it.
+  runId?: string;
 }
 
-export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, prompt, duration, messageId, branches }: TurnBlockProps) {
+export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, prompt, duration, messageId, branches, runId }: TurnBlockProps) {
   // Live-run state applies to the live turn only — every read below is gated
   // on isLive.
   const { running, compacting, projectBound } = useChatSession();
-  const { regenerate, fork, switchBranch, openSettings, approveAll } = useChatActions();
+  const { regenerate, fork, switchBranch, openSettings, approveAll, openTrace, replayRun, compact } = useChatActions();
   // On a bound session the attempts and forks share the project's files,
   // and the controls say so (decisions §5.28).
   const shared = projectBound ? SHARED_FILES_COPY : null;
@@ -171,8 +210,11 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
       {notices.map((part, i) => (
         part.type === 'cancelled'
           ? <CancelledCard key={'notice-' + i} />
-          : <ErrorCard key={'notice-' + i} message={part.content || 'Unknown error'} guardrail={part.guardrail} stage={part.stage}
-              onOpenProviders={openSettings ? () => openSettings('providers') : undefined} />
+          : <ErrorCard key={'notice-' + i} message={part.content || 'Unknown error'} code={part.code} guardrail={part.guardrail} stage={part.stage}
+              onOpenProviders={openSettings ? () => openSettings('providers') : undefined}
+              onRetry={!running && canRegen ? () => regenerate!(regenEntryId!, regenContent!) : undefined}
+              onOpenSpan={runId ? () => openTrace(runId) : undefined}
+              onCompact={compact} />
       ))}
       {isLive && isEmpty && !compacting && (
         <div className="thinking-indicator">
@@ -246,6 +288,15 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
               size="small"
               aria-label={shared ? 'Regenerate — ' + shared.regenerate : 'Regenerate'}
               onClick={() => regenerate!(regenEntryId!, regenContent!)}
+            />
+          )}
+          {runId && replayRun && (
+            <IconButton
+              icon={PlayIcon}
+              variant="invisible"
+              size="small"
+              aria-label="Replay… — this turn's last model call, editable"
+              onClick={() => replayRun(runId)}
             />
           )}
           {duration && <span className="turn-duration">{duration}</span>}

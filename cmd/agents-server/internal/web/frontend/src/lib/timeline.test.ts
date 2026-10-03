@@ -322,6 +322,23 @@ describe('stream/replay isomorphism', () => {
     expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
   });
 
+  // The code the live run.error carried is what the stored annotation's
+  // extra carries, so the card's title reads the same after a reload.
+  it('failed turn: the error code survives reload', () => {
+    let live = ensureLiveTurn([], RUN)!;
+    live = appendErrorPart(live, { type: 'error', content: '401 Unauthorized', code: 'provider_error' }, '', 'partial');
+    const rows: EntryView[] = [
+      { id: "1", run_id: RUN, kind: 'annotation', role: 'assistant', content: 'partial', display: { kind: 'message', text: 'partial' } },
+      { id: "2", run_id: RUN, kind: 'annotation', role: 'system', content: '401 Unauthorized', display: { kind: 'error', text: '401 Unauthorized', extra: { code: 'provider_error' } } },
+    ];
+    const streamParts = (live[live.length - 1] as TurnEntry).parts;
+    expect(streamParts).toEqual([
+      { type: 'text', content: 'partial' },
+      { type: 'error', content: '401 Unauthorized', code: 'provider_error', guardrail: undefined, stage: undefined },
+    ]);
+    expect(partsOf(buildTimeline(rows))).toEqual(streamParts);
+  });
+
   it('cancelled turn: partial text → cancelled marker', () => {
     let live = ensureLiveTurn([], RUN)!;
     live = appendCancelledPart(live, '', 'partial answer')!;

@@ -87,6 +87,8 @@ const (
 	CodePersistError    = "persist_error"
 	CodeStreamError     = "stream_error"
 	CodeResumeError     = "resume_error"
+	CodeProviderError   = "provider_error"
+	CodeContextOverflow = "context_overflow"
 )
 
 // NewEnvelope marshals payload and wraps it in an Envelope of the given type.

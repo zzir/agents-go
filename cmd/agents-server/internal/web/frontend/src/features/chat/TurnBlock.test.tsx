@@ -15,7 +15,7 @@ vi.mock('@/lib/markdown', () => ({ useAsyncMarkdown: () => '' }));
 vi.mock('@/features/chat/StreamingMarkdown', () => ({ StreamingMarkdown: () => null }));
 vi.mock('@/features/chat/TextContent', () => ({ TextContent: () => null }));
 vi.mock('@/features/chat/ProcessTimeline', () => ({ ProcessTimeline: () => null }));
-import { ErrorCard, TurnBlock, endpointTrouble } from '@/features/chat/TurnBlock';
+import { ERROR_TITLES, ErrorCard, TurnBlock, endpointTrouble, errorTitle } from '@/features/chat/TurnBlock';
 import { ChatSessionProvider, type ChatSessionState, type ChatActions } from '@/features/chat/ChatSessionContext';
 
 const g = globalThis as Record<string, unknown>;
@@ -69,6 +69,32 @@ describe('ErrorCard', () => {
     act(() => (b.host.querySelector('.disclosure-header') as HTMLElement).click());
     expect(b.host.querySelector('.error-card-actions')).toBeNull();
     b.unmount();
+  });
+});
+
+describe('ErrorCard titles', () => {
+  // The first line says what failed, per code; an unknown code is generic.
+  it('names each code in words and falls back for an unknown one', () => {
+    for (const [code, title] of Object.entries(ERROR_TITLES)) {
+      const { host, unmount } = mount(<ErrorCard message="raw" code={code} />);
+      expect(host.querySelector('.disclosure-label')?.textContent).toBe(title);
+      unmount();
+    }
+    expect(errorTitle('something_new')).toBe('The run failed');
+    expect(errorTitle(undefined)).toBe('The run failed');
+  });
+
+  it('offers Compact only for a context overflow, and Retry / the failing span when given', () => {
+    const buttons = (host: HTMLElement) => {
+      act(() => (host.querySelector('.disclosure-header') as HTMLElement).click());
+      return [...host.querySelectorAll('.error-card-actions button')].map(b => b.textContent);
+    };
+    const over = mount(<ErrorCard message="too long" code="context_overflow" onCompact={() => {}} onRetry={() => {}} onOpenSpan={() => {}} />);
+    expect(buttons(over.host)).toEqual(['Retry', 'Compact', 'Open failing span']);
+    over.unmount();
+    const other = mount(<ErrorCard message="boom" code="provider_error" onCompact={() => {}} onRetry={() => {}} />);
+    expect(buttons(other.host)).toEqual(['Retry']);
+    other.unmount();
   });
 });
 

@@ -710,8 +710,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       // A guardrail block carries the guardrail name + stage so the turn renders
       // a distinct "blocked" card instead of a generic error.
       const errPart = p.code === ERR.guardrailTripwire
-        ? { type: 'error' as const, content: p.message, guardrail: p.guardrail, stage: p.stage }
-        : { type: 'error' as const, content: p.message };
+        ? { type: 'error' as const, content: p.message, code: p.code, guardrail: p.guardrail, stage: p.stage }
+        : { type: 'error' as const, content: p.message, code: p.code };
       updateSS(sid, s => ({
         ...s, messages: appendErrorPart(s.messages, errPart, thinking, remaining),
         streaming: '', reasoning: '', running: false, compacting: false, liveRunId: null,

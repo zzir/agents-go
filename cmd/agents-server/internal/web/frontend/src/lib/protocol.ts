@@ -81,6 +81,8 @@ export const ERR = {
   persistError: 'persist_error',
   streamError: 'stream_error',
   resumeError: 'resume_error',
+  providerError: 'provider_error',
+  contextOverflow: 'context_overflow',
 
   // SDK — mirrors agents.Code* in agents/errors.go
   guardrailTripwire: 'guardrail_tripwire',

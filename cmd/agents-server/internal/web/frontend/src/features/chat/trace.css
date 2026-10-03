@@ -150,6 +150,8 @@
 }
 .trace-span:hover { background: var(--bgColor-neutral-muted); }
 .trace-span-clickable { cursor: pointer; }
+/* The span the trace was opened on from a turn: its last model call. */
+.trace-span-focus { background: var(--bgColor-accent-muted); }
 /* A tight column clips the label's tail (tokens, tags) and keeps the name. */
 .trace-span-label {
   display: flex;

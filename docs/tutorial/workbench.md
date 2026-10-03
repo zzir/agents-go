@@ -61,8 +61,10 @@ or click the rail's expand icon, to restore the list. The top
 bar's three icons open the Inspector beside the session: **Traces**
 (every model call, tool call and handoff with tokens and latency — expand a
 generation span to see exactly what the model was sent, and **Replay** it with
-a different prompt or model), **Context** (what the context window holds and
-what each part costs) and **Tasks** (background work).
+a different prompt or model; a turn's own **Replay…** button opens that
+dialog on the turn's last model call, and a failed turn's card names what
+failed with Retry and the failing span one click away), **Context** (what the
+context window holds and what each part costs) and **Tasks** (background work).
 
 Two commands live in the composer, listed when you type `/`: `/plan <message>`
 runs that message in plan mode — the agent reads and proposes, and its
