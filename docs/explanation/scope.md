@@ -17,6 +17,11 @@ in which the transcript is the truth, a context lens and traces show what the
 model was sent, any model call can be replayed with edits, and any turn forked
 or regenerated.
 
+Who it is for: an engineer or a small team running agents on their own keys
+and compute, who must be able to explain every step a run took. A check the
+harness enforces is preferred over scaffolding the model maintains, and
+whoever grades the work is not the one doing it.
+
 The SDK underneath it — the root module of this repository — is the same core
 consumed a second way: embedded in your own Go program, with no dependency on
 or reporting to the workbench ([§1.2](#12-non-goals), last row). Two consumers,
@@ -67,9 +72,10 @@ Beyond the non-goals in [§1.2](#12-non-goals):
 
 ## Roadmap
 
-Named, not promised — what is being considered next for the workbench. Anything
-here that turns into a rule graduates into
-[the spec](../reference/spec.md) or
+Named, not promised — what is being considered next for the workbench. An item
+added here names the leg it strengthens — SEE (what the model saw), REPLAY,
+FORK or OWN (keys and data stay on your machine). Anything here that turns
+into a rule graduates into [the spec](../reference/spec.md) or
 [workbench design invariants](workbench-invariants.md); anything decided
 against graduates into §1.2 above.
 
@@ -102,7 +108,7 @@ against graduates into §1.2 above.
   approval-gated call without a human round-trip. Per-TOOL binding — "only this
   tool's arguments go through this guardrail" — is a separate thing the SDK
   does not model; it would need a `Stages`-like selector keyed by tool name.
-- **Renderer hints on tool-call cards.** The `display.renderer` hint
+- **Renderer hints on tool-call cards (SEE).** The `display.renderer` hint
   ("terminal", "task") travels end to end — `ToolResult.Display` to the stored
   display JSON to the timeline, live and replay — but `ToolCallCard` does not
   branch on it yet: a terminal view for `exec_command` output is the remaining
