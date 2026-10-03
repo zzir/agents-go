@@ -9102,6 +9102,8 @@ export interface components {
         };
         /** @description Prompt is what the last build put in front of the conversation; absent until a run has built once. */
         "store.PromptProfile": {
+            /** @description BackgroundChars is the suffix a background run is given; 0 on a chat run. */
+            background_chars?: number;
             /** @description ContextGuidanceChars is the memory and reset guidance the build appended. */
             context_guidance_chars?: number;
             global_prompt_chars?: number;
@@ -9110,6 +9112,8 @@ export interface components {
             /** @description MCPServerIDs are the servers the build wired up, in config order. */
             mcp_server_ids?: string[];
             memory_chars?: number;
+            /** @description PlanPreambleChars is the plan-mode preamble, sent only while the session is planning. */
+            plan_preamble_chars?: number;
             sandbox_prompt_chars?: number;
             skills_index_chars?: number;
             /** @description Tools are the locally attached tools by origin; MCP tools are sized by the read path, not here. */

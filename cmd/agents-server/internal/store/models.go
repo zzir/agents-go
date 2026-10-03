@@ -299,6 +299,10 @@ type PromptProfile struct {
 	// ContextGuidanceChars is the memory and reset guidance the build appended.
 	ContextGuidanceChars int `json:"context_guidance_chars,omitempty"`
 	SkillsIndexChars     int `json:"skills_index_chars,omitempty"`
+	// PlanPreambleChars is the plan-mode preamble, sent only while the session is planning.
+	PlanPreambleChars int `json:"plan_preamble_chars,omitempty"`
+	// BackgroundChars is the suffix a background run is given; 0 on a chat run.
+	BackgroundChars int `json:"background_chars,omitempty"`
 	// Tools are the locally attached tools by origin; MCP tools are sized by the read path, not here.
 	Tools []ToolBucket `json:"tools,omitempty"`
 	// MCPServerIDs are the servers the build wired up, in config order.

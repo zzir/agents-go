@@ -25,7 +25,8 @@ vi.mock('@/components/Loading', () => ({ Loading: () => <div>loading</div> }));
 vi.mock('@/lib/api', () => ({
   api: {
     sessions: {
-      context: async () => ({ input_tokens: 100, output_tokens: 10, cached_tokens: 0, cache_write_tokens: 0, session_input_tokens: 100, session_output_tokens: 10, compaction_enabled: false, compaction_tokens: 0 }),
+      context: async () => ({ input_tokens: 100, output_tokens: 10, cached_tokens: 0, cache_write_tokens: 0, session_input_tokens: 100, session_output_tokens: 10, compaction_enabled: false, compaction_tokens: 0,
+        prompt: { instructions_chars: 40, context_guidance_chars: 400, plan_preamble_chars: 640, background_chars: 320 } }),
       memory: async () => [{ id: 'm1', key: 'notes', bytes: 12, written_by: 'model', updated_at: 't1' }],
       memoryKey: async () => ({ content: 'remember this' }),
     },
@@ -76,6 +77,17 @@ describe('ContextPanel', () => {
     answer.value = true;
     await act(async () => { del!.click(); });
     expect(deleteSpy).toHaveBeenCalledWith('m1');
+    unmount();
+  });
+
+  // Every layer the build sends is a row: the three the panel once left out
+  // included.
+  it('lists the guidance, plan preamble and background layers', async () => {
+    const { host, unmount } = await mount();
+    const text = host.textContent || '';
+    for (const label of ['Context guidance', 'Plan mode preamble', 'Background suffix']) {
+      expect(text).toContain(label);
+    }
     unmount();
   });
 

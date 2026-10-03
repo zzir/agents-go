@@ -465,14 +465,6 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		defer built.Release()
 	}
 
-	// The build's prompt profile, for the Context panel; a failure costs a
-	// panel section, never the run.
-	if r.Deps.ContextProfiles != nil {
-		if err := r.Deps.ContextProfiles.Save(ctx, sessionID, built.Profile); err != nil {
-			log.Warn("failed to record the session's context profile", "error", err)
-		}
-	}
-
 	agent := built.Agent
 	provider := built.Provider
 
@@ -513,6 +505,14 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		// perform. Fresh-only: a resume's rebuild already restored it.
 		if err := r.restorePlanPhase(ctx, built.PlanPhase, sa, sessionRef, ownerID); err != nil {
 			return failTurn("", protocol.CodeConfigError, err, "", "")
+		}
+	}
+	// The profile as this segment sends it (the phase is known now), for the
+	// Context panel; a failure costs a panel section, never the run. A resume
+	// that unlocks mid-segment is counted at the next one.
+	if r.Deps.ContextProfiles != nil {
+		if err := r.Deps.ContextProfiles.Save(ctx, sessionID, built.SentProfile()); err != nil {
+			log.Warn("failed to record the session's context profile", "error", err)
 		}
 	}
 	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, r.Deps.Settings.SpanDataCap(ctx), r.traceAttachmentRefs)

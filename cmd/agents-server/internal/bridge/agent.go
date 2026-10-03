@@ -275,6 +275,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 	// the agent's own instructions, which may well say to ask.
 	if background && result.Agent != nil {
 		result.Agent.Instructions = agents.WrapInstructions(result.Agent.Instructions, "", BackgroundInstructions)
+		result.Profile.BackgroundChars = len(BackgroundInstructions)
 	}
 	// The entry agent's guardrails move to the run level (cleared off the root
 	// so they run once); handoff targets keep their own.
@@ -303,8 +304,21 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		mark := len(result.Agent.Tools)
 		result.Agent, result.PlanPhase = result.plan().Apply(result.Agent)
 		bucketToolsSince(result.Agent, mark, store.ToolSourcePlan, &result.Profile)
+		result.Profile.PlanPreambleChars = len(strings.TrimSpace(middleware.DefaultPlanInstructions))
 	}
 	return result, nil
+}
+
+// SentProfile is the profile as the NEXT request sends it: once the phase is
+// unlocked the preamble and submit_plan are not sent, so they are not counted.
+func (b *BuildResult) SentProfile() store.PromptProfile {
+	p := b.Profile
+	if b.PlanPhase != nil && !b.PlanPhase.Executing() {
+		return p
+	}
+	p.PlanPreambleChars = 0
+	p.Tools = slices.DeleteFunc(slices.Clone(p.Tools), func(t store.ToolBucket) bool { return t.Source == store.ToolSourcePlan })
+	return p
 }
 
 // agentBuildCtx threads a recursive handoff build: stack is the recursion PATH

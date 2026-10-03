@@ -23,7 +23,10 @@ interface PromptProfile {
   global_prompt_chars?: number;
   memory_chars?: number;
   sandbox_prompt_chars?: number;
+  context_guidance_chars?: number;
   skills_index_chars?: number;
+  plan_preamble_chars?: number;
+  background_chars?: number;
   tools?: ToolBucket[];
 }
 
@@ -61,7 +64,10 @@ function compositionRows(data: ContextReport): Array<{ label: string; tokens: nu
     { label: 'System prompt', tokens: est(p.global_prompt_chars || 0) },
     { label: 'Memory', tokens: est(p.memory_chars || 0) },
     { label: 'Sandbox prompt', tokens: est(p.sandbox_prompt_chars || 0) },
+    { label: 'Context guidance', tokens: est(p.context_guidance_chars || 0) },
     { label: 'Skills index', tokens: est(p.skills_index_chars || 0) },
+    { label: 'Plan mode preamble', tokens: est(p.plan_preamble_chars || 0) },
+    { label: 'Background suffix', tokens: est(p.background_chars || 0) },
   ].filter(r => r.tokens > 0);
   for (const b of p.tools || []) {
     rows.push({

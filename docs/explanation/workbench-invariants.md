@@ -391,7 +391,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     own text alone, empty included (`layerInstructions`, `bridge/agent.go`),
     and the Context panel then lists no System prompt layer. Memories, the
     sandbox prompt, the skills index, the plan preamble while planning and a
-    background run's suffix are other layers and unaffected — decisions §5.65.
+    background run's suffix are other layers and unaffected, and the Context
+    panel lists them — decisions §5.65.
 68. **The sidebar has two shapes and one divider.** Dragged well inside its
     260px minimum it snaps to a 48px rail (Expand, Workflows, New; the account
     menu at the foot) and snaps back only past a wider point, so the edge never

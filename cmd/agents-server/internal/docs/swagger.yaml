@@ -2077,6 +2077,10 @@ components:
       description: Prompt is what the last build put in front of the conversation;
         absent until a run has built once.
       properties:
+        background_chars:
+          description: BackgroundChars is the suffix a background run is given; 0
+            on a chat run.
+          type: integer
         context_guidance_chars:
           description: ContextGuidanceChars is the memory and reset guidance the build
             appended.
@@ -2095,6 +2099,10 @@ components:
           type: array
           uniqueItems: false
         memory_chars:
+          type: integer
+        plan_preamble_chars:
+          description: PlanPreambleChars is the plan-mode preamble, sent only while
+            the session is planning.
           type: integer
         sandbox_prompt_chars:
           type: integer
