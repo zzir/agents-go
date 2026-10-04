@@ -163,8 +163,11 @@ cannot hide a missing `go.mod` require.
 
 A release tags the library modules in lockstep with the root: one commit
 carries `vX.Y.Z` and a `<dir>/vX.Y.Z` tag for each, so a consumer pins them
-all to one version. `cmd/agents-server` and `examples/anthropic` are built
-from the repository and carry no tag. `scripts/modules.sh` is the list.
+all to one version. A person pushes `vX.Y.Z` alone; the release workflow
+creates the `<dir>/vX.Y.Z` tags on that commit
+(`scripts/release-prep.sh --tag-modules`). `cmd/agents-server` and
+`examples/anthropic` are built from the repository and carry no tag.
+`scripts/modules.sh` is the list.
 
 ---
 

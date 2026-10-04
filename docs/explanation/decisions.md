@@ -155,9 +155,10 @@ inversion, so the split moved no import path.
 
 **Cost accepted.** A submodule is a separately released module: every release
 tags `<dir>/vX.Y.Z` beside `vX.Y.Z` on the one commit whose `go.mod`s require
-the root at `vX.Y.Z` (the `replace` stays, for CI), and a consumer-smoke job
-proves each `go get` once the release is out. A submodule pseudo-version from
-between releases may not build against the root it names.
+the root at `vX.Y.Z` (the `replace` stays, for CI) — the workflow does the
+tagging from the root tag — and a consumer-smoke job proves each `go get`
+once the release is out. A submodule pseudo-version from between releases may
+not build against the root it names.
 
 Rules: [Architecture](architecture.md#module-boundaries).
 

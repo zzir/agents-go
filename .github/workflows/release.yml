@@ -68,7 +68,12 @@ jobs:
       - name: A patch release carries no API break
         run: ./scripts/release-check.sh "$GITHUB_REF_NAME"
 
-      # Every library module is tagged at this version on this commit (decisions §5.7).
+      # The root tag is the one a person pushes; the library modules are tagged
+      # here, on its commit, and those tags pushed (decisions §5.7). A tag that
+      # already exists on this commit is kept, one pointing elsewhere stops the release.
+      - name: Tag the library modules in lockstep
+        run: ./scripts/release-prep.sh --tag-modules "$GITHUB_REF_NAME" --push
+
       - name: The library modules are tagged in lockstep
         run: ./scripts/release-prep.sh --verify "$GITHUB_REF_NAME"
 
