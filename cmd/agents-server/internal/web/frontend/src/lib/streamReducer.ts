@@ -78,7 +78,7 @@ export function appendInjected(msgs: Msgs, runId: string, input: string, index: 
   if (shown >= index) {
     return last?.role === 'user' && last.runId === runId ? [...msgs, next] : null;
   }
-  const bubble = { role: 'user', content: input, runId, injected: index } as UserEntry;
+  const bubble = { role: 'user', content: input, runId, injected: index, createdAt: Date.now() } as UserEntry;
   // A second input read at the same point follows the first directly: the
   // empty turn left between them is a row a reload does not have.
   const prev = msgs[msgs.length - 2];

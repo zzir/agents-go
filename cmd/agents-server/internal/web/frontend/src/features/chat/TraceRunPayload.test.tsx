@@ -19,6 +19,7 @@ vi.mock('@primer/react', () => {
 });
 import { ChatSessionProvider, useDerivedChatTasks, type ChatActions, type ChatSessionState } from '@/features/chat/ChatSessionContext';
 import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
+import type { TraceMarker } from '@/lib/queuedInputs';
 
 const g = globalThis as Record<string, unknown>;
 let savedActEnv: unknown;
@@ -34,12 +35,12 @@ const noop = () => {};
 const resolve = async () => {};
 const session: ChatSessionState = { sessionId: 's1', running: false, compacting: false, agentAvatars: {} };
 
-function Harness({ events, loadSpan }: { events: TraceEventData[]; loadSpan: ChatActions['loadSpan'] }) {
+function Harness({ events, loadSpan, markers }: { events: TraceEventData[]; loadSpan: ChatActions['loadSpan']; markers?: TraceMarker[] }) {
   const actions: ChatActions = { openTrace: noop, inspectTask: noop, retryTask: resolve, stopTask: resolve, dismissTask: resolve, loadSpan };
   const tasks = useDerivedChatTasks({});
   return (
     <ChatSessionProvider session={session} actions={actions} tasks={tasks}>
-      <TraceRun runId="r1" segments={[{ runId: 'r1', events }]} label="hello" isLive={false} isExpanded onToggle={noop} />
+      <TraceRun runId="r1" segments={[{ runId: 'r1', events }]} label="hello" isLive={false} isExpanded onToggle={noop} markers={markers} />
     </ChatSessionProvider>
   );
 }
@@ -218,6 +219,32 @@ describe('TraceRun', () => {
     act(() => { root.render(<Harness events={[summary]} loadSpan={loadSpan} />); });
     await act(async () => { (container.querySelector('.trace-span-clickable') as HTMLElement).click(); });
     expect(container.textContent).toContain('not stored yet');
+    act(() => { root.unmount(); });
+  });
+
+  // A queued input the run read mid-way is a row between the spans it fell
+  // between, its tick where it landed on the time axis, and the header counts it.
+  it('places a queued input between the spans it was read between', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const t = (s: number) => new Date(Date.UTC(2026, 7, 19, 0, 0, s)).toISOString();
+    const at = (s: number) => Date.UTC(2026, 7, 19, 0, 0, s);
+    const events: TraceEventData[] = [
+      { kind: 'span', name: 'a', type: 'agent', span_id: 'p', started_at: t(0), ended_at: t(100) },
+      { kind: 'span', name: 'a', type: 'generation', span_id: 'g1', parent_id: 'p', started_at: t(0), ended_at: t(10) },
+      { kind: 'span', name: 'a', type: 'generation', span_id: 'g2', parent_id: 'p', started_at: t(60), ended_at: t(70) },
+    ];
+    act(() => { root.render(<Harness events={events} loadSpan={resolve} markers={[{ at: at(50), label: 'also add a test' }]} />); });
+    expect(container.textContent).toContain('1 queued');
+    const rows = Array.from(container.querySelectorAll('.trace-span')) as HTMLElement[];
+    const names = rows.map(r => r.querySelector('.trace-span-name')?.textContent);
+    // Under the agent root, between the generation it followed and the one
+    // that read it.
+    expect(names).toEqual(['a', 'a', 'Queued input', 'a']);
+    const marker = rows.find(r => r.classList.contains('trace-marker'))!;
+    expect(marker.textContent).toContain('also add a test');
+    expect((marker.querySelector('.trace-marker-tick') as HTMLElement).style.left).toBe('50%');
     act(() => { root.unmount(); });
   });
 });

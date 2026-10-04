@@ -715,3 +715,24 @@
   line-height: 16px;
   white-space: nowrap;
 }
+
+/* A queued input the run read mid-way: a row between the spans it fell
+   between, with a tick where it landed on the time axis. */
+.trace-marker { color: var(--fgColor-muted); }
+.trace-marker-icon { color: var(--fgColor-accent); }
+.trace-marker-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.trace-marker-tick {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--fgColor-accent);
+}
+.trace-marker .trace-span-name { flex-shrink: 0; }

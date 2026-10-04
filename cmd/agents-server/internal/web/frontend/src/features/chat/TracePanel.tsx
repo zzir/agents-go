@@ -14,6 +14,7 @@ import { ReplayDialog } from '@/features/chat/ReplayDialog';
 import { PayloadItem, payloadEntry, payloadItems, prettyMaybeJSON, toolOutputEntry, type PayloadRecord } from '@/features/chat/TracePayload';
 import { fmtDuration } from '@/lib/background';
 import type { AttachmentMeta } from '@/lib/attachments';
+import type { TraceMarker } from '@/lib/queuedInputs';
 
 export interface TraceEventData {
   kind?: string;
@@ -273,7 +274,7 @@ function spanHasDetails(s: TraceEventData): boolean {
 // up when siblings on the same level are expandable.
 // loadSpan fetches the row's payload when the listing left it out; opening the
 // row asks once, and the parent swaps the whole span in.
-function SpanRow({ node, depth, range, alignChevron, loadSpan, focusSpanId }: { node: SpanNode; depth: number; range: TimeRange | null; alignChevron: boolean; loadSpan?: (spanId: string) => Promise<void>; focusSpanId?: string }) {
+function SpanRow({ node, depth, range, alignChevron, loadSpan, focusSpanId, markers }: { node: SpanNode; depth: number; range: TimeRange | null; alignChevron: boolean; loadSpan?: (spanId: string) => Promise<void>; focusSpanId?: string; markers?: TraceMarker[] }) {
   // The span the trace was opened on starts open and marked.
   const focused = !!focusSpanId && node.span.span_id === focusSpanId;
   const [open, setOpen] = useState(focused);
@@ -402,7 +403,9 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan, focusSpanId }: { 
                 {JSON.stringify(s.data, null, 2)}
               </pre>
       )}
-      {shown.map((c, i) => <SpanRow key={c.span.span_id || i} node={c} depth={depth + 1} range={range} alignChevron={childExpandable} loadSpan={loadSpan} focusSpanId={focusSpanId} />)}
+      {withMarkers(shown, markers || []).map((row, i) => row.marker
+        ? <MarkerRow key={'m' + i} marker={row.marker} range={range} depth={depth + 1} />
+        : <SpanRow key={row.node!.span.span_id || i} node={row.node!} depth={depth + 1} range={range} alignChevron={childExpandable} loadSpan={loadSpan} focusSpanId={focusSpanId} />)}
     </>
   );
 }
@@ -420,6 +423,58 @@ export interface TraceRunSegment {
   // panel names each attempt of a retried task with it. Absent (the chat
   // drawer), segments render unlabeled as before.
   label?: string;
+}
+
+// A row of the waterfall: a span node, or a queued-input marker between spans.
+interface WaterfallRow { node?: SpanNode; marker?: TraceMarker }
+
+// markersForPart gives each marker to the first stretch that ends after it;
+// one past every stretch, or without a time, goes to the last.
+function markersForPart(markers: TraceMarker[] | undefined, parts: { range: TimeRange | null }[], index: number): TraceMarker[] {
+  if (!markers?.length) return [];
+  return markers.filter(m => {
+    let home = parts.length - 1;
+    if (m.at !== undefined) {
+      const hit = parts.findIndex(p => p.range && m.at! <= p.range.t0 + p.range.total);
+      if (hit >= 0) home = hit;
+    }
+    return home === index;
+  });
+}
+
+// withMarkers interleaves markers with the root spans by start time, so a
+// queued input reads where the run picked it up.
+function withMarkers(roots: SpanNode[], markers: TraceMarker[]): WaterfallRow[] {
+  if (markers.length === 0) return roots.map(node => ({ node }));
+  const rows: WaterfallRow[] = [];
+  const pending = [...markers].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity));
+  for (const node of roots) {
+    const start = spanExtent(node.span)?.[0];
+    while (pending.length && pending[0].at !== undefined && start !== undefined && pending[0].at <= start) {
+      rows.push({ marker: pending.shift()! });
+    }
+    rows.push({ node });
+  }
+  for (const marker of pending) rows.push({ marker });
+  return rows;
+}
+
+function MarkerRow({ marker, range, depth = 0 }: { marker: TraceMarker; range: TimeRange | null; depth?: number }) {
+  const left = range && marker.at !== undefined
+    ? Math.min(100, Math.max(0, ((marker.at - range.t0) / range.total) * 100)).toFixed(2) + '%'
+    : '100%';
+  return (
+    <div className="trace-span trace-marker" title={marker.label} style={{ '--d': depth } as CSSProperties}>
+      <span className="trace-span-label">
+        <span className="trace-span-chevron" />
+        <span className="trace-ev-icon trace-marker-icon"><CommentIcon size={12} /></span>
+        <span className="trace-span-name">Queued input</span>
+        <span className="trace-ev-detail trace-marker-text">{marker.label}</span>
+      </span>
+      <span className="trace-span-duration" />
+      <span className="trace-span-track"><span className="trace-marker-tick" style={{ left }} /></span>
+    </div>
+  );
 }
 
 interface TraceRunProps {
@@ -440,9 +495,12 @@ interface TraceRunProps {
   payloadSessionId?: string;
   // The span to open and mark, when the trace was opened on one.
   focusSpanId?: string;
+  // The inputs the run read from its queue, placed on the waterfall by time
+  // (lib/queuedInputs.ts); they are the transcript's, not spans.
+  markers?: TraceMarker[];
 }
 
-export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle, onJump, payloadSessionId, focusSpanId }: TraceRunProps) {
+export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle, onJump, payloadSessionId, focusSpanId, markers }: TraceRunProps) {
   const ref = useRef<HTMLDivElement>(null);
   const { loadSpan } = useChatActions();
   const { sessionId } = useChatSession();
@@ -490,6 +548,7 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
     <>
       <span className="trace-run-label">{label}</span>
       {failed && <span className="trace-ev-tag trace-ev-tag-error">error</span>}
+      {!!markers?.length && <span className="trace-ev-tag" title="Inputs the run read from its queue">{markers.length + ' queued'}</span>}
       {stale && <span className="trace-run-stale" title="This answer was regenerated; the session is on another attempt">replaced</span>}
       {isLive && <span className="trace-tab-live" />}
       {onJump && (
@@ -527,12 +586,21 @@ export function TraceRun({ segments, label, stale, isLive, isExpanded, onToggle,
       className="trace-run"
     >
       {spanCount === 0 && <div className="trace-empty">No trace events.</div>}
-      {parts.map(p => (
-        <div key={p.key} className="trace-run-segment" style={p.range ? { '--trace-step': ((tickStep(p.range.total) / p.range.total) * 100).toFixed(2) + '%' } as CSSProperties : undefined}>
-          {p.label && <div className="trace-segment-label">{p.label}</div>}
-          {p.spanRoots.map((n, i) => <SpanRow key={n.span.span_id || i} node={n} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} loadSpan={p.loadSpan} focusSpanId={focusSpanId} />)}
-        </div>
-      ))}
+      {parts.map((p, pi) => {
+        // The loop's steps are the agent root's children, so a stretch under
+        // one agent span hands its markers down to sit among them.
+        const partMarkers = markersForPart(markers, parts, pi);
+        const underAgent = p.spanRoots.length === 1 && p.spanRoots[0].span.type === 'agent';
+        const rows: WaterfallRow[] = underAgent ? p.spanRoots.map(node => ({ node })) : withMarkers(p.spanRoots, partMarkers);
+        return (
+          <div key={p.key} className="trace-run-segment" style={p.range ? { '--trace-step': ((tickStep(p.range.total) / p.range.total) * 100).toFixed(2) + '%' } as CSSProperties : undefined}>
+            {p.label && <div className="trace-segment-label">{p.label}</div>}
+            {rows.map((row, i) => row.marker
+              ? <MarkerRow key={'m' + i} marker={row.marker} range={p.range} />
+              : <SpanRow key={row.node!.span.span_id || i} node={row.node!} depth={0} range={p.range} alignChevron={p.spanRoots.some(r => spanHasDetails(r.span))} loadSpan={p.loadSpan} focusSpanId={focusSpanId} markers={underAgent ? partMarkers : undefined} />)}
+          </div>
+        );
+      })}
     </Disclosure>
   );
 }
@@ -556,9 +624,11 @@ interface TraceDrawerProps {
   // lists the runs that actually have one, gating the jump control.
   onJumpToRun?: (runId: string) => void;
   messageRunIds?: Set<string>;
+  // Per run, the inputs it read from its queue (lib/queuedInputs.ts).
+  markers?: Record<string, TraceMarker[]>;
 }
 
-export function TraceDrawer({ traceRuns, liveRunId, activeRunId, focusSpanId, runLabels, staleRuns, runParents, onClose, onJumpToRun, messageRunIds }: TraceDrawerProps) {
+export function TraceDrawer({ traceRuns, liveRunId, activeRunId, focusSpanId, runLabels, staleRuns, runParents, onClose, onJumpToRun, messageRunIds, markers }: TraceDrawerProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // One card per conversation exchange: a run plus the wake-up runs its tasks
   // triggered, in chronological (insertion) order. rootOf routes expand/live
@@ -631,6 +701,7 @@ export function TraceDrawer({ traceRuns, liveRunId, activeRunId, focusSpanId, ru
           onToggle={() => toggle(rootId)}
           onJump={onJumpToRun && messageRunIds && messageRunIds.has(rootId) ? () => onJumpToRun(rootId) : undefined}
           focusSpanId={segments.some(s => s.runId === activeRunId) ? focusSpanId : undefined}
+          markers={markers ? segments.flatMap(s => markers[s.runId] || []) : undefined}
         />
       ))}
     </SidePanel>

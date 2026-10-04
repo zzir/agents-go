@@ -87,7 +87,9 @@ You do not have to wait for a run to finish to say more. While one is going,
 Enter queues what you typed: the agent reads it after its current step and
 changes course. **Send after this run**, in the same menu as the stops, queues
 it for when the run finishes instead. A queued message waits above the box
-until it is read, and comes back into the box if the run ends first.
+until it is read, and comes back into the box if the run ends first. It joins
+the run that read it rather than starting one, so **Traces** keeps one card
+for the exchange, with a *Queued input* row where the run picked it up.
 
 ## Give it a sandbox
 

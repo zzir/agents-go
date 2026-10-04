@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { rowKeys, type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { labelRuns } from '@/lib/runLabels';
+import { queuedInputMarkers } from '@/lib/queuedInputs';
 import { useScrollToBottom, useApi, useCopy } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
 import { composerProjectRows, composerSandboxView, projectLabel, type SandboxSupports, type SessionBinding } from '@/lib/binding';
@@ -526,6 +527,7 @@ export function ChatView({
   // state.messages is the typed timeline; ChatMessage is this file's looser
   // read of the same rows.
   const checklist = useMemo(() => latestChecklist(state.messages), [state.messages]);
+  const traceMarkers = useMemo(() => queuedInputMarkers(state.messages), [state.messages]);
   const session = useMemo<ChatSessionState>(
     () => ({ sessionId, running, compacting, diagnostics, agentAvatars, agentNames, tasksError, projectBound, pendingDecision: !!ownPending, checklist }),
     [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, projectBound, ownPending, checklist],
@@ -736,6 +738,7 @@ export function ChatView({
           onClose={() => onPanelChange(null)}
           onJumpToRun={jumpToRun}
           messageRunIds={messageRunIds}
+          markers={traceMarkers}
         />
       )}
       {panel?.kind === 'context' && sessionId && (

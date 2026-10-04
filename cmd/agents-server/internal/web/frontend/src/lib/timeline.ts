@@ -83,6 +83,7 @@ interface EntryView {
   compaction?: CompactionInfo;
   // Image attachments the entry's message carries, URL-resolved server-side.
   attachments?: AttachmentMeta[];
+  created_at?: string;
 }
 
 // Branches describes one fork point: the sibling attempts that hang off a
@@ -203,6 +204,9 @@ interface UserEntry {
   // Set on a live bubble the run read from its queue (run.injected's index):
   // it shares its run id with the prompt, so the id alone does not name it.
   injected?: number;
+  // When the message was recorded (ms), for placing a queued input on a
+  // run's trace; absent on a bubble not yet stored.
+  createdAt?: number;
   // parentId is the entry this message continues from — where an edit
   // branches; absent on the first message and on a bubble not yet stored.
   parentId?: string;
@@ -392,6 +396,7 @@ function assemble(
         timeline.push({
           role: 'user', content: e.content || '', messageId: e.id, entryId: e.entry_id, runId: e.run_id, attachments: e.attachments,
           parentId: e.parent_id, branches: e.entry_id ? forks.get(e.entry_id) : undefined,
+          createdAt: e.created_at ? Date.parse(e.created_at) || undefined : undefined,
         });
       }
       continue;

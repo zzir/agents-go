@@ -6,6 +6,7 @@ import { Loading } from '@/components/Loading';
 import { LoadError } from '@/components/LoadError';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { CHECKLIST_KEY, CHECKLIST_TOOL, latestChecklist } from '@/lib/checklist';
+import { queuedInputMarkers } from '@/lib/queuedInputs';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
 import { useAsyncMarkdown } from '@/lib/markdown';
@@ -211,6 +212,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
   // checklist.md, invariant 91), re-read as the transcript grows; absent
   // when the run keeps none.
   const taskChecklist = useMemo(() => latestChecklist(view?.messages || []), [view?.messages]);
+  const taskMarkers = useMemo(() => Object.values(queuedInputMarkers(view?.messages || [])).flat(), [view?.messages]);
   const [checklistMd, setChecklistMd] = useState<string | null>(null);
   const childSessionId = view?.childSessionId;
   const transcriptLen = view?.messages.length || 0;
@@ -363,6 +365,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
               isExpanded={traceExpanded}
               onToggle={() => setTraceExpanded(v => !v)}
               payloadSessionId={view?.childSessionId}
+              markers={taskMarkers}
             />
           )}
         </div>
