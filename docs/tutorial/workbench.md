@@ -118,8 +118,7 @@ only the tools named under **Advanced → Also ask for these tools** pause. With
 `y` approves this call and `n` opens the reason box; a turn waiting on a
 decision offers no fork or regenerate until it is made. A session waiting on you is marked in the
 sidebar of every tab and counted in the page title; the account menu's
-**Notify me when a session needs me** adds a desktop notification while the
-page is in the background. The top
+**Desktop notifications** adds one while the page is in the background. The top
 bar's project menu opens a **terminal** into the same container, sets the
 project's **Environment…** (the variables its container is created with;
 write-only, like every credential), exports the working tree as a tar, shows

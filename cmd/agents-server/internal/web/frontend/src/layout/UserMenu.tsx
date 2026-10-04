@@ -70,7 +70,7 @@ export function UserMenu({ onSettingsOpen, compact, align = 'start' }: UserMenuP
           </ActionList.Item>
           <ActionList.Item disabled={!!notifyBlocked} onSelect={() => { void toggleNotify(); }}>
             <ActionList.LeadingVisual>{notify ? <BellIcon /> : <BellSlashIcon />}</ActionList.LeadingVisual>
-            {notify ? 'Notifying when a session needs me' : 'Notify me when a session needs me'}
+            {notify ? 'Notifications on' : 'Desktop notifications'}
             {notifyBlocked && <ActionList.Description variant="block">{notifyBlocked}</ActionList.Description>}
           </ActionList.Item>
           <ActionList.Divider />

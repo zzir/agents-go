@@ -295,7 +295,7 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
               icon={PlayIcon}
               variant="invisible"
               size="small"
-              aria-label="Replay… — this turn's last model call, editable"
+              aria-label="Replay…"
               onClick={() => replayRun(runId)}
             />
           )}
