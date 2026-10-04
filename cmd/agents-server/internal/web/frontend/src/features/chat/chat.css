@@ -100,10 +100,6 @@
 }
 .message-user:hover .message-user-actions,
 .message-user-actions:focus-within { opacity: 1; }
-/* A message being edited in place: the box takes the bubble's width. */
-.message-edit { display: flex; flex-direction: column; gap: var(--base-size-8); min-width: min(100%, 48ch); }
-.message-edit-actions { display: flex; align-items: center; gap: var(--base-size-8); flex-wrap: wrap; }
-.message-edit-hint { font-size: var(--base-text-size-xs); color: var(--fgColor-muted); }
 .message-user-actions button,
 .turn-actions button {
   width: 20px;

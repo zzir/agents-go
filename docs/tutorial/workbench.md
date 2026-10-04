@@ -60,9 +60,8 @@ That is enough to talk. **New** (the sidebar's + button) opens an empty
 composer; pick the agent, type, and your first message makes the session
 as the reply streams in. It appears in the sidebar, and its `…` menu pins,
 renames, forks or deletes it. In the transcript, a reply's **Regenerate**
-answers the same message again and your own message's **Edit** resends it
-changed: either makes a new branch at that point, and a ◀ 1 / 2 ▶ switcher on
-the bubble moves between the attempts. Drag the sidebar's edge inward past its minimum
+answers the same message again as a new branch, and a ◀ 1 / 2 ▶ switcher on
+the reply moves between the attempts. Drag the sidebar's edge inward past its minimum
 and it folds into an icon rail that keeps Workflows and New; drag it back out,
 or click the rail's expand icon, to restore the list. The top
 bar's three icons open the Inspector beside the session: **Traces**

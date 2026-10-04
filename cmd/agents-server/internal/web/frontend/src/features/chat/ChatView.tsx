@@ -53,11 +53,8 @@ interface ChatMessage {
   messageId?: string;
   // The durable entry id — what a branch switch and a regenerate aim at.
   entryId?: string;
-  // The entry a user message continues from — what an edit branches at.
-  parentId?: string;
   parts?: TurnPart[];
-  // Present on a turn or a user message that is one of several attempts at
-  // the same point.
+  // Present on a turn that is one of several attempts at the same point.
   branches?: Branches;
   // Present on a compaction checkpoint: the entries it folded away, and the
   // context size on either side of the pass.
@@ -121,8 +118,6 @@ export interface ChatViewActions {
   // after the timeline reload that follows a fold.
   onCompact?: () => Promise<void>;
   onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, projectId?: string) => void;
-  // Edits a message: branches to its parent and runs the new text.
-  onEditResend?: (parentId: string, text: string, agentConfigId: string, projectId?: string, attachmentIds?: string[]) => void;
   onWatchTask?: (sid: string, taskId: string, childSessionId: string) => void;
   onUnwatchTask?: (sid: string) => void;
   // Applies a server-confirmed task state change (the stop API response) —
@@ -185,7 +180,7 @@ export function ChatView({
     liveRunId, tasks, tasksLoaded, tasksError, taskView, queued,
   } = state;
   const {
-    onSend, onCancel, onApprove, onApproveAll, onReject, onInject, onFork, onSwitchBranch, onCompact, onRegenerate, onEditResend,
+    onSend, onCancel, onApprove, onApproveAll, onReject, onInject, onFork, onSwitchBranch, onCompact, onRegenerate,
     onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen, onSettingsOpen, onRetryTasks,
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
@@ -506,9 +501,6 @@ export function ChatView({
   const handleRegen = useCallback((messageId: string, content: string) => {
     onRegenerate?.(messageId, content, agentConfigId, regenProjectId);
   }, [onRegenerate, agentConfigId, regenProjectId]);
-  const handleEditResend = useCallback((_entryId: string, parentId: string, text: string, attachmentIds?: string[]) => {
-    onEditResend?.(parentId, text, agentConfigId, regenProjectId, attachmentIds);
-  }, [onEditResend, agentConfigId, regenProjectId]);
 
   // The session scope every transcript component reads (see
   // ChatSessionContext for the split). Each value is memoized on its inputs so
@@ -529,15 +521,14 @@ export function ChatView({
   const checklist = useMemo(() => latestChecklist(state.messages), [state.messages]);
   const traceMarkers = useMemo(() => queuedInputMarkers(state.messages), [state.messages]);
   const session = useMemo<ChatSessionState>(
-    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, agentNames, tasksError, projectBound, pendingDecision: !!ownPending, checklist }),
-    [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, projectBound, ownPending, checklist],
+    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, agentNames, tasksError, projectBound, checklist }),
+    [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, projectBound, checklist],
   );
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, approveAll: onApproveAll, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
     regenerate: onRegenerate ? handleRegen : undefined,
-    editResend: onEditResend ? handleEditResend : undefined,
     openTrace, replayRun, compact, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan, openSettings: onSettingsOpen, retryTasks: onRetryTasks,
-  }), [onApprove, onApproveAll, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, onEditResend, handleEditResend, openTrace, replayRun, compact, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen, onRetryTasks]);
+  }), [onApprove, onApproveAll, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, replayRun, compact, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen, onRetryTasks]);
 
   const topBar = (
     <ChatTopBar
@@ -704,9 +695,6 @@ export function ChatView({
             attachments={(m as { attachments?: AttachmentMeta[] }).attachments}
             traceRunId={rid || null}
             msgIdx={i}
-            entryId={m.entryId}
-            parentId={m.parentId}
-            branches={m.branches}
           />
         );
       }

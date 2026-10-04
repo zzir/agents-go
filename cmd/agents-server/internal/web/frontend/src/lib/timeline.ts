@@ -207,11 +207,6 @@ interface UserEntry {
   // When the message was recorded (ms), for placing a queued input on a
   // run's trace; absent on a bubble not yet stored.
   createdAt?: number;
-  // parentId is the entry this message continues from — where an edit
-  // branches; absent on the first message and on a bubble not yet stored.
-  parentId?: string;
-  // Sibling attempts at this point: the message as edited and resent.
-  branches?: Branches;
 }
 
 // WorkflowStartedNote is the data of a started note: a workflow's start (which
@@ -395,7 +390,6 @@ function assemble(
       if (e.content || e.attachments?.length) {
         timeline.push({
           role: 'user', content: e.content || '', messageId: e.id, entryId: e.entry_id, runId: e.run_id, attachments: e.attachments,
-          parentId: e.parent_id, branches: e.entry_id ? forks.get(e.entry_id) : undefined,
           createdAt: e.created_at ? Date.parse(e.created_at) || undefined : undefined,
         });
       }
