@@ -4,7 +4,9 @@ import type { TimelineEntry } from '@/lib/timeline';
 export interface TraceMarker {
   // When the run recorded it (ms); a marker without a time sits at the end.
   at?: number;
+  // The input, shortened for a title, and whole for the opened row.
   label: string;
+  text: string;
 }
 
 const LABEL_CHARS = 60;
@@ -24,7 +26,7 @@ export function queuedInputMarkers(messages: TimelineEntry[]): Record<string, Tr
     seen.add(m.runId);
     const text = m.content.replace(/\s+/g, ' ').trim();
     const label = text.length > LABEL_CHARS ? text.slice(0, LABEL_CHARS - 1) + '…' : text || 'image';
-    (out[m.runId] ||= []).push({ at: m.createdAt, label });
+    (out[m.runId] ||= []).push({ at: m.createdAt, label, text });
   }
   return out;
 }

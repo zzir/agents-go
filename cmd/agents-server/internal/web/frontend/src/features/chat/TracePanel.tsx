@@ -459,21 +459,35 @@ function withMarkers(roots: SpanNode[], markers: TraceMarker[]): WaterfallRow[] 
   return rows;
 }
 
+// MarkerRow is a queued input on the waterfall, shaped like a span row: the
+// text, like a payload, shows once the row is opened.
 function MarkerRow({ marker, range, depth = 0 }: { marker: TraceMarker; range: TimeRange | null; depth?: number }) {
+  const [open, setOpen] = useState(false);
   const left = range && marker.at !== undefined
     ? Math.min(100, Math.max(0, ((marker.at - range.t0) / range.total) * 100)).toFixed(2) + '%'
     : '100%';
   return (
-    <div className="trace-span trace-marker" title={marker.label} style={{ '--d': depth } as CSSProperties}>
-      <span className="trace-span-label">
-        <span className="trace-span-chevron" />
-        <span className="trace-ev-icon trace-marker-icon"><CommentIcon size={12} /></span>
-        <span className="trace-span-name">Queued input</span>
-        <span className="trace-ev-detail trace-marker-text">{marker.label}</span>
-      </span>
-      <span className="trace-span-duration" />
-      <span className="trace-span-track"><span className="trace-marker-tick" style={{ left }} /></span>
-    </div>
+    <>
+      <div
+        className="trace-span trace-span-clickable trace-marker"
+        style={{ '--d': depth } as CSSProperties}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(v => !v)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(v => !v); } }}
+      >
+        <span className="trace-span-label">
+          <span className={'trace-span-chevron' + (open ? ' open' : '')}><ChevronRightIcon size={10} /></span>
+          <span className="trace-ev-icon trace-marker-icon"><CommentIcon size={12} /></span>
+          <span className="trace-span-name">Queued input</span>
+          <span className="trace-ev-tag trace-ev-tag-span">input</span>
+        </span>
+        <span className="trace-span-duration" />
+        <span className="trace-span-track"><span className="trace-marker-tick" style={{ left }} /></span>
+      </div>
+      {open && <div className="trace-span-data" style={{ marginLeft: 14 + depth * 12 }}>{marker.text}</div>}
+    </>
   );
 }
 

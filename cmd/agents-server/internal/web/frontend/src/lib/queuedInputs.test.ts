@@ -17,7 +17,7 @@ describe('queuedInputMarkers', () => {
       user('r2', 'next question', { createdAt: 3000 }),
       turn('r2'),
     ]);
-    expect(got).toEqual({ r1: [{ at: 2000, label: 'also add a test' }] });
+    expect(got).toEqual({ r1: [{ at: 2000, label: 'also add a test', text: 'also add a test' }] });
   });
 
   // Live, the bubble says it was injected before any reload marks it by order.
@@ -27,6 +27,7 @@ describe('queuedInputMarkers', () => {
     expect(got.r1).toHaveLength(1);
     expect(got.r1[0].label).toHaveLength(60);
     expect(got.r1[0].label.endsWith('…')).toBe(true);
+    expect(got.r1[0].text).toBe(long);
   });
 
   it('ignores messages with no run', () => {

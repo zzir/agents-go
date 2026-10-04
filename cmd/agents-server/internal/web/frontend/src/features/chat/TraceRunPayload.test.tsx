@@ -235,7 +235,7 @@ describe('TraceRun', () => {
       { kind: 'span', name: 'a', type: 'generation', span_id: 'g1', parent_id: 'p', started_at: t(0), ended_at: t(10) },
       { kind: 'span', name: 'a', type: 'generation', span_id: 'g2', parent_id: 'p', started_at: t(60), ended_at: t(70) },
     ];
-    act(() => { root.render(<Harness events={events} loadSpan={resolve} markers={[{ at: at(50), label: 'also add a test' }]} />); });
+    act(() => { root.render(<Harness events={events} loadSpan={resolve} markers={[{ at: at(50), label: 'also add a test', text: 'also add a test' }]} />); });
     expect(container.textContent).toContain('1 queued');
     const rows = Array.from(container.querySelectorAll('.trace-span')) as HTMLElement[];
     const names = rows.map(r => r.querySelector('.trace-span-name')?.textContent);
@@ -243,7 +243,10 @@ describe('TraceRun', () => {
     // that read it.
     expect(names).toEqual(['a', 'a', 'Queued input', 'a']);
     const marker = rows.find(r => r.classList.contains('trace-marker'))!;
-    expect(marker.textContent).toContain('also add a test');
+    // The text is a payload: shown once the row is opened, like a span's.
+    expect(marker.textContent).not.toContain('also add a test');
+    act(() => { marker.click(); });
+    expect(container.textContent).toContain('also add a test');
     expect((marker.querySelector('.trace-marker-tick') as HTMLElement).style.left).toBe('50%');
     act(() => { root.unmount(); });
   });
