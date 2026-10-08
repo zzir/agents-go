@@ -193,6 +193,46 @@ func TestBuildParamsSystemMessageMidHistory(t *testing.T) {
 	}
 }
 
+// The API takes a mid-history system message only after a user turn, as the
+// last turn or before an assistant one; anywhere else the text rides in a user
+// turn instead of drawing a 400.
+func TestBuildParamsSystemMessageElsewhereRidesInUserTurn(t *testing.T) {
+	notice := agents.InputItemsFromSystemText("notice")
+	for name, tc := range map[string]struct {
+		input     []agents.InputItem
+		wantRoles []string
+		wantTexts []string // of the turn carrying the notice
+	}{
+		"after assistant": {
+			input:     append(append(agents.InputItemsFromText("hi"), agents.InputItemsFromAssistantText("ok")...), notice...),
+			wantRoles: []string{"user", "assistant", "user"},
+			wantTexts: []string{"notice"},
+		},
+		"between two users": {
+			input:     append(append(agents.InputItemsFromText("hi"), notice...), agents.InputItemsFromText("more")...),
+			wantRoles: []string{"user"},
+			wantTexts: []string{"hi", "notice", "more"},
+		},
+	} {
+		wire := wireParams(t, testModel(), agents.ModelRequest{Input: tc.input})
+		msgs := wire["messages"].([]any)
+		var roles []string
+		for _, m := range msgs {
+			roles = append(roles, m.(map[string]any)["role"].(string))
+		}
+		if !slices.Equal(roles, tc.wantRoles) {
+			t.Fatalf("%s: roles = %v, want %v", name, roles, tc.wantRoles)
+		}
+		var texts []string
+		for _, b := range msgs[len(msgs)-1].(map[string]any)["content"].([]any) {
+			texts = append(texts, b.(map[string]any)["text"].(string))
+		}
+		if !slices.Equal(texts, tc.wantTexts) {
+			t.Errorf("%s: texts = %v, want %v", name, texts, tc.wantTexts)
+		}
+	}
+}
+
 func TestBuildParamsReasoningWithoutSignatureIsDropped(t *testing.T) {
 	for name, enc := range map[string]string{
 		"unsigned":              "",

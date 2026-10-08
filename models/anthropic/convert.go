@@ -206,7 +206,29 @@ func convertInput(items []agents.InputItem, fingerprint string) ([]ant.MessagePa
 				i, item.Type)
 		}
 	}
-	return messages, nil
+	return placeSystemTurns(messages), nil
+}
+
+// placeSystemTurns keeps a system turn where the API takes one — after a user
+// turn, as the last turn or before an assistant one — and carries any other as
+// text in a user turn. The leading turn is the caller's (hoistLeadingSystem).
+func placeSystemTurns(messages []ant.MessageParam) []ant.MessageParam {
+	out := make([]ant.MessageParam, 0, len(messages))
+	for i, m := range messages {
+		if m.Role == ant.MessageParamRoleSystem && i > 0 {
+			afterUser := out[len(out)-1].Role == ant.MessageParamRoleUser
+			lastOrBeforeAssistant := i+1 == len(messages) || messages[i+1].Role == ant.MessageParamRoleAssistant
+			if !afterUser || !lastOrBeforeAssistant {
+				m.Role = ant.MessageParamRoleUser
+			}
+		}
+		if n := len(out); n > 0 && out[n-1].Role == m.Role {
+			out[n-1].Content = append(out[n-1].Content, m.Content...)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // hoistLeadingSystem moves LEADING system turns' text into the top-level system
