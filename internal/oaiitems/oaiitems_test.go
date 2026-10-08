@@ -1,4 +1,4 @@
-package oaicompat
+package oaiitems
 
 import (
 	"encoding/json"
@@ -8,8 +8,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
-// The item carries its call id on the wire and gives it back, whichever type
-// openai-go declares the field with.
+// The item carries its call id on the wire and gives it back.
 func TestFunctionCallOutputCarriesTheCallID(t *testing.T) {
 	item := FunctionCallOutput("call_1", responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt("sunny")})
 	raw, err := json.Marshal(item)
@@ -27,7 +26,7 @@ func TestFunctionCallOutputCarriesTheCallID(t *testing.T) {
 	if wire.Type != "function_call_output" || wire.CallID != "call_1" || wire.Output != "sunny" {
 		t.Fatalf("wire item = %s", raw)
 	}
-	if got := CallID(item.OfFunctionCallOutput); got != "call_1" {
-		t.Fatalf("CallID() = %q, want call_1", got)
+	if got := item.OfFunctionCallOutput.CallID.Value; got != "call_1" {
+		t.Fatalf("CallID = %q, want call_1", got)
 	}
 }

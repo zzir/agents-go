@@ -170,12 +170,12 @@ func TestCompactionAdapterKeepsCallOutputPairTogether(t *testing.T) {
 		if it.OfFunctionCallOutput != nil {
 			found := false
 			for _, other := range items {
-				if other.OfFunctionCall != nil && other.OfFunctionCall.CallID == it.OfFunctionCallOutput.CallID {
+				if other.OfFunctionCall != nil && other.OfFunctionCall.CallID == it.OfFunctionCallOutput.CallID.Value {
 					found = true
 				}
 			}
 			if !found {
-				t.Errorf("orphaned function_call_output %q in kept history", it.OfFunctionCallOutput.CallID)
+				t.Errorf("orphaned function_call_output %q in kept history", it.OfFunctionCallOutput.CallID.Value)
 			}
 		}
 	}

@@ -19,7 +19,7 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/internal/oaicompat"
+	"github.com/zzir/agents-go/internal/oaiitems"
 )
 
 // UsageSpec is the canonical token accounting a scenario's turn must report.
@@ -110,7 +110,7 @@ func inputItem(raw string) agents.InputItem {
 func toolLoopHistory() []agents.InputItem {
 	items := agents.InputItemsFromText("Look up the weather.")
 	items = append(items, inputItem(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"query\":\"weather\"}","status":"completed"}`))
-	return append(items, oaicompat.FunctionCallOutput("call_1", responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt("sunny")}))
+	return append(items, oaiitems.FunctionCallOutput("call_1", responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt("sunny")}))
 }
 
 type lookupArgs struct {

@@ -1824,6 +1824,8 @@ it.
   in order; the terminal event is `response.completed` or
   `response.incomplete` (reason `max_output_tokens` is the one recoverable
   truncation, [§2.7e](#27e-truncated-responses)).
+- **An SSE block with no `data` line is not an event**: a comment keep-alive
+  (`: keep-alive`) a server sends while it prefills is skipped, not decoded.
 - **Text streams as `response.output_text.delta`, raw reasoning text as
   `response.reasoning_text.delta`.**
 - **The event names are spelled ONCE, as the exported `agents.Event*`

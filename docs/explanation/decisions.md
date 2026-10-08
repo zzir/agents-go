@@ -92,19 +92,23 @@ somewhere to live, and the coupling in §5.5b.
 **Decision.** `InputItem` and friends are **type aliases of `openai-go/v3`
 union types**, and they appear in nearly every exported signature. A
 major-version bump of openai-go (v3→v4) is therefore a breaking change of this
-SDK's entire API surface, whatever else it contains. The major version is
-pinned in `go.mod`; nothing forces a bump on users until one is taken
-deliberately, and **when it comes it is the merge window** for every other
-API-surface change on the shelf, so users absorb one migration (§5.8), not
-two.
+SDK's entire API surface, whatever else it contains; **when it comes it is the
+merge window** for every other API-surface change on the shelf, so users absorb
+one migration (§5.8), not two. Within a major, the provider SDKs (openai-go,
+anthropic-sdk-go) **track their latest release**, each bump read from the
+changelog as well as the compiler.
 
 **Rejected.** Wrapping the wire types behind our own structs — it costs the
 round-trip fidelity §5.5 exists for, plus a conversion layer that must chase
-every Responses API addition forever.
+every Responses API addition forever. Holding a low floor behind a compat shim
+— the fixes it skipped never reached users (an SSE keep-alive failed every
+stream from a server that sends one), and the skipped changes piled up.
 
-**Cost accepted.** openai-go retypes fields inside v3 minors (v3.54 did, to a
-function_call_output's `CallID`). `internal/oaicompat` absorbs it so the floor
-stays put; a CI job builds against `@latest` to catch the next.
+**Cost accepted.** A bump raises the floor every consumer gets: a v3 minor
+that retypes a field (v3.54 did, to a function_call_output's `CallID`) is a
+source break for a consumer who names it, so the bump ships in a minor (§5.8).
+Behavior a bump takes away is restored in the adapter, not by pinning (the
+error body, spec §2.15). A CI job builds against `@latest` to show the next.
 
 ### 5.6 Background work runs in-process, not in isolated processes
 

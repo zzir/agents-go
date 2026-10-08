@@ -8,7 +8,6 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/internal/agentstest"
-	"github.com/zzir/agents-go/internal/oaicompat"
 )
 
 // inputShape renders a model request's input for assertions: calls and outputs
@@ -20,7 +19,7 @@ func inputShape(items []agents.InputItem) string {
 		case it.OfFunctionCall != nil:
 			parts = append(parts, "call:"+it.OfFunctionCall.Name)
 		case it.OfFunctionCallOutput != nil:
-			parts = append(parts, "out:"+oaicompat.CallID(it.OfFunctionCallOutput))
+			parts = append(parts, "out:"+it.OfFunctionCallOutput.CallID.Value)
 		default:
 			parts = append(parts, session.ItemText(it))
 		}

@@ -11,15 +11,22 @@ import (
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/internal/oaiitems"
 	"github.com/zzir/agents-go/models/modelkit"
 )
 
 func testModel() *MessagesModel {
 	return &MessagesModel{model: "claude-test", promptCaching: true}
+}
+
+// functionCallOutput is the function_call_output input item answering callID.
+func functionCallOutput(callID, output string) agents.InputItem {
+	return oaiitems.FunctionCallOutput(callID, responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt(output)})
 }
 
 // budgetModel is testModel with reasoning effort sent as a thinking budget.
@@ -103,7 +110,7 @@ func TestBuildParamsMergesAssistantTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	input = append(agents.InputItemsFromText("go"), input...)
-	input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput("toolu_1", "result"))
+	input = append(input, functionCallOutput("toolu_1", "result"))
 
 	wire := wireParams(t, testModel(), agents.ModelRequest{Input: input})
 	msgs := wire["messages"].([]any)
@@ -167,8 +174,7 @@ func TestBuildParamsLeadingSystemHoisted(t *testing.T) {
 }
 
 // A mid-history system message (compaction summary, middleware injection)
-// must travel as a mid_conv_system block in a system turn — the Messages API
-// has no plain "system" role for input text.
+// travels as a system turn of plain text blocks.
 func TestBuildParamsSystemMessageMidHistory(t *testing.T) {
 	input := agents.InputItemsFromText("hi")
 	input = append(input, agents.InputItemsFromSystemText("conversation was compacted")...)
@@ -182,12 +188,8 @@ func TestBuildParamsSystemMessageMidHistory(t *testing.T) {
 		t.Errorf("mid-history system message role = %v, want system", role)
 	}
 	block := sys["content"].([]any)[0].(map[string]any)
-	if block["type"] != "mid_conv_system" {
-		t.Fatalf("system turn block = %v, want mid_conv_system", block)
-	}
-	inner := block["content"].([]any)[0].(map[string]any)
-	if inner["text"] != "conversation was compacted" {
-		t.Errorf("mid_conv_system text = %v", inner["text"])
+	if block["type"] != "text" || block["text"] != "conversation was compacted" {
+		t.Errorf("system turn block = %v, want a text block", block)
 	}
 }
 
@@ -609,7 +611,7 @@ func TestBuildParamsEmptyToolResult(t *testing.T) {
 	}
 	input := agents.InputItemsFromText("hi")
 	input = append(input, calls...)
-	input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput("toolu_1", ""))
+	input = append(input, functionCallOutput("toolu_1", ""))
 
 	wire := wireParams(t, testModel(), agents.ModelRequest{Input: input})
 	tr := wire["messages"].([]any)[2].(map[string]any)["content"].([]any)[0].(map[string]any)
@@ -788,7 +790,7 @@ func TestBuildParamsPartialArgumentsReplayAsEmptyObject(t *testing.T) {
 		t.Fatal(err)
 	}
 	input = append(agents.InputItemsFromText("go"), input...)
-	input = append(input, responses.ResponseInputItemParamOfFunctionCallOutput("toolu_1", "truncated; not run"))
+	input = append(input, functionCallOutput("toolu_1", "truncated; not run"))
 
 	wire := wireParams(t, testModel(), agents.ModelRequest{Input: input})
 	assistant := wire["messages"].([]any)[1].(map[string]any)

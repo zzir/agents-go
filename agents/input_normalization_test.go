@@ -10,7 +10,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/internal/oaicompat"
+	"github.com/zzir/agents-go/internal/oaiitems"
 )
 
 func fnCall(callID string) InputItem {
@@ -18,7 +18,7 @@ func fnCall(callID string) InputItem {
 }
 
 func fnOutput(callID, output string) InputItem {
-	return oaicompat.FunctionCallOutput(callID, responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt(output)})
+	return oaiitems.FunctionCallOutput(callID, responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt(output)})
 }
 
 func reasoningItem(id string) InputItem {

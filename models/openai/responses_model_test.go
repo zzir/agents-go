@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -434,5 +435,32 @@ func TestStreamResponseFailedEventCarriesUsage(t *testing.T) {
 	}
 	if ue.Usage.InputTokens != 42 || ue.Usage.OutputTokens != 7 {
 		t.Errorf("usage = %+v, want in 42 / out 7", ue.Usage)
+	}
+}
+
+// A server that sends SSE comment keep-alives while it prefills (": keep-alive"
+// then a blank line) streams normally: the comment block carries no data and
+// is skipped, not decoded as an empty event.
+func TestStreamResponseSkipsKeepAliveComments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_k\",\"status\":\"in_progress\",\"output\":[]}}\n\n")
+		_, _ = fmt.Fprint(w, ": keep-alive\n\n: keep-alive\n\n")
+		_, _ = fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":1,\"response\":{\"id\":\"resp_k\",\"status\":\"completed\",\"output\":[]}}\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	model, err := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("k")).Model("gpt-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for event, err := range model.StreamResponse(context.Background(), agents.ModelRequest{Input: agents.InputItemsFromText("hi")}) {
+		if err != nil {
+			t.Fatalf("stream err = %v, want a clean stream", err)
+		}
+		types = append(types, event.Type)
+	}
+	if want := []string{agents.EventResponseCreated, agents.EventResponseCompleted}; !slices.Equal(types, want) {
+		t.Errorf("event types = %v, want %v", types, want)
 	}
 }

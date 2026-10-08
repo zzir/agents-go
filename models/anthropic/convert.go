@@ -159,13 +159,11 @@ func convertInput(items []agents.InputItem, fingerprint string) ([]ant.MessagePa
 		switch item.Type {
 		case "message":
 			if item.Role == "system" || item.Role == "developer" {
-				block, ok, err := midConvSystemBlock(item.Parts)
+				blocks, err := systemBlocks(item.Parts)
 				if err != nil {
 					return nil, fmt.Errorf("input item %d: %w", i, err)
 				}
-				if ok {
-					appendBlocks(ant.MessageParamRoleSystem, block)
-				}
+				appendBlocks(ant.MessageParamRoleSystem, blocks...)
 				continue
 			}
 			role, err := messageRole(item.Role)
@@ -216,8 +214,8 @@ func convertInput(items []agents.InputItem, fingerprint string) ([]ant.MessagePa
 func hoistLeadingSystem(messages []ant.MessageParam) (rest []ant.MessageParam, system []ant.TextBlockParam) {
 	for len(messages) > 0 && messages[0].Role == ant.MessageParamRoleSystem {
 		for _, block := range messages[0].Content {
-			if mc := block.OfMidConvSystem; mc != nil {
-				system = append(system, mc.Content...)
+			if t := block.OfText; t != nil {
+				system = append(system, ant.TextBlockParam{Text: t.Text})
 			}
 		}
 		messages = messages[1:]
@@ -226,7 +224,7 @@ func hoistLeadingSystem(messages []ant.MessageParam) (rest []ant.MessageParam, s
 }
 
 // messageRole maps a canonical conversational role onto a Messages API role;
-// system/developer messages take the mid_conv_system path in convertInput.
+// system/developer messages become system turns in convertInput.
 func messageRole(role string) (ant.MessageParamRole, error) {
 	switch role {
 	case "user":
@@ -238,23 +236,20 @@ func messageRole(role string) (ant.MessageParamRole, error) {
 	}
 }
 
-// midConvSystemBlock wraps system-authored text in the mid_conv_system block
-// (the API has no plain system input role); ok is false with no text to carry.
-func midConvSystemBlock(parts []modelkit.Part) (ant.ContentBlockParamUnion, bool, error) {
-	var texts []ant.TextBlockParam
+// systemBlocks converts system-authored text into a system turn's text blocks;
+// the API takes text only there.
+func systemBlocks(parts []modelkit.Part) ([]ant.ContentBlockParamUnion, error) {
+	var blocks []ant.ContentBlockParamUnion
 	for _, p := range parts {
 		if !p.IsText() {
-			return ant.ContentBlockParamUnion{}, false, agents.NewUserError(
+			return nil, agents.NewUserError(
 				"anthropic: system message content part %q has no Messages API equivalent — system turns are text-only", p.Type)
 		}
 		if p.Text != "" {
-			texts = append(texts, ant.TextBlockParam{Text: p.Text})
+			blocks = append(blocks, ant.NewTextBlock(p.Text))
 		}
 	}
-	if len(texts) == 0 {
-		return ant.ContentBlockParamUnion{}, false, nil
-	}
-	return ant.NewMidConvSystemBlock(texts), true, nil
+	return blocks, nil
 }
 
 // messageBlocks converts message content parts into content blocks.
