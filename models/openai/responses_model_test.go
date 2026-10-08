@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 
@@ -462,5 +463,47 @@ func TestStreamResponseSkipsKeepAliveComments(t *testing.T) {
 	}
 	if want := []string{agents.EventResponseCreated, agents.EventResponseCompleted}; !slices.Equal(types, want) {
 		t.Errorf("event types = %v, want %v", types, want)
+	}
+}
+
+// openai-go's API error text is the status alone; the adapter puts back the
+// endpoint (query string dropped: a key may sit there) and the provider's error
+// object, or the whole body for a provider whose envelope has none, so an
+// overflow 400 reads as an overflow whatever the envelope, and the error still
+// unwraps to the SDK type.
+func TestAPIErrorTextCarriesEndpointAndBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"error object":  `{"error":{"message":"This model's maximum context length is 8192 tokens.","type":"invalid_request_error","param":"input","code":"context_length_exceeded"}}`,
+		"vllm envelope": `{"object":"error","message":"This model's maximum context length is 8192 tokens.","type":"BadRequestError","code":400}`,
+		"plain text":    "maximum context length exceeded\n",
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, body)
+		}))
+		t.Cleanup(srv.Close)
+		model, err := NewProvider(option.WithBaseURL(srv.URL), option.WithAPIKey("k"), option.WithQueryAdd("api_key", "sekrit")).Model("gpt-test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := agents.ModelRequest{Input: agents.InputItemsFromText("hi")}
+		_, respondErr := model.Respond(context.Background(), req)
+		var streamErr error
+		for _, err := range model.StreamResponse(context.Background(), req) {
+			if err != nil {
+				streamErr = err
+			}
+		}
+		for path, err := range map[string]error{"respond": respondErr, "stream": streamErr} {
+			if !agents.DetectContextOverflow(err) {
+				t.Errorf("%s/%s: err = %v, want it detected as a context overflow", name, path, err)
+			}
+			if ae, ok := errors.AsType[*oai.Error](err); !ok || ae.StatusCode != http.StatusBadRequest {
+				t.Errorf("%s/%s: err = %T, want it to unwrap to a 400 *openai.Error", name, path, err)
+			}
+			if text := err.Error(); !strings.Contains(text, "POST "+srv.URL+"/responses") || strings.Contains(text, "sekrit") {
+				t.Errorf("%s/%s: err = %q, want the endpoint without its query string", name, path, text)
+			}
+		}
 	}
 }

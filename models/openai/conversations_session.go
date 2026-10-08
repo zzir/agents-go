@@ -67,7 +67,7 @@ func (s *ConversationsSession) ensureID(ctx context.Context) (string, error) {
 		Items: []responses.ResponseInputItemUnionParam{},
 	})
 	if err != nil {
-		return "", fmt.Errorf("creating conversation: %w", err)
+		return "", fmt.Errorf("creating conversation: %w", withErrorDetail(err))
 	}
 	s.id = conv.ID
 	return s.id, nil
@@ -161,7 +161,7 @@ func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]se
 		}
 	}
 	if err := pager.Err(); err != nil {
-		return nil, fmt.Errorf("listing conversation items: %w", err)
+		return nil, fmt.Errorf("listing conversation items: %w", withErrorDetail(err))
 	}
 	if limit > 0 {
 		slices.Reverse(entries)
@@ -228,9 +228,9 @@ func (s *ConversationsSession) addItems(ctx context.Context, in []agents.InputIt
 		batch := sanitized[start:end]
 		if _, err := s.svc.Items.New(ctx, id, conversations.ItemNewParams{Items: batch}); err != nil {
 			if written > 0 {
-				return fmt.Errorf("adding conversation items: failed after writing %d of %d item(s) in prior batches; conversation may be left in a partially written state: %w", written, len(sanitized), err)
+				return fmt.Errorf("adding conversation items: failed after writing %d of %d item(s) in prior batches; conversation may be left in a partially written state: %w", written, len(sanitized), withErrorDetail(err))
 			}
-			return fmt.Errorf("adding conversation items: %w", err)
+			return fmt.Errorf("adding conversation items: %w", withErrorDetail(err))
 		}
 		written = end
 	}
@@ -305,7 +305,7 @@ func (s *ConversationsSession) Clear(ctx context.Context) error {
 		return nil
 	}
 	if _, err := s.svc.Delete(ctx, s.id); err != nil {
-		return fmt.Errorf("deleting conversation: %w", err)
+		return fmt.Errorf("deleting conversation: %w", withErrorDetail(err))
 	}
 	s.id = ""
 	return nil

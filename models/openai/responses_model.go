@@ -103,7 +103,7 @@ func (m *ResponsesModel) Respond(ctx context.Context, req agents.ModelRequest) (
 	opts := append(requestOptions(req.Settings), option.WithResponseInto(&httpResp))
 	resp, err := m.client.New(ctx, params, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("openai responses: %w", err)
+		return nil, fmt.Errorf("openai responses: %w", withErrorDetail(err))
 	}
 	// The Responses API omits the usage block for some responses; count it as
 	// zero requests in that case.
@@ -201,7 +201,7 @@ func (m *ResponsesModel) StreamResponse(ctx context.Context, req agents.ModelReq
 			return
 		}
 		if err := stream.Err(); err != nil {
-			yield(nil, fmt.Errorf("openai responses stream: %w", err))
+			yield(nil, fmt.Errorf("openai responses stream: %w", withErrorDetail(err)))
 			return
 		}
 		// A clean SSE end without a terminal event is a severed connection,

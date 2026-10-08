@@ -1826,6 +1826,10 @@ it.
   truncation, [§2.7e](#27e-truncated-responses)).
 - **An SSE block with no `data` line is not an event**: a comment keep-alive
   (`: keep-alive`) a server sends while it prefills is skipped, not decoded.
+- **A provider's HTTP error names the endpoint (no query string) and carries
+  the provider's error object, or the body when it has none, in its text** —
+  overflow detection ([§2.5g](#25g-context-overflow)) matches on it — and
+  still unwraps to the provider SDK's error type.
 - **Text streams as `response.output_text.delta`, raw reasoning text as
   `response.reasoning_text.delta`.**
 - **The event names are spelled ONCE, as the exported `agents.Event*`
