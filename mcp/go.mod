@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	github.com/zzir/agents-go v0.5.0
+	github.com/zzir/agents-go v0.6.0
 )
 
 require (

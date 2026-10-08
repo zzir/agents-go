@@ -8,7 +8,7 @@ require (
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
 	github.com/uptrace/bun/driver/pgdriver v1.2.18
 	github.com/uptrace/bun/driver/sqliteshim v1.2.18
-	github.com/zzir/agents-go v0.5.0
+	github.com/zzir/agents-go v0.6.0
 )
 
 require (

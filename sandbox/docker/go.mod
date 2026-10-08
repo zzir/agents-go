@@ -6,7 +6,7 @@ require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/moby/moby/api v1.54.2
 	github.com/moby/moby/client v0.4.1
-	github.com/zzir/agents-go v0.5.0
+	github.com/zzir/agents-go v0.6.0
 	golang.org/x/crypto v0.55.0
 )
 
