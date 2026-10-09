@@ -1,8 +1,6 @@
-// The shared response cache behind keyed useApi calls: one entry per key,
-// served to every mount, revalidated once it is older than CACHE_TTL_MS, and
-// dropped by invalidate(). A fetch in flight is shared, so eight panels asking
-// for the agent list at once make one request. Free of React and Primer so
-// the socket layer can invalidate a list without pulling either in.
+// The shared response cache behind keyed useApi calls: one entry per key, served
+// to every mount, revalidated past CACHE_TTL_MS, dropped by invalidate(); a fetch
+// in flight is shared. Free of React so the socket layer can invalidate a list.
 export const CACHE_TTL_MS = 30_000;
 
 interface CacheEntry {

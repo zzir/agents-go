@@ -1,10 +1,9 @@
 import { Component, type ReactNode } from 'react';
 import { Button, Flash } from '@primer/react';
 
-/** Catches a render crash below it so the rest of the app stays alive — the
- * transcript renders arbitrary model output, and one bad payload must not
- * unmount the socket and sidebar with it. A changed resetKey (switching
- * session or tab) clears the error and tries again. */
+/** Catches a render crash below it so the rest of the app stays alive (the
+ * transcript renders arbitrary model output). A changed resetKey clears the
+ * error and tries again. */
 export class ErrorBoundary extends Component<
   { children: ReactNode; resetKey?: unknown; fallback?: (retry: () => void, error: Error) => ReactNode },
   { error: Error | null }

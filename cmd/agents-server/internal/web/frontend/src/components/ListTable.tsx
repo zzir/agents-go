@@ -8,9 +8,8 @@ interface ListTableProps<T extends UniqueRow> {
   // Labels the table; the element with this id is the page's heading.
   labelledBy: string;
   rows: T[];
-  // A column's `minWidth` (px) floors its track; their sum floors the table,
-  // which then scrolls sideways inside Primer's ScrollableRegion instead of
-  // squeezing the headers into each other.
+  // A column's `minWidth` (px) floors its track and their sum floors the table,
+  // which then scrolls sideways inside Primer's ScrollableRegion.
   columns: Column<T>[];
   // Client-side search over the rows; the page resets with the query.
   search?: { placeholder: string; match: (row: T, q: string) => boolean };

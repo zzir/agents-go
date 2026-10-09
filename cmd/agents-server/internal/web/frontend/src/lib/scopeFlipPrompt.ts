@@ -1,6 +1,6 @@
-// The one wording every scope flip confirms with (invariant 41): publishing
-// and unpublishing alike, from a row's menu, a skills group's heading and the
-// admin's management table.
+// The one wording every scope flip confirms with (invariant 41): publishing and
+// unpublishing alike, from a row's menu, a skills group's heading and the
+// admin's table.
 export interface ScopeFlipPrompt {
   title: string;
   content: string;

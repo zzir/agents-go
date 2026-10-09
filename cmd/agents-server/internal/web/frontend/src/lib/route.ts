@@ -1,16 +1,13 @@
 import type { InspectorPanel } from '@/features/chat/ChatView';
 import type { HubTab } from '@/features/workflows/WorkflowsHub';
 
-// The URL names the view: a conversation (with the open Inspector lens), or
-// the Workflows hub (with its tab). The hub is a place of its own, so the
-// conversation last open is kept beside it in state, not in the URL.
-// settings is the Settings dialog open over that view (`?settings=<tab>` on
-// the view's own hash): '' names its first tab, a name that tab, null closed.
+// The URL names the view: a session (with its Inspector lens) or the Workflows
+// hub (with its tab; the last session stays in state beside it). settings is the
+// dialog over the view (`?settings=<tab>`, invariant 61): '' first tab, null closed.
 export interface HashState { sessionId: string | null; panel: InspectorPanel; hub: HubTab | null; settings: string | null }
 
-// splitSettings takes the settings parameter off a fragment. The older
-// `#/settings/:tab` form reads as the root view with that tab, and is written
-// back in the current form so the bookmark keeps working.
+// splitSettings takes the settings parameter off a fragment. A `#/settings/:tab`
+// bookmark reads as the root view with that tab and is rewritten in the current form.
 function splitSettings(h: string): { view: string; settings: string | null } {
   const legacy = /^#\/settings(?:\/([a-zA-Z0-9_-]+))?$/.exec(h);
   if (legacy) {
@@ -59,9 +56,9 @@ export function currentViewHash(): string {
   return splitSettings(window.location.hash).view;
 }
 
-// writeHash puts the state in the URL: a new history entry when push (a move
-// between views, Settings opening — what Back returns from), otherwise the
-// entry in place (a lens, a Settings tab). Nothing when the URL already says it.
+// writeHash puts the state in the URL: a new history entry when push (a view
+// move, Settings opening), else the entry in place; nothing when the URL
+// already says it.
 export function writeHash(sessionId: string | null, panel: InspectorPanel, hub: HubTab | null, settings: string | null, push: boolean) {
   const view = viewHash(sessionId, panel, hub);
   const next = settings == null ? view : settingsHash(view, settings);
@@ -71,10 +68,9 @@ export function writeHash(sessionId: string | null, panel: InspectorPanel, hub: 
   else window.history.replaceState(null, '', url);
 }
 
-// consumeAuthFragment strips a login-callback fragment (#auth_code= /
-// #auth_error=) from the URL before the hash router ever parses it, and
-// returns what it carried. Stripping immediately keeps the one-time code out
-// of the session history the user can arrow back through.
+// consumeAuthFragment strips a login-callback fragment (#auth_code= / #auth_error=)
+// before the hash router parses it and returns what it carried; stripping at once
+// keeps the one-time code out of history.
 export function consumeAuthFragment(): { code?: string; error?: string } {
   const h = window.location.hash;
   if (h.startsWith('#auth_code=')) {
@@ -89,8 +85,7 @@ export function consumeAuthFragment(): { code?: string; error?: string } {
 }
 
 // The deep link a sign-in started from: the OAuth round trip replaces the
-// fragment with the callback's, so the view is stashed before leaving and
-// put back once the code has been exchanged.
+// fragment, so the view is stashed before leaving and put back after the exchange.
 const AUTH_RETURN_KEY = 'auth_return_hash';
 
 export function stashReturnHash(): void {

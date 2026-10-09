@@ -18,9 +18,8 @@ import('./app').then(({ default: App }) => {
     onUncaughtError: (error, info) => console.error('uncaught render error', error, info?.componentStack),
   }).render(<App />)
 }).catch(() => {
-  // A stale chunk after a server restart 404s here; without this the page
-  // stays blank with no message. An element, not a text node: index.html
-  // hides #root until it has a child element.
+  // A stale chunk after a server restart 404s here: say so, not a blank page. An
+  // element, not a text node: index.html hides #root until it has a child element.
   const p = document.createElement('p')
   p.textContent = 'Failed to load the app — reload the page.'
   document.getElementById('root')!.replaceChildren(p)

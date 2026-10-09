@@ -13,11 +13,9 @@ const FLASH_ICON: Record<string, React.ReactNode> = {
   info: <InfoIcon size={16} />,
 };
 
-// A queue, not one slot: three errors during a long run stack up instead of
-// each overwriting the last. Errors linger (10s) so they can be read, then
-// auto-dismiss; a click, their close button, or Escape on a focused one takes
-// it sooner. Each item is its own live region; the stack is none, or a
-// reader would announce every toast twice.
+// A queue, not one slot, so errors during a long run stack instead of overwriting.
+// Errors linger 10s; a click, the close button or Escape takes one sooner. Each
+// item is its own live region (a stacked one would announce every toast twice).
 export function GlobalToast() {
   const [items, setItems] = useState<Array<{ id: number; msg: string; type: string; exiting?: boolean }>>([]);
   const seqRef = useRef(0);
@@ -34,9 +32,8 @@ export function GlobalToast() {
 
   useEffect(() => {
     onToast(({ msg, type }) => {
-      // Collapse a repeat of a toast that's still on screen: a double-click on
-      // Save shouldn't stack two identical errors — the visible one just gets
-      // its dismiss timer refreshed.
+      // A repeat of a toast still on screen (a double-click on Save) collapses
+      // into the visible one, whose dismiss timer is refreshed.
       const ttl = type === 'error' ? 10000 : 4000;
       const dup = itemsRef.current.find(it => !it.exiting && it.msg === msg && it.type === type);
       if (dup) {

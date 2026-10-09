@@ -24,9 +24,8 @@ export function providerLabel(p: string): string {
   return PROVIDER_LABEL[p] || p.charAt(0).toUpperCase() + p.slice(1);
 }
 
-// exchangeErrorTag maps a failed code exchange to the login page's message:
-// the server refuses a used or expired code with 401; anything else is not
-// the code's fault.
+// exchangeErrorTag maps a failed code exchange to the login page's message: 401
+// is a used or expired code; anything else is not the code's fault.
 export function exchangeErrorTag(e: unknown): string {
   const status = (e as { status?: number } | null)?.status;
   if (status === 401) return 'state_mismatch';
@@ -38,9 +37,8 @@ export function LoginPage({ onLogin, authError }: { onLogin: () => void; authErr
   const [token, setTokenVal] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  // null while /auth/config is in flight. A failure shows as such, with a
-  // retry — guessing token mode would offer a password box that an OAuth
-  // server answers with 400.
+  // null while /auth/config is in flight; a failure shows as such with a retry,
+  // since guessing token mode would offer a password box an OAuth server 400s.
   const [cfg, setCfg] = useState<AuthConfig | null>(null);
   const [cfgError, setCfgError] = useState(false);
   const [cfgAttempt, setCfgAttempt] = useState(0);

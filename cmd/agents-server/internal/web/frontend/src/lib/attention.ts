@@ -1,7 +1,6 @@
-// What tells a person a conversation needs them when they are not looking at
-// it: the page title's count, a spoken line, an opt-in desktop notification.
-// All of it renders the status the server derived (session.status, the list's
-// rows) — nothing here works a status out.
+// What tells a person a session needs them when they are not looking: the page
+// title's count, a spoken line, an opt-in desktop notification — all rendering
+// the server's status, deriving none — invariant 86.
 
 import type { SessionStatus } from '@/lib/protocol';
 
@@ -18,9 +17,8 @@ export function countWaiting(rows: Array<{ id: string; status?: SessionStatus }>
   return (rows || []).filter(r => (announced[r.id] ?? r.status) === 'requires_action').length;
 }
 
-/** What to say when a conversation's status becomes `next`, or null when the
- *  change asks nothing of the person: only entering requires_action or failed
- *  does, and a repeat of the status it already had is not entering it. */
+/** What to say when a session's status becomes `next`, or null: only entering
+ *  requires_action or failed asks anything, and a repeat is not entering. */
 export function attentionMessage(name: string, prev: SessionStatus | undefined, next: SessionStatus): string | null {
   if (prev === next) return null;
   const who = name || 'A session';
@@ -51,9 +49,8 @@ export function notifyUnavailable(): string {
   return '';
 }
 
-/** Shows a desktop notification, only when the person asked for them, the
- *  browser granted them, and the page is not the one being looked at. One per
- *  conversation: a newer one for the same session replaces the older. */
+/** Shows a desktop notification only when asked for, granted, and the page is
+ *  hidden (invariant 86); one per session, a newer one replaces the older. */
 export function notifyAttention(message: string, sessionId: string): boolean {
   if (!loadNotifyPref() || notifyUnavailable() || Notification.permission !== 'granted' || !document.hidden) return false;
   // Chrome for Android has the API and throws on the constructor (it wants a

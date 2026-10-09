@@ -8,9 +8,8 @@ export type ApiSchemas = S;
 
 const BASE = '/api/v1';
 
-// TOKEN_KEY names the credential in both storages: localStorage for an
-// OAuth session (new tabs share the 30-day session), sessionStorage for the
-// token-mode login (gone with the tab).
+// TOKEN_KEY names the credential in both storages: localStorage for an OAuth
+// session (tabs share it), sessionStorage for a token-mode login (gone with the tab).
 export const TOKEN_KEY = 'auth_token';
 
 export function getToken(): string {
@@ -60,9 +59,8 @@ export async function login(token: string): Promise<boolean> {
   return true;
 }
 
-// Probe the stored credential. Only a refusal (401/403) means the token is
-// bad and gets it cleared; any other failure (429, a proxy's 502 mid-restart)
-// rejects with the status so the caller can retry rather than sign out.
+// Probes the stored credential. Only a refusal (401/403) clears the token; any
+// other failure rejects with its status so the caller can retry rather than sign out.
 export async function checkAuth(): Promise<boolean> {
   const t = getToken();
   if (!t) return false;
@@ -105,11 +103,8 @@ export async function exchangeCode(code: string): Promise<AuthUser> {
   return body.user || {};
 }
 
-// Revoke the current session server-side (no-op in token mode), forget the
-// local copy, then reload: the socket and every piece of in-memory state
-// belong to the signed-out user, and a fresh document is the one sure way
-// to own none of it when the next account signs in. Always resolves — a
-// dead server must not block sign-out.
+// Revokes the session server-side (no-op in token mode), forgets the local copy
+// and reloads so no in-memory state survives; a dead server never blocks sign-out.
 export async function logout(): Promise<void> {
   try {
     await request('/auth/logout', { method: 'POST' });
@@ -137,8 +132,8 @@ function crud<T>(base: string): CrudMethods<T> {
 }
 
 // Moves a scoped row between private and global: promote is the admin's act,
-// demote the admin's or the owner's (the row returns to its author); 400/409
-// report non-global references or a name collision in the target scope.
+// demote the admin's or the owner's; 400/409 report non-global references or a
+// name collision.
 function setScope(base: string) {
   return (id: string | number, scope: 'global' | 'private') =>
     request<null>(`${base}/${id}/scope`, { method: 'POST', body: JSON.stringify({ scope }) });
@@ -194,23 +189,23 @@ export const api = {
     listAll: () => request<S['store.Session'][]>('/sessions?all=true'),
     setOwner: (id: string, userId: string) =>
       request<S['store.Session']>(`/sessions/${id}/owner`, { method: 'PUT', body: JSON.stringify({ user_id: userId }) }),
-    // Both optional: an unnamed conversation is "New Session" until its first message titles it.
+    // Both optional: an unnamed conversation is "New Session" until its first
+    // message titles it.
     create: (body: { name?: string; agent_config_id?: string } = {}) => request('/sessions', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string | number, name: string) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
     // The session's entries, all of them, oldest first.
     messages: (id: string | number) => request(`/sessions/${id}/messages`),
     // The session's background work — tasks and workflow executions — newest first.
     tasks: (id: string | number) => request(`/sessions/${id}/tasks`),
-    // summary leaves the payload fields (the model request and reply, a
-    // tool's arguments and result — nearly all of a session's trace bytes)
-    // out of each row, marking it payload_omitted; traceSpan fetches one span
-    // whole when a row is opened.
+    // summary leaves the payload fields (model request and reply, tool arguments
+    // and result) out of each row, marked payload_omitted; traceSpan fetches one
+    // whole — invariant 22.
     traces: (id: string | number, opts?: { summary?: boolean }) =>
       request(`/sessions/${id}/traces` + (opts?.summary ? '?summary=true' : '')),
     traceSpan: (id: string | number, spanId: string) => request(`/sessions/${id}/traces/${encodeURIComponent(spanId)}`),
-    // What the session's active branch occupies of the model's context window.
-    // Recomputed per call from the entries — there is no live event for it, so
-    // the panel refetches when a run ends.
+    // What the active branch occupies of the context window, recomputed per
+    // call from the entries; no live event carries it, so the panel refetches
+    // when a run ends.
     context: (id: string | number) => request(`/sessions/${id}/context`),
     // Forces one compaction pass now; {compacted:false} means nothing to fold.
     compact: (id: string | number) => request(`/sessions/${id}/compact`, { method: 'POST' }),
@@ -246,9 +241,8 @@ export const api = {
       return res.json();
     },
     remove: (id: string) => request(`/attachments/${id}`, { method: 'DELETE' }),
-    // The storage section saves/tests/clears as ONE group — per-key writes
-    // are refused server-side (a new value must validate with the siblings
-    // it will actually be stored with).
+    // The storage section saves/tests/clears as ONE group: per-key writes are
+    // refused server-side, a value validating only with the siblings it is stored with.
     storageSave: (body: Record<string, unknown>) => request('/attachments/storage', { method: 'PUT', body: JSON.stringify(body) }),
     storageTest: (body: Record<string, unknown>) => request('/attachments/storage/test', { method: 'POST', body: JSON.stringify(body) }),
   },
@@ -256,10 +250,9 @@ export const api = {
     ...crud<S['store.AgentConfig']>('/agents'),
     setScope: setScope('/agents'),
     setOwner: setOwner('/agents'),
-    // The agent's CURRENT tool surface as schema-only definitions — what the
-    // bridge would hand the model right now, each with its source and
-    // read-only flag. Backs the Replay dialog's tool picker and the editor's
-    // approval list.
+    // The agent's CURRENT tool surface as schema-only definitions, each with
+    // its source and read-only flag: the Replay dialog's tool picker and the
+    // editor's approval list.
     tools: (id: string | number) => request(`/agents/${id}/tools`),
   },
   mcpServers: {
@@ -282,10 +275,8 @@ export const api = {
       output_schema?: { name?: string; schema: Record<string, unknown>; strict?: boolean };
     }) =>
       request('/playground/generate', { method: 'POST', body: JSON.stringify(body) }),
-    // generateStream is the SSE variant: onDelta/onReasoning fire per text
-    // chunk, the returned promise resolves with the terminal `done` payload
-    // (output, usage, duration_ms, ttft_ms). Abort via `signal` cancels the
-    // model call server-side (the request context tears it down).
+    // The SSE variant: onDelta/onReasoning fire per chunk, the promise resolves
+    // with the terminal `done` payload; `signal` aborts the model call server-side.
     generateStream: async (
       body: Record<string, unknown>,
       handlers: { onDelta?: (text: string) => void; onReasoning?: (text: string) => void },
@@ -360,9 +351,9 @@ export const api = {
     setRepoScope: (repo: string, scope: 'global' | 'private', ownerId?: string) =>
       request<null>('/skill-repos/scope', { method: 'POST', body: JSON.stringify({ repo, scope, ...(ownerId ? { owner_id: ownerId } : {}) }) }),
     setOwner: setOwner('/skills'),
-    // Import walks a GitHub repo (or fetches one raw SKILL.md) and upserts.
-    // ownerId names WHICH group a sync refreshes — an admin syncing somebody
-    // else's published repository; omitted, it is the caller's own group.
+    // Import walks a GitHub repo (or one raw SKILL.md) and upserts. ownerId
+    // names WHICH group a sync refreshes (an admin syncing another's repo);
+    // omitted, the caller's own.
     import: (url: string, ownerId?: string) =>
       request('/skill-imports', { method: 'POST', body: JSON.stringify({ url, ...(ownerId ? { owner_id: ownerId } : {}) }) }),
   },
@@ -376,9 +367,8 @@ export const api = {
     // Lists the models with the stored key; a model name is looked up in the list.
     test: (id: string, model?: string) => request<S['handler.providerTestResp']>(`/providers/${id}/test`, { method: 'POST', body: JSON.stringify(model ? { model } : {}) }),
   },
-  // Projects carry a name, a template and an environment; the target is fixed
-  // at creation. A delete refuses (409) while sessions still bind one, and
-  // otherwise destroys the working tree.
+  // Projects carry a name, a template and an environment; the target is fixed at
+  // creation. A delete refuses (409) while sessions bind one, else destroys the tree.
   projects: {
     list: () => request<S['store.Project'][]>('/projects'),
     // Admin: every owner's projects, storage hints included.
@@ -391,9 +381,8 @@ export const api = {
     // Answers 200 whenever the row is gone; storage_error names storage that
     // could not be reclaimed with it — a warning, not a failed delete.
     delete: (id: string) => request<{ deleted: boolean; storage_error?: string }>(`/projects/${id}`, { method: 'DELETE' }),
-    // Container calls: create it up front, or discard and recreate it. Both
-    // are synchronous and can take an image pull's worth of time.
-    // sessionId, when given, is the session the rebuilt note is left on.
+    // Creates the container up front, or discards and recreates it, synchronously
+    // (an image pull's worth of time); sessionId is where the rebuilt note is left.
     rebuildContainer: (id: string, sessionId?: string) => request<null>(`/projects/${id}/sandbox/rebuild`, { method: 'POST', body: sessionId ? JSON.stringify({ session_id: sessionId }) : undefined }),
     // The project's compute: what it is doing, and starting/stopping it by
     // hand rather than leaving both to the next run and the idle timer.
@@ -401,9 +390,8 @@ export const api = {
     sandboxHost: (id: string) => request<{ sandbox_id: string; domain: string }>(`/projects/${id}/host`),
     sandboxStart: (id: string) => request<null>(`/projects/${id}/sandbox/start`, { method: 'POST' }),
     sandboxStop: (id: string) => request<{ stopped: boolean }>(`/projects/${id}/sandbox/stop`, { method: 'POST' }),
-    // The working tree as a tar. It is a DOWNLOAD, not JSON, so it bypasses
-    // request(): the bearer token has to ride on the fetch, which rules out a
-    // plain link, and the body is a stream rather than a parsed object.
+    // The working tree as a tar: a DOWNLOAD, not JSON, so it bypasses request()
+    // — the bearer token must ride on the fetch, and the body is a stream.
     exportTar: async (id: string, name: string): Promise<void> => {
       const headers: Record<string, string> = {};
       const t = getToken();
@@ -417,9 +405,9 @@ export const api = {
       const a = document.createElement('a');
       a.href = url;
       a.download = `${name || 'project'}.tar`;
-      // Appended to the DOM (older Firefox ignores a detached anchor) and the
-      // URL revoked on a delay: revoking straight after click() can cancel a
-      // download Safari has not yet started.
+      // Appended to the DOM (older Firefox ignores a detached anchor); the URL
+      // is revoked on a delay, since revoking right after click() can cancel
+      // Safari's download.
       a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
@@ -431,10 +419,8 @@ export const api = {
     ...crud<S['store.Workflow']>('/workflows'),
     setScope: setScope('/workflows'),
     setOwner: setOwner('/workflows'),
-    // A person's own run of a workflow: the brief they wrote, for the session
-    // the result comes back to.
-    // project_id binds a still-unbound session first, so the
-    // execution has its file and command tools; a bound session ignores them.
+    // A person's own run of a workflow: the brief, for the session the result
+    // comes back to; project_id binds a still-unbound session first — invariant 27.
     run: (id: string | number, body: { session_id: string; input: string; project_id?: string }) =>
       request(`/workflows/${id}/runs`, { method: 'POST', body: JSON.stringify(body) }),
   },
@@ -455,9 +441,9 @@ export const api = {
       request<{ run_id: string; queue: string }>(`/runs/${runId}/inject`, { method: 'POST', body: JSON.stringify(body) }),
   },
   tasks: {
-    // One page across every conversation, newest first ({items, total}): the
-    // hub's Runs view. kind narrows ("workflow"), live keeps only working /
-    // input_required rows, limit/offset cut the page.
+    // One page across every session, newest first ({items, total}), for the
+    // hub's Runs view: kind narrows, live keeps working / input_required rows,
+    // limit/offset page.
     list: (q: { kind?: string; live?: boolean; limit?: number; offset?: number } = {}) => {
       const p = new URLSearchParams();
       if (q.kind) p.set('kind', q.kind);

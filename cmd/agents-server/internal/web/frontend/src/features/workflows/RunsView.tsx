@@ -20,25 +20,19 @@ interface RunRow extends BackgroundItem {
 interface TaskWithSession extends TaskRow { session_name?: string }
 interface TaskPage { items: TaskWithSession[]; total: number }
 
-// RunsView lists workflow executions across every conversation, newest first,
-// a page at a time. version moves when any execution does (the socket hears
-// every session's task.updated), so the page follows live work without
-// polling; a row opens its conversation with the execution's detail in the
-// Inspector.
-// active is false while the hub keeps this view mounted but hidden: the live
-// duration ticker stands down (no per-second re-render of an unseen table),
-// while the version-driven refetch keeps running so returning is instant.
+// RunsView lists workflow executions across every session, newest first, a page
+// at a time; version moves when any execution does, so the page follows live
+// work. active=false (hidden by the hub) stands the duration ticker down
+// (invariant 51).
 export function RunsView({ version, onOpenRun, active = true }: { version: string; onOpenRun: (sessionId: string, taskId: string) => void; active?: boolean }) {
   const [pageIndex, setPageIndex] = useState(0);
   const { data, loading, error, reload } = useApi<TaskPage>(
     () => api.tasks.list({ kind: TASK_KIND_WORKFLOW, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE }) as Promise<TaskPage>,
     [pageIndex],
   );
-  // A page change refetches through useApi's deps; a change of the signature
-  // refetches the same page — and only a CHANGE, so neither doubles a fetch.
-  // Only the FIRST page follows live work: a later page is history being
-  // read, and refetching it by offset while new runs land at the top would
-  // shift its rows under the reader.
+  // Only a CHANGE of version refetches (a page change refetches through
+  // useApi's deps), and only the FIRST page follows live work; a later page is
+  // history being read.
   const seen = useRef(version);
   useEffect(() => {
     if (seen.current === version) return;

@@ -2,18 +2,16 @@ import { useState, memo } from 'react';
 import { ChevronRightIcon } from '@primer/octicons-react';
 import { useAsyncMarkdown } from '@/lib/markdown';
 
-// compactTokens renders an estimate the way an estimate should read: two
-// significant figures and a k, never a precise-looking count. CharEstimator is
-// a character ratio, not a tokenizer.
+// compactTokens renders an estimate at the precision it has: two significant
+// figures and a k (CharEstimator is a character ratio, not a tokenizer).
 function compactTokens(n: number): string {
   return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
 }
 
-// CompactionCard is an inline marker where a pass happened: the history it
-// folded renders in place ABOVE it (the transcript is decoupled from the
-// model's context — see the Context panel for what the model still reads), so
-// the card carries only the shrink figures and, one expand away, the summary
-// that now stands in for that history in the model's view.
+// CompactionCard marks where a pass happened. The folded history still renders
+// ABOVE it (the transcript is decoupled from the model's context; the Context
+// panel shows what the model reads), so it carries the shrink figures and,
+// expanded, the summary.
 interface CompactionCardProps {
   content?: string;
   tokensBefore?: number;

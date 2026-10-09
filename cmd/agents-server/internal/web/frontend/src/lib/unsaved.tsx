@@ -1,9 +1,8 @@
 import { createContext } from 'react';
 
-// UnsavedRegistry is a surface's view of the forms inside it that hold edits
-// not yet saved: each form reports under its own id, and the surface's close
-// paths ask before discarding any (useUnsavedRegistry provides one). Absent
-// (a form outside one), nothing asks.
+// UnsavedRegistry is a surface's view of the forms inside it holding unsaved
+// edits: each reports under its own id, and the surface's close paths ask before
+// discarding (invariant 41; useUnsavedRegistry provides one). Absent, nothing asks.
 export interface UnsavedRegistry {
   set(id: string, dirty: boolean): void;
   any(): boolean;

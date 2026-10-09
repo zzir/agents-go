@@ -22,11 +22,9 @@ import { useServerInfo } from '@/features/settings/serverInfo';
 import { UnsavedContext } from '@/lib/unsaved';
 import { useUnsavedRegistry } from '@/lib/useUnsavedRegistry';
 
-// A trigger starts work without a conversation asking — on a cron schedule,
-// or on a signed webhook call — into the session it names, with the brief its
-// author wrote in advance. What it starts is its target: a workflow (an
-// execution that reports back to the session) or an agent turn (the brief
-// sent as a message of the session, run by that agent).
+// A trigger starts work without a session asking (a cron schedule, or a signed
+// webhook call) into the session it names, with a brief written in advance; its
+// target is a workflow execution or an agent turn run as a message of the session.
 export interface Trigger {
   id: string;
   target: 'workflow' | 'agent';
@@ -91,11 +89,9 @@ export function SecretBox({ trigger }: { trigger: Trigger }) {
   );
 }
 
-// useTriggerActions is what every trigger list does with a row — enable /
-// disable, fire, rotate the secret, edit, delete — with one busy flag per
-// trigger (two worked at once must not free each other's buttons), the row
-// being edited, and the secret a rotation just minted, until the caller
-// drops it.
+// useTriggerActions is what every trigger list does with a row (enable, fire,
+// rotate, edit, delete), one busy flag per trigger, plus the secret a rotation
+// just minted.
 export function useTriggerActions(reload: () => void, sessionName: (id: string) => string) {
   const confirm = useConfirm();
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
@@ -134,9 +130,8 @@ export function useTriggerActions(reload: () => void, sessionName: (id: string) 
   };
 }
 
-// TriggerListState is what every trigger list shows while it has no rows:
-// the loading placeholder, the load error, or the empty state (held while
-// the add form is open).
+// TriggerListState is what every trigger list shows while it has no rows: the
+// loading placeholder, the load error, or the empty state (held while adding).
 export function TriggerListState({ loading, error, count, adding }: { loading: boolean; error: string | null; count: number; adding: boolean }) {
   if (loading && count === 0) return <Loading kind="list" />;
   if (error) return <Flash variant="danger">Could not load triggers: {error}</Flash>;
@@ -152,15 +147,9 @@ export function TriggerListState({ loading, error, count, adding }: { loading: b
   return null;
 }
 
-// TriggerRow is one trigger as every list shows it: one line — the status
-// dot and what it starts as the title (a workflow or an agent, said by the
-// icon), how it fires as a label — that opens on the rest: where it fires
-// and into which conversation, its brief, how it last went and when it
-// fires next. Two actions stay in reach — fire, and the switch — the rest
-// sit behind the kebab; their box stops the clicks (the kebab's menu
-// included — it bubbles through the React tree from its portal) so none of
-// them toggles the row. targetName is the workflow's or the agent's; a list
-// under one workflow passes none, and the kind takes the title's place.
+// TriggerRow is one trigger as every list shows it: one line (status dot, what it
+// starts, how it fires) that opens on the rest. Fire and the switch stay in reach,
+// the rest behind the kebab; their box stops clicks (the portal menu bubbles too).
 export function TriggerRow({ t, sessionName, targetName, targetAvatar, timezone, actions }:
   { t: Trigger; sessionName: string; targetName?: string; targetAvatar?: string; timezone?: string; actions: ReturnType<typeof useTriggerActions> }) {
   const busy = actions.busy(t.id);
@@ -226,11 +215,9 @@ export function TriggerRow({ t, sessionName, targetName, targetAvatar, timezone,
   );
 }
 
-// TriggerForm creates or edits one trigger: what to start (a workflow, or a
-// turn of an agent — fixed when the form belongs to one workflow), what fires
-// it, where, and the brief. `initial` is the trigger being edited; onSaved
-// gets the row (a new webhook's with its secret, once) and whether it was
-// created. `inline` is the edit form in a row's place inside the list.
+// TriggerForm creates or edits one trigger: what to start (fixed when the form
+// belongs to one workflow), what fires it, where, and the brief. onSaved gets
+// the row (a new webhook's with its secret, once) and whether it was created.
 export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inline, onSaved, onCancel }: {
   fixedWorkflow?: Named | null;
   sessionId: string | null;
@@ -255,9 +242,8 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
   const ready = form.session_id
     && (form.target === 'workflow' ? form.workflow_id : form.agent_config_id)
     && (form.kind !== 'cron' || form.schedule.trim());
-  // "New session" is made here, on Save, named after what the trigger starts
-  // so it can be told apart before its first fire; a refused trigger takes it
-  // back (invariant 69).
+  // "New session" is made here, on Save, named after what the trigger starts;
+  // a refused trigger takes it back (invariant 69).
   const save = async () => {
     setBusy(true);
     let made: string | null = null;

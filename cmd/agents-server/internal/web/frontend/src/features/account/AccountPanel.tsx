@@ -16,10 +16,9 @@ import { useLoadError } from '@/features/admin/useLoadError';
 type PatView = ApiSchemas['protocol.PatView'];
 type PatRow = Omit<PatView, 'id'> & { id: string };
 
-// AccountPanel: who is signed in and (OAuth mode) personal access tokens. In
-// token mode the PAT section is absent — the server refuses the surface
-// there, since a PAT could never authenticate against a static token.
-// Signing out lives in the sidebar's account menu.
+// AccountPanel: who is signed in and, in OAuth mode, personal access tokens;
+// token mode has no PAT section (the server refuses it there). Signing out
+// lives in the sidebar's account menu.
 export function AccountPanel() {
   const { data: cfg, error } = useApi<AuthConfig>(authConfig, [], 'auth:config');
   useLoadError(error, 'account details');

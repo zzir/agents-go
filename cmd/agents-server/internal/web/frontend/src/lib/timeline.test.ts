@@ -1,23 +1,11 @@
-// The isomorphism contract between the two ways a turn is built:
+// The isomorphism contract (invariant 16): the streaming path (streamReducer via
+// useAgentSocket) and the replay path (buildTimeline over persisted entries) must
+// build the same turn.parts; these tests drive both for the same logical turn.
 //
-//   streaming — useAgentSocket applies run events via the streamReducer
-//               transforms as they arrive;
-//   replay    — buildTimeline rebuilds the same turn from the ENTRIES the
-//               backend persisted (the displays the runner recorded, plus
-//               runner.savePartialTurn's annotations).
-//
-// What the user watched stream in must equal what a reload shows. These tests
-// drive BOTH paths for the same logical turn and assert the resulting
-// turn.parts are identical, so a shape change on one side fails here instead
-// of shipping a UI that renders differently after refresh.
-//
-// Documented intentional differences (asserted below, keep this list in sync
-// with docs/explanation/workbench-invariants.md):
-//   1. handoff parts are live-only — a reload conveys the transfer via the
-//      transfer_to_* tool-call card instead.
-//   2. a user-rejected tool call keeps status 'rejected' live, but replays as
-//      'completed' — per-call status is not persisted; the rejection notice
-//      survives in the call's output text.
+// Documented intentional differences (asserted below):
+//   1. handoff parts are live-only — a reload conveys the transfer via the transfer_to_* card.
+//   2. a user-rejected call keeps status 'rejected' live but replays as 'completed'
+//      (per-call status is not persisted; the rejection notice survives in the output text).
 import { describe, it, expect } from 'vitest';
 import { buildTimeline, findToolCall, rowKeys, type EntryView, type TimelineEntry, type TurnEntry } from '@/lib/timeline';
 import {
@@ -148,12 +136,10 @@ describe('stream/replay isomorphism', () => {
   });
 
   it('task terminal before its spawn card: the fold is recoverable after append', () => {
-    // Parent and task runs are delivered on independent subscriptions with no
-    // cross-run ordering (a reconnect replays both buffers), so a fast task's
-    // terminal event can precede the parent's run.tool_call. The early fold
-    // finds no card and reports null — nothing patched, nothing invented; the
-    // socket layer re-folds from s.tasks right after appending the card. This
-    // pins that recovery: append-then-fold lands the same parts as replay.
+    // Parent and task runs have no cross-run ordering, so a fast task's
+    // terminal event can precede the parent's run.tool_call: the early fold
+    // finds no card and reports null, and the socket layer re-folds from
+    // s.tasks after appending the card. This pins that recovery.
     let live = ensureLiveTurn([], RUN)!;
     expect(applyTaskTerminal(live, 'c1', { id: 't1', label: 'Quick job', status: 'failed', summary: 'boom' })).toBeNull();
     live = appendToolCall(live, {
@@ -217,12 +203,10 @@ describe('stream/replay isomorphism', () => {
   });
 
   it('task retry: a summary from a voided attempt is dropped on replay', () => {
-    // The fold keeps the last NON-EMPTY summary (merge cannot blank), so after
-    // a retry the previous attempt's failure text survives in the display
-    // beside the new attempt's status. task_summary_attempt is its provenance:
-    // older than the card's attempt means a retry voided it, and rendering it
-    // would show "Task result: <old failure>" against a task that is working
-    // again — or against a later attempt that finished with nothing to say.
+    // The fold keeps the last NON-EMPTY summary, so after a retry the previous
+    // attempt's failure text survives beside the new status;
+    // task_summary_attempt is its provenance, and older than the card's attempt
+    // means a retry voided it.
     const spawnRow = (extra: Record<string, unknown>): EntryView[] => ([
       { id: "1", run_id: RUN, kind: 'item', role: 'assistant', content: 'spawn_task({})', display: { kind: 'tool_call', call_id: 'c1', tool_name: 'spawn_task', arguments: '{}', title: 'Flaky job', summary: 'rate limited', extra } },
     ]);

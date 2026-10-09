@@ -138,7 +138,7 @@ a:hover {
     display: block;
 }
 
-/* --- Sidebar --- */
+/* Sidebar */
 .sidebar-container {
     display: flex;
     flex-direction: column;
@@ -147,7 +147,7 @@ a:hover {
     background: var(--bgColor-default);
 }
 
-/* --- Body row: sidebar | content, both independently scrollable --- */
+/* Body row: sidebar | content, both independently scrollable */
 .app-body {
     display: flex;
     flex: 1;
@@ -200,7 +200,7 @@ a:hover {
     z-index: 1;
 }
 
-/* --- The rail: the sidebar's shape below its minimum width (invariant 68) --- */
+/* The rail: the sidebar's shape below its minimum width (invariant 68) */
 
 /* Only the snap between the two shapes animates; a resize that follows the
    pointer never does. */
@@ -335,7 +335,7 @@ a:hover {
     white-space: nowrap;
 }
 
-/* --- Main content area --- */
+/* Main content area */
 .app-content {
     display: flex;
     flex-direction: column;
@@ -429,7 +429,7 @@ a:hover {
 }
 
 
-/* --- Dialog body: fixed nav | scrollable content --- */
+/* Dialog body: fixed nav | scrollable content */
 .settings-layout {
     display: flex;
     flex: 1;
@@ -546,7 +546,7 @@ a:hover {
     }
 }
 
-/* --- List rows inside a Box card --- */
+/* List rows inside a Box card */
 .Box-row {
     display: flex;
     align-items: center;

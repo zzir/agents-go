@@ -36,14 +36,13 @@ export const clearDraft = (sessionId: string): void => saveKey('draft', sessionI
 export const loadSessionAgent = (sessionId: string): string => loadKey('agent', sessionId);
 export const saveSessionAgent = (sessionId: string, agentConfigId: string): void => saveKey('agent', sessionId, agentConfigId);
 
-// The agent the user picked most recently, across sessions: a new, unbound
-// conversation opens on it rather than always resetting to the first in the
-// list. A per-session draft or the session's server-side agent still win.
+// The agent picked most recently, across sessions: a New composer opens on it
+// (invariant 77); a per-session draft or the session's server-side agent still wins.
 export const loadLastAgent = (): string => { try { return localStorage.getItem('chat.lastAgent') || ''; } catch { return ''; } };
 export const saveLastAgent = (agentConfigId: string): void => { try { if (agentConfigId) localStorage.setItem('chat.lastAgent', agentConfigId); } catch { /* ignore */ } };
 
-// The user's pre-binding project choice; once the first run binds the session,
-// the server value wins and this draft stops mattering.
+// The pre-binding project choice; once the first run binds the session the
+// server value wins — invariant 27.
 export const loadSessionProject = (sessionId: string): string => loadKey('project', sessionId);
 export const saveSessionProject = (sessionId: string, projectId: string): void => saveKey('project', sessionId, projectId);
 

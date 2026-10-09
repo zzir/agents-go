@@ -50,9 +50,8 @@ interface SessionListProps {
   onOpenHub: () => void;
 }
 
-// A menu item's click also bubbles along the React tree — through the
-// portal — to the enclosing row's onSelect, which would switch the active
-// chat; every menu action stops it first.
+// A menu item's click bubbles along the React tree (through the portal) to the
+// row's onSelect, which would switch the active chat; every menu action stops it.
 function menuAction(fn: () => void) {
   return (e: SyntheticEvent) => {
     e.stopPropagation();
@@ -197,10 +196,8 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
   };
   const [renaming, setRenaming] = useState<Session | null>(null);
 
-  // For every mutation: optimistically update the cached list AND migrate active
-  // state as soon as the server call succeeds, then reconcile with a background
-  // reload. The optimistic list update means a reload failure can't strand a
-  // deleted session in the sidebar or show a stale pin.
+  // Every mutation updates the cached list optimistically and migrates active state
+  // on success, then reconciles by a background reload (whose failure strands nothing).
 
   // The heaviest delete in the app — the conversation goes with its messages,
   // traces and tasks — so it confirms like every other one (invariant 41).

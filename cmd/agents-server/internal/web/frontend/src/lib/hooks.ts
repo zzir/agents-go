@@ -20,9 +20,8 @@ export function useNarrow(): boolean {
 }
 
 const RESIZE_ARROW_KEY_STEP = 10;
-// A collapsible pane's hysteresis, in pixels inside `min`: an edge dragged
-// past the first snaps to the rail, and only one dragged back past the second
-// snaps out again.
+// A collapsible pane's hysteresis, in pixels inside `min`: past the first snaps
+// to the rail, back past the second snaps out — invariant 68.
 const COLLAPSE_GAP = 60;
 const EXPAND_GAP = 40;
 // How long `snapping` stays on after a snap — longer than the CSS transition.
@@ -74,9 +73,8 @@ interface UseResizablePaneOptions {
   min: number;
   max: number;
   defaultWidth: number;
-  /** Which side of the viewport the pane is docked to — flips the drag sign:
-   *  a 'left'-docked pane (sidebar) grows when its edge is dragged right, a
-   *  'right'-docked one (a trace/detail drawer) grows when dragged left. */
+  /** Which side the pane is docked to; flips the drag sign (a 'left' pane grows
+   *  when its edge is dragged right, a 'right' one when dragged left). */
   edge: 'left' | 'right';
   /** The width the pane snaps to when its edge is dragged well inside `min`
    *  (the sidebar's icon rail). Absent, the drag stops at `min`. */
@@ -104,15 +102,9 @@ interface ResizablePane {
   };
 }
 
-/**
- * Drag-to-resize behavior shared by the sidebar and any right-docked panel
- * (trace/detail drawers): pointer-drag width persisted per storageKey, with
- * arrow-key nudging and double-click-to-reset. Spread `handleProps` onto the
- * drag-handle element; apply `width` to the pane itself. With `collapsedWidth`
- * the pane also has a collapsed shape (invariant 68): a drag well inside `min`
- * snaps to it; a drag back out, `expand`, a widening arrow key or a double
- * click snaps out.
- */
+/** Drag-to-resize for the sidebar and right-docked drawers: a width persisted per
+ * storageKey, arrow-key nudging, double-click reset. Spread `handleProps` onto the
+ * handle, `width` onto the pane. With `collapsedWidth` it snaps to a rail — invariant 68. */
 export function useResizablePane({ storageKey, min, max, defaultWidth, edge, collapsedWidth }: UseResizablePaneOptions): ResizablePane {
   const collapsible = collapsedWidth !== undefined;
   const collapsedKey = storageKey + 'Collapsed';
@@ -242,19 +234,16 @@ interface UseApiResult<T> {
   mutateData: (fn: (prev: T | null) => T | null) => void;
 }
 
-/** Fetches once on mount and again when `deps` change. With a `key`, the
- * response is shared through the cache above: a mount finds the last answer
- * at once (revalidating it in the background past the TTL), a reload anywhere
- * reaches every consumer, and invalidate(key) refetches them all. Pick a key
- * that changes with `deps` (put the id in it). */
+/** Fetches on mount and when `deps` change. With a `key` the response is shared
+ * through apiCache: a mount finds the last answer at once, and a reload or
+ * invalidate(key) reaches every consumer. Pick a key that changes with `deps`. */
 export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = [], key?: string): UseApiResult<T> {
   const cached = key ? getCached(key) : undefined;
   const [data, setData] = useState<T | null>(cached && cached.at > 0 ? cached.data as T : null);
   const [loading, setLoading] = useState(!(cached && cached.at > 0));
   const [error, setError] = useState<string | null>(null);
-  // Monotonic request id: only the newest reload/mutateData may write data,
-  // error and loading — a slow earlier reload can't overwrite a newer result or
-  // a just-applied optimistic update.
+  // Monotonic request id: only the newest reload/mutateData writes state, so a
+  // slow earlier reload cannot overwrite a newer result or an optimistic update.
   const genRef = useRef(0);
 
   const reload = useCallback(async (opts?: { throwOnError?: boolean }) => {
@@ -268,9 +257,8 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList = [], 
       }
     } catch (e) {
       if (gen === genRef.current) setError((e as Error).message);
-      // Auto-refreshes (useEffect, timers, event handlers) fire-and-forget and
-      // must not reject; only a caller that opts in — a mutation awaiting the
-      // refresh — gets the error propagated.
+      // Auto-refreshes fire-and-forget and must not reject; only a caller that
+      // opts in (a mutation awaiting the refresh) gets the error.
       if (opts?.throwOnError) throw e;
     } finally {
       if (gen === genRef.current) setLoading(false);
@@ -342,15 +330,9 @@ interface UseCrudResult<T, F> {
   remove: (id: CrudId, label?: string) => Promise<boolean>;
 }
 
-/**
- * The list + add/edit/delete state machine every settings panel needs. Wraps a
- * CRUD `api.*` resource: tracks the adding/editing toggle, reloads after a
- * write, and routes every mutation failure through `toast.error` — so panels
- * don't each re-implement (and forget) error handling. Special per-panel
- * actions (OAuth connect, sandbox exec, …) stay in the panel and use `reload`.
- * `key` is the list's cache key (see useApi): every write reloads through it,
- * so a picker elsewhere holding the same list sees the change.
- */
+/** The list + add/edit/delete state machine every settings panel needs, over a
+ * CRUD `api.*` resource: reloads after a write and routes every mutation failure
+ * through `toast.error`. `key` is the list's cache key (useApi): a write reloads every holder. */
 export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
   resource: CrudResource<F>,
   key?: string,
@@ -381,11 +363,9 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
       return true;
     } catch (e) {
       toast.error((e as Error).message);
-      // A 409 on an EDIT means the row changed under the form: resubmitting
-      // the stale snapshot can only 409 again, and the list still holds the
-      // stale row — so close the editor and reload, and the next Edit starts
-      // from current data. An add's 409 (duplicate name) keeps the form: the
-      // fix is changing the input, which is worth keeping.
+      // A 409 on an EDIT means the row changed under the form: close the editor
+      // and reload, so the next Edit starts from current data. An add's 409
+      // keeps the form.
       if (editing && (e as { status?: number }).status === 409) {
         setEditing(null);
         await reload();
@@ -397,8 +377,7 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
     }
   }, [editing, resource, reload]);
 
-  // Every delete confirms here, so a new panel cannot forget the guard.
-  // Returns whether the row was deleted (false on decline or API error).
+  // Every delete confirms here — invariant 41. Returns whether the row was deleted.
   const remove = useCallback(async (id: CrudId, label?: string) => {
     const ok = await confirmDialog({
       title: label ? `Delete “${label}”?` : 'Delete this item?',
@@ -420,12 +399,9 @@ export function useCrud<T extends { id: CrudId }, F = Partial<T>>(
   return { items: data ?? [], loading, error, reload, adding, editing, saving, startAdd, startEdit, cancel, save, remove };
 }
 
-/** Copy-to-clipboard with the 1.5s "Copied" flip every copy button shows.
- * `copied` holds the key passed to `copy` (default 'default') until the flip
- * ends, null otherwise — so one hook serves multi-target boxes too. A denied
- * clipboard permission reports via toast instead of failing silently; the
- * promise says whether the copy happened, for a caller that flips its own
- * button (markup outside React). */
+/** Copy-to-clipboard with the 1.5s "Copied" flip. `copied` holds the key passed
+ * to `copy` (default 'default') while the flip lasts, so one hook serves multi-target
+ * boxes; a denied clipboard reports by toast, and the promise says whether the copy happened. */
 export function useCopy(): { copied: string | null; copy: (text: string, key?: string) => Promise<boolean> } {
   const [copied, setCopied] = useState<string | null>(null);
   const timer = useRef<number | undefined>(undefined);
@@ -447,7 +423,6 @@ export function useCopy(): { copied: string | null; copy: (text: string, key?: s
   return { copied, copy };
 }
 
-/** Ticks once a second while `live`; returns the current ms timestamp for duration labels. */
 // useDebouncedValue follows value after it has held still for ms.
 export function useDebouncedValue<T>(value: T, ms: number): T {
   const [settled, setSettled] = useState(value);
@@ -458,6 +433,7 @@ export function useDebouncedValue<T>(value: T, ms: number): T {
   return settled;
 }
 
+/** Ticks once a second while `live`; returns the current ms timestamp for duration labels. */
 export function useNowTicker(live: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -479,14 +455,9 @@ interface Page<T> {
   setIndex: (i: number) => void;
 }
 
-/**
- * usePage slices a whole list into pages of `size`, for a Table.Pagination fed
- * `defaultPageIndex={index}`. The index is clamped to the last page rather than
- * reset, so a delete on the last page shows the page before it, not an empty
- * one. setIndex ignores the current index: the pagination echoes a changed
- * defaultPageIndex through onChange while it renders, and a state write from
- * there would be an update to another component mid-render.
- */
+/** usePage slices a list into pages of `size` for a Table.Pagination. The index
+ * clamps to the last page (a delete there shows the page before); setIndex
+ * ignores the current index, which the pagination echoes via onChange mid-render. */
 export function usePage<T>(all: T[], size: number): Page<T> {
   const [index, setIndex] = useState(0);
   const count = Math.max(1, Math.ceil(all.length / size));
@@ -524,14 +495,12 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
     }
   }, []);
 
-  // When the person last stopped following (a changing selection, an upward
-  // wheel or drag); each vetoes re-sticking only while recent (350ms) —
-  // invariant 18.
+  // When the person last stopped following (selection change, upward wheel or
+  // drag); each vetoes re-sticking only while recent (350ms) — invariant 18.
   const lastSelChange = useRef(0);
   const lastUpIntent = useRef(0);
-  // The person pressed a pointer or key inside the log since content last
-  // arrived: growth after it is theirs (a block they opened), however late it
-  // lands, not content to follow.
+  // A pointer or key pressed in the log since content last arrived: growth after
+  // it is theirs (a block they opened), not content to follow.
   const pressed = useRef(false);
   // Where the hook last put or saw the view; a scroll event is read against
   // it, so a position the hook set itself never reads as the person's move.
@@ -561,10 +530,9 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
         rafId = requestAnimationFrame(() => {
           rafId = 0;
           const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
-          // Position moved away from the bottom: upward scrollbar drag or
-          // touch scroll (wheel is caught below, before position even moves).
-          // The dist guard keeps content shrinkage — which clamps scrollTop
-          // but leaves dist at 0 — from reading as user intent.
+          // Moved up by scrollbar drag or touch scroll (wheel is caught below).
+          // The dist guard keeps content shrinkage, which clamps scrollTop,
+          // from reading as intent.
           const movedUp = node.scrollTop < seen.current.top - 1 && dist > seen.current.dist + 1;
           seen.current = { top: node.scrollTop, dist };
           const now = performance.now();
@@ -572,18 +540,15 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
             lastUpIntent.current = now;
             updateSticky(false);
           } else if (dist >= 80) {
-            // Away from the bottom without having moved up: the log grew under
-            // the pin. Following it or handing over is the observer's call,
-            // made later in this same frame; without one, this is the notice.
+            // Away from the bottom without moving up: the log grew under the pin.
+            // The observer decides later this frame; without one, this is the notice.
             if (!observer) updateSticky(false);
           } else if (now - lastSelChange.current > 350 && now - lastUpIntent.current > 350) {
             // At the bottom with no recent stop-following intent: (re)stick.
             updateSticky(true);
           }
-          // At the bottom but vetoed (mid-selection / just wheeled up): leave
-          // the state as is — the veto blocks RE-sticking after an unstick,
-          // it must not force an unstick while still pinned (that surfaced a
-          // "Jump to latest" button with nothing below to jump to).
+          // At the bottom but vetoed: left as is — the veto blocks RE-sticking,
+          // it never forces an unstick while pinned.
         });
       };
       const onWheel = (e: WheelEvent) => {
@@ -607,9 +572,9 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
           if (!stick.current) return;
           const now = performance.now();
           if (pressed.current || now - lastSelChange.current < 350 || now - lastUpIntent.current < 350) {
-            // The person is working in the log (opened a block, is selecting,
-            // just scrolled): stay where they are, and stop following once the
-            // growth pushes the bottom out of reach, so nothing later yanks.
+            // The person is working in the log (opened a block, selecting, just
+            // scrolled): stay put, and unstick once growth pushes the bottom
+            // out of reach.
             if (node.scrollHeight - node.scrollTop - node.clientHeight >= 80) updateSticky(false);
             return;
           }
@@ -630,19 +595,15 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
   }, [updateSticky, pin]);
 
   useEffect(() => {
-    // Making or growing a selection in the log suspends bottom-following even
-    // at the bottom: auto-scroll would move the content under the cursor
-    // mid-drag. Only selection *changes* unstick — a static leftover
-    // selection doesn't keep re-unsticking, so the scroll handler above can
-    // win once the user scrolls back down.
+    // A changing selection in the log suspends following; a static leftover one
+    // does not keep re-unsticking — invariant 18.
     const onSelect = () => {
       const el = elRef.current;
       if (!el) return;
       if (selectionInside()) {
-        // Record the intent but do NOT unstick yet: with nothing arriving,
-        // selecting at the bottom must not surface a "Jump to latest" button
-        // for content that doesn't exist. The pin effect below unsticks
-        // lazily, on the first content growth during an active selection.
+        // Record the intent, do NOT unstick yet: with nothing arriving there is
+        // nothing to jump to. The pin effect unsticks on the first growth
+        // during a selection.
         lastSelChange.current = performance.now();
       } else if (!stick.current) {
         // Selection cleared while still at the bottom: resume following.
@@ -659,11 +620,9 @@ export function useScrollToBottom(dep: unknown, resetDep: unknown): ScrollAnchor
   useEffect(() => {
     const el = elRef.current;
     if (!el || !stick.current) return;
-    // Content arrived while a selection is actively changing (mid-drag):
-    // following would move the text under the cursor, so hand over to the
-    // unstuck state — the button appears now, when there genuinely is newer
-    // content below. A static leftover selection doesn't veto (recency
-    // window), matching the scroll handler's discriminator.
+    // Content arrived mid-selection: following would move the text under the
+    // cursor, so unstick now, when there is newer content below. A stale
+    // selection does not veto.
     if (performance.now() - lastSelChange.current < 350) {
       updateSticky(false);
       return;

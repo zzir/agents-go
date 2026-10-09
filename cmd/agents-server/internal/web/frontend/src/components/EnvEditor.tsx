@@ -43,9 +43,9 @@ export function cleanEnv(vars: EnvVar[]): EnvVar[] {
 export function EnvEditor({ vars, onChange, disabled }: EnvEditorProps): ReactElement {
   const set = (i: number, patch: Partial<EnvVar>) =>
     onChange(vars.map((v, n) => (n === i ? { ...v, ...patch } : v)));
-  // One local id per row, kept in step with `vars` by position: a row's key
-  // must survive its own edits (a new object every keystroke) and a removal
-  // above it, or React remounts the inputs under the cursor.
+  // One local id per row, kept by position with `vars`: a row's key must
+  // survive its own edits and a removal above it, or React remounts the inputs
+  // under the cursor.
   const idsRef = useRef<number[]>([]);
   const nextId = useRef(1);
   const ids = idsRef.current;

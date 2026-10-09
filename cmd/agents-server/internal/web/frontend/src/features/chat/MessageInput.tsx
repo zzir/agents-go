@@ -20,18 +20,16 @@ interface MessageInputProps {
   // before typing; blocked, when set, is said instead.
   hint?: string;
   running: boolean;
-  // onQueue, while a run is live, takes what is typed instead of onSend: a
-  // steer the run reads at its next step, or a follow-up for when it ends.
-  // Text only — an image, /plan and /workflow belong to a new run.
-  // It answers false when nothing took the text, which then stays typed.
+  // onQueue, while a run is live, takes the typed text instead of onSend (a
+  // steer or a follow-up; text only) and answers false when nothing took it, so
+  // it stays typed.
   onQueue?: (text: string, queue: 'steer' | 'follow_up') => boolean;
   // allowAttachments gates every image affordance: attachment storage is
   // configured AND the picked agent has Vision on.
   allowAttachments?: boolean;
   toolbar?: ReactNode;
-  // plusItems is what the "+" menu offers after Image — the Project submenu
-  // while the session is unbound; null once bound. The button renders only
-  // when something in the menu can be taken.
+  // plusItems is what the "+" menu offers after Image — the Project submenu while
+  // unbound, null once bound; the button renders only when the menu has something.
   plusItems?: ReactNode;
 }
 
@@ -71,9 +69,8 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
     setAtts(saved.map(meta => ({ key: `saved-${meta.id}`, file: null as unknown as File, localUrl: meta.url, status: 'ready' as const, meta })));
   }, [sessionId]);
 
-  // A restored draft opens with the caret at its end, where typing left off:
-  // React writes the initial value before the element is in the document, and
-  // the browser then starts the selection at 0.
+  // A restored draft opens with the caret at its end: React writes the initial
+  // value before the element is in the document, and the browser then selects at 0.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el || !el.value) return;
@@ -171,10 +168,9 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
     return () => onComposerInsert(null);
   }, [sessionId]);
 
-  // The slash commands: offered while the box holds nothing but a command
-  // prefix, narrowed as it is typed, walked with the arrow keys and taken
-  // with Enter or Tab — the way "/" works in an editor. Escape, or leaving
-  // the box, dismisses the offer until the text changes.
+  // Slash commands: offered while the box holds only a command prefix, narrowed
+  // as typed, walked with arrows, taken with Enter/Tab; Escape or blur
+  // dismisses until the text changes.
   const commands = useSlashCommands();
   const query = slashQuery(text);
   const offered = useMemo(() => (query === null ? [] : matchCommands(commands, query)), [commands, query]);
@@ -221,10 +217,8 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // While an IME composition is active (Chinese/Japanese/Korean input),
-    // Enter commits the candidate selection and must NOT send the message.
-    // `isComposing` is set for the whole composition; keyCode 229 is the
-    // legacy signal browsers emit for the same in-composition key.
+    // During an IME composition Enter commits the candidate, not the message;
+    // keyCode 229 is the older signal for the same in-composition key.
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (popupOpen) {
       switch (e.key) {
@@ -335,10 +329,8 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
                   onClick={(e) => { e.preventDefault(); onCancel(e.shiftKey); }}
                   style={{ color: 'var(--fgColor-danger)' }}
                 />
-                {/* The graceful stop, reachable without a modifier key: a
-                    touch or keyboard user opens the menu beside the button.
-                    The follow-up is here too: the other thing to do with a
-                    run that is still going. */}
+                {/* The graceful stop and the follow-up, reachable without a
+                    modifier key: a touch or keyboard user opens this menu. */}
                 <ActionMenu>
                   <ActionMenu.Anchor>
                     <IconButton icon={TriangleDownIcon} size="small" variant="invisible" aria-label="More actions for this run" />

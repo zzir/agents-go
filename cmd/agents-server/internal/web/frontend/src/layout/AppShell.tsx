@@ -44,9 +44,8 @@ export function AppShell({ onSettingsOpen, sidebarPane, railActions, sidebarOpen
   );
   const narrow = useNarrow();
   const closeSidebar = useCallback(() => onSidebarToggle(false), [onSidebarToggle]);
-  // The drawer is a CSS shift with no dialog behind it, so Escape is wired
-  // here: it closes the drawer and puts focus back on the button that opened
-  // it. Through Primer's registry, so an overlay open on top takes the key first.
+  // The drawer is a CSS shift with no dialog behind it, so Escape is wired here
+  // (through Primer's registry, so an overlay open on top takes the key first).
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const drawerOpen = narrow && sidebarOpen;
   useOnEscapePress(useCallback((e: KeyboardEvent) => {

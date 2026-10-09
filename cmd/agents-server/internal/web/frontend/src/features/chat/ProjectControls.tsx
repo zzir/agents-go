@@ -113,11 +113,8 @@ export function useProjectMenu({ project, sessionId, rebuildable, hostable, runn
   const [sandboxState, setSandboxState] = useState('');
   const [stateLoading, setStateLoading] = useState(false);
 
-  // The state is read when the bound project changes, again as the menu opens,
-  // and whenever a run starts or ends: a run's first command starts the
-  // sandbox without telling this component. A failure leaves the last known
-  // value in place (or, on a first read, offers Start — the harmless choice);
-  // only the newest read for the current project lands.
+  // The state is re-read on the edges that move it; only the newest read lands
+  // — invariant 49.
   const stateReqSeq = useRef(0);
   const refreshSandboxState = useCallback(async (projectID: string) => {
     const seq = ++stateReqSeq.current;

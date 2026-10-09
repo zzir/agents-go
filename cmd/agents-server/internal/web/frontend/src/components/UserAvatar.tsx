@@ -1,7 +1,6 @@
 import { useState } from 'react';
 
-// The fields a picture and a name need; both AuthUser and a store.User row
-// carry them.
+// The fields a picture and a name need; AuthUser and store.User both carry them.
 export interface Person { name?: string; email?: string; avatar_url?: string }
 
 // UserAvatar: the provider's picture when there is one (and it loads),

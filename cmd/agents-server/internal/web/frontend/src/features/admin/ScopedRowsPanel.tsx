@@ -47,10 +47,9 @@ const WORKFLOWS: EntityKind = {
   setScope: api.workflows.setScope, setOwner: api.workflows.setOwner,
 };
 
-// ScopedRowsPanel: one entity's rows across every member — who authored each,
-// whether it is published, and the two management acts an admin has over it
-// (publish/unpublish, and transfer to another account). Editing stays where
-// authorship is: the entity's own settings panel.
+// ScopedRowsPanel: one entity's rows across every member — author, published
+// or not, and the admin's two acts (publish/unpublish, transfer). Editing
+// stays in the entity's own settings panel.
 export function ScopedRowsPanel({ kind }: { kind: EntityKind }) {
   const { data: rows, error, reload } = useApi<ConfigRow[]>(kind.list, [kind], `admin:${kind.key}`);
   useLoadError(error, kind.label.toLowerCase());

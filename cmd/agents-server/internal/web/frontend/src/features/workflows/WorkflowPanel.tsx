@@ -110,9 +110,8 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
   const setStep = (i: number, patch: Partial<WorkflowStep>) =>
     setForm(prev => ({ ...prev, steps: prev.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)) }));
 
-  // Reordering is up/down rather than drag: the order is the whole meaning of a
-  // workflow, and two buttons are exact, keyboard-reachable and need no
-  // dependency. A step keeps its id as it moves, so a run in flight is unaffected.
+  // Reordering is up/down, not drag: exact, keyboard-reachable, no dependency.
+  // A step keeps its id as it moves, so a run in flight is unaffected.
   const move = (i: number, delta: number) =>
     setForm(prev => {
       const j = i + delta;
@@ -122,9 +121,8 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
       return { ...prev, steps };
     });
 
-  // Removing a step also resets edges that pointed at it (back to '' =
-  // default) — the pickers no longer show the id, but a kept value would still
-  // be saved, and the server rejects a dangling target.
+  // Removing a step also resets edges that pointed at it (back to '' = default):
+  // a kept value would still be saved, and the server rejects a dangling target.
   const removeStep = (i: number) =>
     setForm(prev => {
       const gone = prev.steps[i]?.id;
@@ -262,11 +260,9 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
   );
 }
 
-// RunDialog asks for the brief and the conversation to report back to —
-// the one the person came from by default — and starts the workflow: the
-// person's own start, the same one the agent's tool makes. A conversation
-// with no project bound is offered one here: the execution runs on the
-// conversation's binding, and without one it has no file or command tools.
+// RunDialog asks for the brief and the session to report back to (the one the
+// person came from by default) and starts the workflow, as the agent's tool does.
+// A session with no project bound is offered one: without it, no file or command tools.
 function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessionId: string | null; onClose: () => void }) {
   const [target, setTarget] = useState(sessionId || '');
   const [input, setInput] = useState('');
@@ -278,9 +274,8 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
   const [projectId, setProjectId] = useState('');
   const unbound = target === NEW_SESSION || (!!target && !!targetSession && !targetSession.project_id);
   const project = (projects || []).find(p => p.id === projectId);
-  // "New session" is made here, on Run, still default-named: the start names
-  // it after the workflow and brief; a refused start takes it back
-  // (invariant 69).
+  // "New session" is made here, on Run, default-named (the start names it after
+  // the workflow and brief); a refused start takes it back (invariant 69).
   const run = async () => {
     setBusy(true);
     let made: string | null = null;
@@ -351,10 +346,8 @@ export function WorkflowPanel({ sessionId }: { sessionId: string | null }) {
   const closeForm = () => { setTemplate(null); cancel(); };
   const page = usePage(workflows, PAGE_SIZE);
 
-  // A row the caller may not edit still opens — as a read-only view of the
-  // full definition (steps, prompts, gates), the disabled fieldset CrudPanel
-  // gives the other scoped panels; FormActions hides itself and Back closes
-  // the view.
+  // A row the caller may not edit still opens as a read-only view (CrudPanel's
+  // disabled fieldset); FormActions hides itself and Back closes the view.
   let editForm = null;
   if (editing) {
     const form = (

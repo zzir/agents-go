@@ -31,9 +31,9 @@ export interface TraceEventData {
   ended_at?: string;
   data?: Record<string, unknown> | null;
   duration?: string;
-  // The payload fields (input, output, …) were left out of data — by the
-  // summary listing, or by the live cap — and load on open from the stored
-  // row (ChatActions.loadSpan).
+  // The payload fields (input, output, …) left out of data by the summary
+  // listing or the live cap; they load on open from the stored row
+  // (ChatActions.loadSpan).
   payloadOmitted?: boolean;
   // The image attachments the span's input items reference, resolved by the
   // server (the items themselves keep the stored reference).
@@ -69,8 +69,6 @@ function spanColor(s: TraceEventData): string {
   return s.error ? 'var(--fgColor-danger)' : (SPAN_META[s.type || ''] || FALLBACK_META).color;
 }
 
-/* ---------- span payloads ---------- */
-
 // Structured view of a function span's data: the tool call's arguments and
 // its stringified result — a multimodal result as its text and pictures.
 function FunctionPayload({ data, indent }: { data: PayloadRecord; indent: number }) {
@@ -90,8 +88,7 @@ function FunctionPayload({ data, indent }: { data: PayloadRecord; indent: number
 }
 
 // Structured view of a generation span's data: the exact request body the
-// model received (instructions, tool definitions, settings, items) and the
-// items it returned.
+// model received (instructions, tools, settings, items) and the items it returned.
 function GenerationPayload({ data, attachments, indent }: { data: PayloadRecord; attachments?: AttachmentMeta[]; indent: number }) {
   const [replayOpen, setReplayOpen] = useState(false);
   const input = payloadItems(data.input);
@@ -170,8 +167,6 @@ function GenerationPayload({ data, attachments, indent }: { data: PayloadRecord;
   );
 }
 
-/* ---------- span tree + waterfall ---------- */
-
 interface SpanNode {
   span: TraceEventData;
   children: SpanNode[];
@@ -193,11 +188,9 @@ function buildSpanTree(spans: TraceEventData[]): SpanNode[] {
   return roots;
 }
 
-// splitEpisodes cuts a run's roots where it stopped and later went on: a root
-// agent span no handoff led to (the loop a resume restarts). Each stretch then
-// gets its own timeline instead of sharing one with the pause between them. A
-// root that is not an agent (a before-run compaction) goes with the agent
-// span after it.
+// splitEpisodes cuts a run's roots where it stopped and went on (a root agent
+// span no handoff led to); a non-agent root (a before-run compaction) goes with
+// the agent after it.
 function splitEpisodes(roots: SpanNode[]): SpanNode[][] {
   const episodes: SpanNode[][] = [];
   let pending: SpanNode[] = [];
@@ -228,7 +221,8 @@ interface TimeRange {
   total: number;
 }
 
-// spanExtent is a span's [start, end] in ms; a span still running ends where it started.
+// spanExtent is a span's [start, end] in ms; a span still running ends where it
+// started.
 function spanExtent(s: TraceEventData): [number, number] | null {
   if (!s.started_at) return null;
   const a = new Date(s.started_at).getTime();
@@ -262,26 +256,23 @@ function tickStep(total: number): number {
   return TICK_STEPS.find(step => total / step <= 6) ?? TICK_STEPS[TICK_STEPS.length - 1];
 }
 
-// spanHasDetails reports whether a span row can expand: the server strips
-// content-free data before sending, so any data at all means real details
-// (payload, counts), a payload left out of the listing is details to fetch,
-// and errors always expand.
+// spanHasDetails reports whether a span row can expand: any data at all (the
+// server strips content-free data), a payload left out of the listing, or an error.
 function spanHasDetails(s: TraceEventData): boolean {
   return !!s.error || !!s.payloadOmitted || !!(s.data && Object.keys(s.data).length > 0);
 }
 
-// alignChevron: reserve the chevron slot even without details, so icons line
-// up when siblings on the same level are expandable.
-// loadSpan fetches the row's payload when the listing left it out; opening the
-// row asks once, and the parent swaps the whole span in.
+// alignChevron reserves the chevron slot without details, so sibling icons line
+// up. loadSpan fetches a payload the listing left out: asked once on open, the
+// parent swaps the span in.
 function SpanRow({ node, depth, range, alignChevron, loadSpan, focusSpanId, markers }: { node: SpanNode; depth: number; range: TimeRange | null; alignChevron: boolean; loadSpan?: (spanId: string) => Promise<void>; focusSpanId?: string; markers?: TraceMarker[] }) {
   // The span the trace was opened on starts open and marked.
   const focused = !!focusSpanId && node.span.span_id === focusSpanId;
   const [open, setOpen] = useState(focused);
   useEffect(() => { if (focused) setOpen(true); }, [focused]);
-  // The payload fetch of an opened row: pending, done, or failed — a live span
-  // not yet ended has no stored row. Reset on close, so reopening asks again;
-  // never asked twice while open, whatever the answer.
+  // The payload fetch of an opened row: pending, done, or failed (a live span
+  // has no stored row yet). Reset on close so reopening asks again; never twice
+  // while open.
   const [payload, setPayload] = useState<'idle' | 'loading' | 'loaded' | 'failed'>('idle');
   const s = node.span;
   const failed = !!s.error;
@@ -410,18 +401,14 @@ function SpanRow({ node, depth, range, alignChevron, loadSpan, focusSpanId, mark
   );
 }
 
-/* ---------- per-run card ---------- */
-
-// One run's events inside a trace card. A card usually holds a single run,
-// but a conversation exchange that spawned background tasks also pulls in the
-// wake-up runs their results triggered — each segment keeps its own waterfall
-// timeline (the runs are minutes apart; one shared scale would be unreadable).
+// One run's events inside a trace card. A card usually holds a single run, but
+// an exchange that spawned background tasks also pulls in the wake-up runs their
+// results triggered; each segment keeps its own waterfall (the runs are minutes apart).
 export interface TraceRunSegment {
   runId: string;
   events: TraceEventData[];
   // label, when set, renders a small heading above the segment — the task
-  // panel names each attempt of a retried task with it. Absent (the chat
-  // drawer), segments render unlabeled as before.
+  // panel names each run of a retried task with it; absent, segments are unlabeled.
   label?: string;
 }
 
@@ -503,9 +490,8 @@ interface TraceRunProps {
   // onJump scrolls the chat to this run's user message; absent when the
   // conversation has no message for the run.
   onJump?: () => void;
-  // payloadSessionId is the session whose stored rows hold these spans'
-  // payload — the chat's own by default; an inspected task's child session
-  // for the task inspector.
+  // payloadSessionId is the session whose stored rows hold these spans' payload:
+  // the chat's own by default, an inspected task's child session in the task inspector.
   payloadSessionId?: string;
   // The span to open and mark, when the trace was opened on one.
   focusSpanId?: string;
@@ -626,9 +612,8 @@ interface TraceDrawerProps {
   // The span to land on inside the active run (its last model call).
   focusSpanId?: string;
   runLabels: Record<string, string>;
-  // Runs belonging to an abandoned branch — the answer was regenerated and the
-  // session moved on. Listed, but marked: their work is real history, it is
-  // just not the conversation as it currently stands.
+  // Runs on an abandoned branch (the answer was regenerated): listed, but
+  // marked — real history, not the conversation as it stands.
   staleRuns?: Set<string>;
   // runParents maps a wake-up run (auto-started by a task result) to the run
   // whose spawn_task originated it; the chain renders as ONE card.
@@ -644,11 +629,10 @@ interface TraceDrawerProps {
 
 export function TraceDrawer({ traceRuns, liveRunId, activeRunId, focusSpanId, runLabels, staleRuns, runParents, onClose, onJumpToRun, messageRunIds, markers }: TraceDrawerProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  // One card per conversation exchange: a run plus the wake-up runs its tasks
-  // triggered, in chronological (insertion) order. rootOf routes expand/live
-  // state for any run in a chain to the card that hosts it. A parent missing
-  // from traceRuns (e.g. trimmed by retention) leaves the wake run as its own
-  // top-level card.
+  // One card per exchange: a run plus the wake-up runs its tasks triggered, in
+  // insertion order; rootOf routes expand/live state for any run in a chain to
+  // its card. A parent missing from traceRuns (retention) leaves the wake run
+  // its own card.
   const { groups, rootOf } = useMemo(() => {
     const ids = Object.keys(traceRuns);
     const children: Record<string, string[]> = {};

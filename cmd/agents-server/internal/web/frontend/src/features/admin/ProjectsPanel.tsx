@@ -13,10 +13,8 @@ import { useLoadError } from '@/features/admin/useLoadError';
 
 type ProjectRow = Omit<ApiSchemas['store.Project'], 'id'> & { id: string; sandbox: string; rebuildable: boolean };
 
-// The Storage column shows just the docker volume name; a backend whose
-// sandbox IS the storage has no volume, so its cell stays empty. The full
-// hint ("docker volume X on Y" / "ref — a sandbox on host") still backs the
-// delete confirmation.
+// The Storage column shows only the docker volume name (empty where the sandbox
+// IS the storage); the full hint still backs the delete confirmation.
 const volumeOf = (hint?: string) => hint?.match(/^docker volume (\S+) on /)?.[1] ?? '';
 
 // Every owner's projects joined with the sandbox each runs on.
@@ -31,22 +29,17 @@ const listProjects = async (): Promise<ProjectRow[]> => {
   }));
 };
 
-// ProjectsPanel: every owner's working trees and where their files live — the
-// operator's map of what exists, and of what a delete destroys. Newest first:
-// what an admin watches here is what has just appeared.
-//
-// The compute actions are the admin's too (stop, and rebuild where the backend
-// has one): they are strictly less than the delete already offered here.
-// Reading a tree — preview, export — is not, and is nowhere on this page.
+// ProjectsPanel: every owner's working trees and where their files live, newest
+// first. Stop and rebuild (where the backend has one) sit beside delete;
+// reading a tree (preview, export) is offered nowhere here.
 export function ProjectsPanel() {
   const { data: projects, error, reload } = useApi<ProjectRow[]>(listProjects, [], 'admin:projects:joined');
   useLoadError(error, 'projects');
   const confirm = useConfirm();
   const { ownerOf, labelFor } = useOwnerLabels();
 
-  // Stop and rebuild answer, or an upstream error worth reading — a rebuild
-  // refused because the sandbox IS the storage says so in its message. Rebuild
-  // discards the container, so it confirms first, like the chat menu's does.
+  // Stop and rebuild answer, or an upstream error worth reading. Rebuild
+  // discards the container, so it confirms first (invariant 41).
   const act = useCallback(async (p: ProjectRow, what: 'stop' | 'rebuild') => {
     if (what === 'rebuild' && !(await confirm({
       title: `Rebuild the container for “${p.name}”?`,

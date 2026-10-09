@@ -34,9 +34,8 @@ interface TerminalPanelProps {
   // Bumped by the app when the set of session bindings changed; refreshes the
   // + menu's project list.
   bindingsVersion?: number;
-  // One-shot request to start (or focus) a terminal for a project, issued
-  // when the top-bar button opens a closed panel with one selected. The nonce
-  // marks each request as new.
+  // One-shot request to start (or focus) a terminal for a project, issued when
+  // the top-bar button opens a closed panel; the nonce marks each request as new.
   openRequest?: { projectId: string; projectName?: string; targetName?: string; nonce: number } | null;
 }
 
@@ -49,10 +48,8 @@ const HEIGHT_KEY = 'terminalHeight';
 const HEIGHT_ARROW_KEY_STEP = 10;
 const maxHeight = () => Math.round(window.innerHeight * 0.8);
 
-// TerminalPanel is the global bottom panel hosting sandbox terminals in tabs.
-// It is session-agnostic and stays mounted while hidden so every tab's shell
-// survives panel toggles, chat switches and sandbox re-selection; only
-// closing a tab (or the page) ends that session (invariant 81).
+// TerminalPanel is the global bottom panel hosting sandbox terminals in tabs;
+// it stays mounted while hidden, and only closing a tab ends its shell (invariant 81).
 export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersion, openRequest }: TerminalPanelProps) {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -78,9 +75,8 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   useEffect(() => {
     if (settingsReloadKey) reloadTargets();
   }, [settingsReloadKey, reloadTargets]);
-  // The caller's project rows for the + menu — the same hook (and unit) the
-  // composer picker uses: opening a project's terminal lands in that
-  // project's container.
+  // The caller's project rows for the + menu, the same hook the composer
+  // picker uses: a project's terminal lands in that project's container.
   const { projects, error: projectsError } = useProjects(bindingsVersion);
 
   // A collapsed panel must expand before a terminal can be shown (a new tab
@@ -118,9 +114,8 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
     expand();
   };
 
-  // Roving tabindex: the active tab is the list's one Tab stop, the arrow
-  // keys move (and activate) along the strip. Only a tab's own keys count —
-  // the "+" menu on the same strip uses Home/End for its items.
+  // Roving tabindex: the active tab is the list's one Tab stop, arrow keys move
+  // along the strip. Only a tab's own keys count (the "+" menu uses Home/End).
   const tabRefs = useRef(new Map<number, HTMLDivElement | null>());
   const onTabListKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (tabs.length === 0 || (e.target as HTMLElement).getAttribute('role') !== 'tab') return;
@@ -168,9 +163,8 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
     if (existing) {
       activateTab(existing.id);
     } else {
-      // The requester (ChatView) knows the project's name even when this
-      // panel's own projects fetch hasn't landed yet — a tab never opens
-      // nameless.
+      // The requester (ChatView) knows the project's name even before this
+      // panel's projects fetch lands, so a tab never opens nameless.
       const project = (projects || []).find(p => p.id === openRequest.projectId);
       const name = project?.name || openRequest.projectName || '';
       const targetName = (targets || []).find(t => t.id === project?.sandbox_id)?.name || openRequest.targetName || '';

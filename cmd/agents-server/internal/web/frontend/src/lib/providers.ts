@@ -1,10 +1,6 @@
-// Display metadata for the provider backends the server registers.
-//
-// Split of responsibilities with `GET /api/v1/provider-types`: the server
-// serves MACHINE FACTS (which types exist, their auth modes, which request
-// features fail loudly), keyed by `type`; this table holds the WORDING —
-// labels, placeholders, hints — which belongs to the frontend. Adding a
-// backend = one providerDef in the server registry + one entry here.
+// Display metadata for the provider backends the server registers: GET /provider-types
+// serves the machine facts (types, auth modes, unsupported features), this table the
+// wording. Adding a backend = one providerDef in the server registry + one entry here.
 
 export interface ProviderTypeInfo {
   type: string;
@@ -66,10 +62,9 @@ export const PROVIDERS: ProviderMeta[] = [
 ];
 
 export function providerMeta(value: string | undefined): ProviderMeta {
-  // Matches the empty-default value AND the explicit type name: the API
-  // accepts provider_type "openai" spelled out, so stored rows may carry
-  // either form. Unknown values fall back to the default entry — the backend
-  // rejects them at save/build, the form just needs something to render.
+  // Matches the empty default AND the spelled-out type ("openai"), as stored
+  // rows carry either; an unknown value falls back to the default entry (the
+  // backend rejects it at save).
   const v = value || '';
   return PROVIDERS.find(p => p.value === v || p.type === v) ?? PROVIDERS[0];
 }

@@ -117,9 +117,8 @@ export function SkillsPanel() {
     }
   };
 
-  // A sync names the GROUP it refreshes, not just the repo: the same
-  // repository can be two groups (one published, one somebody's private
-  // copy), and a sync must land in the one whose row was clicked (§5.31).
+  // A sync names the GROUP it refreshes, not just the repo: the same repository
+  // can be two groups, and a sync lands in the one clicked (decisions §5.31).
   const handleSync = async (group: SkillGroup) => {
     setSyncing(prev => new Set(prev).add(group.key));
     try {
@@ -132,10 +131,8 @@ export function SkillsPanel() {
     }
   };
 
-  // An imported repo flips as ONE group, server-side and all-or-nothing —
-  // a repo's skills publish together, so the group is never half-published
-  // (decisions §5.29). A workbench-authored skill flips on its own row.
-  // Confirmed like every flip (invariant 41), under the group's heading.
+  // An imported repo flips as ONE group, all-or-nothing (decisions §5.31); a
+  // workbench-authored skill flips on its own row. Confirmed first (invariant 41).
   const setGroupScope = async (group: SkillGroup, scope: 'global' | 'private') => {
     const ownerId = group.ownerId || undefined;
     if (!(await confirm(scopeFlipPrompt(group.label, scope, { id: ownerId, label: ownerId && ownerId === me?.id ? 'you' : undefined })))) return;
@@ -173,8 +170,7 @@ export function SkillsPanel() {
   };
 
   // Groups are (repo, owner): the same repo imported by two people is two
-  // groups, each flipping on its own; a group not the caller's names its
-  // author.
+  // groups, each flipping on its own; a group not the caller's names its author.
   const grouped = groupSkills(rows);
 
   const closeImport = () => { setImporting(false); setImportUrl(''); };
@@ -202,9 +198,8 @@ export function SkillsPanel() {
   ) : null;
 
   return (
-    // Scoped rows: the form is a disabled view exactly when the opened row is
-    // not the caller's to edit (canEditRow), not for every member. Creating
-    // and importing are every member's: the rows land private, owned by them.
+    // The form is a disabled view exactly when the opened row is not the
+    // caller's to edit (canEditRow); creating and importing are every member's.
     <ReadOnlyContext value={!!editing && !skillEditable(editing)}>
       <CrudPanel title="Skills" onAdd={startAdd} onCancel={importing ? closeImport : cancel} form={form}
         loading={loading} error={error} onRetry={reload} isEmpty={grouped.length === 0}
@@ -214,9 +209,9 @@ export function SkillsPanel() {
           ? async () => { if (await remove(editing.id, editing.name)) cancel(); } : null}
         {...listEmpty({ noun: 'skills', total: skills.length, query, mine: !!scopeFilter?.mine, hint: 'A skill is a SKILL.md an agent reads on demand.', addHint: '+ Add writes one here; Import brings a GitHub repository’s.' })}>
         {grouped.map(group => {
-          // Sync re-imports the repo, updating every row in the group — so it
-          // is offered only when every row is the caller's to update. Publishing
-          // a group is the admin's; unpublishing is theirs or its author's.
+          // Sync re-imports the whole group, so it is offered only when every
+          // row is the caller's; publishing is the admin's, unpublishing theirs
+          // or the author's.
           const canSync = group.repo !== '' && group.skills.every(skillEditable);
           const owner = { scope: group.scope, owner_id: group.ownerId };
           const isRepo = group.repo !== '';

@@ -9,28 +9,18 @@ import './sessions.css';
 
 interface SessionRef { id: string; name: string; pinned?: boolean; project_id?: string }
 
-// SESSION_REMOVED carries (detail) the id of a conversation this browser can
-// no longer see — deleted or reassigned from the Admin dialog — for the app
-// to drop its state the way the sidebar's own delete does.
+// SESSION_REMOVED carries (detail) the id of a session this browser can no
+// longer see (deleted or reassigned from Admin), for the app to drop its state.
 export const SESSION_REMOVED = 'sessions:removed';
 
-// NEW_SESSION is the picker's first row as a value: not a conversation but the
-// ask for one. The form holding the picker makes it when it saves (invariant
-// 69), so a cancelled form leaves nothing and no two forms share one.
+// NEW_SESSION is the picker's first row as a value: the ask for a session,
+// which the form holding the picker makes when it saves (invariant 69).
 export const NEW_SESSION = '__new_session__';
 const NEW_SESSION_TEXT = 'New session';
 
-// SessionPicker chooses ONE conversation the way the sidebar shows them — the
-// same order (pinned first, then most recently changed first), the same
-// search — or NEW_SESSION: a form that names a conversation must not send the
-// person to the sidebar first. One flat list, "New session" its first row: the
-// choice is short enough not to need headings. A row is one line, however
-// long the name (the whole of it is the row's title).
-// The panel is capped at a SMALL height, and grows only to its content: the
-// anchored overlay flips above the anchor when it does not fit below, and
-// when it fits neither it tries the sides — beside a block-wide anchor that
-// is off the viewport's edge, and the panel lands clamped at the far left of
-// the screen. A short panel fits one side or the other.
+// SessionPicker chooses ONE session, in the sidebar's order and search, or
+// NEW_SESSION as the first row. The panel is capped at a SMALL height: an
+// overlay fitting neither above nor below lands clamped at the screen's far left.
 export function SessionPicker({ value, onChange, placeholder = 'Select a session…' }:
   { value: string; onChange: (id: string) => void; placeholder?: string }) {
   const { data: sessions } = useApi<SessionRef[]>(() => api.sessions.list() as Promise<SessionRef[]>);
@@ -76,11 +66,8 @@ export function SessionPicker({ value, onChange, placeholder = 'Select a session
   );
 }
 
-// UnboundHint says, under a picker, when the chosen conversation has no
-// project (sandbox) bound — a new one has none yet: work started into it has
-// no file or command tools — the one thing a person cannot see from the name,
-// and the usual reason a coding workflow gets nowhere. what is the work: "the
-// workflow", "the turn".
+// UnboundHint says, under a picker, when the chosen session (a new one always)
+// has no project bound, so no file or command tools; `what` names the work.
 export function UnboundHint({ sessionId, what }: { sessionId: string; what: string }) {
   const isNew = sessionId === NEW_SESSION;
   const { data } = useApi<SessionRef | null>(

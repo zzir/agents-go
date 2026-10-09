@@ -9,16 +9,17 @@ import { toast } from '@/lib/toast';
 
 interface UserMenuProps {
   onSettingsOpen: () => void;
-  // Avatar only (the narrow header and the rail); the sidebar footer shows the name too.
+  // Avatar only (the narrow header and the rail); the sidebar footer shows the
+  // name too.
   compact?: boolean;
-  // The trigger's edge the menu lines up with: 'end' for one at the right of the screen.
+  // The trigger's edge the menu lines up with: 'end' for one at the right of
+  // the screen.
   align?: 'start' | 'end';
 }
 
 // UserMenu is the signed-in person's corner: picture and name open Settings
 // (invariant 61), the notification preference and Sign out. Until /auth/me
-// answers the trigger is a placeholder so the footer does not jump; after any
-// answer the menu opens.
+// answers the trigger is a placeholder so the footer does not jump.
 export function UserMenu({ onSettingsOpen, compact, align = 'start' }: UserMenuProps) {
   const { me: user, loading, error, reload } = useMe();
   // Desktop notifications are this browser's preference, asked for here: the

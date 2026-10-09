@@ -181,9 +181,8 @@ function SettingRow({ def, value, saving, onSave }: SettingRowProps) {
 // default side until a value is stored.
 const boolOf = (def: SettingDef, draft: string) => (draft || def.default) === 'true';
 
-// The default belongs in the caption, not in a placeholder the operator has
-// to guess at: it is what the server actually applies when the box is empty.
-// A switch needs none: it stands on the default side until a value is stored.
+// The default goes in the caption, not a placeholder: it is what the server
+// applies when the box is empty. A switch needs none; it shows the default side.
 function settingCaption(def: SettingDef): string {
   return [def.description, def.default ? `Default: ${def.default}.` : null].filter(Boolean).join(' ');
 }
@@ -209,9 +208,8 @@ function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string
         <TextInput
           type="number"
           value={draft}
-          // A whole-number setting never goes negative, and `min: 0` is
-          // omitted from the JSON — so the floor is 0 unless a def raises it.
-          // Without this the spinner would offer values the server rejects.
+          // A whole-number setting never goes negative and `min: 0` is omitted
+          // from the JSON, so the floor is 0 unless a def raises it.
           min={def.min ?? 0}
           max={def.max}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
@@ -240,11 +238,8 @@ function SettingInput({ def, draft, setDraft }: { def: SettingDef; draft: string
   }
 }
 
-// The storage-section keys mapped to the group endpoint's field names. The
-// section's values are only valid together (changing the bucket re-probes
-// against the same public base), so this is a FORM — one Save, one Test, one
-// Clear — not click-to-store rows; the server refuses per-key writes of
-// these keys (invariant 58).
+// The storage-section keys mapped to the group endpoint's field names: the
+// section saves as one FORM, never as per-key rows (invariant 58).
 const STORAGE_FIELDS: Record<string, string> = {
   s3_endpoint: 'endpoint',
   s3_region: 'region',
@@ -341,9 +336,8 @@ function StorageForm({ defs, getValue, onSaved }: { defs: SettingDef[]; getValue
   );
 }
 
-// Rows the registry does not define: written before writes were validated, or
-// left behind by a removed feature. Shown rather than hidden, because a value
-// nobody can see is a value nobody can clear.
+// Rows the registry does not define (written before writes were validated, or
+// left by a removed feature): shown, so a value nobody can see can still be cleared.
 function UnknownSection({ rows, onDelete }: { rows: Setting[]; onDelete: ((key: string) => void) | null }) {
   return (
     <div className="form-group">

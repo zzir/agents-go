@@ -1,7 +1,6 @@
 // A multimodal tool result displays as the Responses content list the model
-// received (SDK spec §2.7b): input_text / input_image / input_file parts. This
-// reads one back; anything else — a plain string, JSON of another shape — is
-// text and renders as it always did.
+// received (SDK spec §2.7b): input_text / input_image / input_file parts.
+// Anything else is text.
 
 export type ToolContentPart =
   | { type: 'input_text'; text: string }

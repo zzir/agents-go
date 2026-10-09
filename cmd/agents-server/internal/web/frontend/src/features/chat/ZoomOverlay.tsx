@@ -2,9 +2,9 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 // ZoomOverlay shows one thing — a diagram, an image — over the page at its
-// natural size, scrollable when it is larger than the window; a click outside
-// it or Escape closes it. It is a modal dialog to assistive tech: focus moves
-// in on open, Tab stays inside, and the opener gets focus back on close.
+// natural size, scrollable when larger than the window; click outside or Escape
+// closes. A modal to assistive tech: focus moves in, Tab stays inside, the
+// opener gets it back.
 export function ZoomOverlay({ children, onClose }: { children: ReactNode; onClose: () => void }) {
   const boxRef = useRef<HTMLDivElement>(null);
 

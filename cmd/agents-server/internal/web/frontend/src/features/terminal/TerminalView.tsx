@@ -9,9 +9,8 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { getToken } from '@/lib/api';
 import { EV } from '@/lib/protocol';
 
-// ANSI palettes matching GitHub's light/dark themes; Primer primitives expose
-// no ANSI variables, so these are fixed per color mode while background /
-// foreground track the live CSS variables.
+// ANSI palettes matching GitHub's light/dark themes (Primer exposes no ANSI
+// variables); background and foreground track the live CSS variables instead.
 const ANSI_LIGHT: Partial<ITheme> = {
   black: '#24292f', red: '#cf222e', green: '#116329', yellow: '#4d2d00',
   blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
@@ -66,9 +65,8 @@ interface TerminalViewProps {
   onSelection?: (hasSelection: boolean) => void;
 }
 
-// TerminalView hosts one interactive sandbox terminal over /ws/terminal. The
-// session's lifetime is the component's: unmounting (closing the tab) ends
-// the shell.
+// TerminalView hosts one interactive sandbox terminal over /ws/terminal; the
+// shell's lifetime is the component's (invariant 81).
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView(
   { projectId, hidden, onStatus, onSelection }: TerminalViewProps,
   ref,
@@ -128,9 +126,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     let exited = false;
     let disposed = false;
 
-    // Sync the PTY to xterm's grid, tracking the last size actually sent —
-    // comparing against that (not fit's before/after) closes the gap where
-    // the grid was corrected while the socket wasn't ready yet.
+    // Sync the PTY to xterm's grid, tracking the last size actually sent: that
+    // (not fit's before/after) catches a grid corrected while the socket was not ready.
     let sentCols = 0;
     let sentRows = 0;
     const syncSize = () => {
@@ -166,9 +163,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         case EV.terminalReady:
           ready = true;
           setStatus('connected');
-          // The open request carried whatever the pre-connect fit produced;
-          // xterm's renderer may not have been measurable yet (a freshly
-          // mounted tab), so recalibrate the PTY now that both ends are live.
+          // The open request carried the pre-connect fit, which may predate a
+          // measurable renderer (a fresh tab), so recalibrate now that both
+          // ends are live.
           syncSize();
           if (!hiddenRef.current) term.focus();
           break;
@@ -204,9 +201,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       onSelectionRef.current?.(term.hasSelection());
     });
 
-    // Refit on any layout resize; propagate the new grid to the PTY. While
-    // hidden (display:none) proposeDimensions is undefined and fit is a no-op;
-    // becoming visible fires the observer again and refits.
+    // Refit on any layout resize and propagate the grid to the PTY; while hidden
+    // fit is a no-op (proposeDimensions undefined) and becoming visible refits.
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const resizeObserver = new ResizeObserver(() => {
       if (resizeTimer) clearTimeout(resizeTimer);
@@ -231,13 +227,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     };
   }, [projectId]);
 
-  // WebGL renderer as progressive enhancement, attached ONLY to the visible
-  // tab: hugely faster on output floods, but it must not run on hidden
-  // instances — a second live webgl addon corrupts the shared glyph-atlas
-  // cell measurement (observed as a 2-column terminal), and browsers cap
-  // concurrent WebGL contexts anyway. Hidden tabs fall back to the DOM
-  // renderer, which is free while display:none. Also degrade gracefully:
-  // no GPU / context loss just means DOM rendering, never a failure.
+  // WebGL renderer attached ONLY to the visible tab: a second live webgl addon
+  // corrupts the shared glyph-atlas cell measurement (a 2-column terminal), and
+  // browsers cap WebGL contexts. No GPU or a context loss falls back to DOM rendering.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;

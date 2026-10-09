@@ -1,7 +1,5 @@
-// Image attachments: the composer-side half. Uploads go through POST
-// /attachments (multipart), after a canvas downscale to the server-announced
-// longest-side target — the original file is discarded, the workbench stores
-// what the model will see.
+// Image attachments, the composer-side half (invariant 57): a canvas downscale to the
+// server's longest-side target, then POST /attachments; the original is discarded.
 import { api } from '@/lib/api';
 
 // AttachmentMeta is an uploaded image as every surface passes it around: the
@@ -18,8 +16,8 @@ export interface AttachmentConfig {
   downscale_px: number;
 }
 
-// The config is a deployment fact; fetch once per page load and share. A
-// failed fetch reads as disabled — the affordances hide rather than break.
+// The config is a deployment fact, fetched once per page load; a failed fetch
+// reads as disabled.
 let configPromise: Promise<AttachmentConfig> | null = null;
 export function fetchAttachmentConfig(): Promise<AttachmentConfig> {
   configPromise ??= (api.attachments.config() as Promise<AttachmentConfig>).catch(() => {
@@ -29,10 +27,9 @@ export function fetchAttachmentConfig(): Promise<AttachmentConfig> {
   return configPromise;
 }
 
-// imageAffordance is the composer's "Image…" menu item: taken when the server
-// stores attachments AND the picked agent has Vision on, otherwise disabled
-// with the missing switch as its hint. A config still loading disables it
-// without a hint.
+// imageAffordance is the composer's "Image…" menu item: enabled when the server
+// stores attachments AND the agent has Vision, else disabled with the missing
+// switch as hint (none while loading).
 export function imageAffordance(cfg: AttachmentConfig | null, vision: boolean): { enabled: boolean; hint: string } {
   if (!cfg) return { enabled: false, hint: '' };
   if (!cfg.enabled) return { enabled: false, hint: 'not configured on this server' };
@@ -40,18 +37,17 @@ export function imageAffordance(cfg: AttachmentConfig | null, vision: boolean): 
   return { enabled: true, hint: '' };
 }
 
-// attachmentIdsEqual compares two bubbles' attachment sets — the second half
-// of the user-message dedup key (content alone collapses two image-only
-// messages).
+// attachmentIdsEqual compares two bubbles' attachment sets, the second half of
+// the user-message dedup key.
 export function attachmentIdsEqual(a?: AttachmentMeta[], b?: AttachmentMeta[]): boolean {
   const ai = (a ?? []).map(x => x.id);
   const bi = (b ?? []).map(x => x.id);
   return ai.length === bi.length && ai.every((id, i) => id === bi[i]);
 }
 
-// downscaleImage re-encodes file with its longest side capped at maxPx.
-// PNG sources stay PNG (alpha survives), everything else becomes JPEG. A file
-// already within the cap is uploaded as-is — no pointless re-encode.
+// downscaleImage re-encodes file with its longest side capped at maxPx: PNG
+// stays PNG (alpha survives), everything else becomes JPEG; a file within the
+// cap is returned as-is.
 async function downscaleImage(file: File, maxPx: number): Promise<Blob> {
   const bmp = await createImageBitmap(file);
   try {
@@ -74,15 +70,13 @@ async function downscaleImage(file: File, maxPx: number): Promise<Blob> {
   }
 }
 
-// isImageFile admits what the server admits. GIFs are refused on purpose:
-// providers read a single frame at best, which surprises worse than a clear
-// "convert to a still image".
+// isImageFile admits what the server admits. GIFs are refused: providers read a
+// single frame at best.
 export function isImageFile(f: File): boolean {
   return f.type === 'image/png' || f.type === 'image/jpeg';
 }
 
-// uploadAttachment downscales and uploads one image, returning the stored
-// attachment.
+// uploadAttachment downscales and uploads one image, returning the stored attachment.
 export async function uploadAttachment(file: File, cfg: AttachmentConfig): Promise<AttachmentMeta> {
   const blob = await downscaleImage(file, cfg.downscale_px || 1568);
   if (cfg.max_bytes && blob.size > cfg.max_bytes) {

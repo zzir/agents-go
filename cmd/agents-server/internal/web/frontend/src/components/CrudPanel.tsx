@@ -13,18 +13,12 @@ import { useMe } from '@/lib/me';
 import { scopeFlipPrompt } from '@/lib/scopeFlipPrompt';
 import { toast } from '@/lib/toast';
 
-/** The list-or-form scaffold every settings panel shares: a PageHeader whose
- * "+ Add" hides while a form shows, the form in the list's place, a skeleton
- * while the first fetch is out, a Blankslate when the list is empty, and a
- * LoadError line over the rows when the read failed (invariant 79). The
- * form and each row stay the panel's own. as="section" nests it inside a page
- * (the Settings routes block).
- * Read-only (a member's dialog, or a scoped row not the caller's to edit):
- * no Add, and the form opens disabled — a view of the record — with Back
- * where Cancel would be, plus Delete when onDelete allows it (the admin's
- * one write on a foreign private row). */
+/** The list-or-form scaffold every settings panel shares: "+ Add" (hidden
+ * while a form shows), a skeleton, a Blankslate, LoadError over stale rows
+ * (invariant 79). Read-only: no Add, and the form opens disabled with Back and Delete. */
 export function CrudPanel({ title, as, description, actions, search, filter, onAdd, onCancel, onDelete, form, loading, error, onRetry, noun, isEmpty, empty, emptyHint, children }: {
   title: string;
+  // 'section' nests the panel inside a page (the Settings routes block).
   as?: 'page' | 'section';
   description?: ReactNode;
   // Extra header buttons beside "+ Add" (an Import), shown when it is.
@@ -107,13 +101,9 @@ export function CrudPanel({ title, as, description, actions, search, filter, onA
   return as === 'section' ? <div className="form-group">{body}</div> : <Stack gap="normal">{body}</Stack>;
 }
 
-/** A row's "…" overflow, the one action control a list row carries:
- * Edit ("View" when the form it opens is a disabled view — the dialog is
- * read-only, or `editReadOnly` says this row is not the caller's), a Duplicate,
- * a Fork
- * (open the CREATE form pre-filled from this row — nothing is written until
- * Save), the admin's scope flip, and a Delete the caller confirms. Renders
- * nothing when the caller can do none of it. */
+/** A row's "…" overflow: Edit ("View" when the form opens disabled), Duplicate,
+ * Fork (the create form seeded from this row), the admin's scope flip, Transfer
+ * and Delete. Renders nothing when the caller can do none of it. */
 export function RowActionsMenu({ name, onEdit, editReadOnly, onDuplicate, onFork, scope, onTransfer, onDelete }: {
   name: string;
   onEdit?: () => void;
@@ -124,11 +114,9 @@ export function RowActionsMenu({ name, onEdit, editReadOnly, onDuplicate, onFork
   // Offered on every visible row: forking a global row is how a member gets
   // an editable private copy.
   onFork?: () => void;
-  // The promote/demote item — pass `canPromote`/`canDemote` from the caller's
-  // role and the row's author (publishing is the admin's, unpublishing the
-  // admin's or the author's). Confirmed first (scopeFlipPrompt), then
-  // POST /<entity>/:id/scope, with the server's 400/409 (non-global
-  // references, name collisions) as toasts.
+  // The promote/demote item: confirmed (scopeFlipPrompt), then POST
+  // /<entity>/:id/scope with the server's 400/409 as toasts;
+  // canPromote/canDemote follow role and authorship.
   scope?: {
     row: ScopedRow & { id: string | number };
     setScope: (id: string | number, scope: 'global' | 'private') => Promise<null>;

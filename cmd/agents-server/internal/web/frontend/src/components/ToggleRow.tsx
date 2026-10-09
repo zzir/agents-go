@@ -3,10 +3,9 @@ import { ToggleSwitch } from '@primer/react';
 import { useReadOnly } from '@/lib/access';
 import './toggle-row.css';
 
-/** One boolean as GitHub's settings show it: the name and what it does on the
- * left, the On/Off switch on the right, in a bordered row of its own. A
- * read-only dialog disables it here — the fieldset that disables every other
- * input never reaches the switch's status text. */
+/** One boolean as a bordered settings row: name and description on the left,
+ * the On/Off switch on the right (invariant 66). A read-only dialog disables it
+ * here: the fieldset's disabled never reaches the switch's status text. */
 export function ToggleRow({ label, description, checked, onChange, disabled }: {
   label: string;
   description?: ReactNode;

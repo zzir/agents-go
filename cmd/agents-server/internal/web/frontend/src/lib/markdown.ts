@@ -1,11 +1,7 @@
-// Markdown facade for the main thread.
-//
-// Two render paths:
-//  - renderMarkdownLite: synchronous, no hljs/KaTeX — for streaming text that
-//    changes every frame (cheap enough to run per animation frame).
-//  - renderMarkdownAsync / useAsyncMarkdown: full pipeline (marked + hljs +
-//    KaTeX) in a Web Worker; the main thread only sanitizes (DOMPurify needs
-//    a DOM) and serves an LRU cache. History re-renders are cache hits.
+// Markdown facade for the main thread. renderMarkdownLite is synchronous (no
+// hljs/KaTeX) for streaming text; renderMarkdownAsync / useAsyncMarkdown run
+// the full pipeline in a Web Worker, the main thread sanitizing (DOMPurify
+// needs a DOM) and caching.
 import { useState, useEffect } from 'react';
 import DOMPurify from 'dompurify';
 import { renderLiteCore } from './markdownShared';
@@ -37,8 +33,6 @@ export function renderMarkdownLite(text: string): string {
   if (!text) return '';
   return DOMPurify.sanitize(renderLiteCore(text), SANITIZE_OPTS);
 }
-
-/* ---------- worker client ---------- */
 
 let worker: Worker | null = null;
 let workerBroken = false;
@@ -96,9 +90,8 @@ function renderMarkdownAsync(text: string): Promise<string> {
   });
 }
 
-// KaTeX's stylesheet is ~77KB gz the first paint never needs — it loads the
-// first time worker output actually contains math (a failed load retries on
-// the next math block).
+// KaTeX's stylesheet (~77KB gz) loads the first time worker output contains
+// math; a failed load retries on the next math block.
 let katexCssLoaded = false;
 function ensureKatexCss(html: string): void {
   if (katexCssLoaded || !html.includes('class="katex')) return;
@@ -120,8 +113,6 @@ export function useAsyncMarkdown(text: string): string {
   }, [text]);
   return html;
 }
-
-/* ---------- SVG / mermaid helpers ---------- */
 
 export function sanitizeSVG(svg: string): string {
   const clean = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ['foreignObject'] });

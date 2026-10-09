@@ -25,10 +25,8 @@ import { requestedBy } from '@/lib/background';
 import { activates } from '@/lib/activation';
 import { useCopy, useNowTicker } from '@/lib/hooks';
 
-// This is the panel behind the top bar's Tasks button. It holds both kinds of
-// background work — spawned tasks and workflow executions — because to a
-// person they are one thing: work happening in a session they are not in. The
-// UI keeps saying "Tasks"; a second word would be a second concept.
+// The panel behind the top bar's Tasks button: spawned tasks and workflow
+// executions in one list, under the one word "Tasks" — invariant 36.
 
 // The list's group order: live work first, then terminal states by kind.
 const GROUPS: Array<{ title: string; match: (s: BackgroundItem['status']) => boolean }> = [
@@ -39,9 +37,8 @@ const GROUPS: Array<{ title: string; match: (s: BackgroundItem['status']) => boo
 ];
 
 // BackgroundListPanel is the Inspector's "tasks" lens: background work grouped
-// by state (Active first, then terminal kinds), newest first inside each group.
-// State is the row's leading dot + its group header; the right-hand label is
-// the duration (ticking while live). Rows open the detail lens.
+// by state (Active first, then terminal kinds), newest first in each group; the
+// right-hand label is the duration, ticking while live. Rows open the detail lens.
 export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
   const items = useChatBackground();
   const { tasksError, agentNames } = useChatSession();
@@ -60,11 +57,9 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
           the empty state is for a list that loaded empty (invariant 79). */}
       {tasksError && <LoadError what="background tasks" error={tasksError} onRetry={retryTasks} />}
       {items.length === 0 && !tasksError && <div className="trace-empty">No background work in this session.</div>}
-      {/* One line per row by default (the full result lives in the detail
-          lens). Live rows add one action line — activity or Approve/Reject
-          on the left, Stop isolated on the right. failed is the only terminal
-          state that keeps a second line: its error excerpt explains itself
-          without a click. */}
+      {/* One line per row by default; live rows add an action line (activity or
+          Approve/Reject left, Stop right), and failed alone keeps a second
+          line for its error excerpt. */}
       {groups.map(g => (
         <div key={g.title} className="task-group">
           <div className="task-group-title">{g.title}</div>
@@ -137,10 +132,9 @@ interface BackgroundDetailPanelProps {
   onClose: () => void;
 }
 
-// BackgroundMissingPanel stands in for the detail lens while the task named
-// by a deep link is not in the session's list: still loading, or gone — a row
-// removed with its session, or one a fork's copy never carried.
-// Either way the panel opens, says so, and leads back to the list.
+// BackgroundMissingPanel stands in for the detail lens while a deep-linked task
+// is not in the session's list (still loading, removed with its session, or
+// never carried by a fork's copy): it says so and leads back to the list.
 export function BackgroundMissingPanel({ taskId, loading, onBack, onClose }: { taskId: string; loading: boolean; onBack: () => void; onClose: () => void }) {
   return (
     <SidePanel icon={StackIcon} title={loading ? 'Task' : 'Task not found'} onClose={onClose} storageKey="inspectorWidth">
@@ -157,16 +151,14 @@ export function BackgroundMissingPanel({ taskId, loading, onBack, onClose }: { t
 }
 
 // BackgroundDetailPanel is the Inspector's "task" lens: the child session's
-// transcript (read-only, live-tailing while the work runs) and its trace. For a
-// workflow that transcript is every step's turns in order — the sequence shares
-// one session, which is the point of it.
+// transcript (read-only, live-tailing while the work runs) and its trace; a
+// workflow's steps share that session, so its transcript is every step in order.
 export function BackgroundDetailPanel({ item, view, onBack, onClose }: BackgroundDetailPanelProps) {
   const { approve: onApprove, reject: onReject, stopTask, retryTask } = useChatActions();
   const { sessionId } = useChatSession();
   const confirm = useConfirm();
-  // A finished workflow can be run again with the same brief — a NEW execution
-  // (its side effects happen again, hence the confirmation), unlike a retry,
-  // which resumes this one from where it stopped.
+  // Run again starts a NEW execution with the same brief (side effects happen
+  // again, hence the confirmation); a retry resumes this one where it stopped.
   const rerunnable = item.kind === 'workflow' && !isLive(item.status) && !!item.state?.workflow_id && !!sessionId;
   const runAgain = async () => {
     if (!item.state?.workflow_id || !sessionId) return;
@@ -185,14 +177,8 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
   const { copied, copy } = useCopy();
   const { held, decide } = useDecisionHold();
   const live = isLive(item.status);
-  // One segment per RUN — a retry starts a new run on the same child session,
-  // and a workflow's steps are runs in their own right, so their spans must not
-  // interleave on one waterfall. Group order is insertion order (load is row
-  // order, live runs append), so segments read oldest first; the labels only
-  // appear once there is more than one. "run N", NOT "attempt N": the index
-  // counts runs that left spans, and an attempt that died before its first span
-  // (a preflight failure) leaves no group — numbering the survivors as attempts
-  // would misname them.
+  // One trace segment per run (a retry, a workflow step), oldest first, labelled
+  // only when several; "run N" not "attempt N" — a span-less attempt leaves no segment.
   const { traceSegments, spanTotal } = useMemo(() => {
     const entries = Object.entries(view?.traceRuns || {});
     const segments = entries.map(([runId, events], i) => ({
@@ -208,9 +194,8 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
     () => (item.kind === 'workflow' ? stepRows(item.state, item.status, view?.traceRuns as Record<string, TraceEventData[]> | undefined) : []),
     [item.kind, item.state, item.status, view?.traceRuns],
   );
-  // The task's checklist as its run last wrote it (the child session's
-  // checklist.md, invariant 91), re-read as the transcript grows; absent
-  // when the run keeps none.
+  // The task's checklist as its run last wrote it (checklist.md, invariant 91),
+  // re-read as the transcript grows; absent when the run keeps none.
   const taskChecklist = useMemo(() => latestChecklist(view?.messages || []), [view?.messages]);
   const taskMarkers = useMemo(() => Object.values(queuedInputMarkers(view?.messages || [])).flat(), [view?.messages]);
   const [checklistMd, setChecklistMd] = useState<string | null>(null);

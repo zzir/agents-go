@@ -23,10 +23,7 @@ export const UserMessage = memo(function UserMessage({ content, attachments, tra
     if (content) copy(content);
   }, [content, copy]);
 
-  // A server-injected notification (a finished task or workflow) never renders
-  // in the timeline: the model reads it verbatim, but for the person the
-  // composer's indicators and the Tasks panel are the surfaces — an in-flow
-  // card duplicated them mid-conversation.
+  // A server-injected task notification never renders — invariant 21.
   if (parseTaskNotification(content)) return null;
 
   return (

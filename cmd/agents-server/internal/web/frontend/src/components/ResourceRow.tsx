@@ -1,9 +1,8 @@
 import { type ReactNode } from 'react';
 
-/** One entity row in a settings list: dot + title + badges on the head line,
- * an optional sub or meta line under it, actions held to the right edge.
- * leading is a left column spanning every line — an avatar, not a status dot,
- * which belongs on the head line via status. */
+/** One entity row in a settings list: status dot + title + badges on the head
+ * line, an optional sub or meta line under it, actions on the right edge.
+ * `leading` is a left column spanning every line (an avatar, not a status dot). */
 export function ResourceRow({ leading, status, title, badges, sub, meta, actions }: {
   leading?: ReactNode;
   status?: ReactNode;

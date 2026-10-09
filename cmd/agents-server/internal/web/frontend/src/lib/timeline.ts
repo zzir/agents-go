@@ -5,9 +5,8 @@ import type { AttachmentMeta } from '@/lib/attachments';
 interface ItemDisplay {
   kind: string;
   renderer?: string;
-  // title/summary are the producer's card heading and one-liner (a task's
-  // label, "3 files changed"); empty falls back to tool_name / the existing
-  // rendering, per the display contract.
+  // title/summary are the producer's card heading and one-liner; empty falls
+  // back to tool_name / the default rendering.
   title?: string;
   summary?: string;
   text?: string;
@@ -16,16 +15,15 @@ interface ItemDisplay {
   arguments?: string;
   output?: string;
   is_error?: boolean;
-  // extra is whatever a tool attached via Details, plus the fields the server
-  // amends onto a card afterwards: a guardrail block's name/stage, a spawned
-  // task's id and terminal status (the durable truth the task card is rebuilt
-  // from on reload, since the hub run is GC'd).
+  // extra is whatever a tool attached via Details, plus what the server amends
+  // onto a card afterwards (a guardrail block's name/stage, a spawned task's id
+  // and terminal status).
   extra?: DisplayExtra;
 }
 
-// DisplayExtra is the shape of a display's `extra` bag wherever it travels:
-// the stored entry's display, the live run.tool_result event, and the ToolCall
-// both fold it into. One name, so the three cannot drift.
+// DisplayExtra is the shape of a display's `extra` bag wherever it travels
+// (stored entry, live run.tool_result, the ToolCall both fold into) — one name,
+// so the three cannot drift.
 interface DisplayExtra {
   // On an error annotation: the run.error code.
   code?: string;
@@ -35,14 +33,12 @@ interface DisplayExtra {
   not_run?: string;
   task_id?: string;
   task_status?: string;
-  // Which run of the task this describes: 1 for the original, more after a
-  // retry. A card showing a finished task uses it to tell a NEW attempt from a
-  // replay of the one it already has.
+  // Which run of the task this describes (1 for the original); tells a new
+  // attempt from a replay.
   task_attempt?: number;
-  // Which attempt wrote the folded summary. The fold keeps the last NON-EMPTY
-  // summary (a later update cannot blank one), so after a retry the previous
-  // attempt's failure text survives beside the new attempt's status — this is
-  // the provenance that lets assemble drop it.
+  // Which attempt wrote the folded summary. The fold keeps the last non-empty
+  // summary, so after a retry this provenance is what lets assemble drop the
+  // previous attempt's text.
   task_summary_attempt?: number;
   [k: string]: unknown;
 }
@@ -56,17 +52,15 @@ const DISPLAY = {
   handoff: 'handoff',
   error: 'error',
   cancelled: 'cancelled',
-  // A person's or a trigger's start of a workflow — the exchange's question
-  // when no run asked (server store.DisplayWorkflowStarted).
+  // A person's or a trigger's start of a workflow (store.DisplayWorkflowStarted).
   workflowStarted: 'workflow_started',
-  // A trigger's AGENT turn: the note before the message it sends (server
-  // store.DisplayTriggerFired).
+  // A trigger's agent turn: the note before the message it sends
+  // (store.DisplayTriggerFired).
   triggerFired: 'trigger_fired',
 } as const;
 
-// EntryView is one row of GET /sessions/:id/messages — a stored session entry
-// plus its row id. Update entries are already folded into their targets
-// server-side, so nothing here needs to apply them.
+// EntryView is one row of GET /sessions/:id/messages: a stored entry plus its row id.
+// Update entries are already folded into their targets server-side.
 interface EntryView {
   id?: string;
   entry_id?: string;
@@ -77,8 +71,8 @@ interface EntryView {
   content?: string;
   display?: ItemDisplay;
   compacted?: boolean;
-  // on_path is false for an abandoned attempt: still recorded, still
-  // switchable-to, but not part of the conversation as it currently stands.
+  // on_path is false for an abandoned attempt: still recorded and
+  // switchable-to, not on the current path.
   on_path?: boolean;
   compaction?: CompactionInfo;
   // Image attachments the entry's message carries, URL-resolved server-side.
@@ -91,8 +85,8 @@ interface EntryView {
 interface Branches {
   // parentId is the entry they all continue from.
   parentId: string;
-  // tips are one entry id per attempt, in the order they were made. Switching
-  // to one means branching to its tip.
+  // tips are one entry id per attempt, in the order made; switching means
+  // branching to its tip.
   tips: string[];
   // active indexes tips — which attempt is on the current path.
   active: number;
@@ -106,9 +100,9 @@ interface CompactionInfo {
   reset?: boolean;
 }
 
-// The ONE ToolCall / TurnPart definition — the streaming path (streamReducer),
-// the replay path (buildTimeline) and every renderer (ChatView, ToolCallCard)
-// import these. A second local copy is how the two paths drift apart.
+// The ONE ToolCall / TurnPart definition, imported by the streaming path
+// (streamReducer), the replay path (buildTimeline) and every renderer —
+// invariant 16.
 interface ToolCall {
   tool_call_id: string;
   tool_name: string;
@@ -119,23 +113,20 @@ interface ToolCall {
   status: string | null;
   not_run?: string;
   needs_approval?: boolean;
-  // title/summary are the tool's display overrides from its result (a card
-  // heading over the tool name, a one-line account of what happened). Set by
-  // both paths — the live run.tool_result event and the stored output entry's
-  // display — so the card reads the same before and after a reload.
+  // title/summary are the tool's display overrides from its result (card
+  // heading, one-line account), set by both paths so the card reads the same
+  // before and after a reload.
   title?: string;
   summary?: string;
   // is_error marks a result that reports a failure.
   is_error?: boolean;
-  // extra is the result's Details bag (a task result's task_id, an
-  // exec_command's command), folded from the same two paths as title/summary.
+  // extra is the result's Details bag (a task_id, a command), folded from the
+  // same two paths.
   extra?: DisplayExtra;
   // Terminal task outcome for a spawn_task call, from the display projection.
   task?: { id?: string; label?: string; status?: string; summary?: string; attempt?: number };
-  // progress is live output the tool pushed while still running — a command's
-  // stdout as it appears, a sub-agent thinking out loud. It is NOT the result:
-  // `output` is, and it replaces this when it lands. Live-only, so a reload
-  // shows the result rather than a replay of how it got there.
+  // progress is live output the tool pushed while running — NOT the result, which
+  // `output` is and which replaces it. Live-only: a reload shows the result alone.
   progress?: string;
   // renderer is the tool's display hint for progress (e.g. "terminal").
   renderer?: string;
@@ -170,14 +161,13 @@ interface ThinkingPart {
   content: string;
 }
 
-// A live-only marker for an agent switch (run.handoff), rendered inside the
-// turn's process timeline. Never persisted — on reload the transfer_to_* tool
-// call card conveys the same information.
+// A live-only marker for an agent switch (run.handoff) in the turn's process
+// timeline; on reload the transfer_to_* tool-call card conveys the same.
 interface HandoffPart {
   type: 'handoff';
   content: string;
-  // The structured halves of content ("from → to"), with the config ids
-  // behind the names when the server knew them — for the avatars.
+  // The halves of content ("from → to"), with the config ids behind the names
+  // when known, for the avatars.
   from?: string;
   to?: string;
   fromId?: string;
@@ -189,30 +179,28 @@ type TurnPart = ToolsPart | TextPart | ErrorPart | CancelledPart | ThinkingPart 
 interface UserEntry {
   role: 'user';
   content: string;
-  // Absent on entries not yet persisted: the sender's optimistic bubble and
-  // the bubble a watching browser builds from run.started's input.
+  // Absent on entries not yet persisted (an optimistic bubble, one built from
+  // run.started).
   messageId?: string;
-  // entryId is the durable entry id, which is what a branch switch aims at —
-  // messageId is a row id, and branching is expressed in entry ids.
+  // entryId is the durable entry id, which a branch switch aims at (messageId
+  // is a row id).
   entryId?: string;
   runId?: string;
   // The message's image attachments, for the thumbnail grid.
   attachments?: AttachmentMeta[];
-  // Stamped on this browser's own not-yet-sent bubble (no run or row id yet):
-  // what a rollback finds, and what tells two identical sends apart.
+  // Stamped on this browser's own not-yet-sent bubble: what a rollback finds,
+  // and what tells identical sends apart.
   clientMsgId?: string;
-  // Set on a live bubble the run read from its queue (run.injected's index):
-  // it shares its run id with the prompt, so the id alone does not name it.
+  // Set on a live bubble the run read from its queue (run.injected's index); it
+  // shares the prompt's run id.
   injected?: number;
-  // When the message was recorded (ms), for placing a queued input on a
-  // run's trace; absent on a bubble not yet stored.
+  // When the message was recorded (ms), for placing a queued input on a run's trace.
   createdAt?: number;
 }
 
-// WorkflowStartedNote is the data of a started note: a workflow's start (which
-// execution — task_id pairs it with the result's wake-up run — of what, with
-// what brief, started by whom), or a trigger's agent turn (which agent, which
-// run; the message it sent follows the note).
+// WorkflowStartedNote is the data of a started note: a workflow's start (taskId
+// pairs it with the result's wake-up run), or a trigger's agent turn before the
+// message it sends.
 interface WorkflowStartedNote {
   taskId: string;
   workflowId: string;
@@ -238,12 +226,10 @@ interface SystemEntry {
 interface TurnEntry {
   role: 'turn';
   parts: TurnPart[];
-  // Persisted turns carry the anchoring row id; a live turn assembled from
-  // stream events has none until the post-run reload swaps it in.
+  // The anchoring row id; a live turn has none until the post-run reload swaps it in.
   messageId?: string;
   runId?: string;
-  // Set when this turn is one of several attempts at the same point, so the
-  // renderer can offer "2 / 3 ‹ ›" instead of silently showing one of them.
+  // Set when this turn is one of several attempts at the same point ("2 / 3 ‹ ›").
   branches?: Branches;
 }
 
@@ -251,8 +237,7 @@ interface CompactionEntry {
   role: 'compaction';
   content: string;
   messageId: string | undefined;
-  // The durable entry id — the Context panel's jump target for a checkpoint
-  // that ranks among the heaviest items.
+  // The durable entry id, the Context panel's jump target.
   entryId?: string;
   tokensBefore?: number;
   tokensAfter?: number;
@@ -281,33 +266,28 @@ interface ToolCallPatch {
 
 export type { EntryView, ItemDisplay, DisplayExtra, CompactionInfo, CompactionEntry, Branches, ToolCall, ToolsPart, TextPart, ErrorPart, CancelledPart, ThinkingPart, HandoffPart, TurnPart, TurnEntry, UserEntry, SystemEntry, WorkflowStartedNote, TimelineEntry, ToolCallPatch };
 
-// originText says who started the execution, the way the trace card and the
-// chip both phrase it.
+// originText says who started the execution, as the trace card and the chip
+// both phrase it.
 export function originText(origin: WorkflowStartedNote['origin']): string {
   if (origin.kind !== 'trigger') return 'you';
   const kind = origin.trigger_kind || 'trigger';
   return origin.schedule ? `${kind} ${origin.schedule}` : kind;
 }
 
-// buildTimeline folds a session's entries into the rendered timeline,
-// dispatching on each entry's kind and recorded display kind. Folded entries
-// render in place and the checkpoint inline — invariant 24.
+// buildTimeline folds a session's entries into the rendered timeline by entry kind and
+// display kind; folded entries render in place, the checkpoint inline — invariant 24.
 export function buildTimeline(entries: EntryView[] | null | undefined): TimelineEntry[] {
   if (!entries) return [];
 
-  // Off-path entries (abandoned attempts) are dropped and surfaced as the
-  // switcher on the current attempt; the filter is not gated on a fork
-  // existing — invariant 19.
+  // Off-path entries are dropped and surfaced as the switcher on the current
+  // attempt — invariant 19.
   const forks = findForks(entries);
   return assemble(entries.filter(e => e.on_path !== false), forks);
 }
 
-// findForks locates every point where the conversation was answered more than
-// once, keyed by the id of the child that continues each attempt.
-//
-// Leaf and update entries are excluded from the parent index on purpose: they
-// are metadata appended at whatever the tip happened to be, so counting them as
-// children would invent a fork at every branch switch.
+// findForks locates every point answered more than once, keyed by the active
+// child's id. Leaf and update entries stay out of the parent index: appended at
+// whatever the tip was, they would invent a fork at every switch.
 function findForks(entries: EntryView[]): Map<string, Branches> {
   const children = new Map<string, string[]>();
   const byId = new Map<string, EntryView>();
@@ -319,8 +299,7 @@ function findForks(entries: EntryView[]): Map<string, Branches> {
     if (kids) kids.push(e.entry_id); else children.set(p, [e.entry_id]);
   }
 
-  // tipOf walks an attempt to its last entry — where a switch has to branch to,
-  // since branching to the middle of an attempt would truncate it.
+  // tipOf walks an attempt to its last entry, where a switch has to branch to.
   const tipOf = (id: string): string => {
     const seen = new Set<string>();
     for (;;) {
@@ -337,8 +316,8 @@ function findForks(entries: EntryView[]): Map<string, Branches> {
     if (kids.length < 2) continue;
     const active = kids.findIndex(k => byId.get(k)?.on_path !== false);
     const branches: Branches = { parentId, tips: kids.map(tipOf), active: active < 0 ? 0 : active };
-    // Keyed by the ACTIVE child: that is the one still in the timeline, and the
-    // switcher rides on the turn it starts.
+    // Keyed by the ACTIVE child: the one still in the timeline, whose turn
+    // carries the switcher.
     out.set(kids[branches.active], branches);
   }
   return out;
@@ -355,21 +334,20 @@ function assemble(
     if (!turn) { turn = { role: 'turn', parts: [], messageId: '' }; timeline.push(turn); }
   };
   const finishTurn = (): void => { turn = null; };
-  // anchor pins the turn to the row it last absorbed, so a fork or a scroll
-  // restore has a durable id to aim at.
+  // anchor pins the turn to the row it last absorbed, a durable id for a fork
+  // or a scroll restore.
   const anchor = (e: EntryView): void => {
     if (e.id) turn!.messageId = e.id;
     if (e.run_id) turn!.runId = e.run_id;
-    // A turn that STARTS an attempt carries its switcher. Only the first entry
-    // of the turn can, which is what `!turn.branches` guards.
+    // Only the first entry of a turn carries its switcher (`!turn.branches`).
     const b = e.entry_id ? forks.get(e.entry_id) : undefined;
     if (b && !turn!.branches) turn!.branches = b;
   };
 
   for (const e of entries) {
     const d = e.display;
-    // A compaction checkpoint: an inline marker where the pass happened. The
-    // history it folded renders in place above it.
+    // A compaction checkpoint: an inline marker; the history it folded renders
+    // in place above it.
     if (e.kind === 'compaction') {
       finishTurn();
       timeline.push({
@@ -405,10 +383,8 @@ function assemble(
         if (typeof x?.not_run === 'string') { tc.status = 'not_run'; tc.not_run = x.not_run; }
         if (x?.task_id || x?.task_status) {
           // A summary from an earlier attempt than the card's is a leftover a
-          // retry voided, not the current result — the fold cannot blank it
-          // (only non-empty fields merge), so compare its provenance instead.
-          // Rows written before attempts existed carry neither key and keep
-          // their summary.
+          // retry voided; the fold cannot blank it, so compare provenance. Rows
+          // from before attempts existed keep theirs.
           const stale = typeof x.task_attempt === 'number' && (x.task_summary_attempt ?? 0) < x.task_attempt;
           tc.task = { id: x.task_id, label: d.title, status: x.task_status, summary: stale ? undefined : d.summary, attempt: x.task_attempt };
         }
@@ -424,15 +400,14 @@ function assemble(
           const tc = pendingTC[d.call_id];
           tc.output = d.output || e.content || '';
           tc.status = 'completed';
-          // The output entry's display carries the tool's word on how to
-          // present the result. Applied conditionally, mirroring the live
-          // path (applyToolResult) — the isomorphism test compares the two.
+          // The output's display is applied conditionally, mirroring
+          // applyToolResult — invariant 16.
           if (d.title) tc.title = d.title;
           if (d.summary) tc.summary = d.summary;
           if (d.renderer) tc.renderer = d.renderer;
           if (d.is_error) tc.is_error = true;
-          // Non-empty only: the wire omits an empty bag (omitempty), so an
-          // empty stored one must fold to nothing too or the paths diverge.
+          // Non-empty only: the wire omits an empty bag, so a stored one must
+          // fold to nothing too.
           if (d.extra && Object.keys(d.extra).length) tc.extra = d.extra;
         }
         continue;
@@ -445,8 +420,8 @@ function assemble(
         continue;
       }
       case DISPLAY.cancelled: {
-        // A run stopped by the user (or a deadline). Content is optional — the
-        // card renders a fixed label — so this branch does not gate on it.
+        // Content is optional (the card renders a fixed label), so this branch
+        // does not gate on it.
         ensureTurn();
         anchor(e);
         turn!.parts.push({ type: 'cancelled', content: e.content || '' });
@@ -461,8 +436,8 @@ function assemble(
       }
       case DISPLAY.workflowStarted:
       case DISPLAY.triggerFired: {
-        // A row of its own, like any system chip; the note's data comes from
-        // the display's extra, the line of text is its fallback.
+        // A row of its own, like any system chip; the note's data is the
+        // display's extra, the text its fallback.
         finishTurn();
         const x = d.extra || {};
         const origin = (x.origin && typeof x.origin === 'object') ? x.origin as WorkflowStartedNote['origin'] : { kind: 'person' };
@@ -477,9 +452,9 @@ function assemble(
         continue;
       }
       case DISPLAY.message: {
-        // Assistant prose. Matched by display kind, not role: a failed run's
-        // partial text (an annotation) and an error-handler fallback answer
-        // arrive as role "system" and must still render as markdown text.
+        // Assistant prose, matched by display kind not role: a failed run's
+        // partial text and an error-handler fallback arrive as role "system"
+        // and still render as markdown.
         if (!e.content) continue;
         ensureTurn();
         anchor(e);
@@ -500,13 +475,9 @@ function assemble(
   return timeline;
 }
 
-// rowKeys gives every rendered row a stable, UNIQUE React key: the durable
-// store id first, then the run id or the sender's optimistic client id, and
-// the array index only for a transient row that has none. Type-tagged
-// prefixes (m/r/c/i) keep the number spaces apart, and the role prefix keeps
-// a bubble and a turn of one run distinct. A run an injection split shares
-// its id between rows of the same role until the store stamps them: the later
-// ones take an ordinal, or React reuses the wrong node and leaves a ghost.
+// rowKeys gives every row a stable, unique React key: store id, else run id,
+// else client id, else index, type-tagged (m/r/c/i) and role-prefixed; rows of
+// one role sharing a run id (an injection split) take an ordinal.
 export function rowKeys(messages: Array<{ role: string; messageId?: string | number; runId?: string; clientMsgId?: string }>): string[] {
   const seen = new Map<string, number>();
   return messages.map((m, i) => {
@@ -521,8 +492,8 @@ export function rowKeys(messages: Array<{ role: string; messageId?: string | num
   });
 }
 
-// findToolCall returns the tool call with the given id (searching newest-first),
-// or null. Used to read a call's current state before patching it.
+// findToolCall returns the tool call with the given id (searching
+// newest-first), or null.
 export function findToolCall(messages: TimelineEntry[], toolCallId: string): ToolCall | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role !== 'turn') continue;

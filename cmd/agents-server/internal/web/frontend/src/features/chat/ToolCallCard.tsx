@@ -16,10 +16,9 @@ import { ChecklistItems } from '@/features/chat/ChecklistItems';
 interface ToolCallCardProps {
   toolCall: ToolCall;
   live?: boolean;
-  // The task offers — passed by the transcript that anchors the task rather
-  // than read from the session, because the same card renders a FOREIGN
-  // transcript in the Inspector, where an Inspect would open a task this
-  // session does not track. Absent = no offer.
+  // The task offers, passed by the transcript that anchors the task, not read
+  // from the session: the same card renders a FOREIGN transcript in the
+  // Inspector. Absent = no offer.
   onInspectTask?: (taskId: string) => void;
   onRetryTask?: (taskId: string) => void;
   // A checklist card that is not the timeline's newest: it stays folded, the
@@ -33,13 +32,9 @@ type ArgBody =
   | { kind: 'workflow'; text: string; spec: WorkflowSpec }
   | { kind: 'memory'; text: string; scope: string; key: string; append: boolean };
 
-// primaryArg picks the meaningful content to show for a tool call. For the tools
-// an operator actually reviews at approval time we surface the raw field with
-// real newlines instead of an escaped-JSON blob: apply_patch → the patch,
-// exec_command → the shell command, submit_plan → the plan as markdown (its
-// approval card IS the plan review), todo_write → a checklist, save_workflow →
-// the definition (its approval card is the change review). Everything else
-// falls back to pretty JSON.
+// primaryArg picks what a tool call's card shows: the raw field with real
+// newlines for the tools reviewed at approval time (patch, command, plan,
+// checklist, definition), else pretty JSON.
 function primaryArg(toolName: string, args: string): ArgBody {
   try {
     const parsed = JSON.parse(args);
@@ -82,9 +77,8 @@ function patchFiles(patch: string): string[] {
   return files;
 }
 
-// diffPreview strips the patch framing so the body is just the hunks. Begin/End
-// carry no info; the single-file name is in the header so its "*** ... File:"
-// line goes too. Multi-file patches keep those File lines as group separators.
+// diffPreview strips the patch framing so the body is just the hunks; a
+// multi-file patch keeps its "*** ... File:" lines as group separators.
 function diffPreview(patch: string, multiFile: boolean): string {
   return patch.split('\n').filter((line) => {
     if (line.startsWith('*** Begin Patch') || line.startsWith('*** End Patch')) return false;
@@ -93,12 +87,9 @@ function diffPreview(patch: string, multiFile: boolean): string {
   }).join('\n');
 }
 
-// argSummary picks a one-line title for the card header straight from the call
-// args, so a collapsed card is self-describing (the file it reads, the command
-// it runs) instead of blank. mono = the code font (paths/commands); sans reads
-// as prose (search queries, sub-tool lists). Missing field / unparseable → null
-// (no title, never throws). apply_patch and spawn_task carry their title from
-// richer sources (patch body / task label) and are resolved in the component.
+// argSummary picks a one-line header title from the call args (mono for paths
+// and commands, sans for prose); null when nothing fits. apply_patch and
+// spawn_task resolve theirs in the component.
 function argSummary(toolName: string, args: string): { text: string; mono: boolean } | null {
   try {
     const p = JSON.parse(args);
@@ -141,10 +132,8 @@ function argSummary(toolName: string, args: string): { text: string; mono: boole
   }
 }
 
-// mcpArgSummary scans an MCP tool call's args for well-known parameter names
-// common across MCP servers (path, query, command, …). Identifiers and paths
-// render in the code font (mono); prose queries don't. Returns null when
-// nothing useful is found — the card falls back to the bare method name.
+// mcpArgSummary scans an MCP call's args for parameter names common across
+// servers (path, query, command, …); null when nothing useful is found.
 function mcpArgSummary(args: string): { text: string; mono: boolean } | null {
   try {
     const p = JSON.parse(args);
@@ -173,10 +162,8 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale
   const liveTaskStatus = liveTaskStatusByCallId[tool_call_id];
   const liveTaskLabel = liveTaskLabelByCallId[tool_call_id];
 
-  // A spawn_task card is the task's anchor in the timeline: the terminal
-  // display projection carries the id on the call side; before that lands, the
-  // result's Details bag does (taskResult puts task_id there so no UI has to
-  // parse the model-facing text back into fields).
+  // A spawn_task card is the task's anchor: the task id comes from the call's
+  // display projection (invariant 21), or the result's Details bag before that lands.
   let inspectTaskId = task?.id || '';
   if (!inspectTaskId && tool_name === 'spawn_task' && typeof toolCall.extra?.task_id === 'string') {
     inspectTaskId = toolCall.extra.task_id;
@@ -189,13 +176,11 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale
   const displayTitle = (toolCall.title || '').trim();
   const displayName = displayTitle || (sepIdx > 0 ? tool_name.substring(sepIdx + 2) : tool_name);
 
-  // The spawn label, shown next to the name so the wide spawn_task card carries
-  // real information instead of blank space: terminal from the display
+  // The spawn label, shown next to the name: terminal from the display
   // projection, pre-terminal from the live run event. Empty for non-task tools.
   const taskTitle = (task?.label || liveTaskLabel || '').trim();
   // The tool's one-line account of what happened ("3 files changed"), from its
-  // result's display. Outranks everything inferred from the arguments below:
-  // the tool said what it did, so the card need not guess from what was asked.
+  // result's display; it outranks everything inferred from the arguments below.
   const resultSummary = (toolCall.summary || '').trim();
 
   const body = primaryArg(tool_name, args);
@@ -207,10 +192,8 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale
       ? `${patchFileList[0]} +${patchFileList.length - 1}`
       : '';
 
-  // One-line title for the header: the spawn label, else the tool's own result
-  // summary, else the patched file(s), else a per-tool arg summary, else the
-  // task a task_status/task_stop targets. At most one applies — it makes the
-  // collapsed card self-describing.
+  // One-line header title: the spawn label, else the result summary, else the
+  // patched file(s), else an arg summary, else a task_status/task_stop's target.
   let headerSummary: { text: string; mono: boolean } | null = null;
   if (taskTitle) headerSummary = { text: taskTitle, mono: false };
   else if (resultSummary) headerSummary = { text: resultSummary, mono: false };
@@ -271,9 +254,8 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale
   // A card with live output opens itself: a spinner the user has to click to
   // see through defeats the point of streaming it.
 
-  // A result that reported failure gets a badge even on cards that would
-  // otherwise stay quiet. It outranks 'approved' (the outcome over the
-  // process) but not 'rejected' — a rejection notice is not the tool failing.
+  // A failed result gets a badge even on cards that would otherwise stay quiet;
+  // it outranks 'approved' but not 'rejected' (a rejection is not the tool failing).
   const failed = !!toolCall.is_error && status !== 'rejected';
   const showStatus = status === 'approved' || status === 'rejected' || pendingApproval || isRunning || failed || notRun;
   const statusLabel = status === 'rejected' ? 'rejected'
@@ -299,8 +281,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale
         >{headerSummary.text}</span>
       )}
       {/* Pushes the trailing group (MCP label / task status / inspect /
-          approval status) to the right edge, so every card's header aligns the
-          same way whether or not it has a summary. */}
+          approval status) to the right edge, on every card. */}
       <span className="ToolCallCard-spacer" />
       {mcpServer && <Label>{mcpServer}</Label>}
       {task?.status && <StatusLabel status={task.status} prefix="task" />}
@@ -373,9 +354,8 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale
           <pre>{task.summary}</pre>
         </div>
       )}
-      {/* Live output while the tool runs. It disappears when `output` lands —
-          the result replaces it rather than sitting beside it, so the same work
-          is never shown twice. */}
+      {/* Live output while the tool runs; `output` landing replaces it, so the
+          same work is never shown twice. */}
       {!output && progress && (
         <div className="ToolCallCard-output ToolCallCard-output--live">
           <div className="ToolCallCard-output-label">Running…</div>

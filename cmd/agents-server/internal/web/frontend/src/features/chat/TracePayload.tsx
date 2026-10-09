@@ -44,9 +44,8 @@ function imageMarker(n: number): string {
   return n === 1 ? '[image]' : '[' + n + ' images]';
 }
 
-// partsText is the text of a content list, its images counted at the end.
-// Refusal parts carry their text in `refusal`, not `text` — without this, an
-// Anthropic refusal in the trace renders as raw JSON.
+// partsText is the text of a content list, its images counted at the end;
+// a refusal part's text is in `refusal`, not `text`.
 function partsText(parts: PayloadRecord[]): string {
   const texts = parts
     .map(p => p.text ?? p.refusal)
@@ -103,9 +102,8 @@ export function itemImages(item: PayloadRecord, attachments?: AttachmentMeta[]):
   return partImages(itemParts(item), attachments);
 }
 
-// payloadEntry is what a PayloadItem shows for an item: tag, preview, the
-// images it carries, and the text behind the click — the item's JSON when it
-// has no text of its own, nothing when the images are all there is.
+// payloadEntry is what a PayloadItem shows: tag, preview, images, and the text
+// behind the click (the item's JSON when it has no text; nothing when only images).
 export function payloadEntry(item: PayloadRecord, attachments?: AttachmentMeta[]): { tag: string; text: string; full: string; images: PayloadImage[] } {
   const text = itemText(item);
   const images = itemImages(item, attachments);

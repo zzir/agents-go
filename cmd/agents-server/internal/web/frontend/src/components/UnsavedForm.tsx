@@ -1,13 +1,9 @@
 import { useContext, useEffect, useId, useState, type ReactNode } from 'react';
 import { FormDirtyContext, UnsavedContext } from '@/lib/unsaved';
 
-/** Wraps an editor and tracks whether it was edited: an input or change event
- * inside marks it, and the wrapper going away (the form closed on save or
- * cancel) clears it. The flag reaches the enclosing registry and the form's
- * own Cancel (FormDirtyContext). A control that is a button (a switch, a
- * segment) raises neither event and goes unguarded. A form that stays mounted
- * after its Save (a settings row) knows its own state better — its draft
- * against the stored value — and passes it as `dirty` instead. */
+/** Wraps an editor and reports whether it was edited (an input/change event
+ * marks it; a button control such as a switch raises neither; unmount clears it)
+ * to the registry and FormDirtyContext. A form mounted past Save passes `dirty`. */
 export function UnsavedForm({ children, className, dirty: controlled }: { children: ReactNode; className?: string; dirty?: boolean }) {
   const id = useId();
   const registry = useContext(UnsavedContext);

@@ -21,12 +21,10 @@ function barWidth(k: number, pointed: number | null): string | undefined {
   return BAR_WIDTHS[Math.abs(k - pointed)];
 }
 
-// Left-rail minimap of the user's prompts: one bar per message, the active
-// bar tracks the scroll position, hovering shows the prompt's first line in
-// a Primer tooltip, clicking jumps to the message. Pointing at a bar (or
-// focusing it) magnifies it and, less, its neighbours — a fisheye rather
-// than the whole rail stretching. Hidden by chat.css when the chat column is
-// too narrow for the rail to sit in the side gutter.
+// Left-rail minimap of the user's prompts: one bar per message, the active bar
+// tracks the scroll position, hover shows the prompt's first line, click jumps
+// to it; pointing at a bar fisheyes it and its neighbours. chat.css hides it on
+// narrow columns.
 export const ChatToc = memo(function ChatToc({ items, scrollElRef, onJump }: ChatTocProps) {
   const [active, setActive] = useState(0);
   const [pointed, setPointed] = useState<number | null>(null);
@@ -62,9 +60,8 @@ export const ChatToc = memo(function ChatToc({ items, scrollElRef, onJump }: Cha
   if (items.length < 2) return null;
 
   return (
-    // The pointer leaving the rail (not the bar) ends the magnification, so a
-    // click that leaves focus on its bar does not hold the fisheye open;
-    // focus leaving the rail ends it too, focus moving bar to bar does not.
+    // Magnification ends when the pointer or focus leaves the RAIL, not the bar:
+    // a click leaves focus on its bar, and focus moving bar to bar keeps it.
     <nav
       className="chat-toc"
       aria-label="Session outline"

@@ -1,11 +1,9 @@
 import { TASK_KIND_WORKFLOW, type TaskStatus, type WorkflowState } from '@/lib/protocol';
 import { taskRetryable, type TaskState } from '@/lib/useAgentSocket';
 
-// BackgroundItem is one piece of background work as the panel shows it. A
-// spawned task and a workflow execution are the same thing to a reader — work
-// running in a session they are not in, which will report back — and to the
-// server too: both are tasks, and a workflow is one whose state carries a step
-// sequence. `kind` survives only for what the strip renders differently.
+// BackgroundItem is one piece of background work as the panel shows it: a
+// spawned task or a workflow execution, both tasks to the server; `kind`
+// survives only for what the strip renders differently.
 export interface BackgroundItem {
   kind: 'task' | 'workflow';
   id: string;
@@ -14,33 +12,28 @@ export interface BackgroundItem {
   childSessionId?: string;
   createdAt?: number;
   updatedAt?: number;
-  // The one-line "what is it doing right now": the running tool for a task,
-  // the current step for a workflow.
+  // The one-line "what is it doing right now": the running tool for a task, the
+  // current step for a workflow.
   activity?: string;
   error?: string;
-  // How far a countable sequence has got, 0..1. Absent for a task — it has no
-  // measurable middle.
+  // How far a countable sequence has got, 0..1; absent for a task.
   progress?: number;
   attempt?: number;
   // The approval it is stuck on, answerable from the row, and the agent that
-  // asked: the paused run's when known, else the task's own.
+  // asked (the paused run's, else the task's own).
   pendingCallId?: string;
   pendingToolName?: string;
   requestedBy?: string;
   retryable: boolean;
   // Hidden from the chat strip, still listed in the panel; a retry clears it.
   dismissed?: boolean;
-  // Workflow only: the definition snapshot and the launch log the detail lens
-  // lists step by step.
+  // Workflow only: the definition snapshot and the launch log the detail lens lists.
   state?: WorkflowState;
 }
 
-// stepProgress reads where a workflow stands from its state: the current
-// step's ordinal and name, the COMPLETED fraction (the current step is in
-// flight, not done), and — once the sequence's own launches outnumber its
-// steps, i.e. an edge led back to a step — how many runs it has taken, so a
-// loop shows as one at a glance. A person's retry runs a step again too, but
-// is not the sequence looping, so it does not count.
+// stepProgress reads where a workflow stands: the current step's ordinal and
+// name, the completed fraction, and — once launches outnumber steps (a backward
+// edge) — the run count, so a loop shows. A person's retry does not count.
 export function stepProgress(state?: WorkflowState): { activity?: string; progress?: number } {
   const steps = state?.steps || [];
   const idx = state ? steps.findIndex(s => s.id === state.step_id) : -1;
@@ -78,8 +71,7 @@ export function taskItem(t: TaskState): BackgroundItem {
   };
 }
 
-// fmtDuration renders a millisecond span as a compact duration (12s, 4m32s,
-// 1h03m).
+// fmtDuration renders a millisecond span as a compact duration (12s, 4m32s, 1h03m).
 export function fmtDuration(ms: number): string {
   if (!isFinite(ms) || ms < 0) return '';
   const s = Math.floor(ms / 1000);
@@ -98,21 +90,20 @@ export function itemDuration(it: BackgroundItem, now: number): string {
   return end > it.createdAt ? fmtDuration(end - it.createdAt) : '';
 }
 
-// backgroundItems is the panel's whole input: the session's tasks, live over
-// the socket, as one list.
+// backgroundItems is the panel's whole input: the session's tasks as one list.
 export function backgroundItems(tasks: Record<string, TaskState> | undefined): BackgroundItem[] {
   return Object.values(tasks || {}).map(taskItem);
 }
 
-// StepRow is one launched step of a workflow, as the detail lens lists them:
-// the log entry joined with what that run's trace says it cost.
+// StepRow is one launched step of a workflow: the log entry joined with what
+// its run's trace says it cost.
 export interface StepRow {
   index: number;
   stepId: string;
   name: string;
   runId: string;
-  // How the run ended (completed | failed | cancelled …), or 'running' for the
-  // current one; a gate's pass/fail is the verdict, and its run completed.
+  // How the run ended, or 'running' for the current one; a gate's pass/fail is
+  // the verdict, its run completed.
   outcome: string;
   verdict?: 'pass' | 'fail';
   // A run a person's retry launched — the same step again, by hand.
@@ -122,7 +113,7 @@ export interface StepRow {
 }
 
 // TraceSpanLike is the slice of a trace event stepRows reads (structurally the
-// Inspector's TraceEventData), so this module needs nothing from the panel.
+// Inspector's TraceEventData).
 export interface TraceSpanLike {
   kind?: string;
   type?: string;
@@ -131,11 +122,9 @@ export interface TraceSpanLike {
   ended_at?: string;
 }
 
-// stepRows joins a workflow's launch log with the child session's trace runs
-// (keyed by run id, as the Inspector holds them). Cost and duration come from
-// the run's spans — generation spans carry the tokens, the earliest start and
-// latest end bound the time — and are absent for a run whose spans have not
-// been loaded (or that never left any).
+// stepRows joins a workflow's launch log with the child session's trace runs:
+// generation spans carry the tokens, earliest start and latest end bound the
+// time; both absent for a run whose spans are not loaded.
 export function stepRows(state: WorkflowState | undefined, status: TaskStatus, traceRuns?: Record<string, TraceSpanLike[]>): StepRow[] {
   const steps = state?.steps || [];
   const runs = state?.step_runs || [];
@@ -158,9 +147,8 @@ export function stepRows(state: WorkflowState | undefined, status: TaskStatus, t
     const last = i === runs.length - 1;
     // The log's own stamps stand in for a run whose spans are not loaded.
     const logged = sr.started_at && sr.ended_at ? new Date(sr.ended_at).getTime() - new Date(sr.started_at).getTime() : NaN;
-    // A run still open shows the task's live status; an ending is recorded
-    // in the log itself (the task's status stands in only for rows written
-    // before that was so).
+    // A run still open shows the task's live status; the log records an ending
+    // (the task status stands in for older rows).
     const loggedOutcome = sr.outcome || (last ? (status === 'working' || status === 'input_required' ? 'running' : status) : '');
     const verdict = loggedOutcome === 'pass' || loggedOutcome === 'fail' ? loggedOutcome : undefined;
     return {
@@ -177,8 +165,8 @@ export function stepRows(state: WorkflowState | undefined, status: TaskStatus, t
   });
 }
 
-// requestedBy says who asked for the decision a paused task waits on: the
-// task by label and the agent by name (its id when the name is not loaded).
+// requestedBy says who asked for the decision a paused task waits on: the task
+// by label, the agent by name.
 export function requestedBy(it: Pick<BackgroundItem, 'label' | 'requestedBy'>, agentNames?: Record<string, string>): string {
   const agent = it.requestedBy ? (agentNames?.[it.requestedBy] || it.requestedBy.slice(0, 8)) : '';
   return 'Requested by ' + it.label + (agent ? ' · ' + agent : '');

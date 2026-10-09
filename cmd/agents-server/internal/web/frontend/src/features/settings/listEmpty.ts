@@ -1,7 +1,5 @@
-// listEmpty words a scoped list's blank state by WHY it is blank: nothing
-// exists yet (and how to make one), the Mine filter hides every row, or the
-// search matched none. One wording for the four scoped panels. The noun
-// travels along, for the line a failed load shows (LoadError).
+// listEmpty words a scoped list's blank state by WHY it is blank (invariant 74);
+// the noun travels along for LoadError's line.
 export function listEmpty(opts: {
   // Plural noun as the list titles it ("agents", "MCP servers").
   noun: string;

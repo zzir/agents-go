@@ -47,9 +47,9 @@ export function useMe(): MeState {
   return useContext(MeContext);
 }
 
-// useIsAdmin is null until /auth/me has answered, so nothing shows an admin
-// the member view during the load; a failed fetch counts as member (the
-// server refuses the writes anyway).
+// useIsAdmin is null until /auth/me answers, so an admin never sees the member
+// view mid-load; a failed fetch counts as member (the server refuses the writes
+// anyway).
 export function useIsAdmin(): boolean | null {
   const { me, loading } = useMe();
   return loading ? null : me?.role === 'admin';

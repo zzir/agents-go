@@ -6,9 +6,9 @@ function parse(iso: string | undefined): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// formatTime is the one date-time format every list and label uses:
-// "Sep 1, 07:19" (short) or "Sep 1, 07:19:42" (long), month and order in the
-// viewer's locale, the year added only when it is not the current one.
+// formatTime is the one date-time format every list and label uses: "Sep 1,
+// 07:19" (short) or "Sep 1, 07:19:42" (long) in the viewer's locale, the year
+// only when not current.
 export function formatTime(iso: string, style: 'short' | 'long' = 'short'): string {
   const d = parse(iso);
   if (!d) return '';

@@ -11,11 +11,8 @@ interface JsonFieldProps {
   rows?: number;
 }
 
-/**
- * A JSON-valued form field: a monospace input that validates on blur and shows
- * a Primer error state for malformed JSON, so bad JSON can't silently reach the
- * backend. Empty is treated as valid — the caller decides what empty means.
- */
+/** A JSON-valued form field: monospace, validates on blur, Primer error state for
+ * malformed JSON. Empty is valid — the caller decides what empty means. */
 export function JsonField({ label, value, onChange, caption, placeholder, multiline, rows = 3 }: JsonFieldProps) {
   const [error, setError] = useState<string | null>(null);
 

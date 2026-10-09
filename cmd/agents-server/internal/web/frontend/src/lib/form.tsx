@@ -1,10 +1,9 @@
 import { type ReactNode } from 'react';
 import { FormControl, SegmentedControl } from '@primer/react';
 
-// hideLabel keeps the label for the accessibility tree but off the screen —
-// for a control whose group title already names it visually. Primer requires
-// every FormControl input to have a Label child, so "no label" is not an
-// option, only a hidden one.
+// hideLabel keeps the label for the accessibility tree but off screen, for a
+// control its group title already names; Primer requires a Label child, so
+// hidden is the only "no label".
 export function fc(label: string | null, input: ReactNode, hint?: string | null, opts?: { hideLabel?: boolean }) {
   return (
     <FormControl>
@@ -15,9 +14,8 @@ export function fc(label: string | null, input: ReactNode, hint?: string | null,
   );
 }
 
-/** A labeled horizontal single-choice row — the segmented replacement for a
- * short Select. Every option is visible at a glance, which a dropdown hides
- * behind a click; use it when the option set is small and fixed. */
+/** A labeled horizontal single-choice row, the segmented replacement for a short
+ * Select: every option visible at a glance. For a small, fixed option set. */
 export function seg(
   label: string,
   value: string,
@@ -25,9 +23,8 @@ export function seg(
   onChange: (v: string) => void,
   hint?: string | null,
 ) {
-  // Past four options the row overflows a phone; there Primer collapses it to
-  // a dropdown (its onSelect still fires each Button's onClick, so selection
-  // works in both shapes). Small sets stay inline — the point of a segment.
+  // Past four options the row overflows a phone, so Primer collapses it to a
+  // dropdown there (its onSelect still fires each Button's onClick).
   const variant = options.length > 4 ? ({ narrow: 'dropdown' } as const) : undefined;
   return fc(label, (
     <SegmentedControl aria-label={label} size="small" variant={variant}>

@@ -1,8 +1,6 @@
-// Bus for injecting text into the active chat composer from elsewhere in the
-// app (e.g. quoting terminal output into the input box). Same single-listener
-// pattern as toast: the mounted MessageInput registers itself; senders fire
-// and forget. insert returns false when no composer is mounted (no session
-// open) so callers can surface a hint instead of silently dropping text.
+// Bus for injecting text into the active chat composer from elsewhere (quoting
+// terminal output). Single-listener like toast: the mounted MessageInput
+// registers itself, senders fire and forget; insert returns false when none is mounted.
 
 import { loadDraft, saveDraft } from '@/lib/drafts';
 
@@ -26,10 +24,8 @@ export function putBackInComposer(sessionId: string, open: boolean, text: string
   saveDraft(sessionId, draft ? draft + '\n' + text : text);
 }
 
-// quoteAsCodeBlock wraps raw terminal output in a Markdown code fence, using
-// a fence longer than any backtick run inside so the content can't break out.
-// Trailing whitespace per line (xterm selections keep cell padding) is
-// stripped.
+// quoteAsCodeBlock wraps terminal output in a Markdown fence longer than any
+// backtick run inside; trailing whitespace per line (xterm cell padding) is stripped.
 export function quoteAsCodeBlock(raw: string): string {
   const text = raw
     .split('\n')

@@ -1,10 +1,9 @@
 import { useId, useState } from 'react';
 import { TextInputWithTokens } from '@primer/react';
 
-/** A list-valued field as removable tokens. Enter or comma commits what is
- * typed; blur commits too, so a half-typed entry is not silently lost. The
- * caller keeps its own storage format — this only speaks string[].
- * `suggestions` offers names to pick from (a datalist); any text still commits. */
+/** A list-valued field as removable tokens: Enter, comma or blur commits what
+ * is typed. Speaks only string[]; the caller keeps its own storage format.
+ * `suggestions` is a datalist to pick from; any text still commits. */
 export function TokenListInput({ values, onChange, placeholder, ariaLabel, suggestions }: {
   values: string[];
   onChange: (next: string[]) => void;

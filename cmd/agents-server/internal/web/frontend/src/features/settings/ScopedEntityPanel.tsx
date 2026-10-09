@@ -14,9 +14,8 @@ const PANEL: Record<Exclude<ScopedEntity, 'workflows'>, LazyExoticComponent<Comp
   skills: lazy(() => import('@/features/skills/SkillsPanel')),
 };
 
-// ScopedEntityPanel is one scoped entity's tab: ONE list, an admin's widened
-// by the "Mine | All" filter that opens on Mine (invariant 61); token mode
-// is one person, so the filter does not show there.
+// ScopedEntityPanel is one scoped entity's tab: ONE list, an admin's widened by
+// the "Mine | All" filter, hidden in token mode (invariant 61).
 export function ScopedEntityPanel({ entity }: { entity: Exclude<ScopedEntity, 'workflows'> }) {
   const isAdmin = useIsAdmin();
   const team = useAuthMode() !== 'token';

@@ -38,13 +38,9 @@ function TimelineHandoff({ part }: { part: Extract<TurnPart, { type: 'handoff' }
   );
 }
 
-// DiagnosticBadge reports trouble the run survived.
-//
-// It sits on the process group rather than in the transcript because that is
-// what it describes: not something the agent said, but how the turn went. A run
-// that answered after three retries or on a fallback model looks identical to
-// one that answered first time, and this is the difference — the thing that
-// explains why the answer took forty seconds, or why it is worse than usual.
+// DiagnosticBadge reports trouble the run survived (retries, a fallback model):
+// it sits on the process group, not in the transcript, since it describes how
+// the turn went, not what the agent said.
 function DiagnosticBadge({ diagnostics }: { diagnostics?: RunDiagnostic[] }) {
   if (!diagnostics || diagnostics.length === 0) return null;
   // Counted by kind: three retries is one fact, not three.
@@ -100,21 +96,15 @@ export function ProcessTimeline({ parts, live, reasoning, textStreaming }: Proce
 
   if (stepCount === 0) return null;
 
-  // Once the turn's answer text starts streaming, this group's thinking/tool
-  // phase is finished even though the run is still live: settle the label and
-  // let it collapse like a done group, instead of pinning "Thinking…" over an
-  // already-visible answer. The run.reasoning_item / run.message events that
-  // freeze the live preview into parts only land after the whole model call, so
-  // the live `reasoning` state otherwise lingers through the entire answer.
+  // Streaming answer text ends this group's phase even while the run is live:
+  // the live `reasoning` state only settles after the whole model call.
   const active = live && !textStreaming;
 
   const shouldShow = pendingCount > 0 || (expanded ?? active);
 
-  // A pending approval is the group's status whether or not the run is still
-  // "active": in the steady paused state running is false, so gate it above
-  // `active` — otherwise it falls through to the settled step count and the
-  // "Waiting for approval" wording only flashes in the run.tool_call→interrupted
-  // window.
+  // A pending approval is the status even when the run is not `active` (paused:
+  // running is false), so it is gated first; below `active` it would only flash
+  // at the interrupt.
   const label = pendingCount > 0
     ? 'Waiting for approval'
     : active

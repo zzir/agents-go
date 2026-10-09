@@ -139,12 +139,8 @@ export function danglingNote(count: number, noun: string): string {
 // from before provider_id — the endpoint the entry named.
 export interface FallbackEntry { provider_id?: string; model?: string; provider_type?: string; base_url?: string }
 
-// legacyFallbackProvider finds the provider an endpoint-form entry names, the
-// way the server resolves it at run time: "" and "openai" are one backend, a
-// trailing slash the same host.
-// resolveFallbackEntry is what the fallback row renders: a fresh entry has no
-// endpoint yet and stays editable; an entry from before provider_id names an
-// endpoint, and is unreachable when no visible provider matches it.
+// resolveFallbackEntry is what the fallback row renders: a fresh entry stays
+// editable; an endpoint-form entry is unreachable when no visible provider matches.
 export function resolveFallbackEntry(e: FallbackEntry, providers: { id: string; type?: string; base_url?: string }[]): { providerId: string; unreachable: boolean } {
   if (e.provider_id) return { providerId: e.provider_id, unreachable: false };
   const legacy = e.provider_type !== undefined || e.base_url !== undefined;
@@ -153,6 +149,8 @@ export function resolveFallbackEntry(e: FallbackEntry, providers: { id: string; 
   return { providerId: match || '', unreachable: !match };
 }
 
+// legacyFallbackProvider resolves an endpoint-form entry the way the server
+// does: "" and "openai" are one backend, a trailing slash the same host.
 export function legacyFallbackProvider(e: FallbackEntry, providers: { id: string; type?: string; base_url?: string }[]): string | undefined {
   const host = (u?: string) => (u || '').trim().replace(/\/+$/, '');
   const type = (t?: string) => t || 'openai';
@@ -278,10 +276,9 @@ interface AgentFormProps {
 function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, skills, allAgents, providerTypes, providers }: AgentFormProps) {
   const { me } = useMe();
   const meId = me?.id;
-  // A brand-new agent starts with NO skills selected — skills are opt-in, so a
-  // bot unrelated to any installed skill doesn't silently carry them all. Only
-  // an EXISTING agent whose `skills` is null (not customized) falls back to
-  // "every installed skill" (null below), so an edit never strips them.
+  // A new agent starts with NO skills (opt-in); only an EXISTING agent whose
+  // `skills` is null (never customized) means every installed skill, so an edit
+  // never strips them.
   const initSkills = (): string[] | null => {
     if (!initial) return [];
     return Array.isArray(initial.skills) ? initial.skills : null;
@@ -319,17 +316,16 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const [temperature, setTemperature] = useState(initMs.temperature !== undefined ? String(initMs.temperature) : '');
   const [topP, setTopP] = useState(initMs.top_p !== undefined ? String(initMs.top_p) : '');
   const [maxTokens, setMaxTokens] = useState(initMs.max_tokens !== undefined ? String(initMs.max_tokens) : '');
-  // model_settings keys the form has no controls for (prompt_cache_options,
-  // verbosity, metadata, …) can be set through the API. The save handler
-  // rebuilds model_settings from the form, so anything not carried over here
-  // would be silently dropped on the next UI save.
+  // model_settings keys the form has no controls for (set through the API) are
+  // carried over, or the rebuild on save would silently drop them.
   const msFormKeys = ['reasoning', 'service_tier', 'extra_body', 'temperature', 'top_p', 'max_tokens'];
   const preservedMs = Object.fromEntries(Object.entries(parseModelSettings()).filter(([k]) => !msFormKeys.includes(k)));
   const [selectedHandoffs, setSelectedHandoffs] = useState<string[]>(initial?.handoffs ?? []);
   const [selectedMcp, setSelectedMcp] = useState<string[]>(initial?.tools ?? []);
   const [selectedSkills, setSelectedSkills] = useState<string[] | null>(initSkills);
   const set = <K extends keyof AgentFormData>(k: K, v: AgentFormData[K]) => setForm(prev => ({ ...prev, [k]: v }));
-  // Summary is the default mode and the only one with a kept window and a summary prompt.
+  // Summary is the default mode and the only one with a kept window and a
+  // summary prompt.
   const summaryMode = !form.compaction_mode || form.compaction_mode === 'summary';
   const resetImplied = !!form.compaction_enabled && (form.compaction_mode === 'reset' || form.compaction_mode === 'hybrid');
   const approveList = form.approve_tools || [];
@@ -338,9 +334,9 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const { data: agentTools } = useApi<AgentToolInfo[]>(
     () => initial?.id ? (api.agents.tools(initial.id) as Promise<AgentToolInfo[]>).catch(() => [] as AgentToolInfo[]) : Promise.resolve([] as AgentToolInfo[]),
     [initial?.id], initial?.id ? 'agent-tools:' + initial.id : undefined);
-  // The backend's facts follow the REFERENCED provider: wording from the
-  // static table, machine facts (unsupported features) from the server's
-  // registry. An agent with no provider runs on the built-in openai default.
+  // The backend's facts follow the REFERENCED provider (wording from the static
+  // table, unsupported features from the server's registry); none = the
+  // built-in openai default.
   const selectedProvider = (providers || []).find(p => p.id === form.provider_id);
   const meta = providerMeta(selectedProvider?.type ?? '');
   // The selected provider's live model list; a provider that cannot list
@@ -353,21 +349,16 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const providerHint = unsupported.length > 0
     ? `Fails loudly on this backend — leave unset: ${unsupported.slice(0, 6).join(', ')}${unsupported.length > 6 ? ` +${unsupported.length - 6} more` : ''}`
     : 'Endpoints and their API keys are managed under Providers';
-  // Every picker offers only what this agent may REFERENCE (decisions §5.29): a
-  // private agent sees global rows plus its owner's, a global one only global
-  // rows. Without this an admin's all-rows listing would offer a foreign
-  // private row the save then refuses.
-  // A create — blank or a fork seed, which sheds scope/owner — will land
-  // private and the caller's, so it references as such; only an EDIT takes
-  // the stored row's pair.
+  // Every picker offers only what this agent may reference (decisions §5.29); a
+  // create (blank or fork seed) lands private and the caller's, an edit keeps
+  // the stored pair.
   const holder = initial?.scope
     ? { scope: initial.scope, owner_id: initial.owner_id }
     : { scope: 'private', owner_id: meId };
   const refOK = (row: { scope?: string; owner_id?: string }) => canReference(holder, row);
   const visibleProviders = (providers || []).filter(refOK);
-  // A fallback entry from before provider_id shows the provider at its
-  // endpoint, and saves as that provider; one no provider reaches is shown
-  // read-only and dropped on save.
+  // An endpoint-form fallback entry shows and saves as the provider it resolves
+  // to; one no provider reaches is read-only and dropped on save.
   const fallbacks = form.fallback_models || [];
   const fallbackProviderId = (e: FallbackEntry) => resolveFallbackEntry(e, visibleProviders).providerId;
   const setFallback = (i: number, patch: Partial<FallbackEntry>) =>
@@ -385,9 +376,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
   const toggleMcp = (id: string | number) => {
     setSelectedMcp(prev => toggleListEntry(prev, String(id), !prev.includes(String(id))));
   };
-  // null selectedSkills = not customized yet -> effectively "every installed skill".
-  // Computed from the live `skills` prop (not stale state) so it's correct even
-  // before any effect/interaction has run. The selection stores skill IDS.
+  // null selectedSkills = not customized = every installed skill, computed from
+  // the live `skills` prop. The selection stores skill ids.
   const allSkillIds = visibleSkills.map(sk => sk.id);
   const effectiveSkills = selectedSkills ?? allSkillIds;
   const danglingSkills = skills && selectedSkills ? danglingRefs(selectedSkills, allSkillIds) : [];
@@ -397,9 +387,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
       return base.includes(id) ? base.filter(x => x !== id) : [...base, id];
     });
   };
-  // Skills are grouped by their import source (a repo can bundle dozens) so
-  // the list stays manageable — collapsed by default, with a group-level
-  // checkbox to select/deselect the whole source at once.
+  // Skills group by import source (a repo can bundle dozens), collapsed by
+  // default, with a group-level checkbox for the whole source.
   const skillGroups = groupSkills(visibleSkills);
   const [expandedSkillRepos, setExpandedSkillRepos] = useState<Set<string>>(new Set());
   const toggleSkillRepoExpanded = (repo: string) => {
@@ -789,7 +778,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             try { numbers[k] = parseWholeNumber(form[k], label); }
             catch (e) { toast.error((e as Error).message); return; }
           }
-          // Dangling ids leave the saved row; what the editor cannot show it does not write back.
+          // Dangling ids leave the saved row; what the editor cannot show it
+          // does not write back.
           const tools = selectedMcp.filter(id => !danglingMcp.includes(id));
           const skillIds = effectiveSkills.filter(id => !danglingSkills.includes(id));
           const flatPayload = { ...form, ...numbers, fallback_models, handoffs: selectedHandoffs, tools, skills: skillIds, model_settings };
@@ -822,10 +812,8 @@ export function AgentConfigPanel() {
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>, [], 'provider-types');
   const { data: providers } = useApi<ProviderRef[]>(() => api.providers.list() as Promise<ProviderRef[]>, [], 'providers');
 
-  // The key remounts the form when the seed changes; the fork seed drops the
-  // id (so nothing treats it as the source row), sheds the source's
-  // scope/owner (the copy lands like any create: private, the caller's) and
-  // suffixes the name toward the per-scope unique index.
+  // The key remounts the form when the seed changes; the fork seed drops the id,
+  // sheds scope/owner (the copy lands private, the caller's) and suffixes the name.
   const forkSeed = () => {
     const { id: _id, scope: _scope, owner_id: _owner, ...rest } = forkOf!;
     return { ...rest, name: forkOf!.name + '-fork' };

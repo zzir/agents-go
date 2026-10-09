@@ -24,10 +24,8 @@ function TabLoadError() {
 }
 
 // PanelDialog is the one settings hub (invariant 61): a nav of lazily loaded
-// panels, the admin tabs after a divider, one panel shown at a time. readOnly
-// is a member's dialog (shared configuration is theirs to read, not write);
-// null is "not known yet", so the nav shows and the panel waits rather than
-// flashing the read-only note at an admin.
+// panels, the admin tabs after a divider, one shown at a time. readOnly null is
+// "not known yet": the panel waits rather than flashing the read-only note at an admin.
 export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onTabChange, onClose }: {
   title: string;
   tabs: DialogTab[];
@@ -44,9 +42,8 @@ export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onTa
   // A later deep link to another tab selects it while the dialog stays open.
   useEffect(() => { if (known) setTab(initialTab); }, [initialTab, known]);
   const selectTab = (key: string) => { setTab(key); onTabChange?.(key); };
-  // Keep-alive (invariant 51): a tab's panel is loaded on first visit and
-  // then STAYS mounted (hidden). The value is the loaded component, or
-  // TabLoadError if its chunk 404'd.
+  // Keep-alive (invariant 51): a tab's panel is loaded on first visit and STAYS
+  // mounted (hidden); the value is the component, or TabLoadError if its chunk 404'd.
   const [loaded, setLoaded] = useState<Record<string, React.ComponentType>>({});
   const all = useMemo(() => (adminTabs ? [...tabs, ...adminTabs] : tabs), [tabs, adminTabs]);
 
@@ -90,8 +87,8 @@ export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onTa
       height="auto"
       position={{ narrow: 'fullscreen', regular: 'center' }}
       // Both sides scale with the viewport and cap, so the dialog stays a
-      // landscape box on a large screen instead of a column. The width cap is
-      // the nav plus the 1100px content column plus margins.
+      // landscape box on a large screen; the width cap is the nav plus 1100px
+      // content plus margins.
       style={narrow ? undefined : { width: 'clamp(960px, 80dvw, 1360px)', height: 'clamp(560px, 85dvh, 1000px)' }}
       renderBody={({ children }) => (
         <Dialog.Body className="settings-body" style={{ padding: 0 }}>

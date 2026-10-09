@@ -39,8 +39,6 @@ import { NewProjectDialog, useProjectMenu } from '@/features/chat/ProjectControl
 import { ArrowDownIcon, FileDirectoryIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
-/* ---------- types ---------- */
-
 // `task` is the detail lens over ONE piece of background work — taskId is a
 // task id or a workflow-execution id, whichever the list row was.
 export type InspectorPanel = null | { kind: 'trace' } | { kind: 'tasks' } | { kind: 'task'; taskId: string } | { kind: 'context' };
@@ -97,8 +95,6 @@ function flashMessage(el: Element) {
 // new message wins over the pause (invariant 19), and that should not surprise.
 const PENDING_HINT = 'Sending skips the pending call — or use Reject with reason';
 
-/* ---------- ChatView ---------- */
-
 // ChatViewActions is what the view can ask the app to do. Every member is a
 // stable callback, so the object is memoized once and the memo'd view holds.
 export interface ChatViewActions {
@@ -133,10 +129,9 @@ export interface ChatViewActions {
   // Fetches the session's task list again after it failed to load.
   onRetryTasks?: () => void;
   onPanelChange: (panel: InspectorPanel) => void;
-  // Opens the global terminal panel (app-level, independent of the session).
-  // Open-only by design: closing/collapsing happens on the panel itself. The
-  // bound session's project is passed along, and a freshly opened panel
-  // starts a terminal for it — in the same container the session's runs use.
+  // Opens the global terminal panel (open-only; it closes on the panel itself)
+  // with the bound session's project, so a fresh panel starts a terminal in the
+  // runs' container.
   onTerminalOpen?: (project?: { projectId: string; projectName?: string; targetName?: string }) => void;
 }
 
@@ -144,14 +139,11 @@ interface ChatViewProps {
   sessionId: string | null;
   // The session's display name for the top bar ('' until known).
   sessionName?: string;
-  // The session's server-side agent binding. `undefined` means "not loaded
-  // yet"; the composer's agent falls back to it (before the first agent in the
-  // list) when this browser holds no local draft — e.g. a fork or another
-  // device. '' is a resolved session with no agent bound.
+  // The session's server-side agent binding: `undefined` while not loaded (the
+  // composer waits for it before the first agent when no local draft exists),
+  // '' when none bound.
   sessionAgentId?: string;
-  // The session's permanent project binding, or null while unbound. Set by
-  // the first project-carrying run; server-authoritative and immutable
-  // afterwards — switching projects means starting a new session.
+  // The session's project binding, or null while unbound — invariant 27.
   sessionBinding?: SessionBinding | null;
   // The session's OWN run waits on a decision (the server's word): a message
   // sent now abandons that pause, and the composer says so.
@@ -222,11 +214,9 @@ export function ChatView({
   useEffect(() => {
     if (!agentConfigs || agentConfigs.length === 0) return;
     if (agentConfigs.some(a => a.id === agentConfigId)) return; // a valid draft wins
-    // No local draft for this session (a fork, another device, cleared storage).
-    // Adopt the session's server-side agent once it has loaded — only then fall
-    // back to the first agent — so the composer never silently runs a different
-    // agent than the session is bound to.
-    // No session has no server-side agent to wait for; a session's is still loading.
+    // No local draft (a fork, another device, cleared storage): adopt the
+    // session's server-side agent once loaded, and only then the first agent.
+    // No session has none to wait for.
     if (sessionId && sessionAgentId === undefined) return;
     if (sessionAgentId && agentConfigs.some(a => a.id === sessionAgentId)) {
       setAgentConfigId(sessionAgentId); // the session's server-side agent
@@ -250,8 +240,7 @@ export function ChatView({
   }, [settingsReloadKey, reloadAgents, reloadSandboxes]);
 
   // The dep changes whenever content ARRIVES (a message, streamed text, a
-  // reasoning delta): that is what tells the hook apart new content from
-  // height that merely rendered late, which it follows by observing the log.
+  // reasoning delta), which tells the hook new content from height that rendered late.
   const { ref: scrollRef, isSticky, scrollToBottom } = useScrollToBottom(
     messages.length + (streaming?.length ?? 0) + (reasoning?.length ?? 0),
     sessionId,
@@ -293,9 +282,9 @@ export function ChatView({
   // its binding's, never the composer's current pick.
   const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
   const boundSandbox = sandboxDefs?.find(sb => sb.id === boundProject?.sandbox_id);
-  // Capabilities come from the sandbox row the project names. Until that row
-  // declares `rebuild`, Rebuild is withheld rather than offered on a guess: a
-  // backend whose store IS the compute cannot be rebuilt.
+  // Capabilities come from the sandbox row the project names; Rebuild is
+  // withheld until that row declares `rebuild` (a store that IS the compute
+  // cannot be rebuilt).
   const { menu: projectMenu, dialog: envDialog } = useProjectMenu({
     project: boundProject,
     sessionId,
@@ -337,11 +326,9 @@ export function ChatView({
     toast.info(graceful ? 'Stopping after the current turn…' : 'Run cancelled');
   }, [onCancel]);
 
-  // A wake run's input is the raw notification text — label it by what it
-  // delivers, phrased so it reads as the parent's reaction to the result, not
-  // as the task's own trace (the task's trace lives in the Inspector). A
-  // workflow execution is a task too, so its notification parses the same
-  // way; the kind, from the task rows, picks the word.
+  // A wake run's input is the raw notification text: label it by what it
+  // delivers, as the parent's reaction (the task's own trace lives in the
+  // Inspector); the task kind picks the word.
   const runLabelFor = useCallback((content: string) => {
     const notif = parseTaskNotification(content);
     if (!notif) return content;
@@ -357,10 +344,8 @@ export function ChatView({
     [state.messages, entries, traceRuns, runLabelFor],
   );
 
-  // Wake-up run → the run whose spawn_task started the chain, read straight
-  // off the trace: a wake run's spans carry parent_run_id, recorded at launch.
-  // The lineage lives on the run's own durable output — task rows and
-  // notification text do not survive a fork or a fold.
+  // Wake-up run → the run whose spawn_task started the chain, read off the
+  // trace's parent_run_id — invariant 22.
   const traceRunParents = useMemo(() => {
     const parents: Record<string, string> = {};
     for (const [rid, evs] of Object.entries(traceRuns)) {
@@ -399,9 +384,9 @@ export function ChatView({
     onPanelChange({ kind: 'task', taskId });
   }, [onPanelChange]);
 
-  // The task context: the socket's task state, which the durable rows seed and
-  // task.updated keeps current, as the list the strip / Tasks panel / top bar
-  // read plus the per-call lookups the tool cards read.
+  // The task context: the socket's task state (seeded by the durable rows, kept
+  // current by task.updated) as the list the strip/panel/top bar read, plus
+  // per-call lookups for the cards.
   const chatTasks = useDerivedChatTasks(tasks);
   const backgroundItems = chatTasks.items;
   const inspectedItem = panel?.kind === 'task' ? backgroundItems.find(it => it.id === panel.taskId) : undefined;
@@ -422,10 +407,8 @@ export function ChatView({
   const retryTask = useCallback(async (taskId: string) => {
     try {
       const info = await (api.tasks.retry(taskId) as Promise<{ status?: string; attempt?: number; max_attempts?: number }>);
-      // The confirmed state, applied without waiting for the broadcast — the
-      // same reason stopTask does: the answer is already in hand, and a button
-      // that stays on "failed" invites a second click that will be refused. The
-      // failed attempt's summary goes with it.
+      // The confirmed state, applied without waiting for the broadcast (as stopTask
+      // does): a button left on "failed" invites a second click that will be refused.
       if (sessionId && info?.status) {
         onPatchTask?.(sessionId, taskId, {
           status: info.status as TaskStatus, attempt: info.attempt,
@@ -437,10 +420,9 @@ export function ChatView({
     }
   }, [sessionId, onPatchTask]);
 
-  // Hides a finished bar without giving up the row (the Tasks panel keeps it,
-  // and a retry un-dismisses server-side). The server announces the
-  // dismissal (task.updated) to every window; the local patch only spares
-  // this one the round trip.
+  // Hides a finished bar without giving up the row (the Tasks panel keeps it; a
+  // retry un-dismisses server-side). The server broadcasts task.updated; the
+  // local patch spares the round trip.
   const dismissTask = useCallback(async (taskId: string) => {
     try {
       await api.tasks.dismiss(taskId);
@@ -459,11 +441,9 @@ export function ChatView({
     return () => onUnwatchTask(sessionId);
   }, [sessionId, inspectedId, inspectedChild, onWatchTask, onUnwatchTask]);
 
-  // Runs the trace panel can offer a "jump to message" for: those with
-  // something in the RENDERED timeline to jump to. A run whose attempt was
-  // regenerated away has no anchor — the jump would scroll to nothing — so it
-  // gets no button, which is also what distinguishes it from the attempt that
-  // replaced it.
+  // Runs the trace panel can offer "jump to message" for: those with an anchor
+  // in the RENDERED timeline. A regenerated-away attempt has none, so it gets
+  // no button.
   const messageRunIds = useMemo(
     () => new Set([...Object.values(userRunMap), ...Object.values(turnRunMap)]),
     [userRunMap, turnRunMap],
@@ -478,9 +458,8 @@ export function ChatView({
     flashMessage(el);
   }, []);
 
-  // TOC rail: one entry per user prompt; click scrolls to the message. The
-  // upward smooth scroll trips the scroll hook's moved-up intent detection,
-  // so following pauses automatically while the user reads.
+  // TOC rail: one entry per user prompt; click scrolls to the message. The upward
+  // smooth scroll reads as moved-up intent to the scroll hook, so following pauses.
   const tocItems = useMemo(() =>
     messages.flatMap((m, i) => m.role === 'user' && m.content && !parseTaskNotification(m.content)
       ? [{ idx: i, preview: m.content.replace(/\s+/g, ' ').trim().slice(0, 60) }]
@@ -494,17 +473,15 @@ export function ChatView({
     flashMessage(el);
   }, []);
 
-  // Bound sessions claim no project (the server uses the binding); unbound
-  // ones carry the choice, because a regen can be the first project-carrying
-  // run.
+  // Bound sessions claim no project (the server uses the binding); unbound ones
+  // carry the choice, since a regen can be the first project-carrying run.
   const regenProjectId = sessionBinding ? '' : projectId;
   const handleRegen = useCallback((messageId: string, content: string) => {
     onRegenerate?.(messageId, content, agentConfigId, regenProjectId);
   }, [onRegenerate, agentConfigId, regenProjectId]);
 
-  // The session scope every transcript component reads (see
-  // ChatSessionContext for the split). Each value is memoized on its inputs so
-  // a streaming delta — which changes none of them — re-renders no consumer.
+  // The session scope every transcript component reads (invariant 38); each value
+  // is memoized on its inputs, so a streaming delta re-renders no consumer.
   const agentAvatars = useMemo<Record<string, string>>(() => {
     const m: Record<string, string> = {};
     for (const a of agentConfigs || []) if (a.avatar) m[a.id] = a.avatar;
@@ -558,11 +535,9 @@ export function ChatView({
   const selectedAgentLabel = selectedAgent?.name || 'Agent';
   const agentCollisions = collidingNames(agentConfigs || []);
 
-  // The composer's "+" carries the Project submenu until the session binds:
-  // the caller's projects newest first, then New project. The pick shows only
-  // here — checked in the list, named on the Project row — and picking the
-  // checked project again clears it. Once bound, the top bar's badge is the
-  // binding and the submenu is gone.
+  // The composer's "+" carries the Project submenu until the session binds: the
+  // caller's projects newest first, then New project; picking the checked project
+  // again clears it. Once bound, the top bar's badge is the binding.
   const projectRows = composerProjectRows(projects, sandboxDefs);
   const plusItems: ReactNode = !sandboxView.bound && sandboxDefs && sandboxDefs.length > 0 ? (
     <ActionMenu>
@@ -603,10 +578,9 @@ export function ChatView({
           initialSandboxId={newProject.sandboxId}
           onClose={() => setNewProject(null)}
           onCreated={created => {
-            // Seed the cached list before selecting: the stale-id guard
-            // above runs against `projects` on the very next commit, and a
-            // fire-and-forget reload would hand it a list without the new
-            // row — wiping the selection it should protect.
+            // Seed the cached list before selecting: the stale-id guard above
+            // runs against `projects` on the next commit, and a fire-and-forget
+            // reload would wipe the selection.
             mutateProjects(prev => prev ? [...prev.filter(p => p.id !== created.id), created] : [created]);
             if (created.id) setProjectId(created.id);
             reloadProjects();
@@ -709,9 +683,9 @@ export function ChatView({
 
   const isEmpty = loaded && messages.length === 0;
 
-  // The Inspector's lenses. Rendered by the empty branch too: a session that
-  // has never spoken can still own background work — a workflow started on
-  // it — and its strip opens the task lens.
+  // The Inspector's lenses, rendered by the empty branch too: a session that
+  // never spoke can still own background work (a workflow started on it) and
+  // open the task lens.
   const sidePanels = (
     <>
       {panel?.kind === 'trace' && (
@@ -783,9 +757,8 @@ export function ChatView({
     );
   }
 
-  // No session yet, or an empty one: the same centered composer. Typing and
-  // sending with no session creates one (app-level handleSend), so the blank
-  // screen is a place to start, not a dead end.
+  // No session yet, or an empty one: the same centered composer. Sending with no
+  // session creates one (app-level handleSend).
   if (!sessionId || isEmpty) {
     return scoped(
       <div className={'chat-main' + (panel && sessionId ? ' trace-open' : '')}>

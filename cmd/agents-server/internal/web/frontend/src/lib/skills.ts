@@ -15,18 +15,17 @@ export interface SkillGroup {
   repo: string; // import source URL; '' = authored in the workbench
   ownerId: string;
   label: string;
-  // The group's visibility. An imported repo is one scope by invariant (the
-  // whole group flips at once — decisions §5.29); a Local group is a per-owner
-  // bucket whose rows flip one at a time, so this is set only when uniform.
+  // The group's visibility: an imported repo is one scope (the whole group flips
+  // at once — decisions §5.29); a Local bucket's rows flip one at a time, so this
+  // is set only when uniform.
   scope?: string;
   skills: Skill[];
   key: string;
 }
 
 // The model-facing prefix of an imported skill: "owner/repo" for a github.com
-// source, the host otherwise. Mirrors store.repoLabelOf — the server stores
-// the authoritative value on the row (repo_label); this reproduces it for a
-// row fetched before that field existed and for grouping.
+// source, the host otherwise. Mirrors store.repoLabelOf; a row's repo_label is
+// authoritative when present.
 export function repoLabel(repo: string): string {
   if (!repo) return '';
   let u: URL;
@@ -49,12 +48,9 @@ export function qualifiedName(sk: Skill): string {
   return label ? `${label}:${sk.name}` : sk.name;
 }
 
-// groupSkills buckets the listing the way scope moves: an imported repo is
-// one group PER OWNER (the same repo imported by two people is two groups,
-// each flipping on its own), and workbench-authored skills bucket by owner.
-// Groups follow the scoped-listing order the flat panels use (store's
-// scopedListOrder): published first, then whichever group was added most
-// recently — the rows arrive in that order, so first-seen IS newest-first.
+// groupSkills buckets the listing the way scope moves: an imported repo is one
+// group PER OWNER, workbench-authored skills bucket by owner. Groups keep the
+// scoped-listing order (store's scopedListOrder): published first, then newest.
 export function groupSkills(skills: Skill[]): SkillGroup[] {
   const map = new Map<string, SkillGroup>();
   for (const sk of skills) {
@@ -76,9 +72,8 @@ export function groupSkills(skills: Skill[]): SkillGroup[] {
     if (group.scope !== sk.scope) group.scope = undefined; // a Local bucket may be mixed
     group.skills.push(sk);
   }
-  // Insertion order already carries the server's ordering; sorting again
-  // would replace it with an alphabet nobody asked for. Only the published
-  // groups are lifted, mirroring the flat listings' first cut.
+  // Insertion order already carries the server's ordering; only the published
+  // groups are lifted, as the flat listings do.
   const groups = Array.from(map.values());
   return [...groups.filter(g => g.scope === 'global'), ...groups.filter(g => g.scope !== 'global')];
 }

@@ -50,9 +50,8 @@ function toolGroup(name: string): string {
   return 'Other';
 }
 
-// comparableText projects response items into diffable lines: message text
-// and tool calls. Reasoning items are skipped — they vary run to run by
-// design and would drown the diff in noise.
+// comparableText projects response items into diffable lines: message text and
+// tool calls; reasoning items vary run to run and are skipped.
 function comparableText(items: PayloadRecord[]): string {
   return items
     .filter(it => it.type !== 'reasoning')
@@ -62,10 +61,9 @@ function comparableText(items: PayloadRecord[]): string {
 }
 
 // ReplayDialog is a two-pane playground for one traced model call: the left
-// pane edits the request (instructions, settings, input items — seeded from
-// the trace), the right pane shows the replay attempts next to the original
-// response. Requests go through POST /playground/generate (no session, no
-// run, tools are schema-only and never executed).
+// pane edits the request (seeded from the trace), the right shows replay
+// attempts beside the original. Requests go through POST /playground/generate —
+// no session, no run, tools schema-only.
 export function ReplayDialog({ data, attachments, onClose }: { data: PayloadRecord; attachments?: AttachmentMeta[]; onClose: () => void }) {
   const { data: agentList } = useApi<AgentOption[]>(() => api.agents.list() as Promise<AgentOption[]>, [], 'agents');
   const agents = useMemo(() => agentList || [], [agentList]);
@@ -77,9 +75,8 @@ export function ReplayDialog({ data, attachments, onClose }: { data: PayloadReco
     return s && Object.keys(s).length > 0 ? JSON.stringify(s, null, 2) : '';
   });
   const [items, setItems] = useState(() => JSON.stringify(Array.isArray(data.input) ? data.input : [], null, 2));
-  // Which tools go into the replay, keyed by name — the traced set by
-  // default, individually toggleable from the grouped picker (which also
-  // offers the agent's current tools beyond the trace, unselected).
+  // Which tools go into the replay, keyed by name — the traced set by default,
+  // toggleable from the grouped picker (which also offers the agent's current tools).
   const [enabledTools, setEnabledTools] = useState<Set<string>>(
     () => new Set(payloadItems(data.tools).map(t => String(t.name || '')).filter(Boolean)),
   );
@@ -107,9 +104,8 @@ export function ReplayDialog({ data, attachments, onClose }: { data: PayloadReco
     () => new Set(tools.map(t => String(t.name || '')).filter(Boolean)),
     [tools],
   );
-  // The agent's CURRENT tool surface — offered by the picker beyond the
-  // traced set, for what-if replays (would the model have called this?).
-  // A failed fetch offers nothing, not the previous agent's tools.
+  // The agent's CURRENT tool surface, offered by the picker beyond the traced
+  // set for what-if replays; a failed fetch offers nothing, not the previous agent's.
   const { data: agentToolList, error: agentToolsError } = useApi<PayloadRecord[]>(
     () => agentId ? (api.agents.tools(agentId) as Promise<PayloadRecord[]>) : Promise.resolve([]),
     [agentId],
@@ -128,9 +124,8 @@ export function ReplayDialog({ data, attachments, onClose }: { data: PayloadReco
     }
     return out;
   }, [tools, agentTools, tracedNames]);
-  // Per-category rows for the three pickers, name only — descriptions made
-  // every row two lines tall and the list a chore to scan. MCP keeps a group
-  // per server inside its panel.
+  // Per-category rows for the three pickers, name only; MCP keeps a group per
+  // server inside its panel.
   const pickerData = useMemo(() => {
     const builtin: SelectPanelItemInput[] = [];
     const mcp: SelectPanelItemInput[] = [];
@@ -162,9 +157,8 @@ export function ReplayDialog({ data, attachments, onClose }: { data: PayloadReco
       return next;
     });
   }, []);
-  // Handoffs are part of the tool surface the model saw; replayed as
-  // schema-only tools. Older traces recorded only the names — those replay
-  // with an empty parameter schema.
+  // Handoffs are part of the tool surface the model saw, replayed as schema-only
+  // tools; a trace that recorded only names replays them with an empty schema.
   const handoffs = useMemo(() => payloadItems(data.handoffs), [data.handoffs]);
   const handoffTools = useMemo(() => handoffs.map(h => ({
     name: String(h.tool_name || ''),
@@ -290,11 +284,9 @@ export function ReplayDialog({ data, attachments, onClose }: { data: PayloadReco
     <Dialog
       title="Replay generation"
       onClose={onClose}
-      // Primer's named sizes cap out well below what a request/response
-      // editor needs; explicit style wins over both (same as PanelDialog).
-      // BOTH axes are capped: an uncapped 100vh height with a fixed width cap
-      // turned the dialog into a tall narrow slab on large displays. A narrow
-      // screen takes Primer's fullscreen — no room for a centered slab.
+      // Primer's named sizes cap out below what an editor needs; explicit style
+      // caps BOTH axes (same as PanelDialog). A narrow screen takes Primer's
+      // fullscreen.
       height="large"
       position={{ narrow: 'fullscreen', regular: 'center' }}
       style={narrow ? undefined : { width: 'min(1440px, calc(100vw - 48px))', height: 'min(900px, calc(100vh - 96px))' }}
@@ -473,10 +465,9 @@ export function ReplayDialog({ data, attachments, onClose }: { data: PayloadReco
 }
 
 // ToolPicker is one tool category's SelectPanel — name-only rows, optional
-// per-server groups — anchored on a "<label> n/N" button. Selection lives in
-// the parent's single enabled-set shared by all pickers; a panel reports its
-// full selection and the parent swaps that slice. Renders nothing when the
-// category is empty.
+// per-server groups — anchored on a "<label> n/N" button; it reports its full
+// selection and the parent swaps that slice of the shared enabled-set. Nothing
+// when the category is empty.
 function ToolPicker({ label, items, groupMetadata, enabled, onSelect }: {
   label: string;
   items: SelectPanelItemInput[];
@@ -516,11 +507,9 @@ function ToolPicker({ label, items, groupMetadata, enabled, onSelect }: {
 }
 
 // SettingsKnobs lifts the common sampling parameters out of the raw settings
-// JSON. The JSON text stays the single source of truth: knobs render from the
-// parsed value and every knob edit re-serializes the whole object, so the two
-// can never disagree. Invalid JSON disables the knobs until it parses again.
-// effortOptions comes from the selected agent's provider (the backends accept
-// different effort levels); a stored value outside the list stays visible.
+// JSON, which stays the source of truth: knobs render from the parsed value and
+// re-serialize the whole object; invalid JSON disables them. effortOptions is
+// the provider's; a value outside it stays visible.
 function SettingsKnobs({ parsed, onChange, effortOptions }: {
   parsed: Record<string, unknown> | null;
   onChange: (s: Record<string, unknown>) => void;

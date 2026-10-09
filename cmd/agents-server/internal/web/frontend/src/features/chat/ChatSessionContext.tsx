@@ -4,11 +4,8 @@ import type { RunDiagnostic } from '@/lib/protocol';
 import { backgroundItems, type BackgroundItem } from '@/lib/background';
 import { taskRetryable, type TaskState } from '@/lib/useAgentSocket';
 
-// The chat's session scope, split four ways by how often each value moves,
-// since a context has no selectors (invariant 38): the run lifecycle (per
-// run), the actions (per session switch), the per-call task lookups (per
-// content change) and the background items (per task event). What moves per
-// streaming delta stays a prop of the one live TurnBlock.
+// The chat's session scope: four contexts split by how often each value moves —
+// invariant 38. What moves per streaming delta stays a prop of the live TurnBlock.
 
 export interface ChatSessionState {
   sessionId: string | null;
@@ -21,11 +18,9 @@ export interface ChatSessionState {
   agentNames?: Record<string, string>;
   // Trouble the live run survived, badged on its process group.
   diagnostics?: RunDiagnostic[];
-  // Set when the durable task list failed to load, so the Tasks panel says so
-  // instead of showing "no background work".
+  // Set when the durable task list failed to load (the Tasks panel says so).
   tasksError?: string;
-  // Whether the session is bound to a project: its forks and attempts then
-  // share that project's files, and the controls say so.
+  // Whether the session is bound to a project (its forks and attempts share its files).
   projectBound?: boolean;
   // The newest todo_write on the timeline (lib/checklist.ts): the chip above
   // the composer shows it, and only its card opens by default.
@@ -51,26 +46,24 @@ export interface ChatActions {
   retryTask: (taskId: string) => Promise<void>;
   stopTask: (taskId: string) => Promise<void>;
   dismissTask: (taskId: string) => Promise<void>;
-  // Loads one trace span's payload — left out of the listing the panel opened
-  // with — from the session whose stored rows hold it (the chat's own, or an
-  // inspected task's child).
+  // Loads one trace span's payload, left out of the listing, from the session whose
+  // stored rows hold it (the chat's own, or an inspected task's child).
   loadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
-  // Opens the Settings dialog on a tab — what an error card that a Providers
-  // edit would fix offers.
+  // Opens the Settings dialog on a tab (what an error card a Providers edit
+  // would fix offers).
   openSettings?: (tab?: string) => void;
   // Fetches the task list again after it failed to load (invariant 79).
   retryTasks?: () => void;
 }
 
 export interface ChatTaskLookups {
-  // toolCallId → whether the server would accept a retry of the task that call
-  // spawned ("failed" alone says nothing about attempts left).
+  // toolCallId → whether the server would accept a retry of the task that call spawned.
   retryableByCallId: Record<string, boolean>;
   // toolCallId → live status (working/input_required) from run events; the
   // terminal status comes from the display projection on the call itself.
   liveTaskStatusByCallId: Record<string, string>;
   // toolCallId → the spawn label, for the card header before the terminal
-  // display projection lands.
+  // projection lands.
   liveTaskLabelByCallId: Record<string, string>;
   // taskId → label, so task_status / task_stop cards name the task they act on.
   taskLabelById: Record<string, string>;
@@ -87,10 +80,9 @@ function sameEntries<V>(a: Record<string, V>, b: Record<string, V>): boolean {
   return ak.length === Object.keys(b).length && ak.every(k => a[k] === b[k]);
 }
 
-// deriveChatTasks builds the task context value from the socket's task state.
-// Given the previous value, each lookup keeps its identity while its entries
-// are unchanged, and so does the lookups object — the memoized tool cards
-// then hold through the task events that change nothing they show.
+// deriveChatTasks builds the task context value from the socket's task state;
+// given the previous value, each lookup (and the lookups object) keeps its
+// identity while unchanged.
 export function deriveChatTasks(tasks: Record<string, TaskState> | undefined, prev?: ChatTasks): ChatTasks {
   const next: ChatTaskLookups = { retryableByCallId: {}, liveTaskStatusByCallId: {}, liveTaskLabelByCallId: {}, taskLabelById: {} };
   for (const t of Object.values(tasks || {})) {
@@ -165,7 +157,7 @@ export function useChatActions(): ChatActions {
 }
 
 // useChatTaskLookups is what a tool card reads: the per-call maps, moving only
-// when a map's content does.
+// when their content does.
 export function useChatTaskLookups(): ChatTaskLookups {
   return useRequiredContext(LookupsContext, 'useChatTaskLookups');
 }

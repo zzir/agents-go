@@ -1,9 +1,8 @@
 /* Pure projection of the composer's project area — kept out of the component
    so the node-environment vitest suite can cover it. */
 
-/* What a sandbox backend can do, as its API row declares it. The UI offers a
-   capability only when it is declared true — an undefined `supports` (older
-   server, row still loading) offers nothing beyond the safe baseline. */
+/* What a sandbox backend can do, as its API row declares it: a capability is
+   offered only when declared true; an undefined `supports` offers the safe baseline. */
 export interface SandboxSupports {
   /* The container can be rebuilt in place. */
   rebuild?: boolean;
@@ -41,8 +40,7 @@ export interface Project {
 }
 
 /* One environment variable of a project. Values are write-only: the server
-   masks every one on the way out, and nothing here hides a value from the
-   agent, which reads the container's environment with one command. */
+   masks every one on the way out (the agent reads the container's environment anyway). */
 export interface EnvVar {
   key: string;
   value: string;
@@ -75,9 +73,8 @@ export function projectLabel(projectName: string, sandboxName: string): string {
   return `${projectName} @ ${sandboxName}`;
 }
 
-/* The composer picker's rows: newest project first, each with the name of the
-   sandbox it runs on. Projects whose sandbox no longer exists are dropped —
-   they cannot be started again. */
+/* The composer picker's rows: newest project first, with its sandbox's name; a
+   project whose sandbox no longer exists is dropped (it cannot start). */
 export function composerProjectRows(
   projects: Project[] | null,
   sandboxes: SandboxLite[] | null,

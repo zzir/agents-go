@@ -8,10 +8,8 @@ import { UnsavedContext } from '@/lib/unsaved';
 import { useUnsavedRegistry } from '@/lib/useUnsavedRegistry';
 import './hub.css';
 
-// The hub's three views: what a workflow IS, what fires it on its own, and
-// every execution across conversations. One place, because a workflow is
-// authored once, then watched — and the watching is what a settings dialog
-// cannot host.
+// The hub's three views: what a workflow IS, what fires it on its own, and every
+// execution across sessions — authored once, then watched, which a dialog cannot host.
 export type HubTab = 'definitions' | 'triggers' | 'runs';
 
 export const HUB_TABS: HubTab[] = ['definitions', 'triggers', 'runs'];
@@ -30,11 +28,8 @@ interface WorkflowsHubProps {
 // WorkflowsHub is the middle column when the sidebar's Workflows entry is
 // selected. Its header sits on the same 48px line as the chat top bar.
 export function WorkflowsHub({ tab, onTabChange, sessionId, tasksSig, onOpenRun }: WorkflowsHubProps) {
-  // Keep-alive: a view is mounted on first visit and then kept (hidden), so
-  // switching back is instant — its data, scroll and pagination intact —
-  // instead of re-mounting from an empty state (the flash). RunsView stays
-  // fresh off tasksSig even while hidden; its live ticker stands down until
-  // it is the shown view again.
+  // Keep-alive (invariant 51): a view is mounted on first visit and kept hidden;
+  // RunsView stays fresh off tasksSig while hidden, its ticker standing down.
   const [visited, setVisited] = useState<Set<HubTab>>(() => new Set([tab]));
   useEffect(() => {
     setVisited(prev => (prev.has(tab) ? prev : new Set(prev).add(tab)));

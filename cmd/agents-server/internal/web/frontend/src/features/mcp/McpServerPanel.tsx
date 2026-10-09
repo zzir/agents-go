@@ -101,9 +101,8 @@ export function flatten(s: Partial<McpServer>): McpFormData {
   };
 }
 
-// Throws on invalid JSON in the Args / Headers fields, or a retry number that
-// is not one, so the caller can block the save and surface it — parsing to
-// an empty value and saving anyway silently discarded whatever the user typed.
+// Throws on invalid JSON in Args / Headers, or a retry number that is not one,
+// so the caller blocks the save instead of silently saving an empty value.
 export function pack(form: McpFormData): Partial<McpServer> {
   const base: Partial<McpServer> = { name: form.name, enabled: form.enabled };
   const config: McpServerConfig = { endpoint: form.endpoint };
@@ -259,13 +258,8 @@ const STATUS_TEXT: Record<McpStatus, string> = {
   disabled: 'disabled',
 };
 
-// The action button each status offers; connected and disabled offer none.
-// connecting is disabled (a concurrent connect would just error with
-// "already in progress"), but authorizing stays CLICKABLE: the wait is on the
-// user finishing a popup they may have closed, and re-clicking supersedes the
-// stale attempt server-side (OAuthCoordinator.supersedeInflight) and opens a
-// fresh popup — otherwise a closed popup pins the row for the full 5-minute
-// pending timeout.
+// The action button each status offers (connected and disabled offer none);
+// authorizing stays CLICKABLE, a re-click superseding the stale attempt — invariant 8.
 const STATUS_ACTION: Partial<Record<McpStatus, { label: string; inProgress?: boolean }>> = {
   disconnected: { label: 'Connect' },
   needs_auth: { label: 'Authorize' },
@@ -296,9 +290,8 @@ function EnabledToggle({ server, onToggle }: { server: McpServer; onToggle: (s: 
   );
 }
 
-// After a mutation the backend (re)connects in the background, so the response
-// status may not have caught up yet ("disconnected" an instant before the
-// handshake starts). Poll through this grace window until the list stabilizes.
+// After a mutation the backend (re)connects in the background; poll through
+// this grace window until the list stabilizes — invariant 7.
 const MUTATION_GRACE_MS = 8000;
 const POLL_INTERVAL_MS = 1500;
 const OAUTH_POPUP = 'width=520,height=640,popup=yes';
@@ -327,9 +320,8 @@ export function McpServerPanel() {
   const [graceUntil, setGraceUntil] = useState(0);
   const bumpGrace = useCallback(() => setGraceUntil(Date.now() + MUTATION_GRACE_MS), []);
   const [authorizeLink, setAuthorizeLink] = useState<Record<string | number, AuthorizeLink>>({});
-  // A link outlives its flow only through the grace window after the click
-  // (the poll has not flipped the row to authorizing yet); a row seen in any
-  // other status past it — connected, timed out back to needs_auth — drops it.
+  // A link outlives its flow only through the grace window after the click; a
+  // row seen in any other status past it (connected, needs_auth) drops it.
   useEffect(() => {
     setAuthorizeLink(prev => {
       const now = Date.now();
@@ -370,9 +362,8 @@ export function McpServerPanel() {
   const handleConnect = async (s: McpServer) => {
     const id = s.id;
     setBusy(prev => ({ ...prev, [id]: true }));
-    // A popup opened after the await is not the click's any more and gets
-    // blocked, so a row expected to ask for authorization opens one now and
-    // points it once the URL is known; a plain reconnect opens none.
+    // A popup opened after the await is not the click's and gets blocked, so a
+    // row expected to authorize opens one now and points it once the URL is known.
     let popup = AUTH_PENDING.has(s.status) ? window.open('', 'mcp_oauth', OAUTH_POPUP) : null;
     try {
       const res = await api.mcpServers.connect(id) as { status?: string; authorize_url?: string } | null;

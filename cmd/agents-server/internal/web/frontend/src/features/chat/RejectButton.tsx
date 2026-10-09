@@ -6,10 +6,9 @@ interface RejectButtonProps {
   // The rejection, with the reason when one was typed.
   onReject: (reason?: string) => void;
   disabled?: boolean;
-  // What is being rejected, when it is not an ordinary tool call. A workflow
-  // step waiting to start: its rejection ends the run, so the reason is kept
-  // on the run's summary and no model reads it. A submitted plan: the reason
-  // is the feedback the model revises the plan from.
+  // What is rejected when not an ordinary call: a step (the reason is kept on
+  // the run's summary, no model reads it) or a plan (the reason is the model's
+  // feedback).
   kind?: 'step' | 'plan';
 }
 
@@ -26,8 +25,8 @@ export interface RejectHandle { ask: () => void }
 
 // RejectButton is an approval's reject control: the plain rejection one click
 // away, and behind the menu a reason — what the model reads as the rejected
-// call's output. The reason box is a sibling of the buttons, so a wrapping
-// row gives it a line of its own.
+// call's output. The reason box is a sibling of the buttons, so a wrapping row
+// gives it its own line.
 export const RejectButton = forwardRef<RejectHandle, RejectButtonProps>(function RejectButton({ onReject, disabled, kind }, ref) {
   const copy = REASON_COPY[kind || 'call'];
   const [asking, setAsking] = useState(false);

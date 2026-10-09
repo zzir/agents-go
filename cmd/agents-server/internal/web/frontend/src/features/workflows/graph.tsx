@@ -6,8 +6,8 @@ import './graph.css';
 // draws a proposed definition the same way.
 
 // One step: the agent that runs it and the prompt that starts its turn. The id
-// is server-assigned and STABLE — inserting a step above another must not
-// renumber what a run in flight or a retry is naming.
+// is server-assigned and stable, so inserting a step never renumbers what a run
+// in flight names.
 export interface WorkflowStep {
   id?: string;
   name?: string;
@@ -19,18 +19,15 @@ export interface WorkflowStep {
   // A CHECK: the last line of the step's output (PASS/FAIL, or the gate's own
   // words) picks the edge instead of the run's outcome. Absent = plain step.
   gate?: { pass?: string; fail?: string } | null;
-  // Where the sequence goes after this step. Empty on_success falls through to
-  // the next step in the list; empty on_failure fails the workflow. "end" stops
-  // there. Pointing BACKWARDS is how a sequence loops.
+  // Where the sequence goes next: empty on_success falls through to the next step,
+  // empty on_failure fails the workflow, "end" stops, a backward edge loops.
   on_success?: string;
   on_failure?: string;
 }
 
-// What one execution may spend before it is stopped, failed with the reason;
-// 0/absent = no bound. Steps and minutes count step runs (a pause on a person
-// costs nothing), tokens every model call on the execution's session. Laps
-// bound a LOOP: how many times one execution may take the same backward edge
-// (verify → exec) — 0/absent is the server's default of 3, not no bound.
+// What one execution may spend before it is stopped; 0/absent = no bound,
+// except max_laps (times one execution may take the same backward edge), whose
+// absent is the server's default of 3.
 export interface WorkflowBudget {
   max_steps?: number;
   max_tokens?: number;
@@ -54,13 +51,12 @@ export const END = 'end';
 
 export const stepLabel = (s: WorkflowStep, i: number) => (s.name || '').trim() || `Step ${i + 1}`;
 
-// A step names an edge, or is a check: the sequence has a shape a list does
-// not show.
+// branches reports a sequence with a shape a list does not show: a named edge,
+// or a check.
 export const branches = (steps: WorkflowStep[]) => steps.some(s => s.on_success || s.on_failure || s.gate);
 
-// How the sequence is drawn: by default only a branching one is (a plain list
-// needs no diagram, and a loop is hard to read off three dropdowns); `always`
-// draws a linear one too, as a chain. label names a step's node.
+// How the sequence is drawn: by default only a branching one is; `always` draws a
+// linear one too, as a chain. label names a step's node.
 export interface GraphOpts {
   always?: boolean;
   label?: (s: WorkflowStep, i: number) => string;
@@ -82,10 +78,9 @@ export function edgeSummary(steps: WorkflowStep[], { always, label = stepLabel }
   });
 }
 
-// edgeGraph is the same shape as a flowchart: one node per step, a solid
-// edge for the success side, a dotted one for the failure side, and two
-// terminals; a linear sequence is one chain into end. Empty when there is
-// nothing to draw, like edgeSummary.
+// edgeGraph is the sequence as a flowchart: a node per step, a solid success
+// edge, a dotted failure edge, two terminals; a linear sequence is one chain.
+// Empty when nothing to draw, like edgeSummary.
 export function edgeGraph(steps: WorkflowStep[], { always, label = stepLabel }: GraphOpts = {}): string {
   const q = (t: string) => '"' + t.replace(/"/g, '#quot;') + '"';
   const box = (i: number) => `n${i}[${q(label(steps[i], i))}]`;

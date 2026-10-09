@@ -11,9 +11,9 @@ export interface TraceMarker {
 
 const LABEL_CHARS = 60;
 
-// queuedInputMarkers finds, per run, the inputs the run read from its queue:
-// a run has one prompt, so every later user message under the same run id is
-// one (live, the bubble also says so). The first message is never a marker.
+// queuedInputMarkers finds, per run, the inputs the run read from its queue: a
+// run has one prompt, so every later user message under the same run id is one;
+// the first never is.
 export function queuedInputMarkers(messages: TimelineEntry[]): Record<string, TraceMarker[]> {
   const seen = new Set<string>();
   const out: Record<string, TraceMarker[]> = {};

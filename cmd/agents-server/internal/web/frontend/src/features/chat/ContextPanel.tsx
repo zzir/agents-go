@@ -48,15 +48,13 @@ interface ContextReport {
   prompt?: PromptProfile;
 }
 
-// Characters → tokens, the estimator's ratio (compaction.CharEstimator). The
-// server reports the prompt profile in characters because that is what it can
-// measure; the panel shows tokens because that is what the reader is thinking in.
+// Characters → tokens at the estimator's ratio (compaction.CharEstimator): the
+// server reports the prompt profile in characters, the panel shows tokens.
 const CHARS_PER_TOKEN = 4;
 const est = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
 
-// The window's composition: the prompt layers and tool surface the build sends
-// every turn, plus the conversation itself — one ruler (estimates), so the
-// shares can be honest percentages of their own total.
+// The window's composition: prompt layers, tool surface and the conversation,
+// all on the one estimate ruler so the shares add up — invariant 28.
 function compositionRows(data: ContextReport): Array<{ label: string; tokens: number; unavailable?: boolean }> {
   const p = data.prompt || {};
   const rows: Array<{ label: string; tokens: number; unavailable?: boolean }> = [
@@ -87,10 +85,8 @@ interface ContextPanelProps {
   // running refetches when a run ends: the report is computed from stored
   // entries, so it only moves at turn boundaries.
   running: boolean;
-  // reloadKey refetches when its identity changes — the caller passes what a
-  // server re-read of the timeline replaces, so a branch switch (the report
-  // describes the ACTIVE branch, and <2/2> moves it without any run ending)
-  // updates the report too.
+  // reloadKey refetches when its identity changes: the caller passes what a
+  // timeline re-read replaces, so a branch switch (no run ends) updates the report too.
   reloadKey?: unknown;
   onClose: () => void;
   // onCompact forces one compaction pass now; it owns the API call, the
@@ -103,11 +99,8 @@ interface ContextPanelProps {
 
 const fmt = (n: number) => n.toLocaleString();
 
-// Estimated values are rendered to the precision they actually have: two
-// significant figures behind a ~. A badge saying "estimated" is skipped by the
-// eye that reads the digits; four exact-looking digits claim a measurement the
-// character estimator never made. Provider figures keep every digit, and the
-// contrast between the two is the whole labelling scheme.
+// approx renders an estimate at the precision it has: two significant figures
+// behind a ~, while provider figures keep every digit — invariant 28.
 function approx(n: number): string {
   if (n <= 0) return '0';
   const step = Math.pow(10, Math.max(0, Math.floor(Math.log10(n)) - 1));
@@ -230,16 +223,12 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
   const threshold = (data?.compaction_enabled && data.compaction_threshold) || 0;
   const resetMode = data?.compaction_mode === 'reset' || data?.compaction_mode === 'hybrid';
   const compactionPct = threshold > 0 ? Math.min(100, ((data?.compaction_tokens || 0) / threshold) * 100) : 0;
-  // The fold point on the window's own scale — ONE bar carries both stories.
-  // The threshold compares against the compaction figure (last call's total
-  // plus estimates), so the tick is where the fold roughly lands, not a second
-  // meter; the numbers line below keeps the exact comparison.
+  // The fold point as a tick on the window's own bar (invariant 28): the
+  // threshold compares against the compaction figure, so the tick is approximate.
   const thresholdPct = windowSize > 0 && threshold > 0 ? Math.min(100, (threshold / windowSize) * 100) : 0;
-  // The estimated size of the NEXT request (all composition rows summed). The
-  // big number above is the LAST MEASURED call, which does not move until a
-  // real request follows — so right after "Compact now" it still shows the
-  // pre-fold total. This estimate reflects the fold immediately; surfaced only
-  // when it diverges from the measured figure, so steady state stays quiet.
+  // The estimated size of the NEXT request; the big number is the LAST MEASURED
+  // call, which stays pre-fold until a request follows. Shown only when the two
+  // diverge.
   const composition = data ? compositionRows(data) : [];
   const estNext = composition.reduce((n, r) => n + r.tokens, 0);
   const showNext = windowSize > 0 && estNext > 0 && Math.abs(estNext - used) >= Math.max(500, used * 0.1);

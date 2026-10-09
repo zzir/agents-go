@@ -24,8 +24,6 @@ function mount(): { root: Root; container: HTMLElement } {
   return { root: createRoot(container), container };
 }
 
-/* ---------- fixtures ---------- */
-
 const noop = () => {};
 const resolve = async () => {};
 const ACTIONS: ChatActions = { openTrace: noop, inspectTask: noop, retryTask: resolve, stopTask: resolve, dismissTask: resolve };

@@ -1,5 +1,4 @@
-// A numeric form field holds a string while editing and parses on save
-// (invariant 80): empty is the server's zero value, never a 0 in the box.
+// A numeric form field holds a string while editing and parses on save — invariant 80.
 
 // numberDraft is the stored number as the field first shows it.
 export function numberDraft(n: number | undefined | null): string {

@@ -15,15 +15,9 @@ function elapsed(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-// WorkflowStrip is what a background sequence looks like from the conversation
-// that asked for it: how far it has got, and — the part that cannot be left out
-// — the decision it is waiting on. A step pauses for approval inside a session
-// nobody can open, so without this the sequence waits forever on a question
-// nobody can see.
-//
-// A finished sequence shows nothing here — its result arrives as a turn, and
-// the Tasks panel keeps the record. A dismissed failure is likewise the
-// panel's alone.
+// WorkflowStrip is a background sequence seen from the conversation that asked
+// for it: how far it has got and the decision it waits on — invariant 35. A
+// finished or dismissed sequence shows nothing here; the panel keeps it (invariant 36).
 export function WorkflowStrip() {
   const items = useChatBackground();
   const { approve, reject, inspectTask, stopTask, retryTask, dismissTask } = useChatActions();
@@ -31,9 +25,9 @@ export function WorkflowStrip() {
   // One flag per execution with a request in flight: two bars worked at once
   // must not free each other's buttons.
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
-  // Every hook before the early return: the strip renders empty most of the
-  // time, and a hook that only ran once a sequence appeared would change the
-  // hook order between those two renders (React #310).
+  // Every hook before the early return: the strip usually renders empty, and a
+  // hook that ran only once a sequence appeared would change the hook order
+  // (React #310).
   const { held, decide } = useDecisionHold();
   const live = items.filter(it => it.kind === 'workflow' && it.status !== 'completed' && it.status !== 'cancelled' && !it.dismissed);
   // A once-a-second tick drives the elapsed clock — only while a step is

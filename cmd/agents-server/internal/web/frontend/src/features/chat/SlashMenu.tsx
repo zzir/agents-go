@@ -4,23 +4,21 @@ import { ChecklistIcon, WorkflowIcon, type Icon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 
-// WORKFLOW_COMMAND leads a message that starts a workflow into this
-// conversation instead of a turn: "/workflow <name> <brief…>". The name is
-// the workflow's, as the hub lists it; everything after it is the brief.
+// WORKFLOW_COMMAND leads a message that starts a workflow instead of a turn:
+// "/workflow <name> <brief…>", the name as the hub lists it.
 export const WORKFLOW_COMMAND = /^\/workflow\b[ \t]*/;
 
-// SLASH_PREFIX matches a composer that holds nothing but the start of a
-// command — "/" or "/wo" — which is when the commands are offered. A space
-// ends the command and closes the offer: what follows is the message.
+// SLASH_PREFIX matches a composer holding nothing but the start of a command
+// ("/", "/wo"), which is when the commands are offered; a space closes the
+// offer.
 const SLASH_PREFIX = /^\/(\S*)$/;
 
 // A SlashCommand is one thing the composer can be told to do with a leading
 // slash: what to type, and how the offer describes it.
 export interface SlashCommand {
   id: string;
-  // What the composer holds once picked — the command and a trailing space,
-  // ready for what follows. Trimmed, it is the row's label too — the offer
-  // shows what picking it types.
+  // What the composer holds once picked (the command and a trailing space);
+  // trimmed, the row's label.
   insert: string;
   description: string;
   icon: Icon;
@@ -57,9 +55,9 @@ export function useSlashCommands(): SlashCommand[] {
   ], [workflows]);
 }
 
-// matchCommands narrows the commands to the typed prefix: an empty query
-// offers all, otherwise those whose match string contains it — "/w" and
-// "/build" both reach "workflow build".
+// matchCommands narrows the commands to the typed prefix: an empty query offers
+// all, otherwise those whose match string contains it ("/w" and "/build" both
+// reach "workflow build").
 export function matchCommands(commands: SlashCommand[], query: string): SlashCommand[] {
   return query ? commands.filter(c => c.match.includes(query)) : commands;
 }
@@ -68,13 +66,9 @@ export function matchCommands(commands: SlashCommand[], query: string): SlashCom
 // aria-activedescendant.
 export function slashOptionID(i: number): string { return 'slash-command-' + i; }
 
-// SlashCommandPopup offers the commands while a slash prefix is being typed:
-// a panel pinned ABOVE the composer's box (positioned by CSS off the box, not
-// by an overlay's fitting logic, so it sits in the same place whether the
-// composer is at the bottom of a transcript or in the middle of a greeting)
-// that scrolls past its cap instead of growing. It never takes focus — the
-// person keeps typing, and the composer forwards the arrow, Enter and Escape
-// keys; the highlighted row is the composer's activeIndex, kept in view.
+// SlashCommandPopup offers the commands while a slash prefix is typed: a panel pinned
+// above the composer's box by CSS (not an overlay), scrolling past its cap. It never
+// takes focus — the composer forwards arrow/Enter/Escape and owns activeIndex.
 export function SlashCommandPopup({ open, commands, activeIndex, onPick }: {
   open: boolean;
   commands: SlashCommand[];
@@ -82,8 +76,8 @@ export function SlashCommandPopup({ open, commands, activeIndex, onPick }: {
   onPick: (cmd: SlashCommand) => void;
 }) {
   const shown = open && commands.length > 0;
-  // Keep the highlighted row inside the panel's own scroll — the panel's, not
-  // scrollIntoView's, which would also nudge every scrolling ancestor.
+  // Keep the highlighted row inside the panel's own scroll (scrollIntoView
+  // would nudge every ancestor).
   useEffect(() => {
     if (!shown) return;
     const row = document.getElementById(slashOptionID(activeIndex));

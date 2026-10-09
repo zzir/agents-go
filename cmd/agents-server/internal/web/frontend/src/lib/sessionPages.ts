@@ -1,7 +1,6 @@
 // The sidebar reads the session list a page at a time (GET /sessions?limit=):
-// pinned sessions ride with the first page, and scrolling to the end asks for
-// a longer prefix rather than the next page, so a refresh keeps what is shown
-// in one request.
+// pinned sessions ride with the first page, and scrolling to the end asks for a
+// longer prefix, not the next page, so a refresh of what is shown is one request.
 
 export const SESSION_PAGE = 100;
 

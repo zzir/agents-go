@@ -82,9 +82,8 @@ function ProviderForm({ initial, providerId, onSave, onCancel, onDelete, saving,
     providerFacts(providerTypes, value)?.auth_modes ?? (providerMeta(value).type === 'openai' ? ['chatgpt_login'] : []);
   const supportsChatGPT = authModesFor(form.type).includes('chatgpt_login');
 
-  // A stored key belongs to the destination it was stored for, so the server
-  // refuses to restore the mask across a change of backend or endpoint. Say so
-  // before the save fails.
+  // A stored key belongs to the destination it was stored for; the server refuses
+  // the mask across a change of backend or endpoint, so say so before the save fails.
   const initialType = initial?.type ?? '';
   const initialBaseURL = initial?.base_url ?? '';
   const destinationChanged = initial !== undefined && initial !== null &&
@@ -114,10 +113,8 @@ function ProviderForm({ initial, providerId, onSave, onCancel, onDelete, saving,
           API Key
         </SegmentedControl.Button>
         <SegmentedControl.Button selected={form.auth_mode === 'chatgpt_login'}
-          // The OAuth token only ever goes to ChatGPT, so switching to it drops
-          // the API-key mode's base_url AND api_key — the server refuses either
-          // (a masked key 400s pointing at a field this mode hides), and there
-          // is no control left to clear them below.
+          // Switching to the OAuth token drops the API-key mode's base_url AND
+          // api_key: the server refuses either, and no control below could clear them.
           onClick={() => setForm(prev => ({ ...prev, auth_mode: 'chatgpt_login', api_key: '', base_url: '' }))}>
           ChatGPT sign-in
         </SegmentedControl.Button>
@@ -156,10 +153,9 @@ export function ProviderPanel() {
   const rows = filterRows(providers, { mine: !!scopeFilter?.mine, meId: me?.id, query }, p => `${p.name} ${p.base_url || ''} ${p.type || ''}`);
   const transfer = useTransfer({ kindLabel: 'Providers', setOwner: api.providers.setOwner, onDone: reload });
   const { data: providerTypes } = useApi<ProviderTypeInfo[]>(() => api.providerTypes.list() as Promise<ProviderTypeInfo[]>, [], 'provider-types');
-  // Sign-in is a two-step manual-paste flow — there is no loopback listener to
-  // catch the redirect (see the API's chatgpt.complete). handleLogin opens the
-  // authorize popup and reveals the paste field; handleComplete redeems the
-  // callback URL the user copies back from that popup.
+  // Sign-in is a two-step manual-paste flow (decisions §5.41): handleLogin
+  // opens the authorize popup and reveals the paste field; handleComplete
+  // redeems the pasted URL.
   const [pasteURL, setPasteURL] = useState<Record<string, string>>({});
   const [awaiting, setAwaiting] = useState<Record<string, boolean>>({});
   const [completing, setCompleting] = useState<Record<string, boolean>>({});

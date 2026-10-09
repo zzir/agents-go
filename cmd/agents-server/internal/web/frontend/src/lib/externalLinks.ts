@@ -1,8 +1,6 @@
-// installExternalLinkOpener makes a plain click on a link to another origin
-// open a new tab (noopener) instead of navigating the app away: rendered
-// markdown carries no target (the sanitizer drops one), and the page's state
-// would not survive the navigation. Modifier clicks and links naming their
-// own target keep the browser's behavior. Returns the uninstall.
+// installExternalLinkOpener opens a plain click on a cross-origin link in a new
+// tab (noopener) instead of navigating the app away (sanitized markdown carries no
+// target); modifier clicks and links naming a target keep the browser's behavior.
 export function installExternalLinkOpener(root: Document = document): () => void {
   const onClick = (e: MouseEvent) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;

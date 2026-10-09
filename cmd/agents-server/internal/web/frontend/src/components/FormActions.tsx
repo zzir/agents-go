@@ -3,10 +3,9 @@ import { Button, useConfirm } from '@primer/react';
 import { useReadOnly } from '@/lib/access';
 import { DISCARD_PROMPT, FormDirtyContext } from '@/lib/unsaved';
 
-/** The Save/Cancel/Delete row every settings form ends with. Save's handler
- * keeps the form's own packing/validation; Delete sits alone on the far edge.
- * Cancel asks first when the form was edited (UnsavedForm tracks that).
- * Absent in a read-only dialog: the form is a view, closed from its header. */
+/** The Save/Cancel/Delete row every settings form ends with. Cancel asks first
+ * when the form was edited (UnsavedForm tracks that). Absent in a read-only
+ * dialog, where the form is a view closed from its header. */
 export function FormActions({ onSave, onCancel, onDelete, size, saving, saveDisabled }: {
   onSave: () => void;
   onCancel?: (() => void) | null;

@@ -11,9 +11,8 @@ export interface UserLabel {
   email: string;
 }
 
-// The directory is one small, slow-moving list that every scoped panel needs,
-// so it is fetched once and shared: a mount serves the copy it has, and only
-// refetches once that copy is older than STALE_MS (or reloadDirectory asked).
+// The directory is one small, slow-moving list every scoped panel needs, so it is
+// fetched once and shared; a mount refetches only past STALE_MS (or reloadDirectory).
 const STALE_MS = 60_000;
 let directory: UserLabel[] | null = null;
 let loadedAt = 0;
@@ -41,8 +40,8 @@ export function reloadDirectory(): Promise<void> {
 }
 
 // useOwnerLabels serves the id→person directory the scoped panels render row
-// owners from. Every member may read it (one team, one trust boundary — spec
-// §5.29); `labelFor` falls back to a short id until it arrives.
+// owners from (every member may read it — decisions §5.29); `labelFor` falls
+// back to a short id until it arrives.
 export function useOwnerLabels() {
   const [users, setUsers] = useState<UserLabel[]>(directory ?? []);
   useEffect(() => {
@@ -61,10 +60,8 @@ export function useOwnerLabels() {
   return { users, ownerOf, labelFor };
 }
 
-// OwnerName is how every management listing names a person: the NAME they
-// signed in with, with the email — which is the identity accounts merge on,
-// but too long for a column — on hover. An account with no name shows its
-// email and needs no second copy of it.
+// OwnerName names a person by the NAME they signed in with, the email (too long
+// for a column) on hover; an account with no name shows its email once.
 export function OwnerName({ owner, fallback }: { owner?: UserLabel; fallback: string }) {
   const shown = owner?.name || owner?.email || fallback;
   if (!owner?.name || !owner.email) return <span className="list-clip" title={shown}>{shown}</span>;

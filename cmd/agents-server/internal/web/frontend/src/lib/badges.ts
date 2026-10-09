@@ -1,11 +1,6 @@
-// The settings panels' badge grammar — ONE semantic per color, every panel:
-//   secondary  quiet metadata: counts, and a panel's own type axis (the
-//              provider-type badge alone carries a per-backend color).
-//   accent     a reference to another configured entity, shown by name.
-//   done       published or system-provided (scope badge, built-in).
-//   success/attention/danger  live status only — and rendered as the dot
-//              beside the title (form-status-dot), never a Label.
-// Badge ORDER on a row: scope first, then type/reference, counts last.
+// The settings panels' badge grammar, ONE semantic per color (the keys below).
+// success/attention/danger are live status only, rendered as the dot beside the
+// title (form-status-dot), never a Label. Row order: scope, type/reference, counts.
 export const BADGE = {
   /** How many sub-items a row holds, always written "Thing·N" — MCP·2, Steps·3. */
   count: 'secondary',

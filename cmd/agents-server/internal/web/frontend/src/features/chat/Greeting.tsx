@@ -22,9 +22,8 @@ function getGreeting(): [string, string] {
 
 // The empty session's slogan.
 export function Greeting() {
-  // Pick once per mount. The call site keys this by session id, so the slogan
-  // stays put across composer re-renders (e.g. switching the bottom agent /
-  // sandbox picker) and only rerolls when a new or different session opens it.
+  // Picked once per mount; the call site keys this by session id, so the slogan
+  // holds across composer re-renders and rerolls only when another session opens.
   const [[emoji, text]] = useState(getGreeting);
   return (
     <div className="chat-greeting">

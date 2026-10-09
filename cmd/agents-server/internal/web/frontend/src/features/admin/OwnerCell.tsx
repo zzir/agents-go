@@ -1,9 +1,8 @@
 import { OwnerName, type UserLabel } from '@/lib/owners';
 import './admin.css';
 
-// OwnerCell names a row's author the way every admin table does; a row with
-// no author (a global row from before ownership was stamped) says so quietly
-// rather than showing an unknown person.
+// OwnerCell names a row's author the way every admin table does; a row with no
+// author (a global row stamped before ownership) says so quietly.
 export function OwnerCell({ ownerId, ownerOf, labelFor }: {
   ownerId?: string;
   ownerOf: (id?: string) => UserLabel | undefined;

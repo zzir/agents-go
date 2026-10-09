@@ -39,11 +39,9 @@
   white-space: nowrap;
   font-size: var(--base-text-size-sm);
   font-weight: var(--base-text-weight-semibold); /* match .side-panel-title */
-  /* The title is the session's identity — it never yields to the badge:
-     it takes the bar, less the badge's own room once one is there, and the
-     badge shrinks. Its cap of 60 characters still clamps a long name on a
-     wide screen, and clears what a sidebar row at its widest (400px) can
-     show, so the bar never shows less of the name than the sidebar. */
+  /* The title is the session's identity and never yields to the badge: it
+     takes the bar less the badge's room, and the badge shrinks. Its 60-character
+     cap still clears what a sidebar row at its widest (400px) can show. */
   flex-shrink: 0;
   max-width: min(100%, 60ch);
 }
@@ -52,10 +50,9 @@
   max-width: min(calc(100% - 72px), 60ch);
 }
 
-/* The bound-workdir hint beside the title: muted metadata text showing only
-   the directory's basename; hover shows the full path and sandbox in the
-   title. Read-only on purpose — the binding is immutable, so this is context,
-   not a control. */
+/* The bound-workdir hint beside the title: muted metadata, the directory's
+   basename only; hover shows the full path and sandbox. Read-only: the
+   binding is immutable (invariant 27), so this is context, not a control. */
 .chat-topbar-binding {
   padding: var(--base-size-2) var(--base-size-6);
   max-width: 200px;
@@ -167,9 +164,8 @@
   /* A drag past the top/bottom stays here instead of chaining to the window. */
   overscroll-behavior: contain;
   /* Native scroll anchoring OFF: useScrollToBottom owns anchoring, and the
-     browser's anchor re-selection jitters (~1px) during subpixel trackpad
-     scrolling across fractional-height content (KaTeX/SVG). New content only
-     appends at the bottom, so losing native anchoring costs nothing. */
+     browser's anchor re-selection jitters (~1px) on subpixel trackpad scrolling
+     over fractional-height content (KaTeX/SVG); content only appends at the bottom anyway. */
   overflow-anchor: none;
   padding: var(--base-size-16) var(--base-size-24);
   contain: layout style;
@@ -242,19 +238,16 @@
 
 /* Message styles */
 .message {
-  /* Left/right padding buffers the jump-flash outline ring on the
-     right-aligned user bubble: .message has content-visibility:auto (implies
-     contain:paint), which would otherwise clip the ring where the bubble meets
-     the edge. Kept in sync with .message-turn so bubbles and turns align. */
+  /* Left/right padding buffers the jump-flash outline ring on the right-aligned
+     user bubble: content-visibility:auto implies contain:paint, which clips the
+     ring at the edge. Kept in sync with .message-turn so bubbles and turns align. */
   padding: var(--base-size-8) var(--base-size-4);
   max-width: var(--content-max-width);
   margin: 0 auto;
   width: 100%;
-  /* Chrome jank fix: skip layout/paint for off-screen messages. Long chats
-     with SVG-heavy content (KaTeX, mermaid) drop frames badly when the whole
-     26k-px page paints on every scroll. `auto` remembers each message's real
-     size after first render, so revisits don't shift; 400px approximates the
-     typical rendered height for the first pass. */
+  /* Skip layout/paint for off-screen messages (SVG-heavy long chats drop frames
+     when the whole page paints per scroll). `auto` remembers each message's real
+     size after first render, so revisits don't shift; 400px approximates the first pass. */
   content-visibility: auto;
   contain-intrinsic-size: auto 400px;
 }
@@ -279,12 +272,9 @@
   border: 1px solid var(--borderColor-muted);
 }
 
-/* Flash ring when the trace panel jumps to this message. Uses outline (not
-   box-shadow) so it survives forced-colors / high-contrast mode, where the UA
-   drops box-shadow. The ring still relies on the horizontal padding on
-   .message / .message-turn to avoid being clipped by their
-   content-visibility:auto paint containment (outline is painted, so it clips
-   just like box-shadow would). */
+/* Flash ring when the trace panel jumps to this message. outline, not
+   box-shadow, so it survives forced-colors mode; it still needs the horizontal
+   padding on .message / .message-turn, since paint containment clips it too. */
 @keyframes msg-jump-flash {
   0%, 55% { outline: 2px solid var(--borderColor-accent-emphasis); outline-offset: 1px; }
   100%    { outline: 2px solid transparent; outline-offset: 1px; }
@@ -513,10 +503,9 @@
   box-shadow: var(--shadow-resting-xsmall);
 }
 
-/* The slash commands: pinned above the box's left edge, capped and
-   scrolling — the same place whether the box sits under a transcript or in
-   the middle of a greeting. As wide as its rows need, up to the cap where
-   descriptions truncate. */
+/* The slash commands: pinned above the box's left edge, capped and scrolling,
+   the same place under a transcript or in the middle of a greeting. As wide
+   as its rows need, up to the cap where descriptions truncate. */
 .slash-popup {
   position: absolute;
   left: 0;
@@ -903,11 +892,9 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
-/* Centering must come from auto margins, not justify-content: center — with
-   justify-content the overflowing half of an oversized diagram extends into
-   the container's negative coordinate space, which scrolling can never reach.
-   Auto margins collapse to 0 on overflow, keeping every edge scrollable; the
-   padding keeps a gutter even at the scroll extremes. */
+/* Centering by auto margins, not justify-content: center — with justify-content
+   the overflowing half of an oversized diagram lands in negative coordinate
+   space scrolling cannot reach; auto margins collapse to 0 on overflow. */
 .svg-overlay > div {
   margin: auto;
   padding: var(--base-size-32);
@@ -1098,7 +1085,7 @@
   text-align: center;
 }
 
-/* ---- Image attachments ---- */
+/* Image attachments */
 
 /* Composer strip: thumbnails of images queued for the next message. */
 .chat-attachment-strip {

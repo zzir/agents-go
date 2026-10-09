@@ -4,8 +4,6 @@ import { sanitizeSVG } from '@/lib/markdown';
 import { useCopy } from '@/lib/hooks';
 import { ZoomOverlay } from '@/features/chat/ZoomOverlay';
 
-/* ---------- mermaid helpers ---------- */
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mermaidMod: any = null;
 let mermaidTheme: string | null = null;
@@ -75,8 +73,7 @@ async function ensureMermaid() {
       theme: 'base',
       themeVariables: primerThemeVars(),
       // Labels as SVG text, not HTML in a foreignObject: the sanitizer strips
-      // the HTML wrappers (a foreignObject is no HTML integration point for
-      // DOMPurify), which left long labels overflowing and off-center.
+      // the HTML wrappers there (no HTML integration point for DOMPurify).
       htmlLabels: false,
       flowchart: { useMaxWidth: false },
       sequence: { useMaxWidth: false },
@@ -102,8 +99,6 @@ function mermaidCacheSet(key: string, value: string) {
   mermaidCache.set(key, value);
 }
 
-/* ---------- SVG viewer overlay ---------- */
-
 function SvgOverlay({ svg, onClose }: { svg: string; onClose: () => void }) {
   return (
     <ZoomOverlay onClose={onClose}>
@@ -112,11 +107,8 @@ function SvgOverlay({ svg, onClose }: { svg: string; onClose: () => void }) {
   );
 }
 
-/* ---------- rendering hook ---------- */
-
-// useMermaidSvg renders a mermaid source to sanitized SVG, cached per source
-// and color mode, re-rendered when the app's color mode flips. svg is null
-// until the first render lands; failed reports a source mermaid rejected.
+// useMermaidSvg renders a mermaid source to sanitized SVG, cached per source and
+// color mode; svg is null until the first render lands, failed marks a rejected source.
 export function useMermaidSvg(source: string): { svg: string | null; failed: boolean } {
   const [colorMode, setColorMode] = useState(getColorMode);
   const cacheKey = source + '\0' + colorMode;
@@ -140,9 +132,9 @@ export function useMermaidSvg(source: string): { svg: string | null; failed: boo
       const id = `m${++mermaidIdSeq}`;
       try {
         const mermaid = await ensureMermaid();
-        // `source` is the raw fenced ```mermaid``` body from the un-escaped
-        // markdown — it must be fed to mermaid verbatim. Decoding entities here
-        // corrupted diagrams that legitimately contain "&", "<" or ">".
+        // `source` is the raw fenced body from the un-escaped markdown, fed to
+        // mermaid verbatim: decoding entities breaks diagrams containing "&",
+        // "<" or ">".
         const { svg: rendered } = await mermaid.render(id, source);
         if (!cancelled) {
           const safe = sanitizeSVG(rendered);
@@ -162,8 +154,6 @@ export function useMermaidSvg(source: string): { svg: string | null; failed: boo
 
   return { svg, failed };
 }
-
-/* ---------- MermaidBlock ---------- */
 
 export function MermaidBlock({ source }: { source: string }) {
   const { svg, failed } = useMermaidSvg(source);

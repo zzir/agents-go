@@ -1,9 +1,9 @@
 import { Link } from '@primer/react';
 
-// composerGate says whether the composer can send at all, from the agent list
-// as useApi delivers it: null is a list not in hand (loading, or failed), an
-// empty array is a workbench with no agent — the one case the first-mile card
-// answers. `blocked` is the placeholder the disabled textarea shows.
+// composerGate says whether the composer can send, from the agent list as
+// useApi delivers it: null is a list not in hand, an empty array a workbench
+// with no agent — the first-mile card's one case. `blocked` is the disabled
+// textarea's placeholder.
 export type ComposerGate =
   | { state: 'ready'; blocked?: undefined }
   | { state: 'loading' | 'error' | 'none'; blocked: string };

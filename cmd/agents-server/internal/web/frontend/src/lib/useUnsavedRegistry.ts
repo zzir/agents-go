@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useConfirm } from '@primer/react';
 import { DISCARD_PROMPT, type UnsavedRegistry } from '@/lib/unsaved';
 
-/** The registry a dialog or a page provides through UnsavedContext, and the
- * close that asks first while any form under it is dirty. Leaving the page
- * asks too, through the browser's own beforeunload prompt (invariant 41). */
+/** The registry a dialog or page provides through UnsavedContext, and the close
+ * that asks first while any form under it is dirty; leaving the page asks via
+ * beforeunload (invariant 41). */
 export function useUnsavedRegistry(): { registry: UnsavedRegistry; guardedClose: (close: () => void) => Promise<void> } {
   const dirtyForms = useRef(new Set<string>());
   const registry = useMemo<UnsavedRegistry>(() => ({

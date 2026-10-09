@@ -15,9 +15,8 @@ import { AttentionSignals } from '@/features/sessions/AttentionSignals';
 import { ChatView, type ChatViewActions, type InspectorPanel } from '@/features/chat/ChatView';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
-// Lazy: xterm (+ webgl renderer) is a few hundred KB the first paint never
-// needs — the chunk loads when the terminal panel first opens, then the panel
-// stays mounted (hidden) so its sessions survive toggles.
+// Lazy: the xterm chunk loads when the terminal panel first opens; the panel
+// then stays mounted while hidden — invariant 81.
 const TerminalPanel = React.lazy(() =>
   import('@/features/terminal/TerminalPanel').then(m => ({ default: m.TerminalPanel })),
 );
@@ -39,9 +38,8 @@ import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/l
 import { frameTooLarge } from '@/lib/messageSize';
 import { installExternalLinkOpener } from '@/lib/externalLinks';
 
-// The settings hub's tabs (invariant 61): the person's own, then what a run is
-// built from in dependency order, the admin entries last; workflows are
-// authored in the sidebar's hub, so only their management view is here.
+// The settings hub's tabs: the person's own, then what a run is built from,
+// the admin entries last — invariant 61. Workflows are authored in the sidebar's hub.
 const scopedTab = (name: 'ProvidersTab' | 'AgentsTab' | 'McpServersTab' | 'SkillsTab') =>
   () => import('@/features/settings/ScopedEntityPanel').then(m => ({ default: m[name] }));
 
@@ -68,27 +66,22 @@ const ADMIN_TABS: DialogTab[] = [
 
 const DEFAULT_SS = defaultSS();
 
-// The width of a session id, for sizing a message's frame before the
-// conversation it starts exists.
+// A session id's width, for sizing a message's frame before its session exists.
 const PLACEHOLDER_SESSION_ID = '00000000-0000-0000-0000-000000000000';
 
-// Monotonic client-side id stamped on each optimistic user bubble. It lets the
-// socket layer roll back a specific un-sent message (on session_busy or a
-// dropped send) and lets the stream reducer dedup two identical-text sends
-// without collapsing them into one.
+// Monotonic id stamped on each optimistic user bubble: the socket layer rolls
+// back one specific un-sent message by it, and the reducer dedups identical sends.
 let clientMsgSeq = 0;
 function nextClientMsgId(): string { return 'c' + (++clientMsgSeq); }
 
 const MemoizedChatView = memo(ChatView);
-// The sidebar re-renders only when a prop moves: a streaming frame changes
-// none of them, so it does not redraw the whole list.
+// A streaming frame moves no sidebar prop, so the list does not redraw per frame.
 const MemoizedSessionList = memo(SessionListImpl);
 
-// PLAN_COMMAND is the composer's plan-mode command: a prefix that puts the
-// session into plan mode before the request it leads runs. (WORKFLOW_COMMAND,
-// the other one, lives with the menu that types it.)
+// The composer's plan-mode prefix (invariant 33); WORKFLOW_COMMAND lives with
+// the menu that types it.
 const PLAN_COMMAND = /^\/plan\b[ \t]*/;
-// PLAN_OFF_COMMAND leads a message that leaves plan mode: "/plan off <message>".
+// "/plan off <message>" leaves plan mode.
 const PLAN_OFF_COMMAND = /^\/plan[ \t]+off\b[ \t]*/;
 
 function panelKey(p: InspectorPanel): string {
@@ -112,9 +105,8 @@ function App() {
   // Token mode is one person: the Members tab has nobody to list.
   const authMode = useAuthMode();
   const [checking, setChecking] = useState(true);
-  // The initial auth check failed at the network level (server unreachable), as
-  // opposed to resolving "not authenticated". Without this the app would sit on
-  // a blank screen forever; instead we surface a retryable error state.
+  // The initial auth check failed at the network level (not "not authenticated"):
+  // shown as a retryable error, never a blank screen.
   const [checkError, setCheckError] = useState('');
   const [activeSession, setActiveSession] = useState<string | null>(() => readHash().sessionId);
   const activeSessionRef = useRef(activeSession);
@@ -132,32 +124,24 @@ function App() {
   const narrow = useNarrow();
   const narrowRef = useRef(narrow);
   narrowRef.current = narrow;
-  // The active session's display name and project binding. Captured from the
-  // existence-check fetch below and kept fresh by the title_updated /
-  // project_bound events; the id guards against a stale response landing after
-  // a session switch.
+  // The active session's name and binding, from the existence-check fetch below
+  // and the title_updated / project_bound events; the id rejects a response that
+  // lands after a session switch.
   const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; projectId: string; agentConfigId: string } | null>(null);
-  // Bindings announced over the socket, per session. The session GET races the
-  // session.project_bound broadcast (meta is cleared before the fetch, so the
-  // event can arrive while prev is null), and a binding is immutable once set
-  // — any announced value is THE value, merged over whatever the slower GET
-  // returns.
+  // Bindings announced over the socket, per session: the broadcast can land while
+  // the session GET is in flight (meta is null then), and an announced binding
+  // wins over what the GET returns — invariant 27.
   const announcedBindings = useRef<Record<string, string>>({});
-  // Bumped whenever the set of bound sessions changes (a new binding lands, a
-  // session is deleted): a bind can auto-create its scratch project, so the
-  // project pickers in ChatView and the terminal panel refetch — without this
-  // they would only ever show the world as of their mount.
+  // Bumped when the set of bound sessions changes: a bind can auto-create its
+  // scratch project, so the project pickers (ChatView, terminal panel) refetch.
   const [bindingsVersion, setBindingsVersion] = useState(0);
-  // Global terminal panel: session-agnostic, opened from the composer (the
-  // button only ever opens; closing/collapsing lives on the panel itself).
-  // everOpened defers mounting (and the xterm chunk) until first use, after
-  // which the panel stays mounted while hidden to keep sessions alive.
+  // Global terminal panel, opened from the composer (closing lives on the panel).
+  // everOpened defers the mount to first use; then it stays mounted while hidden.
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalEverOpened, setTerminalEverOpened] = useState(false);
-  // A one-shot "start a terminal for this project" request, set when the
-  // composer button opens a CLOSED panel with a project selected (an
-  // already-open panel is left alone). The nonce distinguishes repeat requests
-  // for the same project.
+  // A one-shot "start a terminal for this project" request, set only when the
+  // composer opens a CLOSED panel with a project selected; the nonce tells
+  // repeats apart.
   const [terminalRequest, setTerminalRequest] = useState<{ projectId: string; projectName?: string; targetName?: string; nonce: number } | null>(null);
   const terminalOpenRef = useRef(false);
   terminalOpenRef.current = terminalOpen;
@@ -181,9 +165,8 @@ function App() {
     setCheckError('');
     checkAuth()
       .then(ok => { setAuthed(ok); setChecking(false); })
-      // A network-level failure (server down, offline) or a non-refusal
-      // status (429, 502) rejects here — don't stay stuck in "checking" and
-      // don't sign out; show the retry screen below.
+      // A network failure or a non-refusal status (429, 502) rejects here:
+      // leave "checking", stay signed in, show the retry screen.
       .catch(e => {
         setChecking(false);
         const status = (e as { status?: number } | null)?.status;
@@ -209,9 +192,9 @@ function App() {
     runCheck();
   }, [runCheck]);
 
-  // The URL names the view, and Settings as `?settings=<tab>` over it. A move
-  // between views or Settings opening is a history entry (Back returns from
-  // it); a lens or a Settings tab replaces the entry in place.
+  // The URL names the view, Settings rides as `?settings=<tab>` (invariant 61).
+  // A view move or Settings opening pushes a history entry; a lens or a tab
+  // replaces it.
   const writtenViewRef = useRef<string | null>(null);
   const settingsWasOpenRef = useRef(settingsOpen);
   // Whether the entry on screen is the one Settings pushed, so closing it
@@ -251,9 +234,8 @@ function App() {
     if (!activeSession) setActivePanel(null);
   }, [activeSession]);
 
-  // The URL is read back on every navigation — a link, Back or Forward (both
-  // hashchange and popstate fire; the handler is idempotent). The settings
-  // parameter opens or closes the dialog over the view the rest names.
+  // The URL is read back on every navigation (hashchange and popstate both fire;
+  // the handler is idempotent); the settings parameter opens or closes the dialog.
   useEffect(() => {
     const onHash = () => {
       const { sessionId, panel, hub, settings } = readHash();
@@ -310,9 +292,9 @@ function App() {
     });
   }, []);
 
-  // Whether the open conversation's OWN run waits on a decision — what a new
-  // message would abandon; a task's pause is not that. Read off the session
-  // detail's pending calls, re-read when its status is announced.
+  // Whether the open session's OWN run waits on a decision (a task's pause is
+  // not that): read off the session detail's pending calls, re-read on each
+  // status announcement.
   const [ownPending, setOwnPending] = useState<{ id: string; pending: boolean } | null>(null);
   const ownPendingGen = useRef(0);
   const readOwnPending = useCallback((sid: string, detail: unknown) => {
@@ -326,14 +308,12 @@ function App() {
       .catch(() => undefined);
   }, [readOwnPending]);
 
-  // The sidebar's markers: each conversation's status as the server last
-  // announced it (session.status), over the one its list row carries. Derived
-  // server-side and rendered as is — invariant 3.
+  // The sidebar's markers: each session's status as last announced
+  // (session.status), over the one its list row carries — invariant 86.
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>({});
 
-  // What the socket tells the app about a conversation beyond its runs: the
-  // auto-title after the first turn, and the project binding, whose record
-  // (announcedBindings) survives a meta cleared by a session switch mid-fetch.
+  // What the socket says about a session beyond its runs: the auto-title and
+  // the project binding (recorded in announcedBindings, which outlives a cleared meta).
   const sessionEvents = useMemo(() => ({
     activeSession: () => activeSessionRef.current,
     onTitleUpdated: (sid: string, title: string) => {
@@ -363,23 +343,18 @@ function App() {
 
   const { wsRef, sessionRunRef, connected, loadSession, loadTasks, loadTraces, loadSpanPayload, deleteSession, forgetLoaded, watchTask, unwatchTask, queueInput, dropQueued } = useAgentSocket(updateSS, sessionEvents);
 
-  // patchTask applies a server-confirmed task state change (e.g. the stop
-  // API's response) directly — the fallback for when no hub broadcast will
-  // come (stopping a paused task after a restart).
+  // patchTask applies a server-confirmed task state (the stop API's response)
+  // directly, for when no hub broadcast will come (a paused task stopped after
+  // a restart).
   const patchTask = useCallback((sid: string, taskId: string, patch: Record<string, unknown>) => {
     updateSS(sid, s => {
       const cur = s.tasks[taskId];
       if (!cur) return s;
-      // Stamped like the live-event path (updateTask), because the duration a
-      // terminal task shows is updatedAt - createdAt: without this it freezes
-      // at whatever event last touched the task — a tool call, an approval —
-      // and a task stopped after a long quiet stretch shows its timer jumping
-      // backwards. A patch carrying its own value still wins.
+      // updatedAt is stamped as the live path (updateTask) does: a terminal task's
+      // duration is updatedAt - createdAt. A patch carrying its own value wins.
       const next = { ...s, tasks: { ...s.tasks, [taskId]: { ...cur, updatedAt: Date.now(), ...patch } } };
-      // The spawn card follows the same confirmation. A retry normally re-arms
-      // it from the run.started broadcast, but the caller that got this answer
-      // over REST may have no socket at all — and then nothing else would ever
-      // correct a card still offering to retry a task that is already running.
+      // The spawn card follows too: the REST caller may have no socket, so the
+      // run.started that would re-arm it never comes.
       const merged = next.tasks[taskId];
       if (!cur.toolCallId) return next;
       const msgs = syncTaskCard(next.messages, cur.toolCallId, {
@@ -394,13 +369,9 @@ function App() {
     setSessionMeta(null);
     if (!activeSession) return;
     let cancelled = false;
-    // The session id can come from the URL hash and may not exist (stale link,
-    // deleted session, hand-typed id). The messages endpoint returns [] for an
-    // unknown session rather than 404, so validate existence explicitly: a 404
-    // means drop the id — the app falls back to the empty state and typing then
-    // starts a new session instead of running against a non-existent session.
-    // A failed first load shows in the view (state.loadError); a failed
-    // re-read of a conversation already on screen can only be said here.
+    // The id may come from the URL and not exist; the messages endpoint answers
+    // [] for an unknown session, so existence is checked here and a 404 drops the
+    // id. A failed re-read of a session on screen can only be said here.
     const tryLoad = () => loadSession(activeSession).catch(() => {
       if (ssRef.current[activeSession]?.messages.length) toast.error('Could not refresh the session');
     });
@@ -411,16 +382,14 @@ function App() {
         const s = sess as { name?: string; project_id?: string; agent_config_id?: string };
         // A re-read a status announcement started since is the newer answer.
         if (pendingGen === ownPendingGen.current) readOwnPending(activeSession, sess);
-        // A binding announced while this fetch was in flight wins: the fetch
-        // read the row before the bind landed, and bindings never change.
+        // A binding announced while this fetch was in flight wins — invariant 27.
         const announced = announcedBindings.current[activeSession];
         setSessionMeta({
           id: activeSession,
           name: s?.name || '',
           projectId: announced || s?.project_id || '',
-          // The session's server-side agent: the composer falls back to it when
-          // this browser has no local draft (a fork, another device), instead
-          // of defaulting to the first agent in the list.
+          // The session's server-side agent: the composer's fallback when this
+          // browser holds no draft (a fork, another device).
           agentConfigId: s?.agent_config_id || '',
         });
         tryLoad();
@@ -433,9 +402,8 @@ function App() {
     return () => { cancelled = true; };
   }, [activeSession, loadSession, readOwnPending]);
 
-  // Backfill the session's persisted trace summary on load: the chat labels
-  // each turn with its run span's duration, and the trace/context lenses join
-  // to the same spans. Once per session (loadTraces guards); payloads stay lazy.
+  // The session's trace summary, once (loadTraces guards): turn labels and the
+  // trace/context lenses join to its spans; payloads stay lazy — invariant 22.
   useEffect(() => {
     if (activeSession) loadTraces(activeSession);
   }, [activeSession, loadTraces]);
@@ -449,18 +417,16 @@ function App() {
     if (activeSession) loadTasks(activeSession);
   }, [activeSession, loadTasks]);
 
-  // reloadTimeline re-reads a session's persisted history after a server-side
-  // change the client cannot patch in — a branch move (a different branch is a
-  // different conversation), a compaction, a note the server wrote.
+  // reloadTimeline re-reads a session's history after a server-side change no
+  // local patch expresses: a branch move, a compaction, a note the server wrote.
   const reloadTimeline = useCallback(async (sid: string) => {
     forgetLoaded(sid);
     await loadSession(sid).catch(() => toast.error('Could not reload the session'));
   }, [forgetLoaded, loadSession]);
 
-  // runWorkflowCommand is the /workflow command: the first word names the
-  // workflow, the rest is its brief. Without a conversation open it makes
-  // one, as a message would; the started note the server writes into the
-  // conversation is what the reload brings in.
+  // The /workflow command: the name, then the brief. With no session open it
+  // makes one, as a message would (invariant 69); the reload brings in the
+  // started note the server writes.
   const runWorkflowCommand = useCallback(async (rest: string, agentConfigId?: string, projectId?: string) => {
     const spec = rest.trim();
     if (!spec) {
@@ -500,16 +466,14 @@ function App() {
       }
     }
     try {
-      // The composer's project rides along, as it does on a message: an
-      // unbound conversation is bound to it before the start, so the
-      // execution has its file and command tools.
+      // The composer's project rides along as on a message: it binds an unbound
+      // session before the start — invariant 27.
       const body: { session_id: string; input: string; project_id?: string } = { session_id: sid, input: brief };
       if (projectId) body.project_id = projectId;
       await api.workflows.run(wf.id, body);
       toast.success(`Started "${wf.name}" in the background — the result comes back here`);
-      // The one thing the person cannot see from here: a conversation with
-      // no project — bound or picked — gives the workflow no file or command
-      // tools.
+      // Not visible from here: with no project, bound or picked, the workflow
+      // has no file or command tools.
       const bound = (sessionMeta && sessionMeta.id === sid ? !!sessionMeta.projectId : false) || !!projectId;
       if (!bound) toast.info('This session has no project — the workflow has no file or command tools');
       await reloadTimeline(sid);
@@ -530,13 +494,9 @@ function App() {
       await runWorkflowCommand(input.replace(WORKFLOW_COMMAND, ''), agentConfigId, projectId);
       return;
     }
-    // `/plan <message>` asks for a plan before any change: the message runs
-    // in plan mode. It is handled HERE, not in the composer, because it sets
-    // the SESSION's phase and a brand-new session has no id until the block
-    // below creates one. Nothing arms plan mode ahead of a message — the
-    // command IS the message's.
-    // `/plan off <message>` is the way out: the message runs with plan mode
-    // off, and the session stays out (an approved plan is the other exit).
+    // `/plan <message>` runs the message in plan mode, `/plan off <message>`
+    // leaves it (invariant 33). Handled here, not in the composer: it sets the
+    // SESSION's phase, and a new session has no id until the block below makes one.
     const planOff = PLAN_OFF_COMMAND.test(input);
     const planned = !planOff && PLAN_COMMAND.test(input);
     const text = planOff ? input.replace(PLAN_OFF_COMMAND, '') : planned ? input.replace(PLAN_COMMAND, '') : input;
@@ -544,9 +504,7 @@ function App() {
       toast.info(planOff ? '/plan off takes the message to run: /plan off <what to do>' : '/plan takes the message to plan for: /plan <what to do>');
       return;
     }
-    // The phase travels WITH the message: only a /plan message says anything,
-    // and an absent `plan` leaves the session's phase alone — an approved plan
-    // is what unlocks it again.
+    // An absent `plan` leaves the session's phase alone — invariant 33.
     const payload: Record<string, unknown> = { session_id: activeSession || PLACEHOLDER_SESSION_ID, input: text, agent_config_id: agentConfigId };
     if (attachments?.length) payload.attachment_ids = attachments.map(a => a.id);
     if (planned) payload.plan = true;
@@ -558,10 +516,9 @@ function App() {
       toast.error('Message is too large');
       return;
     }
-    // Typing straight into the box with no active session starts a new session,
-    // instead of silently dropping the message. The freshly-created session has
-    // no history, so mark it loaded to protect the optimistic message from the
-    // load-session effect.
+    // No active session: the first message makes one (invariant 69). It has no
+    // history, so it is marked loaded, or the load-session effect would drop
+    // the bubble.
     let sid = activeSession;
     let isNew = false;
     if (!sid) {
@@ -590,9 +547,9 @@ function App() {
     }
   }, [activeSession, updateSS, wsRef, runWorkflowCommand]);
 
-  // handleInject queues a message on the conversation's live run — a steer it
-  // reads at its next step, or a follow-up it takes once it finishes. What
-  // could not be queued goes back to the box it was typed in.
+  // handleInject queues a message on the live run — a steer read at its next
+  // step, or a follow-up taken when it finishes; what could not be queued goes
+  // back to the box.
   const handleInject = useCallback((text: string, queue: InjectQueue): boolean => {
     const sid = activeSession;
     const runId = sid ? ssRef.current[sid]?.liveRunId : null;
@@ -611,9 +568,8 @@ function App() {
     return true;
   }, [activeSession, queueInput, dropQueued]);
 
-  // handleCancel reports whether the stop was SENT: no live run to stop, or a
-  // socket that is down, is a stop that did not happen and must not read as
-  // one.
+  // handleCancel reports whether the stop was SENT: no live run, or a socket
+  // that is down, is a stop that did not happen.
   const handleCancel = useCallback((graceful?: boolean): boolean => {
     if (!wsRef.current || !activeSession) return false;
     const runId = sessionRunRef.current[activeSession];
@@ -675,8 +631,7 @@ function App() {
       delete next[deletedId];
       return next;
     });
-    // The record of the session's announced binding dies with it — the map
-    // would otherwise grow one entry per bound session for the page's life.
+    // The announced-binding record dies with the session.
     delete announcedBindings.current[deletedId];
     // The deleted session may have carried the last reference to a project —
     // the pickers re-aggregate.
@@ -719,11 +674,9 @@ function App() {
     }
   }, [activeSession, reloadTimeline]);
 
-  // The Context panel's "Compact now": one forced pass, then the timeline
-  // reload — the fold marks entries compacted and appends a checkpoint, which
-  // no local patch can express. Toasts carry the outcome either way; errors
-  // (409 while a run is live, 400 when compaction is off) surface their
-  // message.
+  // The Context panel's "Compact now": one forced pass, then a timeline reload
+  // (the fold appends a checkpoint no local patch expresses — invariant 24).
+  // Toasts carry the outcome, a 409's or 400's message included.
   const handleCompact = useCallback(async () => {
     if (!activeSession) return;
     try {
@@ -752,14 +705,10 @@ function App() {
     try {
       const { previous_leaf } = await api.sessions.branch(activeSession, userEntryId);
       await reloadTimeline(activeSession);
-      // The Inspector stays open: regen is in-place (same session), so an open
-      // trace/task panel remains valid — the replaced attempt gets its "replaced"
-      // chip and the drawer follows the new live run.
-      // Empty input: the run answers the branch we just switched to rather
-      // than adding a new user message. The server maps it to an empty item list.
+      // The Inspector stays open: an in-place regen keeps its lens valid. Empty
+      // input makes the run answer the branch just switched to, adding no user message.
       const payload: Record<string, unknown> = { session_id: activeSession, input: '', agent_config_id: agentConfigId };
-      // A regen can be an unbound session's first project-carrying run, so
-      // the project choice rides along; a bound session ignores it anyway.
+      // A regen can be an unbound session's first project-carrying run — invariant 27.
       if (projectId) payload.project_id = projectId;
       if (!wsRef.current.send(EV.runCreate, payload)) {
         // The socket dropped between the probe and the send: roll the branch
@@ -784,9 +733,8 @@ function App() {
     return loadSpanPayload(activeSession, spanSessionId, runId, spanId);
   }, [activeSession, loadSpanPayload]);
 
-  // The tab is a string or nothing: a menu's onSelect hands over an event,
-  // which must not become a tab name. Reads narrow through a ref so the
-  // callback keeps its identity.
+  // A menu's onSelect hands over an event, which must not become a tab name;
+  // narrow is read through a ref so the callback keeps its identity.
   const handleOpenSettings = useCallback((tab?: string) => {
     setSettingsTab(typeof tab === 'string' ? tab : undefined);
     setSettingsOpen(true);
@@ -803,9 +751,8 @@ function App() {
   }), [handleSend, handleCancel, handleApprove, handleApproveAll, handleReject, handleInject, handleFork, handleSwitchBranch, handleCompact,
     handleRegenerate, watchTask, unwatchTask, patchTask, handleLoadSpan, handleTerminalOpen, handleOpenSettings, handleRetryLoad, handleRetryTasks]);
 
-  // A signature that moves with any execution in any conversation (every
-  // connection hears every session's task.updated), for the hub's Runs view
-  // to refetch on.
+  // A signature that moves with any workflow execution in any session (every
+  // connection hears every task.updated), for the hub's Runs view to refetch on.
   const tasksSig = useMemo(() => {
     const sig: string[] = [];
     for (const state of Object.values(ss)) {
@@ -853,9 +800,7 @@ function App() {
     focusComposer();
   }, [handleSelectSession, focusComposer]);
 
-  // A run in the hub opens its conversation with the execution's detail in
-  // the Inspector — the run belongs to that conversation, and the panel there
-  // already knows how to show it.
+  // A run in the hub opens its session with the execution's detail in the Inspector.
   const handleOpenRun = useCallback((sessionId: string, taskId: string) => {
     setActiveSession(sessionId);
     setActivePanel({ kind: 'task', taskId });
@@ -949,9 +894,8 @@ function App() {
   );
 }
 
-// The last line of defense: App itself failed to render. Everything below the
-// boundary is gone, so the only honest offer is a reload. Styled with bare
-// CSS vars — ThemeProvider died with the tree.
+// Root catches App itself failing to render: the only offer is a reload,
+// styled with bare CSS vars since ThemeProvider died with the tree.
 export default function Root() {
   return (
     <ErrorBoundary fallback={(_retry, error) => (

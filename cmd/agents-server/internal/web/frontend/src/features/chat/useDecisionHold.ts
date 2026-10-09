@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// useDecisionHold keeps a decision's buttons held for a moment after a click:
-// approve and reject are one-way sends with no reply to await, and a second
-// click would send a second decision the server refuses (a toast that reads
-// as a failure). Keyed by the pending call, so a NEW pause on the same task
-// is not held by the last one's timer. The paused shape leaves the screen as
-// soon as the task moves on anyway.
+// useDecisionHold holds a decision's buttons for a moment after a click (approve
+// and reject are one-way sends; a second one is refused), keyed by the pending call.
 export function useDecisionHold(holdMs = 3000): { held: (callId: string) => boolean; decide: (callId: string, send: () => void) => void } {
   const [held, setHeld] = useState<Set<string>>(() => new Set());
   const timers = useRef<number[]>([]);

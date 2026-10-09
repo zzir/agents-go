@@ -5,22 +5,15 @@ import { originText, type WorkflowStartedNote } from '@/lib/timeline';
 import { useChatActions, useChatSession } from '@/features/chat/ChatSessionContext';
 import { AgentAvatar } from '@/components/AgentAvatar';
 
-// WorkflowStartedChip is the row a person's or a trigger's workflow start
-// leaves in the conversation: the exchange's question, when no run asked. It
-// says what started and who asked, and opens the execution — the task's
-// detail is where the brief, the steps and the transcript live. It is
-// anchored by the run id of the wake-up run that later delivered the result,
-// so the trace panel's jump from that run's card lands here. A trigger's
-// agent turn leaves the same row before the message it sends — the reader
-// sees the next question was an automation's; that message IS the brief,
-// so the row is the label alone.
+// WorkflowStartedChip is the row a workflow start leaves in the conversation,
+// opening the execution; anchored by the wake-up run's id, so the trace panel's
+// jump lands here. A trigger's agent turn leaves it as a bare label before its message.
 export const WorkflowStartedChip = memo(function WorkflowStartedChip({ note, content, traceRunId, msgIdx }:
   { note: WorkflowStartedNote; content: string; traceRunId?: string | null; msgIdx: number }) {
   const { inspectTask } = useChatActions();
   const { agentAvatars } = useChatSession();
-  // The note's data names the workflow or the agent; a row without either
-  // (the extra missing) shows the line of text the server wrote instead of
-  // an empty name.
+  // The note names the workflow or the agent; a row with neither shows the
+  // line of text the server wrote instead of an empty name.
   const name = note.workflowName || note.workflowId.slice(0, 8);
   const agentTurn = !!note.agentName && !name;
   const label = name ? `Workflow "${name}" started by ${originText(note.origin)}`

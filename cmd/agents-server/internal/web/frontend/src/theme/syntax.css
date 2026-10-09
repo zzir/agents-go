@@ -3,7 +3,7 @@
    Replaces external highlight.js theme so colors follow data-theme.
    ============================================================= */
 
-/* --- Light theme (default) --- */
+/* Light theme (default) */
 .hljs {
   color: #24292e;
   background: transparent;
@@ -49,7 +49,7 @@
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: bold; }
 
-/* --- Dark theme --- */
+/* Dark theme */
 [data-color-mode="dark"] .hljs { color: #e6edf3; }
 [data-color-mode="dark"] .hljs-comment,
 [data-color-mode="dark"] .hljs-quote { color: #8b949e; }

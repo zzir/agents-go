@@ -10,36 +10,31 @@ import type { SessionState, UpdateSSFn } from '@/lib/useAgentSocket';
 import type { TraceEventData as TraceEvent } from '@/features/chat/TracePanel';
 
 // The task side of the run-event stream: a background run's events go to its
-// PARENT session's task list and, while the Inspector watches that task, to
-// the task view — never to a chat timeline. useAgentSocket asks the router
-// first on every event; a handled event is the router's alone.
+// PARENT session's task list and, while the Inspector watches that task, to the
+// task view — never a chat timeline. useAgentSocket asks the router first.
 
-// TaskState tracks one background task of a chat session — live status from
-// run events while the hub run exists, seeded from the durable tasks rows on
-// session load.
+// TaskState tracks one background task of a session: live status from run
+// events, seeded from the durable task rows on session load.
 export interface TaskState {
   taskId: string;
   label: string;
-  // The task's kind: undefined/'' a sub-agent task, 'workflow' an execution
-  // whose `state` carries the step sequence. A workflow's status is the
-  // TASK's, told by task.updated — its step runs end without ending it.
+  // undefined/'' a sub-agent task, 'workflow' an execution whose `state` carries
+  // the steps. A workflow's status is the TASK's (task.updated), not its step runs'.
   kind?: string;
   state?: WorkflowState;
   status: TaskStatus;
   // Which run of the task this is: 1 for the original, more after a retry.
   attempt?: number;
-  // The ceiling `attempt` is measured against — the server's policy, sent as a
-  // PARAMETER so the offer can be derived here (taskRetryable) whenever the
-  // status changes.
+  // The ceiling `attempt` is measured against, sent by the server so
+  // taskRetryable can derive the offer here.
   maxAttempts?: number;
   childSessionId?: string;
   toolCallId?: string;
   // The run that spawned this task — lets the trace panel nest the wake-up
   // run's card under the run whose spawn_task started the chain.
   parentRunId?: string;
-  // Millisecond timestamps for the list's duration label: createdAt from the
-  // durable row (or spawn time when seen live), updatedAt refreshed on every
-  // task event — for a terminal task it is the finish time.
+  // Millisecond timestamps for the duration label: createdAt from the row (or
+  // spawn time), updatedAt refreshed per task event — a terminal task's finish time.
   createdAt?: number;
   updatedAt?: number;
   lastTool?: string;
@@ -55,19 +50,17 @@ export interface TaskState {
   dismissed?: boolean;
 }
 
-// TaskViewState is the Inspector's live view of ONE task being inspected:
-// the child session's transcript (persisted snapshot + live tail assembled
-// with the same streamReducer functions as the chat) and its trace events.
-// Populated only while the panel is open (watch/unwatch).
+// TaskViewState is the Inspector's live view of ONE task: the child session's
+// transcript (snapshot + live tail, assembled with the chat's streamReducer
+// functions) and its trace events; populated only while watched.
 export interface TaskViewState {
   taskId: string;
   childSessionId: string;
   messages: TimelineEntry[];
   streaming: string;
   reasoning: string;
-  // Trace events grouped by run — one group per ATTEMPT (a retry starts a new
-  // run on the same child session), insertion-ordered oldest first, the same
-  // shape the chat's trace drawer keeps.
+  // Trace events grouped by run, one group per ATTEMPT (a retry starts a new
+  // run), oldest first — the chat's trace drawer's shape.
   traceRuns: Record<string, TraceEvent[]>;
   loaded: boolean;
 }
@@ -86,10 +79,9 @@ export function taskStateFromRow(row: TaskRow): TaskState {
   };
 }
 
-// taskRetryable answers "would a retry be accepted" from the task state a
-// client already tracks: it failed, and it has attempts left against the
-// ceiling the server sent. Capacity is NOT part of it — the parent's live-task
-// limit is transient, so that refusal arrives as a 409 with its own reason.
+// taskRetryable answers "would a retry be accepted" from tracked state: failed,
+// with attempts left against the server's ceiling. Capacity is transient, so
+// that refusal arrives as a 409.
 export function taskRetryable(t: TaskState): boolean {
   if (t.status !== 'failed' || !t.maxAttempts || (t.attempt || 1) >= t.maxAttempts) return false;
   // An execution its budget or the step ceiling stopped is refused a retry
@@ -97,10 +89,8 @@ export function taskRetryable(t: TaskState): boolean {
   return !(t.kind === TASK_KIND_WORKFLOW && t.state?.stopped);
 }
 
-// staleTaskRow reports whether a durable row describes an OLDER state than the
-// one already on screen: an earlier attempt, or the same attempt walked back
-// from a finished status. The same comparison settles two reconnect fetches
-// racing each other.
+// staleTaskRow: the durable row describes an OLDER state than the one on screen
+// — an earlier attempt, or the same attempt walked back from a finished status.
 function staleTaskRow(cur: TaskState, status: TaskStatus, attempt?: number): boolean {
   const curAttempt = cur.attempt ?? 0;
   const rowAttempt = attempt ?? 0;
@@ -108,9 +98,8 @@ function staleTaskRow(cur: TaskState, status: TaskStatus, attempt?: number): boo
   return TERMINAL_TASK_STATUSES.has(cur.status) && !TERMINAL_TASK_STATUSES.has(status);
 }
 
-// seedTaskRows folds the durable rows a session load fetched into its state.
-// Live events may have registered a task first and win per field; the row
-// still owns the durable identity fields (child session, tool call).
+// seedTaskRows folds the rows a session load fetched into its state. A live
+// event registered first wins per field; the row owns the durable identity fields.
 export function seedTaskRows(s: SessionState, rows: TaskRow[]): SessionState {
   const tasks = { ...s.tasks };
   for (const row of rows) {
@@ -145,10 +134,9 @@ export function seedTaskRows(s: SessionState, rows: TaskRow[]): SessionState {
   return { ...s, tasks, tasksLoaded: true };
 }
 
-// mergeTaskRows folds durable task rows into a session's state after an
-// outage. A snapshot older than what the socket already delivered loses
-// (staleTaskRow); the spawn card follows too, not just the chip, since the
-// run.started that would have re-armed it is gone from the hub.
+// mergeTaskRows folds durable rows in after an outage: a snapshot older than what
+// the socket delivered loses (staleTaskRow), and the spawn card follows too,
+// since the run.started that would re-arm it is gone from the hub — invariant 73.
 export function mergeTaskRows(s: SessionState, rows: TaskRow[]): SessionState {
   const tasks = { ...s.tasks };
   let messages = s.messages;
@@ -188,9 +176,8 @@ export interface TaskPendingApproval {
   tool_calls?: Array<{ tool_call_id: string; tool_name: string }>;
 }
 
-// withPendingTaskApprovals puts a paused task's decision on its chip: what
-// keeps the Approve button reachable after a reload, when no live
-// run.tool_call event will arrive.
+// withPendingTaskApprovals puts a paused task's decision on its chip, keeping
+// Approve reachable after a reload when no live run.tool_call will arrive.
 export function withPendingTaskApprovals(s: SessionState, pending: TaskPendingApproval[]): SessionState {
   const tasks = { ...s.tasks };
   for (const p of pending) {
@@ -264,9 +251,9 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
   let watch: { sid: string; taskId: string; childSessionId: string } | null = null;
   let buf = { text: '', reasoning: '' };
 
-  // The watch is keyed by item id; run events carry a run id. The registry
-  // maps a run to its item id; the child-session fallback covers a run it
-  // never registered (its run.started predates this page).
+  // The watch is keyed by task id, events by run id: the registry maps one to the
+  // other, and the child-session fallback covers a run never registered (its
+  // run.started predates this page).
   const isWatchedRun = (runId: string) => {
     if (!watch) return false;
     return (runs[runId]?.taskId || runId) === watch.taskId || deps().sessionOfRun(runId) === watch.childSessionId;
@@ -276,9 +263,8 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
   // timeline: every task run, a workflow step's included.
   const isBackgroundRun = (runId: string) => !!runs[runId] || isWatchedRun(runId);
 
-  // updateTaskView applies fn to the inspected item's view iff runId is one
-  // of its runs; the view is keyed by the durable item id, so the guard goes
-  // through isWatchedRun rather than comparing raw ids.
+  // updateTaskView applies fn to the inspected task's view iff runId is one of
+  // its runs (isWatchedRun, since the view is keyed by task id).
   const updateTaskView = (runId: string, fn: (v: TaskViewState) => TaskViewState) => {
     const w = watch;
     if (!w || !isWatchedRun(runId)) return;
@@ -286,8 +272,7 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
   };
 
   // refetchTaskView re-pulls the child transcript after a terminal event: the
-  // snapshot is the durable truth and closes any in-flight merge gap
-  // (invariant 17, scoped to the inspected task).
+  // snapshot is the durable truth and closes any merge gap — invariant 17.
   const refetchTaskView = (runId: string) => {
     const w = watch;
     if (!w || !isWatchedRun(runId)) return;
@@ -309,9 +294,8 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
     if (!meta) return;
     deps().updateSS(meta.parentSid, s => {
       const cur = s.tasks[meta.taskId] || { taskId: meta.taskId, label: meta.label, status: 'working' as TaskStatus, toolCallId: meta.toolCallId, kind: meta.kind };
-      // A workflow's step run ending is NOT the workflow ending: the task
-      // moves to its next step, or ends, and task.updated says which. Keep
-      // the run-level facts (the approval it dropped), not the verdict.
+      // A workflow step run ending is NOT the workflow ending (task.updated says
+      // which): keep the run-level facts, drop the verdict.
       if ((meta.kind || cur.kind) === TASK_KIND_WORKFLOW && patch.status && TERMINAL_TASK_STATUSES.has(patch.status)) {
         const { status: _status, summary: _summary, ...runFacts } = patch;
         patch = runFacts;
@@ -349,9 +333,8 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
       const taskId = p.task_id || p.run_id;
       runs[p.run_id] = { parentSid: p.parent_session_id, label: p.label || '', taskId, toolCallId: p.tool_call_id, kind: p.kind };
       deps().updateSS(p.parent_session_id, s => {
-        // A retry: the spawn card shows the previous attempt's outcome.
-        // Re-arm it (syncTaskCard), or the new outcome is refused as a move
-        // backwards.
+        // A retry: the spawn card shows the previous attempt's outcome. Re-arm
+        // it, or the new outcome is refused as a move backwards.
         const rearmed = p.tool_call_id && p.attempt
           ? syncTaskCard(s.messages, p.tool_call_id, { id: taskId, label: p.label, attempt: p.attempt })
           : null;
@@ -368,10 +351,9 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
       return true;
     },
 
-    // The task's own state, from the server that owns it. For a sub-agent
-    // task it confirms what the run events already said; for a workflow it is
-    // the ONLY source of the task-level status and the step it is on. Merged
-    // under the same no-move-backwards rule as the durable rows.
+    // The task's own state from the server that owns it: for a workflow the ONLY
+    // source of the task-level status and current step. Merged under the durable
+    // rows' no-move-backwards rule.
     taskUpdated(p) {
       if (!p.parent_session_id || !p.task_id) return;
       const status = (p.status || 'working') as TaskStatus;
@@ -401,9 +383,8 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
           pendingCallId: paused ? (p.pending_call_id || cur?.pendingCallId) : undefined,
           pendingToolName: paused ? (p.pending_tool_name || cur?.pendingToolName) : undefined,
           pendingAgentId: paused ? cur?.pendingAgentId : undefined,
-          // Live again clears a dismissal — a retry brings the row back; a
-          // terminal row carries the flag as the server has it (a dismissal
-          // made in another window arrives here), else what this one knows.
+          // Live again clears a dismissal (a retry brings the row back); a terminal
+          // row carries the flag as the server has it (another window's dismissal).
           dismissed: TERMINAL_TASK_STATUSES.has(status) ? (p.dismissed ?? cur?.dismissed) : false,
         };
         // The card that spawned it follows the task's state, not its runs'.
@@ -553,9 +534,8 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
     interrupted(p) {
       if (!isBackgroundRun(p.run_id)) return false;
       updateTask(p.run_id, { status: 'input_required' });
-      // High-signal, once per pause: background approvals are otherwise easy
-      // to miss. A workflow step has no entry here — its name lives on the
-      // execution row.
+      // High-signal, once per pause: background approvals are easy to miss. A
+      // workflow step has no entry here; its name is on the execution row.
       const meta = runs[p.run_id];
       toast.info(meta ? 'Task "' + (meta.label || p.run_id.slice(0, 8)) + '" needs approval' : 'A workflow step needs approval');
       return true;

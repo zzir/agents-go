@@ -22,12 +22,9 @@ interface SidePanelProps {
   maxWidth?: number;
 }
 
-/**
- * Generic resizable right-docked panel shell: icon/title/count header, close
- * button, scrollable body, drag-to-resize handle (mirrors the sidebar's).
- * Feed it different content (trace runs today, a generated image or diff
- * later) to open a detail view without rebuilding the drawer chrome each time.
- */
+/** Generic resizable right-docked panel shell: icon/title/count header, close
+ * button, scrollable body, drag-to-resize handle (mirrors the sidebar's). Any
+ * detail view (trace runs, an image, a diff) opens in it. */
 export function SidePanel({ icon: PanelIcon, title, count, onClose, children, storageKey, defaultWidth = DEFAULT_WIDTH, minWidth = MIN_WIDTH, maxWidth = MAX_WIDTH }: SidePanelProps) {
   const narrow = useNarrow();
   const { width, dragging, handleProps } = useResizablePane({ storageKey, min: minWidth, max: maxWidth, defaultWidth, edge: 'right' });

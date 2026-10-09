@@ -10,9 +10,8 @@ import { TextContent } from '@/features/chat/TextContent';
 import { ProcessTimeline } from '@/features/chat/ProcessTimeline';
 import { useChatSession, useChatActions } from '@/features/chat/ChatSessionContext';
 
-// STAGE_NOTES says what a trip at each stage actually stopped. A guardrail runs
-// at four of them, and telling someone "the request was blocked before the
-// model ran" when a tool result tripped it describes the wrong event.
+// STAGE_NOTES says what a trip at each stage stopped: a guardrail runs at four
+// of them, and "blocked before the model ran" misdescribes a tool-result trip.
 const STAGE_NOTES: Record<string, string> = {
   input: 'The request was blocked before the model ran.',
   output: 'The response above was blocked before delivery.',
@@ -20,18 +19,18 @@ const STAGE_NOTES: Record<string, string> = {
   tool_output: "A tool's result was blocked before the model could read it.",
 };
 
-// SHARED_FILES_COPY is what the turn controls add on a session bound to a
-// project: a fork, a regenerate and a switch of attempts all act on the one
-// working tree the project's sessions share (decisions §5.28).
+// SHARED_FILES_COPY is what the turn controls add on a project-bound session: a
+// fork, a regenerate and an attempt switch act on the one shared working tree
+// (decisions §5.28).
 export const SHARED_FILES_COPY = {
   fork: "the new session shares the project's files with this one",
   regenerate: "the project's files keep what the first attempt changed",
   attempts: "attempts share the project's files",
 };
 
-// endpointTrouble recognizes the pre-flight failures a Providers edit fixes:
-// no endpoint on the agent, or an endpoint it cannot reach any more. The
-// messages are the runner's (bridge/runner.go, provider_resolve.go).
+// endpointTrouble recognizes the pre-flight failures a Providers edit fixes: no
+// endpoint on the agent, or one it cannot reach; the messages are the runner's
+// (bridge/runner.go).
 export function endpointTrouble(message: string): boolean {
   return /no API key configured|names provider|provider \S+: not found|provider \S+ is out of the agent's scope/i.test(message);
 }
@@ -105,12 +104,9 @@ function CancelledCard() {
   );
 }
 
-// Group a turn's parts into render segments: every text part is assistant
-// prose said to the user — interim narration and final answer alike — and
-// renders flat in chronological order; each unbroken run of thinking/tools
-// parts between texts collapses into one process group. Notices (errors,
-// cancellation) render separately at the end. Empty texts are dropped without
-// splitting the group around them.
+// Groups a turn's parts into render segments: texts flat in order, each run of
+// thinking/tool parts between them one process group, notices last; empty texts
+// split nothing.
 type TurnSegment =
   | { kind: 'text'; content: string }
   | { kind: 'process'; parts: TurnPart[] };
@@ -169,10 +165,9 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
 
   const { segments, notices } = useMemo(() => buildSegments(parts), [parts]);
 
-  // While live, the trailing process group is the one still executing — live
-  // reasoning and the status label attach there; earlier groups have settled.
-  // When the trailing segment is text (or the turn is empty) but reasoning is
-  // already streaming, a tail group holds it until the next part arrives.
+  // While live, the trailing process group is the executing one (live reasoning
+  // and status attach there); if the tail is text or empty, a tail group holds
+  // streaming reasoning.
   const lastSeg = segments[segments.length - 1];
   const activeIdx = isLive && lastSeg?.kind === 'process' ? segments.length - 1 : -1;
   const liveTail = isLive && activeIdx === -1 && !!reasoning;
@@ -231,9 +226,8 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
           <span className="thinking-agent">Compacting context…</span>
         </div>
       )}
-      {/* The bar shows for anything a person can act on: a failed or
-          cancelled turn with no assistant text still regenerates, forks and
-          switches attempts — only Copy needs text. */}
+      {/* The bar shows for anything a person can act on: a failed or cancelled
+          turn with no text still regenerates, forks and switches attempts; only Copy needs text. */}
       {!isLive && batchIds.length >= 2 && approveAll && (
         <div className="turn-approve-all">
           <Button size="small" variant="primary" onClick={() => approveAll(batchIds)}>Approve all ({batchIds.length})</Button>

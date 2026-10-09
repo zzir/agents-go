@@ -1,8 +1,7 @@
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 
-// The start-up configuration (GET /server): shown, never edited — it comes
-// from the command line, not the settings table.
+// The start-up configuration (GET /server): from the command line, shown, never edited.
 export interface ServerInfo {
   version: string;
   // The IANA zone cron schedules are read in.

@@ -6,13 +6,9 @@ import { toast } from '@/lib/toast';
 import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
 import type { EnvVar, Project, ProjectDetail } from '@/lib/binding';
 
-/* The project's settings: the environment (loaded on open — a listing never
-   carries one). Values arrive masked and go back masked unless the person
-   rewrites one.
-
-   Saving a CHANGED environment replaces the container at the project's next
-   run, so the confirm step spells out what that costs; a save that rewrote
-   nothing goes through without asking. */
+/* The project's settings: the environment, loaded on open (a listing never
+   carries one), masked both ways unless a value is rewritten. Saving a CHANGED
+   environment replaces the container at the next run, so that save confirms first. */
 
 interface ProjectEnvDialogProps {
   project: Project;
@@ -21,17 +17,14 @@ interface ProjectEnvDialogProps {
 }
 
 /* The sandbox's settings, read-only: the image the container starts from and
-   whether it has a network. Both answer questions this dialog provokes —
-   "why can't the setup reach the internet?" above all — and both are the
-   admin's to change, in Settings. */
+   whether it has a network — the admin's to change, in Settings. */
 interface SandboxSummary {
   image?: string;
   network?: string;
 }
 
-/* What the container is created with — the comparison the server makes to
-   decide whether to replace it. Untouched rows compare equal because both
-   sides still hold the mask. */
+/* What the container is created with — the server's comparison for replacing it.
+   Untouched rows compare equal because both sides still hold the mask. */
 const containerEnv = (vars: EnvVar[]) =>
   JSON.stringify(cleanEnv(vars).map(v => [v.key, v.value]).sort((a, b) => a[0].localeCompare(b[0])));
 

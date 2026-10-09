@@ -10,11 +10,9 @@ interface Row {
   status?: SessionStatus;
 }
 
-// AttentionSignals tells a person who is not looking that a conversation
-// needs them: the page title counts the ones waiting on a decision, and a
-// conversation that starts to wait, or fails, is spoken to a screen reader
-// and — when asked for — raised as a desktop notification. It reads the
-// sidebar's own list and what session.status announced since (invariant 86).
+// AttentionSignals tells a person who is not looking that a session needs
+// them: the page title's count, a spoken line and the opt-in desktop
+// notification, read from the sidebar's list and session.status (invariant 86).
 export function AttentionSignals({ announced }: { announced: Record<string, SessionStatus> }): ReactElement {
   const { data: rows, reload } = useApi(() => api.sessions.list() as Promise<Row[]>, [], 'sessions');
 
@@ -33,9 +31,8 @@ export function AttentionSignals({ announced }: { announced: Record<string, Sess
     reload();
   }, [announced, rows, reload]);
 
-  // What each row showed last: the announced status over the row's own. The
-  // first list is never news; after it a row entering requires_action or
-  // failed is, whether an event said so or a relist after an outage did.
+  // What each row showed last (the announced status over the row's own); the
+  // first list is never news, a row entering requires_action or failed after it is.
   const lastRef = useRef<Record<string, SessionStatus> | null>(null);
   const [spoken, setSpoken] = useState('');
   useEffect(() => {

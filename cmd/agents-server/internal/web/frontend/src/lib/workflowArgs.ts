@@ -1,9 +1,8 @@
 import type { Workflow, WorkflowStep } from '@/features/workflows/graph';
 
-// The save_workflow tool's arguments: a definition as the model writes it,
-// steps, agents and edges by NAME (mirrors bridge.workflowSpec). The approval
-// card renders it, and brings the stored definition it would replace to the
-// same shape so the two can be diffed line by line.
+// The save_workflow tool's arguments: a definition as the model writes it, steps,
+// agents and edges by NAME (mirrors bridge.workflowSpec). The approval card
+// renders it and diffs it line by line against the stored definition in the same shape.
 
 export interface WorkflowSpecStep {
   name: string;
@@ -33,9 +32,9 @@ const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0
 // the same string, kept here so this module has no dependency on the chart).
 const END = 'end';
 
-// GATE_TRIM is what the server's Verdict strips off a candidate line before
-// comparing, and so off a configured word (store.normalizeGateWord) — the
-// card must show the word as it will be stored and matched.
+// GATE_TRIM is what the server's Verdict strips off a candidate line and off a
+// configured word (store.normalizeGateWord); the card shows the word as stored
+// and matched.
 const GATE_TRIM = '*_`.!:';
 export function normalizeGateWord(w: string): string {
   let t = w.trim();
@@ -47,13 +46,9 @@ export function normalizeGateWord(w: string): string {
   return t.trim();
 }
 
-// parseWorkflowSpec reads the tool call's arguments defensively — a field the
-// model left out reads as empty, and anything but an object with a name is
-// null — into the shape the server would STORE them (bridge.resolveWorkflowSpec
-// + store.NormalizeWorkflow): trimmed, gate words as Verdict compares them,
-// edges resolved case-insensitively to the step's own spelling and `end` in
-// any case to `end`. The card's chart and its diff against the stored
-// definition then show the save, not the model's spelling of it.
+// parseWorkflowSpec reads the tool call's arguments defensively (a missing field
+// is empty, anything but an object with a name is null) into the shape the server
+// STORES: bridge.resolveWorkflowSpec + store.NormalizeWorkflow, mirrored here.
 export function parseWorkflowSpec(argsJSON: string): WorkflowSpec | null {
   let raw: unknown;
   try {
@@ -98,10 +93,9 @@ export function parseWorkflowSpec(argsJSON: string): WorkflowSpec | null {
   };
 }
 
-// storedStepNames names every step of a stored definition, uniquely: its own
-// name, or "Step N" for a nameless one (suffixed if that collides) — the same
-// rule the server's get_workflow applies, so a diff against a save the model
-// read back shows no phantom rename.
+// storedStepNames names every step of a stored definition uniquely ("Step N" for
+// a nameless one, suffixed on collision), by the rule the server's get_workflow
+// applies, so a diff against a save the model read back shows no phantom rename.
 export function storedStepNames(steps: WorkflowStep[]): string[] {
   const used = new Set<string>();
   const names = steps.map(s => {
@@ -143,9 +137,9 @@ export function specFromStored(w: Workflow, agentName: (id: string) => string): 
   };
 }
 
-// specSteps is the spec's steps in the graph's shape — the step name standing
-// in for the id, which is what the spec's edges name — so EdgeGraph draws a
-// proposal exactly as it draws a stored definition.
+// specSteps is the spec's steps in the graph's shape, the step name standing in
+// for the id (which the spec's edges name), so EdgeGraph draws a proposal like a
+// stored definition.
 export function specSteps(spec: WorkflowSpec): WorkflowStep[] {
   return spec.steps.map(s => ({
     id: s.name, name: s.name, agent_config_id: s.agent, prompt: s.prompt,
@@ -166,9 +160,8 @@ export function stepFlags(s: WorkflowSpecStep): string[] {
   return out;
 }
 
-// canonicalWorkflowText lays a spec out one fact per line — the head, the
-// budget, then each step's line and its prompt indented — for a line diff
-// between the stored definition and the proposed one.
+// canonicalWorkflowText lays a spec out one fact per line (head, budget, each
+// step's line and indented prompt) for a line diff against the stored definition.
 export function canonicalWorkflowText(spec: WorkflowSpec): string {
   const lines = [`name: ${spec.name}`, `description: ${spec.description}`];
   const b = spec.budget;

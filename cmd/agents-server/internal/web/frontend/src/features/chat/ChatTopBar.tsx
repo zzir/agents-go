@@ -8,19 +8,13 @@ interface ChatTopBarProps {
   sessionName: string;
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
-  /* The terminal panel opens from the project menu, not from a button of its
-     own: what it opens is the BOUND project's terminal (the menu renders only
-     once the session is bound), and the three buttons on the right are
-     inspector lenses — it never belonged among them. An unbound session has
-     no way in, by design: a session binds on its first message. */
+  /* The terminal opens from the project menu (it is the BOUND project's
+     terminal), never from a lens button; an unbound session has no way in. */
   terminalEnabled: boolean;
   onTerminalOpen?: () => void;
-  /* The session's sandbox binding, rendered as a quiet read-only label beside
-     the title once the first sandbox-carrying run has fixed it. WHICH tree is
-     permanent — switching projects means starting a new session (the
-     composer's Project picker) — but what its container is configured with is
-     not, which is what the menu beside it edits. Shows only the project name;
-     the sandbox name lives in the hover title. */
+  /* The session's sandbox binding, a read-only label beside the title: the
+     project name, the sandbox name in the hover title. WHICH tree is permanent,
+     the container's configuration (what the menu beside it edits) is not — invariant 27. */
   binding?: { title: string; projectName: string } | null;
   /* The bound project's own actions. Absent while unbound: there is no
      container to act on yet. */
@@ -34,9 +28,8 @@ export interface ProjectMenu {
   busy: boolean;
   /* absent | stopped | running, or '' while unknown. */
   state: string;
-  /* True while the state is being re-read. The compute item is disabled
-     meanwhile: on a remote service the read is a network round trip, so the
-     menu would otherwise offer Start on a running sandbox for a moment. */
+  /* True while the state is being re-read; the compute item is disabled
+     meanwhile, or a slow remote read would offer Start on a running sandbox. */
   stateLoading: boolean;
   /* False on a backend where the sandbox IS the storage, and replacing it
      would take the working tree with it. */
@@ -112,10 +105,7 @@ export function ChatTopBar({
                 )}
                 <ActionList.Divider />
                 {projectMenu.stateLoading && projectMenu.state === '' ? (
-                  // Only the very first read shows this: a re-read of a known
-                  // state keeps the last label (disabled below) rather than
-                  // flashing back to "Checking…", and a failed first read falls
-                  // through to Start — the harmless choice.
+                  // Only the first read shows "Checking…" — invariant 49.
                   <ActionList.Item disabled>
                     <ActionList.LeadingVisual><PlayIcon /></ActionList.LeadingVisual>
                     Checking the sandbox…
@@ -158,9 +148,8 @@ export function ChatTopBar({
           variant="invisible"
           size="small"
           aria-label="Traces"
-          // Not gated on having spans in memory: they load lazily when this
-          // panel first opens, so a count gate would lock the door that loads
-          // them.
+          // Not gated on spans in memory: they load when this panel first
+          // opens, so a count gate would lock the door that loads them.
           disabled={!sessionId}
           onClick={() => onPanelChange(panel?.kind === 'trace' ? null : { kind: 'trace' })}
         />
