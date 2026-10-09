@@ -29,7 +29,7 @@ Requires Go 1.27+.
 ./scripts/ci.sh                       # full CI locally: gofmt, vet, build, race tests, every submodule (GOWORK=off)
 go test -race ./...                   # race detector is ON in CI — keep it green
 go test -race ./agents -run TestName  # single test
-golangci-lint run                     # CI uses golangci-lint v2.13
+golangci-lint run                     # CI uses golangci-lint v2.14
 ./scripts/schema-compat.sh v0.4.4     # does HEAD open a database that tag created? (the release header's line; --pg <DSN> checks PostgreSQL too)
 ./scripts/release-check.sh v0.5.1     # before tagging: a patch that breaks exported API is refused (decisions §5.8)
 ./scripts/release-prep.sh v0.5.1      # release commit: every go.mod requires the version; then tag v0.5.1 and push it — release.yml tags the library modules
