@@ -15,9 +15,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// AuthHandler serves the authentication surface: config for the login page,
-// token login (token mode), the signed-in user's session endpoints, personal
-// access tokens, and the admin's user management.
+// AuthHandler serves the authentication surface: login, the signed-in user's
+// session endpoints, personal access tokens, and the admin's user management.
 type AuthHandler struct {
 	svc    *authn.Service
 	tokens *store.AuthTokenStore
@@ -90,8 +89,7 @@ type UserLabel struct {
 	Email string `json:"email"`
 }
 
-// ListUserLabels serves the id→label directory the admin panel's owner
-// pickers render from; the route carries the admin gate, as ListUsers does.
+// ListUserLabels serves the id→label directory the owner pickers render from.
 //
 //	@Summary	List user labels (id, name, email) for owner pickers (admin)
 //	@Tags		auth
@@ -113,9 +111,8 @@ func (h *AuthHandler) ListUserLabels(c *gin.Context) {
 	c.JSON(http.StatusOK, labels)
 }
 
-// PatchUser changes an account's role or switches it off. Refused: the change
-// that would leave no enabled admin (409), the local account, and an admin
-// acting on themself (a locked-out admin's only recovery is --bootstrap-admin).
+// PatchUser changes an account's role or switches it off; refused when it
+// would leave no enabled admin (409), on the local account, and on oneself.
 //
 //	@Summary	Change a user's role or disable them (admin)
 //	@Tags		auth
@@ -165,8 +162,8 @@ func (h *AuthHandler) PatchUser(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// What the old role or the credentials opened — a terminal above all —
-	// closes; a still-enabled client reconnects as what it is now.
+	// Close what the old role opened; a still-enabled client reconnects as what
+	// it is now.
 	h.Conns.CloseForUser(id, "account changed")
 	if req.Disabled != nil && *req.Disabled {
 		if _, err := h.tokens.RevokeAllForUser(c.Request.Context(), id); err != nil {
@@ -320,8 +317,7 @@ func (h *AuthHandler) DeleteToken(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// A connection the revoked token opened closes; those the user's other
-	// credentials opened reconnect and carry on.
+	// Close the user's connections; those on other credentials reconnect and carry on.
 	h.Conns.CloseForUser(u.ID, "token revoked")
 	c.Status(http.StatusNoContent)
 }
@@ -416,8 +412,8 @@ func (h *AuthHandler) OAuthStart(c *gin.Context) {
 		notFound(c)
 		return
 	}
-	// HttpOnly so no script reads it; Lax so the provider's top-level redirect
-	// back still carries it; as short-lived as the pending login itself.
+	// HttpOnly, Lax, and as short-lived as the pending login —
+	// docs/howto/workbench-auth.md.
 	name, secure := h.svc.LoginCookie()
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name: name, Value: nonce, Path: "/", MaxAge: int(authn.LoginTTL / time.Second),
@@ -426,9 +422,8 @@ func (h *AuthHandler) OAuthStart(c *gin.Context) {
 	c.Redirect(http.StatusFound, authURL)
 }
 
-// OAuthCallback finishes a login. It always redirects into the SPA — success
-// carries a one-time exchange code in the URL fragment, failure a coarse
-// error tag; the detail is logged, not shown to an unauthenticated visitor.
+// OAuthCallback finishes a login and always redirects into the SPA: success
+// carries a one-time exchange code in the fragment, failure a coarse error tag.
 //
 //	@Summary	OAuth provider callback
 //	@Tags		auth

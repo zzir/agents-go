@@ -25,15 +25,13 @@ func NewSessionStore(db *bun.DB) *SessionStore {
 	return &SessionStore{db: db}
 }
 
-// Create inserts sess, stamping its created_at and updated_at timestamps. An
-// owner is required: a session nobody owns would be one nobody can open.
+// Create inserts sess, stamping its timestamps; an owner is required.
 func (s *SessionStore) Create(ctx context.Context, sess *Session) error {
 	if sess.OwnerID == "" {
 		return errors.New("creating session: no owner")
 	}
 	if sess.Gen == "" {
-		// Assigned here, so no path that creates a session can forget it and
-		// share entries with whatever held the name before.
+		// Assigned here so no creating path can forget it.
 		gen, err := session.NewGeneration()
 		if err != nil {
 			return err
@@ -242,11 +240,11 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 	return nil
 }
 
-// BindProjectIfEmpty permanently binds project_id to the session unless it
-// is already bound (decisions §5.28), reporting whether THIS call bound it.
-// The project's existence is pinned inside the write (an EXISTS predicate on
-// SQLite; FOR KEY SHARE on PostgreSQL, against DeleteIfUnreferenced's FOR
-// UPDATE). An empty projectID binds nothing; a missing session is (false, nil).
+// BindProjectIfEmpty permanently binds project_id to the session unless it is
+// already bound (decisions §5.28), reporting whether THIS call bound it; the
+// project's existence is pinned inside the write (EXISTS on SQLite, FOR KEY
+// SHARE on PostgreSQL). An empty projectID binds nothing; a missing session is
+// (false, nil).
 func (s *SessionStore) BindProjectIfEmpty(ctx context.Context, id, projectID string) (bool, error) {
 	if projectID == "" {
 		return false, nil
@@ -293,7 +291,8 @@ func (s *SessionStore) BindProjectIfEmpty(ctx context.Context, id, projectID str
 }
 
 // CountProjectRefs reports how many sessions bind projectID — the unit the
-// SandboxManager caches an instance per. An empty id counts the unbound (NULL, see boundTo).
+// SandboxManager caches an instance per. An empty id counts the unbound (NULL,
+// see boundTo).
 func (s *SessionStore) CountProjectRefs(ctx context.Context, projectID string) (int, error) {
 	n, err := boundTo(s.db.NewSelect().Model((*Session)(nil)), "project_id", projectID).Count(ctx)
 	if err != nil {
@@ -302,8 +301,9 @@ func (s *SessionStore) CountProjectRefs(ctx context.Context, projectID string) (
 	return n, nil
 }
 
-// boundTo narrows a nullable uuid column to one id, or for the empty id to
-// the rows that carry none (NULL): PostgreSQL refuses "" as a uuid, SQLite merely matches nothing.
+// boundTo narrows a nullable uuid column to one id, or for the empty id to the
+// rows that carry none (NULL): PostgreSQL refuses "" as a uuid, SQLite merely
+// matches nothing.
 func boundTo(q *bun.SelectQuery, column, id string) *bun.SelectQuery {
 	if id == "" {
 		return q.Where("? IS NULL", bun.Ident(column))
@@ -311,11 +311,9 @@ func boundTo(q *bun.SelectQuery, column, id string) *bun.SelectQuery {
 	return q.Where("? = ?", bun.Ident(column), id)
 }
 
-// Delete removes the session with everything keyed by it — entries, trace
-// events, pending approvals, wake-ups, triggers — and cascades through its
-// tasks' hidden child sessions, following only LIVE edges (liveParent /
-// liveChild), in one transaction. The root's absence is ErrNotFound; a
-// child already gone is not.
+// Delete removes the session with everything keyed by it and cascades through
+// its tasks' hidden child sessions over LIVE edges only (liveParent /
+// liveChild), in one transaction. The root's absence is ErrNotFound; a child's is not.
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		tree, err := sessionTree(ctx, tx, id)
@@ -385,13 +383,13 @@ func sessionTree(ctx context.Context, db bun.IDB, id string) ([]string, error) {
 	return tree, nil
 }
 
-// deleteSessionRows removes one session of the tree: its row, everything
-// keyed by its id, the task rows naming it as PARENT or CHILD, and its
-// triggers; the attachments only its entries referenced are unbound for the
-// reaper. mustExist makes a missing row ErrNotFound.
+// deleteSessionRows removes one session of the tree: its row, everything keyed
+// by its id, the task rows naming it as PARENT or CHILD, its triggers;
+// attachments only it referenced are unbound for the reaper. mustExist makes a
+// missing row ErrNotFound.
 func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool) error {
-	// The session row's lock first — the order every entry write takes
-	// (EntryStore.lockSessionIn), so an append and this cascade cannot deadlock.
+	// The session row's lock first, the order every entry write takes
+	// (EntryStore.lockSessionIn).
 	if tx.Dialect().Name() == dialect.PG {
 		err := tx.NewSelect().Model((*Session)(nil)).Column("id").
 			Where("id = ?", id).For("UPDATE").Scan(ctx, new(string))
@@ -493,9 +491,8 @@ func (s *SessionStore) DeleteOrphanHidden(ctx context.Context, cutoff time.Time)
 }
 
 // DeleteTaskSessionsBefore removes the hidden child sessions of tasks
-// terminal since before cutoff, subtree included as Delete does, and with
-// them the task rows: a task keeps no row once its transcript is gone.
-// Returns the count of sessions removed.
+// terminal since before cutoff (subtree included, as Delete does) and their
+// task rows. Returns the count of sessions removed.
 func (s *SessionStore) DeleteTaskSessionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	done := func(q *bun.SelectQuery) *bun.SelectQuery {
 		return q.Where(liveChild).Where("t.status IN "+taskTerminalSet).Where("t.updated_at < ?", cutoff)
@@ -506,8 +503,8 @@ func (s *SessionStore) DeleteTaskSessionsBefore(ctx context.Context, cutoff time
 		return 0, fmt.Errorf("listing the sessions of finished tasks: %w", err)
 	}
 	return s.collect(ctx, ids, func(ctx context.Context, tx bun.Tx, id string) (bool, error) {
-		// The task row is locked with the session already held (the cascade's
-		// order), so a retry claimed meanwhile is seen and the row kept.
+		// Locked after the session (the cascade's order): a retry claimed
+		// meanwhile keeps the row.
 		q := done(tx.NewSelect().Model((*Task)(nil)).Column("id").Where("t.child_session_id = ?", id))
 		if tx.Dialect().Name() == dialect.PG {
 			q = q.For("UPDATE")
@@ -520,9 +517,8 @@ func (s *SessionStore) DeleteTaskSessionsBefore(ctx context.Context, cutoff time
 	})
 }
 
-// collect deletes each session's tree in its own transaction, with the row
-// locked first and still re-checked under the lock; a session that no longer
-// qualifies is skipped, not an error.
+// collect deletes each session's tree in its own transaction, re-checking
+// the row under its lock; one that no longer qualifies is skipped.
 func (s *SessionStore) collect(ctx context.Context, ids []string, still func(ctx context.Context, tx bun.Tx, id string) (bool, error)) (int, error) {
 	n := 0
 	for _, id := range ids {

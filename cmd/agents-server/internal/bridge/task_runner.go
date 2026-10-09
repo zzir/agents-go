@@ -14,9 +14,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// TaskFinalError reports a stop attempt on an already-final task — the one
-// genuinely conflict-shaped stop failure (handlers map it to 409; anything
-// else is an internal error).
+// TaskFinalError reports a stop attempt on an already-final task. Handlers map
+// it to 409.
 type TaskFinalError struct{ Status string }
 
 func (e *TaskFinalError) Error() string { return "task already " + e.Status }
@@ -38,17 +37,14 @@ func isTerminalTaskStatus(s string) bool {
 	return s == protocol.TaskCompleted || s == protocol.TaskFailed || s == protocol.TaskCancelled
 }
 
-// IsTerminalTaskStatus reports whether a task status string is terminal, for
-// handlers that overlay live hub state onto stored rows and must leave
-// terminal rows alone.
+// IsTerminalTaskStatus reports whether a task status string is terminal.
 func IsTerminalTaskStatus(s string) bool { return isTerminalTaskStatus(s) }
 
-// resolveSpawnAgent: an explicit config id or name wins (spawn_task passes
-// the id its build gave the handoff target); an empty name is the spawning
-// run's agent.
+// resolveSpawnAgent resolves an explicit config id or name; an empty name is
+// the spawning run's agent.
 func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name string) (*store.AgentConfig, error) {
-	// Resolved within the parent session owner's view (decisions §5.29); a
-	// lookup that cannot be made refuses (spec §2.13).
+	// Within the parent session owner's view (decisions §5.29); a lookup that
+	// cannot be made refuses (spec §2.13).
 	sess, err := r.Deps.Sessions.Get(ctx, parentSessionID)
 	if err != nil {
 		return nil, fmt.Errorf("spawn_task: resolving the parent session: %w", err)
@@ -127,8 +123,7 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 	case errors.Is(err, store.ErrNotFound):
 		return nil, nil
 	case err != nil:
-		// A check that cannot be made refuses (spec §2.13): reading a store
-		// failure as "chat session" hands a TASK run the task tools — invariant 34.
+		// A check that cannot be made refuses (spec §2.13, invariant 34).
 		return nil, fmt.Errorf("resolving task for session %s: %w", sessionID, err)
 	}
 	attempt := max(task.Attempt, 1)
@@ -154,10 +149,8 @@ func trustSessionID(sessionID string, task *TaskMeta) string {
 	return sessionID
 }
 
-// StopTask cancels a background task on behalf of the REST stop endpoint,
-// with the same status-aware semantics as the model-facing task_stop tool.
-// (The model-facing spawn/status/stop path itself is the SDK's task manager
-// tools, wired in buildFullAgent — not methods here.)
+// StopTask cancels a background task for the REST stop endpoint, with the
+// task_stop tool's semantics.
 func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 	if r.tasks == nil {
 		return nil, fmt.Errorf("task_stop: tasks are not configured")
@@ -173,14 +166,13 @@ func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 }
 
 // RetryTask resumes a failed background task for the REST endpoint, with the
-// task_retry tool's semantics, under the hub's root context: the run outlives
-// the HTTP call that asked for it.
+// task_retry tool's semantics, under the hub's root context.
 func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 	if r.tasks == nil {
 		return nil, fmt.Errorf("task_retry: tasks are not configured")
 	}
-	// A workflow at a bound is refused HERE, before the claim: after RetryClaim
-	// the launcher's refusal would owe the parent a wake-up run to say so.
+	// A workflow at a bound is refused HERE, before the claim (a refusal after
+	// it owes a wake-up).
 	if row, err := r.Deps.Tasks.Get(r.hub.rootCtx, taskID); err == nil && row.Kind == store.TaskKindWorkflow {
 		if st, derr := store.DecodeWorkflowState(row.State); derr == nil {
 			tokens, terr := r.executionTokens(r.hub.rootCtx, st, row.ChildSessionID)
@@ -199,8 +191,7 @@ func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 	return r.taskInfoFrom(info), nil
 }
 
-// MaxTaskAttempts is the ceiling a task's attempt count is measured against;
-// clients get the parameter, not a "can I retry" that goes stale as the status moves.
+// MaxTaskAttempts is the ceiling a task's attempt count is measured against.
 func (r *Runner) MaxTaskAttempts() int {
 	if r.tasks == nil {
 		return 0
@@ -212,8 +203,7 @@ func (r *Runner) MaxTaskAttempts() int {
 // wake-ups, then hands the outcome to the task manager — invariant 29.
 func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 	ctx := r.hub.rootCtx
-	// Any run ending is a session becoming free, which is when a debt owed to
-	// it can finally be paid.
+	// A run ending frees the session: the moment a debt owed to it can be paid.
 	(Waker{r}).Drain(ctx, sessionID)
 	if r.tasks == nil {
 		return
@@ -228,8 +218,7 @@ func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 		return
 	}
 	out := tasks.RunOutcome{
-		// The attempt that finished, so a task retried while this run was in
-		// flight keeps the new attempt rather than this one's outcome.
+		// The attempt that finished: a task retried meanwhile keeps the new attempt.
 		RunID:        runID,
 		Status:       taskStatusFromRun(info.Status),
 		Text:         result.FinalText,
@@ -240,8 +229,7 @@ func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 }
 
 // FailOrphanedTasks is the first half of the restart reconciliation: tasks the
-// restart interrupted are failed, which owes their parents a wake-up. It runs
-// synchronously, before any request — workbench invariant 32.
+// restart interrupted are failed, owing their parents a wake-up — invariant 32.
 func (r *Runner) FailOrphanedTasks(ctx context.Context) {
 	if r.tasks == nil {
 		return
@@ -260,9 +248,8 @@ func (r *Runner) DrainPendingWakeups(ctx context.Context) { (Waker{r}).DrainAll(
 func (r *Runner) Shutdown(ctx context.Context) { r.hub.Shutdown(ctx) }
 
 // WithSessionTreeFenced runs fn with the session and every hidden session
-// serving it fenced in the hub — no run live on any, none starting until fn
-// returns — then drains the wake-ups the fence refused. ErrSessionBusy when
-// one is live; fn's error is returned as is.
+// serving it fenced in the hub (invariant 82), then drains the wake-ups the
+// fence refused. ErrSessionBusy when one is live; fn's error is returned as is.
 func (r *Runner) WithSessionTreeFenced(ctx context.Context, sessionID string, fn func() error) error {
 	tree, err := r.Deps.Sessions.Tree(ctx, sessionID)
 	if err != nil {
@@ -281,15 +268,12 @@ func (r *Runner) WithSessionTreeFenced(ctx context.Context, sessionID string, fn
 }
 
 // EndSessionDelete lifts StopSessionTree's deleting mark once the store delete
-// has ended either way: a surviving session accepts runs again, a deleted one
-// refuses them at the run's own session read.
+// has ended either way.
 func (r *Runner) EndSessionDelete(sessionID string) { r.hub.unmarkSessionDeleting(sessionID) }
 
-// StopSessionTree cancels the session's live run and every non-terminal task it
-// spawned (a workflow's steps included), then waits, bounded, for their
-// goroutines — postRun included — so the delete cascade cannot race a write.
-// The teardown marker goes down FIRST, or a task's drain could start a
-// notification run on the session mid-delete.
+// StopSessionTree marks the session deleting FIRST, then cancels its live run
+// and every non-terminal task it spawned and waits, bounded, for their
+// goroutines (postRun included) ahead of the delete cascade.
 func (r *Runner) StopSessionTree(sessionID string) {
 	ctx := r.hub.rootCtx
 	r.hub.markSessionDeleting(sessionID)
@@ -301,8 +285,7 @@ func (r *Runner) StopSessionTree(sessionID string) {
 		waits = append(waits, rid)
 	}
 	if r.tasks != nil {
-		// Collect the run ids BEFORE stopping: the loop below needs the list as
-		// it was when they were live.
+		// The run ids as they were while live, collected BEFORE stopping.
 		live, err := r.Deps.Tasks.ListByParent(ctx, sessionID)
 		if err != nil {
 			logging.Ctx(ctx).Warn("listing tasks for session stop", "error", err, "session_id", sessionID)
@@ -315,8 +298,8 @@ func (r *Runner) StopSessionTree(sessionID string) {
 				waits = append(waits, live[i].RunID)
 			}
 		}
-		// The manager cancels each and finalizes the rows nothing will advance.
-		// Under the teardown deadline: it stops one at a time, and a stop can WAIT.
+		// The manager cancels each and finalizes the rows, one at a time under
+		// the teardown deadline.
 		stopCtx, cancelStop := context.WithDeadline(ctx, deadline)
 		err = r.tasks.StopTree(stopCtx, sessionID)
 		cancelStop()
@@ -329,14 +312,12 @@ func (r *Runner) StopSessionTree(sessionID string) {
 	}
 }
 
-// sessionTeardownWait bounds how long a delete waits for run goroutines:
-// unbounded lets one stuck run block forever; too short races the cascade.
+// sessionTeardownWait bounds how long a delete waits for run goroutines.
 const sessionTeardownWait = 5 * time.Second
 
 // ReleaseSessionBinding evicts the cached sandbox instance behind a deleted
-// session's project binding when no remaining session references the project
-// (invariant 27). Called AFTER the delete cascade; best-effort — on any doubt
-// the instance stays.
+// session's project binding once no session references the project
+// (invariant 27). Called AFTER the delete cascade; on any doubt the instance stays.
 func (r *Runner) ReleaseSessionBinding(projectID string) {
 	if projectID == "" {
 		return
@@ -350,14 +331,12 @@ func (r *Runner) ReleaseSessionBinding(projectID string) {
 	if n > 0 {
 		return
 	}
-	// Eviction only: the project row still exists, so its storage and stopped
-	// container stay for the next session that binds it.
+	// Eviction only: the project row, its storage and stopped container stay.
 	r.Deps.SandboxManager.EvictProject(projectID)
 }
 
-// ForgetSessionTrust drops a deleted session's exec_command trust grants.
-// Trust is keyed by the chat session id (trustSessionID), so the root of the
-// deleted tree is the key that accumulated them.
+// ForgetSessionTrust drops a deleted session's exec_command trust grants,
+// keyed by the root chat session id (trustSessionID).
 func (r *Runner) ForgetSessionTrust(sessionID string) {
 	if r.Deps.SandboxManager != nil {
 		r.Deps.SandboxManager.Trust().Forget(sessionID)

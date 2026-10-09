@@ -13,10 +13,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// WSHandler dispatches WebSocket messages to start runs and handle tool
-// approvals. Runs live in the runner's hub, independent of the connection,
-// and their events are a broadcast bus (invariant 14); approvals are
-// persisted by the runner, so they work across reconnects and restarts.
+// WSHandler dispatches WebSocket messages: run starts, subscriptions, injects
+// and approval decisions. Runs live in the runner's hub — invariant 14.
 type WSHandler struct {
 	runner    *bridge.Runner
 	registry  *ConnRegistry
@@ -37,9 +35,8 @@ func (h *WSHandler) audit(conn *server.WSConn, action, resource, detail string) 
 	})
 }
 
-// NewWSHandler returns a WebSocket handler backed by the runner and wires the
-// runner's attach hook to the connection registry. The hook is a plain field
-// the run goroutines read, so this must run before anything can start a run.
+// NewWSHandler returns a WebSocket handler over the runner and wires its attach
+// hook to the connection registry; must run before anything can start a run.
 func NewWSHandler(runner *bridge.Runner, sessions *store.SessionStore, approvals *store.PendingApprovalStore) *WSHandler {
 	h := &WSHandler{runner: runner, registry: NewConnRegistry(runner.Hub(), sessions), sessions: sessions, approvals: approvals}
 	runner.OnRunAttach = h.registry.AttachAll
@@ -79,8 +76,9 @@ type connSubs struct {
 	closed bool
 }
 
-// add records the subscription for runID, detaching a previous one to the
-// same run first; after closeAll it detaches on the spot (AttachAll snapshots the registry).
+// add records the subscription for runID, detaching a previous one to the same
+// run first; after closeAll it detaches on the spot (AttachAll snapshots the
+// registry).
 func (cs *connSubs) add(runID string, cancel func()) {
 	cs.mu.Lock()
 	if cs.closed {
@@ -121,8 +119,8 @@ func (cs *connSubs) closeAll() {
 // Handle reads and dispatches WebSocket messages on conn until the connection closes.
 func (h *WSHandler) Handle(conn *server.WSConn) {
 	log := logging.Ctx(conn.Context())
-	// Drain outbound events through a bounded queue + writer goroutine so a
-	// slow client can't back-pressure the hub/run goroutines that publish them.
+	// Bounded outbound queue + writer goroutine: a slow client never
+	// back-pressures the hub.
 	conn.StartWriter()
 	subs := &connSubs{subs: map[string]func(){}}
 	defer subs.closeAll()
@@ -239,8 +237,9 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 		})})
 		return
 	}
-	// No explicit subscribe: OnRunAttach attached every connection of the
-	// owner before the first event. StartRun applies the plan intent inside its reservation.
+	// No explicit subscribe: OnRunAttach attached every connection of the owner
+	// before the first event. StartRun applies the plan intent inside its
+	// reservation.
 	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.ProjectID, bridge.RunInput{Text: msg.Input, AttachmentIDs: msg.AttachmentIDs}, msg.Plan, nil)
 	if err == nil {
 		h.audit(conn, "ws.run.create", msg.SessionID, "")
@@ -270,7 +269,8 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 }
 
 // resolve applies an approve/reject decision (persisted by the runner). The
-// decision resumes the SAME run id; OnRunAttach re-attaches connections not yet watching.
+// decision resumes the SAME run id; OnRunAttach re-attaches connections not yet
+// watching.
 func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool, scope bridge.ApprovalScope, reason string) {
 	log := logging.Ctx(conn.Context())
 	pending, err := ownsApproval(conn.Context(), h.approvals, h.sessions, conn.User.ID, toolCallID)

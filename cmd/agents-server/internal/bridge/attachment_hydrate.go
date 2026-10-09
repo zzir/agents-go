@@ -77,8 +77,7 @@ func (m hydratingModel) hydrate(ctx context.Context, items []agents.InputItem) [
 	}
 	meta, err := m.atts.MetaBatch(ctx, ids)
 	if err != nil {
-		// Leave the sentinels in place: the provider will reject the URL and
-		// the run fails loudly, which beats silently dropping the images.
+		// The sentinels stay: the provider rejects the URL and the run fails loudly.
 		logging.Ctx(ctx).Error("attachment hydrate: metadata lookup failed", "error", err)
 		return items
 	}

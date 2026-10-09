@@ -9,8 +9,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// plan is the Plan this build's agent is rewritten with. Its read-only set is
-// also what on_change asks outside of — one construction, so the two agree.
+// plan is the Plan this build's agent is rewritten with; its read-only set is
+// also what on_change asks outside of (invariant 90).
 func (b *BuildResult) plan() middleware.Plan {
 	return middleware.Plan{ReadOnlyTools: append(slices.Clone(middleware.DefaultReadOnlyTools), b.PlanReadOnly...)}
 }
@@ -20,8 +20,7 @@ func (b *BuildResult) plan() middleware.Plan {
 func (b *BuildResult) ReadOnlySet() middleware.ReadOnlySet { return b.plan().ReadOnlySet() }
 
 // applyApprovalMode installs the agent's approval mode on every tool it
-// carries — invariant 90. on_change asks for each tool plan mode would deny,
-// always for every tool; exec_command keeps its per-command gate in both.
+// carries — invariant 90; exec_command keeps its per-command gate in both modes.
 func applyApprovalMode(r *BuildResult) {
 	if r.Agent == nil || !r.Approval.Asks() {
 		return
@@ -51,9 +50,8 @@ func applyApprovalMode(r *BuildResult) {
 	r.Agent.MCPServers = wrapped
 }
 
-// askBeforeCall returns a copy of t that pauses for approval on every call.
-// The tool's own predicate still runs for its error and per-call effects; a
-// non-error answer is superseded, as the runner treats a listed name.
+// askBeforeCall returns a copy of t that pauses for approval on every call;
+// the tool's own predicate still runs for its error, its answer superseded.
 func askBeforeCall(t *agents.Tool) *agents.Tool {
 	asked := *t
 	inner := t.NeedsApprovalFunc

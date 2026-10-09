@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// The AgentConfig scalar settings are grouped into JSON category columns, so
-// adding a setting needs no schema change; each group is a nested object in the API.
+// The AgentConfig scalar settings are grouped into JSON category columns (no
+// schema change per setting); each group is a nested object in the API.
 
 // BehaviorGroup holds the run-behavior knobs. Booleans are stated POSITIVELY
 // (decisions §5.43); a knob whose default is ON uses *bool, nil meaning the default.
@@ -18,26 +18,34 @@ type BehaviorGroup struct {
 	HandoffDescription string `json:"handoff_description,omitempty"`
 	// ToolChoiceReset resets a pinned tool_choice after a tool runs; nil/true = on.
 	ToolChoiceReset *bool `json:"tool_choice_reset,omitempty"`
-	// StopAtTools is a comma-separated list of tool names the run ends after; empty lets the model decide.
+	// StopAtTools is a comma-separated list of tool names the run ends after;
+	// empty lets the model decide.
 	StopAtTools          string `json:"stop_at_tools,omitempty"`
 	HandoffInputFilter   string `json:"handoff_input_filter,omitempty"`
 	MaxToolConcurrency   int    `json:"max_tool_concurrency,omitempty"`
 	ToolNotFoundBehavior string `json:"tool_not_found_behavior,omitempty"`
-	// ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across turns) or "omit".
+	// ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
+	// turns) or "omit".
 	ReasoningItemIDPolicy string `json:"reasoning_item_id_policy,omitempty"`
-	// WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow; off by default.
+	// WorkflowAuthoring gives the agent's chat runs get_workflow /
+	// save_workflow; off by default.
 	WorkflowAuthoring bool `json:"workflow_authoring,omitempty"`
-	// Checklist gives the agent's chat runs the todo_write checklist tool; off by default.
+	// Checklist gives the agent's chat runs the todo_write checklist tool; off
+	// by default.
 	Checklist bool `json:"checklist,omitempty"`
 	// Subagents grants the agent's chat runs the task tools; nil/true = on.
 	Subagents *bool `json:"subagents,omitempty"`
 	// Vision admits image attachments on this agent's runs; off by default.
 	Vision bool `json:"vision,omitempty"`
-	// OverrideSystemPrompt sends this agent's instructions alone, empty included; the global system prompt is not prepended.
+	// OverrideSystemPrompt sends this agent's instructions alone, empty
+	// included; the global system prompt is not prepended.
 	OverrideSystemPrompt bool `json:"override_system_prompt,omitempty"`
-	// ThinkingMode is how an Anthropic backend sends the reasoning effort: "" as adaptive thinking, "budget" as a thinking token budget.
+	// ThinkingMode is how an Anthropic backend sends the reasoning effort: ""
+	// as adaptive thinking, "budget" as a thinking token budget.
 	ThinkingMode string `json:"thinking_mode,omitempty"`
-	// ThinkingBinding asks an Anthropic backend to drop a replayed thinking block it can no longer verify instead of failing the request; nil/true = on.
+	// ThinkingBinding asks an Anthropic backend to drop a replayed thinking
+	// block it can no longer verify instead of failing the request; nil/true =
+	// on.
 	ThinkingBinding *bool `json:"thinking_binding,omitempty"`
 }
 
@@ -65,13 +73,15 @@ type ResilienceGroup struct {
 	FallbackModels FallbackModels `json:"fallback_models,omitempty"`
 }
 
-// FallbackModel is one entry of the fallback chain: a provider and the model to ask it for.
+// FallbackModel is one entry of the fallback chain: a provider and the model to
+// ask it for.
 type FallbackModel struct {
 	// ProviderID names the provider the entry runs on; required on a write.
 	ProviderID string `json:"provider_id,omitempty"`
 	// Model is the model name asked of that provider; empty asks for the agent's own.
 	Model string `json:"model,omitempty"`
-	// ProviderType and BaseURL are read-only: the endpoint an entry named before provider_id, resolved to a provider at run time.
+	// ProviderType and BaseURL are read-only: the endpoint an entry named
+	// before provider_id, resolved to a provider at run time.
 	ProviderType string `json:"provider_type,omitempty"`
 	BaseURL      string `json:"base_url,omitempty"`
 	// inlineKey records that the entry carried an api_key, which the decode drops.
@@ -150,7 +160,8 @@ func (l FallbackModels) InlineKeyAt() int {
 
 // GuardrailGroup holds guardrail names and the output schema.
 type GuardrailGroup struct {
-	// Guardrails is a JSON array of guardrail names; each carries the stages it inspects.
+	// Guardrails is a JSON array of guardrail names; each carries the stages it
+	// inspects.
 	Guardrails   string `json:"guardrails,omitempty"`
 	OutputSchema string `json:"output_schema,omitempty"`
 }
@@ -164,9 +175,12 @@ type SessionGroup struct {
 
 // ApprovalGroup holds the HITL approval selection.
 type ApprovalGroup struct {
-	// Mode is when the agent's tool calls pause for approval: never (only the listed tools), on_change (every tool plan mode would deny), always (every tool). Empty reads as never.
+	// Mode is when the agent's tool calls pause for approval: never (only the
+	// listed tools), on_change (every tool plan mode would deny), always (every
+	// tool). Empty reads as never.
 	Mode string `json:"approval_mode,omitempty"`
-	// ApproveTools names tools that pause for approval before each call in every mode; ["*"] means every tool.
+	// ApproveTools names tools that pause for approval before each call in
+	// every mode; ["*"] means every tool.
 	ApproveTools StringList `json:"approve_tools,omitempty"`
 }
 

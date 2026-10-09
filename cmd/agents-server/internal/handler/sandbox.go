@@ -34,7 +34,8 @@ func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, r *Retirer) 
 }
 
 // Retirer turns a content change on a sandbox into the project generations it
-// invalidates, then retires each project's live instance and terminals (decisions §5.33).
+// invalidates, then retires each project's live instance and terminals
+// (decisions §5.33).
 type Retirer struct {
 	projects  *store.ProjectStore
 	manager   *sandboxes.Manager
@@ -183,11 +184,8 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, sanitizeSandboxConfig(*sb))
 }
 
-// Update overwrites the sandbox and responds with the updated row. A masked
-// credential keeps the stored value. An update that would change the
-// sandbox's identity (SandboxIdentityChanged) is refused with 409 while any
-// project lives on it (decisions §5.36); the image and the limits update
-// freely and reach bound sessions at their next run.
+// Update overwrites the sandbox; a masked credential keeps the stored value,
+// and an identity change is 409 while any project lives on it — decisions §5.36.
 //
 //	@Summary		Update sandbox
 //	@Description	Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the row changed meanwhile. Omitting it falls back to last-writer-wins. Editing the top-level "prompt" is NOT a content change: it retires no container and severs no terminal, reaching bound sessions at their next run (unlike an image change).
@@ -214,8 +212,8 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	}
 	id := c.Param("id")
 	ctx := c.Request.Context()
-	// A transient (non-not-found) Get failure must abort: an empty prev would
-	// resolve the mask to "" and silently WIPE the stored credential.
+	// A transient Get failure must abort: an empty prev would wipe the stored
+	// credential.
 	prev, err := h.store.Get(ctx, id)
 	if err != nil {
 		storeError(c, err)
@@ -235,16 +233,14 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		return
 	}
 	sb.Config = restored
-	// Normalize AFTER the mask restore: the canonical form must carry the
-	// real secret, not the ******** sentinel.
+	// Normalize after the mask restore: the canonical form carries the real secret.
 	canonical, err := store.NormalizeSandboxConfig(sb.Type, sb.Config)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
 	}
 	sb.Config = canonical
-	// Everything decided from prev holds only while the row IS prev: the
-	// revision CAS (anchored on the client's revision when given) refuses a race with 409.
+	// Revision CAS, anchored on the client's revision when given: a race is 409.
 	expected := prev.Revision
 	if req.Revision != 0 {
 		expected = req.Revision
@@ -265,11 +261,10 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// Invalidate NOW, from what the CAS guarantees, not from a re-read a
-	// cancelled request could fail. Only a CONTENT change retires.
+	// Invalidate from what the CAS guarantees, not a re-read; only a content
+	// change retires.
 	if contentChanged {
-		// WithoutCancel: the row is written; a disconnect must not skip the
-		// generation bump.
+		// WithoutCancel: a disconnect must not skip the generation bump.
 		if err := h.retire.bump(context.WithoutCancel(ctx), id); err != nil {
 			internalError(c, err)
 			return
@@ -283,9 +278,8 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, sanitizeSandboxConfig(*updated))
 }
 
-// Delete removes the sandbox. One still carrying projects is refused with
-// 409; the operator deletes them first. The refusal is decided by the delete
-// statement itself, so a racing project create either blocks it or loses.
+// Delete removes the sandbox; one still carrying projects is 409, decided by
+// the delete statement itself.
 //
 //	@Summary	Delete sandbox
 //	@Tags		sandboxes
@@ -425,9 +419,8 @@ func (h *SandboxHandler) StopContainer(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// RemoveContainer force-removes one managed container — the rebuild act: the
-// project's volume survives, and the next run recreates the container from the
-// current configuration.
+// RemoveContainer force-removes one managed container; the volume survives
+// and the next run recreates the container.
 //
 //	@Summary	Remove a managed container (rebuild)
 //	@Tags		sandboxes

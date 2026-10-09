@@ -15,14 +15,14 @@ type GuardrailHandler struct {
 	resolver *guardrails.Resolver
 }
 
-// NewGuardrailHandler returns a guardrail handler backed by the given store and resolver.
+// NewGuardrailHandler returns a guardrail handler backed by the given store and
+// resolver.
 func NewGuardrailHandler(s *store.GuardrailStore, r *guardrails.Resolver) *GuardrailHandler {
 	return &GuardrailHandler{store: s, resolver: r}
 }
 
-// List responds with all available guardrails (stored + built-in). Stored
-// entries carry config and blocking so the edit form can initialize from the
-// list; built-in entries have no id and fixed behavior.
+// List responds with every guardrail: stored (config and blocking included —
+// invariant 2) and built-in (no id, fixed behavior).
 //
 //	@Summary	List guardrails
 //	@Tags		guardrails
@@ -38,8 +38,7 @@ func validateGuardrail(g *store.Guardrail) string {
 	if g.Name == "" || len(g.Stages) == 0 || g.Mode == "" {
 		return "name, stages, and mode are required"
 	}
-	// Enforce the stage/mode enums and the mode's config (regex compiles,
-	// etc.) at save time, not when an agent first references it.
+	// Validate the stages, the mode and its config at save time.
 	if err := guardrails.ValidateDef(g); err != nil {
 		return err.Error()
 	}
@@ -96,8 +95,7 @@ func (h *GuardrailHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, g)
 }
 
-// Update overwrites a guardrail definition and responds with the updated
-// guardrail.
+// Update overwrites a guardrail definition and responds with it.
 //
 //	@Summary	Update guardrail
 //	@Tags		guardrails

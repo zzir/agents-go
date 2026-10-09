@@ -88,8 +88,8 @@ func requireRunOwner(c *gin.Context, info bridge.RunInfo, ok bool) bool {
 }
 
 // ownsApproval returns the pending tool call toolCallID when userID owns the
-// session its approval is filed on (a task's hidden session inherits the
-// parent's owner); a foreign one is store.ErrNotFound, a store fault its error.
+// session it is filed on (a task's hidden session inherits the parent's owner);
+// foreign is ErrNotFound.
 func ownsApproval(ctx context.Context, approvals *store.PendingApprovalStore, sessions *store.SessionStore, userID, toolCallID string) (*store.PendingToolCall, error) {
 	pending, call, err := approvals.FindByToolCall(ctx, toolCallID)
 	if err != nil {
@@ -264,8 +264,9 @@ func deleteOwnedWith[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(
 	return true
 }
 
-// stampCreateScope applies the caller to a new scoped row: a global claim
-// needs the admin role, anything else lands private. False means the response is written.
+// stampCreateScope applies the caller to a new scoped row: a global claim needs
+// the admin role, anything else lands private. False means the response is
+// written.
 func stampCreateScope(c *gin.Context, scope, ownerID *string) bool {
 	u, ok := server.CurrentUser(c)
 	if !ok {
@@ -372,10 +373,8 @@ func callerSees(c *gin.Context, scope, rowOwner string) bool {
 	return ok && store.Visible(scope, rowOwner, u.ID, u.Role == store.RoleAdmin)
 }
 
-// runnableRow gates the RUN surface of an agent (a session bound to it, its
-// tool listing, a playground call): an admin does not run a member's private
-// row — 403, the row being known to them. A member's own answer is the
-// caller's (visibleRow or the build), left as it is.
+// runnableRow gates the RUN surface of an agent (a bound session, its tool
+// listing, a playground call): an admin does not run a member's private row (403).
 func runnableRow(c *gin.Context, scope, rowOwner string) bool {
 	u, ok := server.CurrentUser(c)
 	if ok && u.Role == store.RoleAdmin && !store.Visible(scope, rowOwner, u.ID, false) {

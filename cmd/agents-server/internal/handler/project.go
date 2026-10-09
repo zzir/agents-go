@@ -20,16 +20,13 @@ import (
 	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
 )
 
-// ProjectHandler manages projects — per-user working trees on a sandbox
-// (decisions §5.28). Routes act on the caller's own rows; an admin also lists
-// every owner's (?all=true) and may delete any (decisions §5.29).
+// ProjectHandler manages projects, the per-user working trees on a sandbox —
+// see decisions §5.28; who may act on whose rows is decisions §5.29.
 type ProjectHandler struct {
-	// Audit, when set, records every working-tree export: the one call that
-	// takes a whole project off the machine. Wired at bootstrap.
+	// Audit, when set, records every working-tree export. Wired at bootstrap.
 	Audit protocol.AuditFunc
 	// Notes, when set, lets a rebuild leave its note on the session it was
-	// asked from: the session store, the entry store and the fence that
-	// proves the session at rest. Wired at bootstrap.
+	// asked from. Wired at bootstrap.
 	Notes     *RebuildNoteDeps
 	store     *store.ProjectStore
 	sandboxes *store.SandboxStore
@@ -101,8 +98,8 @@ type projectDeleteResp struct {
 	StorageError string `json:"storage_error,omitempty"`
 }
 
-// own resolves the caller's project by id; an admin's reach does NOT extend
-// here (the environment is the owner's), and a foreign project reads as absent.
+// own resolves the caller's project by id; an admin's reach does not extend
+// here, and a foreign project reads as absent.
 func (h *ProjectHandler) own(c *gin.Context) (*store.Project, bool) {
 	ownerID, _, ok := callerScope(c)
 	if !ok {
@@ -180,7 +177,7 @@ func (h *ProjectHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// storageHint names WHERE p's files live (decisions §5.33); admin-only, as a
+// storageHint names where p's files live (decisions §5.33); admin-only, as a
 // daemon address is a server-side fact. hints caches the per-sandbox half.
 func (h *ProjectHandler) storageHint(c *gin.Context, hints map[string]string, p *store.Project) string {
 	where, ok := hints[p.SandboxID]
@@ -247,8 +244,7 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	// Existence is the create's own guard (the store locks the row), so a
-	// missing sandbox 404s from the insert itself.
+	// A missing sandbox 404s from the insert itself: the store locks the row.
 	p := &store.Project{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env}
 	if err := h.store.Create(c.Request.Context(), p); err != nil {
 		saveError(c, err)
@@ -265,8 +261,7 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	created(c, p.ID, out)
 }
 
-// Get responds with one of the caller's projects and the names of its
-// environment, every value masked.
+// Get responds with one of the caller's projects, environment masked.
 //
 //	@Summary		Get project
 //	@Description	The one endpoint that returns a project's environment — names, with every value masked. Listings never carry it at all. Owner only: an environment is not part of an admin's management reach.
@@ -320,8 +315,7 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	// Masks resolve BEFORE normalization, so the canonical payload carries
-	// real values rather than the sentinel.
+	// Masks resolve before normalization: the canonical payload carries real values.
 	restored, err := restoreProjectEnv(req.Env, stored)
 	if err != nil {
 		badRequest(c, err.Error())
@@ -332,8 +326,7 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	// Everything decided from prev holds only while the row IS prev: the
-	// revision CAS (anchored on the client's revision when given) refuses a race with 409.
+	// Revision CAS, anchored on the client's revision when given: a race is 409.
 	expected := prev.Revision
 	if req.Revision != 0 {
 		expected = req.Revision
@@ -347,14 +340,12 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		saveError(c, err)
 		return
 	}
-	// Invalidate from the generation the store wrote — not prev+1 (a racing
-	// sandbox bump leaves it short), not a re-read a cancelled request could fail.
+	// Invalidate from the generation the store wrote, not prev+1 or a re-read.
 	if contentChanged {
 		h.manager.RetireProject(prev.ID, newGen)
 		h.terminals.CloseProjectTerminals(prev.ID, newGen)
 	}
-	// Re-read for the response: a client answering with a stale revision
-	// would have its next update refused as a conflict.
+	// Re-read for the response, so the client holds the current revision.
 	updated, err := h.store.Get(c.Request.Context(), prev.ID)
 	if err != nil {
 		storeError(c, err)
@@ -377,7 +368,8 @@ type RebuildNoteDeps struct {
 
 // rebuildReq is RebuildContainer's optional body.
 type rebuildReq struct {
-	// SessionID is the caller's session, bound to this project, to leave the rebuilt note on; left out, no note is written.
+	// SessionID is the caller's session, bound to this project, to leave the
+	// rebuilt note on; left out, no note is written.
 	SessionID string `json:"session_id,omitempty"`
 }
 
@@ -456,8 +448,8 @@ type sandboxStateResp struct {
 	State string `json:"state"`
 }
 
-// sandboxStopResp says whether the sandbox stopped now or will stop when the
-// work using it finishes — the honest answer to a Stop pressed mid-run.
+// sandboxStopResp says whether the sandbox stopped now or stops when the work
+// using it finishes.
 type sandboxStopResp struct {
 	Stopped bool `json:"stopped"`
 }
@@ -492,8 +484,7 @@ type projectHostResp struct {
 	Domain    string `json:"domain"`
 }
 
-// SandboxHost names where the project's sandbox serves its ports. Owner
-// only, like Export: the address reaches whatever runs in the sandbox.
+// SandboxHost names where the project's sandbox serves its ports.
 //
 //	@Summary		Project sandbox public address
 //	@Description	The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Owner only. 409 where the sandbox's row does not declare supports.public_host, or where there is no sandbox to address (none provisioned yet, or gone).
@@ -534,9 +525,8 @@ func (h *ProjectHandler) SandboxHost(c *gin.Context) {
 	c.JSON(http.StatusOK, projectHostResp{SandboxID: id, Domain: domain})
 }
 
-// SandboxStart provisions the project's sandbox and makes it ready — the
-// image pull happens here, where a person is watching, instead of inside the
-// next run.
+// SandboxStart provisions the project's sandbox and makes it ready, image
+// pull included.
 //
 //	@Summary		Start the project's sandbox
 //	@Description	Synchronous, and can take an image pull's worth of time. Owner or admin.
@@ -551,9 +541,7 @@ func (h *ProjectHandler) SandboxStart(c *gin.Context) {
 	h.containerAct(c, h.manager.EnsureRunning)
 }
 
-// SandboxStop releases the compute, keeping the working tree. A run or an
-// open terminal is not torn off its container: the response says the stop is
-// deferred to whenever that finishes.
+// SandboxStop releases the compute, keeping the working tree.
 //
 //	@Summary		Stop the project's sandbox
 //	@Description	Keeps the working tree. `stopped: false` means a run or terminal is still using it and the stop happens when that ends. Owner or admin.
@@ -578,10 +566,7 @@ func (h *ProjectHandler) SandboxStop(c *gin.Context) {
 	c.JSON(http.StatusOK, sandboxStopResp{Stopped: stopped})
 }
 
-// Export streams the project's working tree as a tar archive — the way files
-// leave a sandbox whose storage the host cannot open directly
-// (decisions §5.33). Owner only, like the environment: a tree is the owner's,
-// and an admin's management reach does not extend to reading one.
+// Export streams the project's working tree as a tar archive — decisions §5.33.
 //
 //	@Summary		Export the project's working tree
 //	@Description	Streams /workspace as an uncompressed tar. Owner only, and audited: this takes the whole tree off the machine.
@@ -594,8 +579,7 @@ func (h *ProjectHandler) SandboxStop(c *gin.Context) {
 //	@Security		BearerAuth
 //	@Router			/projects/{id}/export [get]
 func (h *ProjectHandler) Export(c *gin.Context) {
-	// Owner only, unlike the lifecycle routes: this hands over the whole
-	// working tree, and managing the plane is not reading someone's files.
+	// Owner only, unlike the lifecycle routes.
 	spec, ok := h.ownSpec(c)
 	if !ok {
 		return
@@ -613,8 +597,8 @@ func (h *ProjectHandler) Export(c *gin.Context) {
 			Detail: "project " + spec.Project.Name,
 		})
 	}
-	// The headers go out before the first byte: a failure mid-stream shows as
-	// a truncated archive, which tar itself reports.
+	// Headers go out before the first byte: a mid-stream failure shows as a
+	// truncated archive.
 	c.Header("Content-Disposition", `attachment; filename="`+tarFilename(spec.Project.Name)+`"`)
 	c.Header("Content-Type", "application/x-tar")
 	c.Status(http.StatusOK)
@@ -678,9 +662,7 @@ func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, 
 	c.Status(http.StatusNoContent)
 }
 
-// Delete removes the caller's project — an admin's: any project — while no
-// session binds it, then DESTROYS its storage: the container and the volume
-// holding the working tree (decisions §5.33).
+// Delete removes the project and destroys its storage — decisions §5.33.
 //
 //	@Summary		Delete project
 //	@Description	Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any. The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the project survived.
@@ -714,14 +696,11 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 		conflict(c, "sessions are still bound to this project; delete them first")
 		return
 	}
-	// The project is gone: its shells must die with it — nothing may keep
-	// serving a tree that is about to be destroyed.
+	// The project's shells die with it.
 	h.terminals.CloseProjectTerminals(p.ID, maxTerminalGen)
-	// The row is gone; reclaim the storage. A failure here is REPORTED inside
-	// a successful delete: an error status would claim the project still exists.
+	// Reclaim the storage; a failure is reported inside the 200 — invariant 46.
 	if h.manager != nil {
-		// WithoutCancel: the row is already gone, so a client disconnect must
-		// not abort the reclaim and strand the container/volume.
+		// WithoutCancel: a client disconnect must not abort the reclaim.
 		reclaimCtx := context.WithoutCancel(c.Request.Context())
 		spec, serr := resolveSpec(reclaimCtx, h.sandboxes, p)
 		if serr == nil {

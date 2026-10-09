@@ -24,9 +24,8 @@ const DefaultCompactionThresholdTokens = 50000
 // defaultCompactionWindow is the entry count the kept tail defaults to.
 const defaultCompactionWindow = 10
 
-// CompactionNotifier receives compaction lifecycle notifications: OnStart
-// right before the summarization request, OnDone after a successful pass
-// with the item counts before and after.
+// CompactionNotifier receives OnStart right before the summarization request
+// and OnDone after a successful pass, with the item counts before and after.
 type CompactionNotifier struct {
 	OnStart func()
 	OnDone  func(before, after int)
@@ -40,15 +39,13 @@ type CompactionAdapter struct {
 	// threshold is in TOKENS: a pass fires when the active history sizes
 	// past it.
 	threshold int
-	// windowSize stays in ENTRIES: the kept tail needs pairing-safe cutting,
-	// which is an entry-boundary concern, not a token one.
+	// windowSize is in ENTRIES: the kept tail is cut at an entry boundary.
 	windowSize    int
 	summaryPrompt string
 	notify        CompactionNotifier
 
-	// Mode is the agent's compaction mode; reset and hybrid fold by reset
-	// (spec §2.5i). Memories, when set, is where a reset reads the session
-	// memory it carries over.
+	// Mode is the agent's compaction mode (spec §2.5i); Memories, when set, is
+	// where a reset reads the session memory it carries over.
 	Mode     string
 	Memories *MemoryStore
 }
@@ -91,13 +88,11 @@ func NewCompactionAdapter(
 	}
 }
 
-// RunCompaction implements session.CompactionAware. It marks older entries
-// compacted and appends a compaction checkpoint, keeping the most recent
-// windowSize non-compacted entries intact. Only the ACTIVE branch is sized
-// and folded — invariant 24.
+// RunCompaction implements session.CompactionAware: the ACTIVE branch's older
+// entries are marked compacted and a checkpoint appended, the most recent
+// windowSize entries kept — invariant 24.
 func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.CompactionArgs) error {
-	// The generation's rows WITHOUT bodies (the lifted columns answer the
-	// check), through scoped like every other read.
+	// The generation's rows WITHOUT bodies: the lifted columns answer the check.
 	var rows []entryRow
 	if err := ca.scoped(ca.db.NewSelect().Model(&rows)).
 		ExcludeColumn("entry").
@@ -134,8 +129,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
 	}
 
-	// Convert every active entry to its replayable item, remembering its row.
-	// Rows that don't convert follow their preceding convertible neighbor.
+	// Every active entry as its replayable item, with its row; a row that
+	// does not convert follows its preceding convertible neighbor.
 	entries := make([]session.Entry, 0, len(active))
 	itemMsgIdx := make([]int, 0, len(active))
 	for i := range active {
@@ -170,8 +165,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return nil // nothing summarizable below the window
 	}
 
-	// Snap the split to a group boundary so it cannot cut a function_call /
-	// output pair; 0 means no valid prefix exists, so skip this pass.
+	// Snapped to a group boundary (no cut function_call / output pair); 0 = no
+	// valid prefix, skip.
 	itemSplit = compaction.SafeSplit(entries, itemSplit)
 	if itemSplit <= 0 {
 		return nil
@@ -182,15 +177,15 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return nil
 	}
 
-	// The folded prefix goes to the summary model as ONE plain-text
-	// transcript under a single user message — invariant 26.
+	// The folded prefix goes to the summary model as ONE plain-text transcript
+	// — invariant 26.
 	transcript := renderTranscript(entries[:itemSplit])
 	if transcript == "" {
 		return nil
 	}
 
-	// Map the safe item split back to row space: when it moved, everything
-	// before the first kept item's row is compacted.
+	// The safe item split back in row space: everything before the first kept
+	// item's row folds.
 	if itemSplit < len(itemMsgIdx) && itemMsgIdx[itemSplit] < msgSplit {
 		msgSplit = itemMsgIdx[itemSplit]
 	}
@@ -219,8 +214,8 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return nil
 	}
 
-	// A checkpoint names what it folded (ExcludedIDs) and carries the
-	// summary; the kept tail stays in the session — invariant 24.
+	// A checkpoint names what it folded (ExcludedIDs) and carries the summary —
+	// invariant 24.
 	excluded := make([]string, 0, len(toCompact))
 	compactIDs := make([]string, len(toCompact))
 	for i, row := range toCompact {
@@ -246,8 +241,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		return fmt.Errorf("compaction adapter: persisting: %w", err)
 	}
 	if !applied {
-		// The rows vanished before the write (a concurrent session delete);
-		// nothing changed, so no OnDone.
+		// The rows vanished before the write (a concurrent session delete): no OnDone.
 		return nil
 	}
 
@@ -259,8 +253,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 }
 
 // resetPass folds the active branch down to its newest user message and a
-// checkpoint carrying the session memory, plus a short recap of what was
-// folded in hybrid mode; a failed recap degrades to a bare reset (spec §2.5i).
+// checkpoint carrying the session memory (plus a recap in hybrid mode) — spec §2.5i.
 func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.CompactionArgs, active []entryRow) error {
 	bodies, err := ca.entryBodies(ctx, ca.ref, rowIDs(active))
 	if err != nil {
@@ -273,9 +266,8 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 			break
 		}
 	}
-	// Items fold, and so do the earlier checkpoints: a reset supersedes what
-	// they carried, or the context would hold one summary per reset. Other
-	// kinds (annotations, updates) never reach the model and stay.
+	// Items and the earlier checkpoints fold (a reset supersedes them); other
+	// kinds never reach the model and stay.
 	var toCompact []entryRow
 	var folded []session.Entry
 	var earlier []string
@@ -358,8 +350,7 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 	return nil
 }
 
-// resetReason is the first line of a bare reset's checkpoint: who reset,
-// so the model does not ask again for the message it is handed back.
+// resetReason is the first line of a bare reset's checkpoint: who reset.
 func resetReason(args session.CompactionArgs) string {
 	switch {
 	case args.Reset:
@@ -371,8 +362,7 @@ func resetReason(args session.CompactionArgs) string {
 }
 
 // recap asks the summary model for the short account a hybrid reset carries,
-// over what the earlier checkpoints said and what folds now; "" when the
-// model fails, since a reset never fails the run.
+// over the earlier checkpoints and what folds now; "" when the model fails.
 func (ca *CompactionAdapter) recap(ctx context.Context, earlier []string, folded []session.Entry) string {
 	var replayable []session.Entry
 	for _, e := range folded {
@@ -447,9 +437,9 @@ type ContextSize struct {
 	Checkpoint bool
 }
 
-// ActiveContextTokens sizes a non-compacted history in tokens: the most
-// recent usage-bearing entry prices everything up to itself, the tail after
-// it is estimated, and a fold newer than that pricing discards it — invariant 28.
+// ActiveContextTokens sizes a non-compacted history in tokens: the newest
+// usage-bearing entry prices everything up to itself, the tail after it is
+// estimated; a fold newer than that pricing discards it — invariant 28.
 func ActiveContextTokens(sizes []ContextSize) int {
 	lastUsage, lastFold := -1, -1
 	for i := range sizes {
@@ -553,14 +543,12 @@ func (ca *CompactionAdapter) persistCompaction(ctx context.Context, compactIDs [
 		if err != nil {
 			return err
 		}
-		// Only skip when the driver positively reports zero rows; if it cannot
-		// report (err != nil), fall through and append as before.
+		// Skipped only when the driver positively reports zero rows.
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
 			return nil
 		}
-		// The checkpoint extends the branch tip as it stands, folded or not:
-		// the run's view closes its parent links over folded rows, and the
-		// transcript keeps the folded turn on the path (invariant 24).
+		// The checkpoint extends the branch tip as it stands, folded or not
+		// (invariant 24).
 		if err := ca.appendTo(ctx, tx, summary); err != nil {
 			return err
 		}

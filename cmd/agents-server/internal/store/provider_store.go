@@ -10,20 +10,21 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// AuthModeChatGPTLogin is the one provider auth mode beyond a plain API key.
-// It lives here because it is a column's vocabulary; the bridge aliases it.
+// AuthModeChatGPTLogin is the one provider auth mode beyond a plain API key
+// (a column's vocabulary; the bridge aliases it).
 const AuthModeChatGPTLogin = "chatgpt_login"
 
 // ErrProviderRef marks a write refused because the provider it references is
-// gone; handlers map it to 400 (the caller's input is what is wrong).
+// gone. Handlers map it to 400.
 var ErrProviderRef = errors.New("provider_id names no provider")
 
 // ErrProviderScope marks a write refused because the provider it references
 // sits outside the holder's reach (decisions §5.29). Handlers map it to 400.
 var ErrProviderScope = errors.New("provider_id names a provider outside the agent's scope")
 
-// writeReferencingProvider runs write in ONE transaction that first reads
-// (on PostgreSQL locks) the provider row the write references; write receives it, nil when providerID is empty.
+// writeReferencingProvider runs write in ONE transaction that first reads (on
+// PostgreSQL locks) the provider row the write references; write receives it,
+// nil when providerID is empty.
 func writeReferencingProvider(ctx context.Context, db *bun.DB, providerID string, write func(ctx context.Context, tx bun.Tx, pv *Provider) error) error {
 	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var pv *Provider
@@ -140,15 +141,15 @@ func (s *ProviderStore) explainRefusal(ctx context.Context, id string) (int, err
 }
 
 // NormalizeProvider trims the fields whose spelling is noise and fills the
-// defaults. It does NOT validate the type or auth mode: the registry lives in
-// bridge, so the handler checks them on save.
+// defaults; the type and auth mode are the handler's to validate (the registry
+// lives in bridge).
 func NormalizeProvider(p *Provider) error {
 	p.Name = strings.TrimSpace(p.Name)
 	p.Type = strings.TrimSpace(p.Type)
 	p.AuthMode = strings.TrimSpace(p.AuthMode)
 	p.APIKey = strings.TrimSpace(p.APIKey)
-	// A trailing slash makes an otherwise identical endpoint compare unequal,
-	// which would refuse a masked key's restore for no reason.
+	// A trailing slash must not make an identical endpoint compare unequal (a
+	// masked key's restore).
 	p.BaseURL = strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")
 	if p.Name == "" {
 		return fmt.Errorf("name is required")
@@ -156,10 +157,8 @@ func NormalizeProvider(p *Provider) error {
 	return nil
 }
 
-// DemoteToPrivate flips the provider back into its author's private set,
-// refusing while any agent a demote would strand still references it; count
-// and flip share one transaction (decisions §5.29). Returns the foreign
-// count, non-zero meaning nothing was flipped; ErrNotFound when gone.
+// DemoteToPrivate flips the provider back to private unless agents would be
+// stranded, returning their count (non-zero = not flipped) — decisions §5.29.
 func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id string) (int, error) {
 	var refs int
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -195,7 +194,7 @@ func (s *ProviderStore) DemoteToPrivate(ctx context.Context, id string) (int, er
 }
 
 // countStrandedRefs counts the agents that would lose this provider were it
-// private to owner (RefVisible as a query — decisions §5.29).
+// private to owner (RefVisible as a query).
 func countStrandedRefs(ctx context.Context, tx bun.Tx, providerID, owner string) (int, error) {
 	return tx.NewSelect().Model((*AgentConfig)(nil)).
 		Where(agentReferencesProvider, providerID, providerID).
@@ -203,9 +202,8 @@ func countStrandedRefs(ctx context.Context, tx bun.Tx, providerID, owner string)
 		Count(ctx)
 }
 
-// TransferOwner hands the provider — credential included — to newOwner,
-// refused while any agent would be stranded (decisions §5.29). Returns the
-// stranded count, non-zero meaning nothing moved.
+// TransferOwner hands the provider, credential included, to newOwner; a
+// non-zero stranded count means nothing moved (decisions §5.29).
 func (s *ProviderStore) TransferOwner(ctx context.Context, id, newOwner string) (int, error) {
 	var refs int
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {

@@ -14,10 +14,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// GitHub is the GitHub OAuth login. The REST API supplies the identity after
-// the code exchange: /user for the stable numeric id and the profile,
-// /user/emails for the primary verified address, which /user omits when the
-// person keeps it private.
+// GitHub is the GitHub OAuth login; identity comes from the REST API after the
+// code exchange (/user, and /user/emails for the primary verified address).
 type GitHub struct {
 	ClientID     string
 	ClientSecret string
@@ -50,8 +48,8 @@ func (g *GitHub) config(redirectURI string) *oauth2.Config {
 		RedirectURL:  redirectURI,
 		// user:email reads the addresses; the profile fields are public.
 		Scopes: []string{"user:email"},
-		// GitHub documents the client credentials as POST parameters; naming
-		// the style spares the auto-detect's second exchange on a refusal.
+		// GitHub takes the client credentials as POST parameters; naming the
+		// style spares the auto-detect's retry.
 		Endpoint: oauth2.Endpoint{AuthURL: authURL, TokenURL: tokenURL, AuthStyle: oauth2.AuthStyleInParams},
 	}
 }
@@ -62,8 +60,7 @@ func (g *GitHub) AuthCodeURL(state, verifier, redirectURI string) string {
 }
 
 // Identity implements OAuthProvider: exchange the code, then read the profile
-// and the addresses. The primary address must be verified; a verified
-// secondary does not stand in for it.
+// and the addresses; the primary address must be verified.
 func (g *GitHub) Identity(ctx context.Context, code, verifier, redirectURI string) (store.OAuthIdentity, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, client)

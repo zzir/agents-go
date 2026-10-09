@@ -47,8 +47,7 @@ type runWorkflowReq struct {
 	ProjectID string `json:"project_id"`
 }
 
-// Run starts an execution of the workflow for a session, with a brief the
-// person wrote — the same start the agent's spawn_task(workflow=…) makes.
+// Run starts an execution of the workflow for a session, with the person's brief.
 //
 //	@Summary		Run a workflow (optionally binding the session's project first)
 //	@Description	Starts an execution as a background task of the given session, with the brief in the body (the workflow's session cannot see the conversation, so the brief is what it works from). The result comes back to the session as a notification, like any task's. 400 when the workflow has no runnable steps or an agent is gone, 404 for an unknown workflow or session, 409 when the session is at its background-task cap.

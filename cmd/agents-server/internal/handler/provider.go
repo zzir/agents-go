@@ -100,8 +100,7 @@ func (h *ProviderHandler) listModels(ctx context.Context, pv *store.Provider) ([
 }
 
 // providerFailure is what a failed listing tells the caller: the status the
-// provider answered, or that it could not be reached — never the URL, the
-// body or the key.
+// provider answered or that it was unreachable — never the URL, body or key.
 func providerFailure(err error) error {
 	if oe, ok := errors.AsType[*openaisdk.Error](err); ok && oe.Response != nil {
 		return fmt.Errorf("the provider answered %d %s", oe.Response.StatusCode, http.StatusText(oe.Response.StatusCode))
@@ -376,9 +375,8 @@ func (h *ProviderHandler) SetScope(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// SetOwner transfers the provider — credential included — to another account
-// (admin). Refused while the move would strand an agent that references it,
-// the guard a demote carries for the same reason.
+// SetOwner transfers the provider, credential included, to another account
+// (admin); refused while the move would strand an agent that references it.
 //
 //	@Summary	Reassign a provider's owner (admin)
 //	@Tags		providers

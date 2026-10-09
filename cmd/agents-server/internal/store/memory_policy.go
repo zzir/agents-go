@@ -11,8 +11,8 @@ const (
 )
 
 // ApprovedPlanKey is the session memory an approved plan is kept under, and
-// ApprovedPlanSource its Metadata: the workbench writes the row when a person
-// approves submit_plan; the model reads it and cannot write it.
+// ApprovedPlanSource its Metadata; the workbench writes it, the model only
+// reads it (invariant 87).
 const (
 	ApprovedPlanKey    = "approved-plan.md"
 	ApprovedPlanSource = "plan_approval"
@@ -36,8 +36,7 @@ const (
 	ModelWriteApprove = "approve"
 )
 
-// MemoryPolicy is one scope kind's rules: the matrix's only home, which the
-// handler, the run and the injection consult rather than judge (invariant 64).
+// MemoryPolicy is one scope kind's rules: the matrix's only home (invariant 64).
 type MemoryPolicy struct {
 	// Injected renders the scope into the agent's instructions every request.
 	Injected bool

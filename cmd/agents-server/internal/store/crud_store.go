@@ -176,7 +176,8 @@ func (s *CrudStore[T]) Update(ctx context.Context, id string, m *T) error {
 }
 
 // lockRow reads the row matching where into model inside tx — SELECT ... FOR
-// UPDATE on PostgreSQL; SQLite's one connection serializes by itself. ErrNotFound when none.
+// UPDATE on PostgreSQL; SQLite's one connection serializes by itself.
+// ErrNotFound when none.
 func lockRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) error {
 	q := tx.NewSelect().Model(model).Where(where, arg)
 	if tx.Dialect().Name() == dialect.PG {
@@ -192,7 +193,8 @@ func lockRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) e
 }
 
 // updateFrom is the read-modify-write behind every credential-keeping Update:
-// read the row locked, hand it to prepare, overwrite every column but id, created_at and keep.
+// read the row locked, hand it to prepare, overwrite every column but id,
+// created_at and keep.
 func (s *CrudStore[T]) updateFrom(ctx context.Context, tx bun.Tx, id string, m *T, prepare func(prev *T) error, keep ...string) error {
 	prev := new(T)
 	if err := lockRow(ctx, tx, prev, "id = ?", id); err != nil {
@@ -235,8 +237,7 @@ func (s *CrudStore[T]) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// pruneBatchSize bounds one DELETE of a maintenance sweep: on SQLite's one
-// connection, one huge statement would hold every append and read.
+// pruneBatchSize bounds one DELETE of a maintenance sweep (SQLite has one connection).
 var pruneBatchSize = 5000
 
 // deleteInBatches deletes the rows of model that match where, batch by

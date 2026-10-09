@@ -28,22 +28,19 @@ const (
 	chatgptAuthURL  = "https://auth.openai.com/oauth/authorize"
 	chatgptTokenURL = "https://auth.openai.com/oauth/token"
 	chatgptScope    = "openid profile email offline_access api.connectors.read api.connectors.invoke"
-	// chatgptRedirectURI is fixed — the Codex client registers loopback
-	// callbacks only, and the token exchange must echo it; nothing listens here
-	// (decisions §5.41).
+	// chatgptRedirectURI is what the token exchange must echo; nothing listens
+	// on it — decisions §5.41.
 	chatgptRedirectURI = "http://localhost:1455/auth/callback"
 	// ChatGPTBaseURL is the base URL for the ChatGPT Codex API.
 	ChatGPTBaseURL = "https://chatgpt.com/backend-api/codex"
 )
 
-// chatgptLoginTTL bounds a pending login: the user must paste the callback URL
-// within this window before the PKCE verifier is dropped. It matches the short
-// life of the authorization code the callback carries.
+// chatgptLoginTTL is how long a pending login keeps its PKCE verifier for the
+// pasted callback; it matches the authorization code's own life.
 const chatgptLoginTTL = 5 * time.Minute
 
-// chatgptHTTPTimeout bounds every ChatGPT token endpoint call (exchange and
-// refresh). Without it the default client waits forever, so a stalled OpenAI
-// auth host would hang the session that triggered a token refresh.
+// chatgptHTTPTimeout bounds every token endpoint call (exchange and refresh);
+// a refresh runs inside the session that triggered it.
 const chatgptHTTPTimeout = 30 * time.Second
 
 // ChatGPTOAuth manages the OAuth flow for ChatGPT subscription authentication.
@@ -57,17 +54,14 @@ type ChatGPTOAuth struct {
 	mu      sync.Mutex
 	pending map[string]*chatgptPending // keyed by state
 
-	// refreshMu serializes token refreshes so two concurrent GetCredentials
-	// calls don't both spend a single-use refresh token — the second rotation
-	// would be rejected and log the user out.
+	// refreshMu serializes refreshes: the refresh token is single-use.
 	refreshMu sync.Mutex
 }
 
 type chatgptPending struct {
 	providerID   string
 	codeVerifier string
-	// timer drops this entry after chatgptLoginTTL so an abandoned login (the
-	// user never pastes the callback) cannot leak the verifier forever.
+	// timer drops this entry after chatgptLoginTTL.
 	timer *time.Timer
 }
 
@@ -103,10 +97,8 @@ type ChatGPTLoginResult struct {
 	AuthorizeURL string `json:"authorize_url"`
 }
 
-// StartLogin begins the ChatGPT OAuth PKCE flow for the given provider. It
-// fails with store.ErrNotFound if the provider does not exist — otherwise the flow
-// would run to completion and then silently lose the token on the final
-// (no-op) update to a missing row.
+// StartLogin begins the ChatGPT OAuth PKCE flow for the given provider;
+// store.ErrNotFound when the provider does not exist.
 func (o *ChatGPTOAuth) StartLogin(ctx context.Context, providerID string) (*ChatGPTLoginResult, error) {
 	if providerID == "" {
 		return nil, fmt.Errorf("provider_id is required")
@@ -115,10 +107,7 @@ func (o *ChatGPTOAuth) StartLogin(ctx context.Context, providerID string) (*Chat
 	if err != nil {
 		return nil, err
 	}
-	// A provider that does not authenticate by chatgpt_login can never use the
-	// token, so completing the flow would only strand a credential in the
-	// database with no UI path to revoke it — the disconnect button renders
-	// for chatgpt_login providers only.
+	// Only a chatgpt_login provider can use (and revoke) the token.
 	if err := chatGPTLoginAvailable(pv); err != nil {
 		return nil, err
 	}
@@ -180,8 +169,8 @@ func (o *ChatGPTOAuth) CompleteLogin(ctx context.Context, providerID, callback s
 	if !ok {
 		return ErrChatGPTLoginExpired
 	}
-	// The state is the only thing binding a callback to its verifier, so a URL
-	// whose flow was started for another provider must not complete this one.
+	// The state binds a callback to its verifier; another provider's flow must
+	// not complete this one.
 	if p.providerID != providerID {
 		return fmt.Errorf("%w: this callback belongs to a different sign-in", ErrChatGPTCallbackInvalid)
 	}
@@ -199,9 +188,8 @@ func (o *ChatGPTOAuth) CompleteLogin(ctx context.Context, providerID, callback s
 	if err := o.saveTokens(ctx, providerID, tokens); err != nil {
 		return err
 	}
-	// Redeem exactly once: only a stored token clears the pending entry, so a
-	// transient exchange failure leaves the flow for the user to paste again
-	// (until the TTL timer drops it).
+	// Only a stored token clears the pending entry: a failed exchange leaves
+	// the flow for another paste until the TTL drops it.
 	o.cleanupPending(state)
 	return nil
 }
@@ -226,9 +214,8 @@ func parseChatGPTCallback(raw string) (code, state, oauthErr string, err error) 
 	return q.Get("code"), q.Get("state"), q.Get("error"), nil
 }
 
-// cleanupPending removes the pending flow for state and stops its expiry timer.
-// Idempotent: CompleteLogin and the timer both call it, and whichever runs
-// second finds nothing and is a no-op.
+// cleanupPending removes the pending flow for state and stops its expiry
+// timer; idempotent (CompleteLogin and the timer both call it).
 func (o *ChatGPTOAuth) cleanupPending(state string) {
 	o.mu.Lock()
 	p, ok := o.pending[state]
@@ -283,16 +270,13 @@ func tokenExpiring(tok chatgptTokens) bool {
 	return tok.ExpiresAt > 0 && time.Now().Unix() > tok.ExpiresAt-60
 }
 
-// refreshCredentials rotates the stored token under refreshMu so concurrent
-// callers don't both spend the single-use refresh token. After taking the
-// lock it re-reads the stored token: if another goroutine already refreshed it,
-// that result is reused instead of spending the refresh token a second time.
+// refreshCredentials rotates the stored token under refreshMu, re-reading the
+// row under the lock: a rotation that already landed is reused, not repeated.
 func (o *ChatGPTOAuth) refreshCredentials(ctx context.Context, providerID string, tok chatgptTokens) (chatgptTokens, error) {
 	o.refreshMu.Lock()
 	defer o.refreshMu.Unlock()
 
-	// Double-check under the lock: a racing refresh may have already rotated the
-	// token while we waited.
+	// A racing refresh may have rotated the token while we waited.
 	if pv, err := o.providers.Get(ctx, providerID); err == nil {
 		var current chatgptTokens
 		if json.Unmarshal([]byte(pv.ChatGPTToken), &current) == nil && current.AccessToken != "" {
@@ -359,10 +343,9 @@ var ErrChatGPTLoginExpired = errors.New("chatgpt login expired — start the sig
 // provider, or bound to a different provider's flow. The handler maps it to 400.
 var ErrChatGPTCallbackInvalid = errors.New("invalid callback URL")
 
-// chatGPTLoginAvailable reports whether the provider backend offers
-// chatgpt_login. It gates BOTH ends of the OAuth flow: StartLogin, and
-// saveTokens — the row can change during the authorize window, and a token
-// persisted onto a provider that cannot use it has no UI path to revoke it.
+// chatGPTLoginAvailable reports whether the provider row authenticates by
+// chatgpt_login; it gates both StartLogin and saveTokens (the row can change
+// during the authorize window).
 func chatGPTLoginAvailable(pv *store.Provider) error {
 	def, err := DefFor(pv.Type)
 	if err != nil {
@@ -371,9 +354,7 @@ func chatGPTLoginAvailable(pv *store.Provider) error {
 	if !slices.Contains(def.AuthModes, AuthModeChatGPTLogin) {
 		return fmt.Errorf("%w: not offered by the %s provider — switch the provider type or use an API key", ErrChatGPTLoginUnavailable, def.Type)
 	}
-	// The ROW's own mode, not only the type's menu: logging in a provider that
-	// authenticates by API key would strand a token nothing ever uses or shows
-	// a disconnect button for.
+	// The ROW's own mode, not only the type's menu.
 	if pv.AuthMode != AuthModeChatGPTLogin {
 		return fmt.Errorf("%w: this provider authenticates by API key — set auth_mode to %s first", ErrChatGPTLoginUnavailable, AuthModeChatGPTLogin)
 	}

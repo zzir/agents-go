@@ -1,4 +1,5 @@
-// Package cmd implements the agents-server command-line entry point and server bootstrap.
+// Package cmd implements the agents-server command-line entry point and server
+// bootstrap.
 package cmd
 
 import (
@@ -103,14 +104,11 @@ func run(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	// The root context scopes runs, connections, and the hub; it ends when this
-	// function returns, so their Done branches are reachable, not dead code.
+	// The root context scopes runs, connections and the hub; it ends when run returns.
 	ctx, stopRoot := context.WithCancel(logging.Into(context.Background(), log))
 	defer stopRoot()
-	// The maintenance loops (approval reaper, trace retention, MCP auto-connect,
-	// wake-up drain) get their own cancellation so shutdown can stop them FIRST:
-	// a reaper still ticking during the drain could expire the very approval the
-	// drain is persisting.
+	// The maintenance loops get their own cancellation so shutdown stops them
+	// first — invariant 43.
 	bgCtx, stopBg := context.WithCancel(ctx)
 	defer stopBg()
 
@@ -151,9 +149,8 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 
 	st := newStores(db)
-	// The audit log: who did what. A process-level retention, not a setting —
-	// the log of configuration changes must not be shortened through the API
-	// it records.
+	// The audit log; its retention is a flag, not a setting (invariant 54): the
+	// log of configuration changes is not shortened through the API it records.
 	recordAudit := auditRecorder(st.Audit, log)
 	if flagAuditRetention > 0 {
 		go bridge.RunAuditRetention(bgCtx, st.Audit, flagAuditRetention)
@@ -166,14 +163,12 @@ func run(cmd *cobra.Command, _ []string) error {
 		CredentialsSealed: box != nil,
 	})
 
-	// The restart reconciliation: fail what the restart interrupted FIRST and
-	// synchronously, drain the wake-ups it owes AFTER the handlers, on its own
-	// goroutine — workbench invariant 32.
+	// Restart reconciliation: fail the interrupted first, drain the wake-ups
+	// after the handlers — invariant 32.
 	svc.Runner.FailOrphanedTasks(ctx)
 	go svc.Runner.DrainPendingWakeups(bgCtx)
-	// The reaper and the clock start after the sweep AND after the handlers,
-	// for the same reason the drain does: they end and start runs, and they
-	// announce through hooks (OnBroadcast) the WS handler has only now wired.
+	// The reaper and the clock start after the sweep and the handlers: they
+	// announce through hooks the WS handler has only now wired.
 	go bridge.RunApprovalReaper(bgCtx, st.SettingReader, st.PendingApprovals, st.Entries, st.Tasks, svc.Runner.AnnounceTask, svc.Runner.PublishSessionStatus)
 	if err := svc.Scheduler.Start(ctx); err != nil {
 		return fmt.Errorf("starting the trigger scheduler: %w", err)
@@ -198,12 +193,8 @@ func run(cmd *cobra.Command, _ []string) error {
 	httpSrv := &http.Server{
 		Addr:    addr,
 		Handler: srv.Engine,
-		// Slow-loris protection: headers, the whole request read (a client
-		// dribbling a BODY would otherwise hold the connection), and idle
-		// keep-alive. ReadTimeout covers the request only — net/http lifts it
-		// once the body is consumed, so a long response (SSE) is not cut by it,
-		// and the WebSocket endpoints hijack and keep their own deadlines. No
-		// WriteTimeout: it would abort those streams; each bounds its own writes.
+		// Slow-loris protection on headers, body and idle keep-alive; no
+		// WriteTimeout, as the streams (SSE, WebSocket) bound their own writes.
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -212,8 +203,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	go func() {
 		log.Info("server started", "addr", addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			// Nothing above can recover from a dead listener, and staying up
-			// would leave a process serving nobody.
+			// A dead listener leaves a process serving nobody: exit.
 			log.Error("server error", "error", err)
 			os.Exit(1)
 		}
@@ -224,34 +214,24 @@ func run(cmd *cobra.Command, _ []string) error {
 	<-quit
 
 	log.Info("shutting down")
-	// The clock first: a tick during the drain would only start a run the
-	// drain refuses, recorded on the trigger as a failure that was nobody's.
+	// Shutdown order: the clock, the maintenance loops, the drain, then the
+	// listener — invariant 43.
 	svc.Scheduler.Stop()
-	// Then the maintenance loops, for the reason at bgCtx's creation.
 	stopBg()
-	// Drain FIRST, then the listener. Each live run is cancelled and waited
-	// for, so its partial turn persists (run.cancelled, savePartialTurn)
-	// instead of vanishing when the process exits under it — and ending the
-	// runs is also what lets the long-lived SSE handlers return, so
-	// httpSrv.Shutdown does not spend its whole budget waiting on event
-	// streams that were waiting on those very runs.
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelDrain()
 	svc.Runner.Shutdown(drainCtx)
 
-	// The WebSocket clients hear a going-away frame rather than a dropped
-	// TCP connection (hijacked connections are outside Shutdown's reach).
+	// WebSocket clients hear a going-away frame (hijacked connections are
+	// outside Shutdown's reach).
 	srv.Conns.CloseAll("server shutting down")
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutCtx); err != nil {
-		// The runs are drained and persisted by now; whatever kept Shutdown
-		// waiting is not worth an exit status.
+		// The runs are drained by now; a late Shutdown is not worth an exit status.
 		log.Warn("http shutdown did not complete cleanly", "error", err)
 	}
-	// The root context ends here, before the deferred closes: nothing that
-	// descends from it may still be using the services or the database they
-	// tear down.
+	// The root context ends before the deferred closes tear down what descends from it.
 	stopRoot()
 	return nil
 }

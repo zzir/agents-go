@@ -28,7 +28,7 @@ const (
 )
 
 // ErrUnauthorized is Authenticate's answer to a wrong, expired or revoked
-// credential — indistinguishable on purpose; any other error means the store
+// credential, indistinguishable on purpose; any other error means the store
 // could not say.
 var ErrUnauthorized = server.ErrUnauthorized
 
@@ -63,9 +63,8 @@ func NewStatic(staticToken string, local *store.User) *Service {
 	return &Service{mode: ModeToken, staticToken: staticToken, localUser: userInfoOf(local)}
 }
 
-// OAuthConfig configures the --auth oauth mode service. Root validates the
-// combination (base URL present, at least one provider, a non-empty allowlist)
-// before construction.
+// OAuthConfig configures the --auth oauth mode service; root validates the
+// combination before construction.
 type OAuthConfig struct {
 	Users  *store.UserStore
 	Tokens *store.AuthTokenStore
@@ -165,9 +164,8 @@ func (s *Service) StaticOK(token string) bool {
 		subtle.ConstantTimeCompare([]byte(token), []byte(s.staticToken)) == 1
 }
 
-// Logout revokes the presented session token. A no-op in token mode — the
-// static credential has nothing to revoke — and for a PAT, which a sign-out
-// from a script must not burn.
+// Logout revokes the presented session token; a no-op in token mode and for a
+// PAT.
 func (s *Service) Logout(ctx context.Context, bearer string) error {
 	if s.mode == ModeToken || bearer == "" {
 		return nil
@@ -191,9 +189,8 @@ func (s *Service) redirectURI(provider string) string {
 	return s.baseURL + server.APIPrefix + "/auth/oauth/" + provider + "/callback"
 }
 
-// LoginCookie names the cookie that carries Begin's nonce and whether it is
-// Secure: the __Host- prefix (https only) pins it to this origin and path /,
-// so no sibling host or subpath can plant one.
+// LoginCookie names the cookie carrying Begin's nonce and whether it is Secure
+// (__Host- on https) — docs/howto/workbench-auth.md.
 func (s *Service) LoginCookie() (name string, secure bool) {
 	if strings.HasPrefix(s.baseURL, "https://") {
 		return "__Host-agents_oauth", true
@@ -201,9 +198,8 @@ func (s *Service) LoginCookie() (name string, secure bool) {
 	return "agents_oauth", false
 }
 
-// Begin starts one login: mints state + PKCE verifier + a browser nonce,
-// parks them, and returns the provider's authorize URL to redirect the
-// browser to and the nonce for the handler to set as a cookie.
+// Begin starts one login: mints and parks state, PKCE verifier and a browser
+// nonce, returning the authorize URL and the nonce the handler sets as a cookie.
 func (s *Service) Begin(provider string) (authURL, nonce string, err error) {
 	p, ok := s.providers[provider]
 	if !ok {
@@ -217,14 +213,10 @@ func (s *Service) Begin(provider string) (authURL, nonce string, err error) {
 	return p.AuthCodeURL(state, verifier, s.redirectURI(provider)), nonce, nil
 }
 
-// Complete finishes one login from the provider's callback and always returns
-// a redirect for the browser: on success into the SPA carrying a one-time
-// exchange code in the fragment (fragments stay out of logs, and the session
-// token itself never rides a URL), on failure carrying a coarse error tag —
-// the detail goes to the log, not to an unauthenticated visitor. nonce is the
-// cookie Begin handed the browser; a callback without the right one is a
-// login somebody else started. providerErr is the provider's own error
-// parameter (a cancelled consent), reported as such.
+// Complete finishes one login from the provider's callback and returns the
+// browser's redirect: into the SPA with a one-time exchange code in the
+// fragment, or with a coarse error tag. nonce is Begin's cookie; providerErr
+// the provider's error parameter.
 func (s *Service) Complete(ctx context.Context, provider, state, code, nonce, providerErr string) string {
 	fail := func(tag string, err error) string {
 		s.log.Warn("oauth login failed", "provider", provider, "reason", tag, "error", err)

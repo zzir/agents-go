@@ -36,18 +36,16 @@ func PublicURL(base, key string) string {
 	return strings.TrimRight(base, "/") + "/" + key
 }
 
-// Client performs the bucket operations. Built per call from the current
-// settings (ClientFrom) — configuration is runtime-editable and the client
-// holds no connection state of its own.
+// Client performs the bucket operations; built per call from the current
+// settings (ClientFrom), it holds no connection state of its own.
 type Client struct {
 	cfg  settings.S3Config
 	http *http.Client
 }
 
 // ClientFrom returns a client for cfg, or nil when cfg is incomplete (the
-// feature is off). httpClient nil uses http.DefaultClient; pass the proxy
-// client so bucket traffic follows the proxy_url setting like all other
-// outbound requests.
+// feature is off); a nil httpClient uses http.DefaultClient, the proxy client
+// follows proxy_url.
 func ClientFrom(cfg settings.S3Config, httpClient *http.Client) *Client {
 	if !cfg.Complete() {
 		return nil
@@ -96,8 +94,7 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 }
 
 // do executes a signed request and folds a non-2xx answer (404 excepted) into
-// an error carrying the body's head — S3 errors are XML and the code inside
-// is the part worth reading.
+// an error carrying the body's head (the S3 error code is in the XML).
 func (c *Client) do(req *http.Request, op, key string) error {
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -111,11 +108,9 @@ func (c *Client) do(req *http.Request, op, key string) error {
 	return fmt.Errorf("s3 %s %s: %s: %s", op, key, resp.Status, strings.TrimSpace(string(body)))
 }
 
-// Probe verifies the configuration end to end: upload a marker object, fetch
-// it back ANONYMOUSLY through the public base URL (the credential-less read
-// is the point — model providers fetch that way), then delete it. Each stage
-// failing names itself, so a bucket that accepts writes but is not publicly
-// readable is caught at save time, not inside a run.
+// Probe verifies the configuration end to end (upload a marker, fetch it back
+// anonymously through the public base URL, delete it), each failing stage
+// naming itself — invariant 58.
 func (c *Client) Probe(ctx context.Context) error {
 	key := "attachments/probe-" + fmt.Sprintf("%d", time.Now().UnixNano())
 	body := []byte("agents-server attachment probe")

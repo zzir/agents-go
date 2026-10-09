@@ -51,7 +51,7 @@ type TriggerHandler struct {
 	replays   replayGuard
 }
 
-// maxTriggersPerOwner caps how many triggers one user may hold — unattended
+// maxTriggersPerOwner caps how many triggers one user may hold: unattended
 // starts are spend.
 const maxTriggersPerOwner = 50
 
@@ -62,7 +62,8 @@ func NewTriggerHandler(s *store.TriggerStore, sessions *store.SessionStore, work
 }
 
 // replayGuard remembers each delivery accepted within the timestamp window,
-// keyed by trigger and signature. In memory: a restart inside the window is the one gap.
+// keyed by trigger and signature. In memory: a restart inside the window is the
+// one gap.
 type replayGuard struct {
 	mu   sync.Mutex
 	seen map[string]time.Time
@@ -447,8 +448,7 @@ func (h *TriggerHandler) RotateSecret(c *gin.Context) {
 }
 
 // Hook is the webhook endpoint (POST /hooks/{id}), outside the token-guarded
-// API; its contract is protocol.md, Workflows. 401 on a bad or stale
-// signature; otherwise as a manual fire.
+// API; its contract is protocol.md, Workflows.
 func (h *TriggerHandler) Hook(c *gin.Context) {
 	ctx, id := c.Request.Context(), c.Param("id")
 	t, err := h.store.Get(ctx, id)

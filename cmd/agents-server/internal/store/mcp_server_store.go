@@ -19,8 +19,8 @@ func NewMcpServerStore(db *bun.DB) *McpServerStore {
 }
 
 // Update overwrites the server config; the stored row is read in the same
-// transaction and handed to prepare (nil to skip). oauth_token is copied onto
-// m before prepare runs, so prepare can also clear it. ErrNotFound when absent.
+// transaction and handed to prepare (nil to skip), oauth_token already copied
+// onto m. ErrNotFound when absent.
 func (s *McpServerStore) Update(ctx context.Context, id string, m *McpServerConfig, prepare func(prev *McpServerConfig) error) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		return s.updateFrom(ctx, tx, id, m, func(prev *McpServerConfig) error {
@@ -40,8 +40,7 @@ func (s *McpServerStore) Update(ctx context.Context, id string, m *McpServerConf
 // SaveOAuthToken persists the serialized OAuth token for the given server,
 // updating only the oauth_token column.
 func (s *McpServerStore) SaveOAuthToken(ctx context.Context, id, tokenJSON string) error {
-	// updateColumn enforces the row exists, so a token written for a deleted
-	// server surfaces as ErrNotFound.
+	// A token written for a deleted server is ErrNotFound (updateColumn).
 	return updateColumn(ctx, s.db, (*McpServerConfig)(nil), "mcp server oauth token", id, "oauth_token", sealSecret(labelMcpOAuthToken, tokenJSON))
 }
 

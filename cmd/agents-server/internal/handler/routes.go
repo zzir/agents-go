@@ -39,8 +39,8 @@ type Handlers struct {
 func (h Handlers) Register(api *gin.RouterGroup) {
 	{
 		auth := api.Group("/auth")
-		// The guess budget sits on the two routes where every request IS a
-		// credential guess; the flow steps get the looser budget.
+		// The guess budget on the credential-guess routes; the flow steps get
+		// the looser one.
 		guess, flow := server.AuthRateLimit(), server.FlowRateLimit()
 		auth.POST("/login", guess, h.Auth.Login)
 		auth.POST("/exchange", guess, h.Auth.Exchange)
@@ -171,8 +171,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 	// and the global settings table.
 	api.GET("/provider-types", ProviderTypeList)
 	api.GET("/setting-defs", SettingDefList)
-	// What the command line decided, so the UI can show the rules it is
-	// subject to instead of only their refusals.
+	// The command line's decisions, as read-only facts for the UI.
 	api.GET("/server", ServerInfoHandler(h.Server))
 	{
 		providers := api.Group("/providers")
@@ -185,8 +184,7 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		providers.GET("/:id/models", h.Providers.Models)
 		providers.POST("/:id/test", h.Providers.Test)
 		providers.PUT("/:id/owner", admin, h.Providers.SetOwner)
-		// The OAuth flow belongs to the endpoint, not to any one agent —
-		// signing a private provider into ChatGPT is its owner's act.
+		// The ChatGPT login is the provider's, gated in the handler (editable).
 		providers.POST("/:id/chatgpt/login", h.ChatGPT.Login)
 		providers.POST("/:id/chatgpt/complete", h.ChatGPT.Complete)
 		providers.POST("/:id/chatgpt/logout", h.ChatGPT.Logout)

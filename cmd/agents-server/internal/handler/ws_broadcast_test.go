@@ -123,13 +123,9 @@ func TestRunEventsBroadcastToAllConnections(t *testing.T) {
 	// is covered by TestRunHubLiveRunIDs plus the hub's replay contract that
 	// the SSE handler already depends on.
 
-	// The broadcast hook reaches the connections a run's stream does not: a
-	// connection that joined AFTER the run (never attached to it) hears the
-	// broadcast; one attached to the run — which already carried the event —
-	// does not hear it twice.
-	// Once the second run has left the live set, a connection dialing now is
-	// NOT attached to it — the situation of a browser joining after a run
-	// paused on an approval.
+	// The broadcast reaches a connection that joined after the run (never
+	// attached), not one attached to it (which already carried the event); a
+	// connection dialing after the run left the live set is not attached to it.
 	readUntil(t, watcher2, protocol.EventRunError)
 	deadline := time.Now().Add(5 * time.Second)
 	for slices.Contains(runner.Hub().LiveRunIDs(), sp2.RunID) {

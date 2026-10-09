@@ -17,9 +17,8 @@ import (
 	"github.com/uptrace/bun/driver/sqliteshim"
 )
 
-// instanceLockKey identifies the single-instance advisory lock, database-wide
-// on PostgreSQL. An arbitrary fixed constant so every agents-server process
-// contends on the same lock — spelling "agntsgo" in ASCII.
+// instanceLockKey identifies the single-instance advisory lock on PostgreSQL:
+// one fixed constant ("agntsgo" in ASCII) every agents-server process contends on.
 const instanceLockKey int64 = 0x61_67_6e_74_73_67_6f
 
 // ErrInstanceLocked is returned when another agents-server already holds the
@@ -49,16 +48,16 @@ func OpenDB(arg string) (db *bun.DB, err error) {
 }
 
 // NewSQLiteDB opens the SQLite database at dsn with a single-connection pool.
-// PRAGMAs are executed as statements, never DSN parameters: modernc and mattn
-// disagree on DSN pragma syntax and silently drop what they do not recognize.
+// PRAGMAs are statements, never DSN parameters (drivers disagree on the syntax
+// and drop the unknown).
 func NewSQLiteDB(dsn string) (*bun.DB, error) {
 	sqldb, err := sql.Open(sqliteshim.DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite: %w", err)
 	}
 	sqldb.SetMaxOpenConns(1)
-	// journal_mode answers with the mode now in force, so the WAL claim is
-	// verified; in-memory databases report "memory".
+	// journal_mode answers with the mode now in force; in-memory databases
+	// report "memory".
 	var mode string
 	if err := sqldb.QueryRow("PRAGMA journal_mode=WAL").Scan(&mode); err != nil {
 		return nil, fmt.Errorf("enabling WAL: %w", err)
@@ -73,13 +72,9 @@ func NewSQLiteDB(dsn string) (*bun.DB, error) {
 	return db, nil
 }
 
-// AcquireInstanceLock admits one agents-server per PostgreSQL database, so a
-// second instance cannot run the startup orphan sweep against a live
-// instance's tasks (scope.md, Roadmap). It holds a dedicated connection for
-// the process's lifetime — a PostgreSQL session advisory lock lives with its
-// session — and release() frees it. On SQLite (one file, one process by
-// assumption) it is a no-op. Returns ErrInstanceLocked when another instance
-// already holds the lock.
+// AcquireInstanceLock admits one agents-server per PostgreSQL database
+// (invariant 63), holding a dedicated connection until release(); a no-op on
+// SQLite. ErrInstanceLocked when another instance holds the lock.
 func AcquireInstanceLock(ctx context.Context, db *bun.DB) (release func(), err error) {
 	if db.Dialect().Name() != dialect.PG {
 		return func() {}, nil
@@ -104,9 +99,8 @@ func AcquireInstanceLock(ctx context.Context, db *bun.DB) (release func(), err e
 	}, nil
 }
 
-// NewPostgresDB opens the PostgreSQL database at dsn. A bad DSN or
-// unreachable server surfaces on the first query (the instance lock at startup).
-// The pool is capped so one burst cannot exhaust the server's max_connections.
+// NewPostgresDB opens the PostgreSQL database at dsn with a capped pool; a
+// bad DSN or unreachable server surfaces on the first query.
 func NewPostgresDB(dsn string) *bun.DB {
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
 	sqldb.SetMaxOpenConns(16)

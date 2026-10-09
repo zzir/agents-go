@@ -67,8 +67,7 @@ func openMcpServer(m *McpServerConfig) (err error) {
 }
 
 // SandboxSecretKeys are the credential fields inside a sandbox's config across
-// every type — string fields and the e2b headers map — the one list that
-// sealing at rest and the API's masking share.
+// every type (string fields and the e2b headers map): sealing and masking share it.
 var SandboxSecretKeys = []string{"ssh_password", "api_key", "headers"}
 
 func sealSandbox(sb *Sandbox) (err error) {
@@ -101,8 +100,7 @@ func mapProjectEnv(p *Project, fn func(label, s string) (string, error)) error {
 	if err != nil {
 		return err
 	}
-	// AAD is bound to the project id, so a victim project's ciphertext pasted
-	// into another env is not a decryption oracle.
+	// AAD is bound to the project id: another project's ciphertext does not open here.
 	label := labelProjectEnv + "." + p.ID
 	for i, v := range vars {
 		out, ferr := fn(label, v.Value)

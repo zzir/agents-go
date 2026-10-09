@@ -10,13 +10,9 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
-// TestSegmentFinalizeNoDoubleClose locks the fix: each run segment owns its
-// own done gate, so a resume that swaps a fresh segment onto the record while
-// the old segment's goroutine is still winding down (the window between finish
-// and finalize) cannot make two goroutines close one channel. The crux is that
-// finalizing the OLD segment must NOT close the NEW segment's gate — the exact
-// cross-close the previous markDone(runID) design produced, panicking when the
-// new segment then closed its (already-closed) gate.
+// TestSegmentFinalizeNoDoubleClose: each run segment owns its own done gate,
+// so finalizing the OLD segment after a resume swapped in a NEW one must not
+// close the new segment's gate.
 func TestSegmentFinalizeNoDoubleClose(t *testing.T) {
 	h := NewRunHub(context.Background())
 	seg1, _, err := h.register("run1", "sess1", "", "", "", nil)

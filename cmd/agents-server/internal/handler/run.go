@@ -46,11 +46,8 @@ type createRunResp struct {
 	Status    string `json:"status"`
 }
 
-// Create starts a run for the session identified by the id path parameter.
-// By default it returns 201 at once with the run id (stream events via GET
-// /runs/{id}/events). With `Prefer: wait=N` (RFC 7240) it holds the request up
-// to N seconds for the run to end and answers with the final output — or 202
-// with the run id when N passes first.
+// Create starts a run for the session identified by the id path parameter;
+// `Prefer: wait=N` holds the request for the outcome.
 //
 //	@Summary		Start run
 //	@Description	Starts an agent run on the session. Default returns 201 with a run id. With the header `Prefer: wait=N` (RFC 7240) the request is held up to N seconds (capped at 10 minutes): 200 with the final output when the run ends in time — or status "interrupted" when it pauses for tool approval (list via /sessions/{id}/approvals, decide via POST /approvals/{tool_call_id}/approve or /reject) — else 202 with the run id, still running (`Preference-Applied: wait=N` marks the honored wait). Fails 409 if the session already has an active run.
@@ -119,8 +116,7 @@ func preferWait(r *http.Request) (time.Duration, bool) {
 // createAndWait starts a run and holds the request up to wait for its
 // outcome; when the wait passes first the answer is 202 and the run keeps executing.
 func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createRunReq, wait time.Duration) {
-	// StartRun's onDone delivers the typed outcome directly. Buffered so the
-	// callback never blocks if the client hangs up first.
+	// Buffered so onDone never blocks if the client hangs up first.
 	done := make(chan *bridge.RunOutcome, 1)
 	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.ProjectID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, func(res *bridge.RunOutcome) {
 		done <- res
@@ -141,8 +137,8 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 	case res := <-done:
 		switch {
 		case res.Interrupted:
-			// The run paused for tool approval: report the state; the caller
-			// decides via GET /sessions/{id}/approvals, which resumes the same run id.
+			// Paused for tool approval: report the state; a decision resumes
+			// the same run id.
 			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunInterrupted)})
 		case res.Cancelled:
 			abortError(c, http.StatusBadGateway, protocol.CodeUpstream, "run cancelled")
@@ -159,38 +155,32 @@ func (h *RunHandler) startError(c *gin.Context, err error) {
 		conflict(c, "session already has an active run: "+busy.RunID)
 		return
 	}
-	// The request named a sandbox binding that can never work (unknown id, a
-	// workdir the backend cannot honor): the client's mistake, 400.
+	// A sandbox binding that can never work (unknown id, unhonorable workdir): 400.
 	if invalid, ok := errors.AsType[bridge.ErrInvalidBinding](err); ok {
 		badRequest(c, invalid.Error())
 		return
 	}
-	// The bind kept losing its validation race against concurrent config
-	// edits: transient state, the client retries once the config settles.
+	// The bind kept losing its race against config edits: transient, retry.
 	if errors.Is(err, bridge.ErrBindingContention) {
 		conflict(c, err.Error())
 		return
 	}
-	// The session exists but is already at its live-task cap: a state conflict
-	// (409), not a missing resource.
+	// The session is at its live-task cap: 409.
 	if limit, ok := errors.AsType[bridge.ErrTaskLimit](err); ok {
 		conflict(c, limit.Error())
 		return
 	}
-	// The session's delete cascade is in progress: a state conflict (409), not a
-	// missing session.
+	// The session's delete cascade is in progress: 409.
 	if deleting, ok := errors.AsType[bridge.ErrSessionDeleting](err); ok {
 		conflict(c, deleting.Error())
 		return
 	}
-	// The server is draining: 503, not 500. The request was fine; the answer
-	// is to retry against the process that comes back.
+	// The server is draining: 503, retry against the next process.
 	if down, ok := errors.AsType[bridge.ErrShuttingDown](err); ok {
 		unavailable(c, down.Error())
 		return
 	}
-	// The remaining failures come from StartRun's session lookup: an unknown
-	// session -> 404, any other DB error -> 500.
+	// StartRun's session lookup: unknown session 404, other DB errors 500.
 	storeError(c, err)
 }
 
@@ -313,10 +303,8 @@ func (h *RunHandler) Inject(c *gin.Context) {
 	c.JSON(http.StatusAccepted, injectResp{RunID: runID, Queue: req.Queue})
 }
 
-// Events streams the run's events as Server-Sent Events. Each event's id is
-// its hub sequence number; a reconnect with Last-Event-ID (or ?from_seq)
-// resumes without loss. The stream ends after a FINAL event; run.interrupted
-// only pauses the run, and the same-id resume continues on the open stream.
+// Events streams the run's events as Server-Sent Events, resumable by
+// Last-Event-ID.
 //
 //	@Summary		Stream run events (SSE)
 //	@Description	Server-Sent Events stream. Each event id is the hub sequence number; reconnect with the Last-Event-ID header or from_seq to resume. The stream closes after a final event: run.output, run.error or run.cancelled. run.interrupted (paused for approval) does not close a live stream — deciding via /approvals resumes the SAME run id and its events continue on the open connection; a disconnected client reconnects with Last-Event-ID.
@@ -345,7 +333,8 @@ func (h *RunHandler) Events(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// The sink BLOCKS on this buffer; a slow client is dropped in the hub with
-	// a run.gap (invariant 14). Only a FINAL event closes the stream, via its own channel.
+	// a run.gap (invariant 14). Only a FINAL event closes the stream, via its
+	// own channel.
 	events := make(chan bridge.SeqEnvelope, bridge.EventBufferCap)
 	terminal := make(chan bridge.SeqEnvelope, 1)
 	sink := func(item bridge.SeqEnvelope) {

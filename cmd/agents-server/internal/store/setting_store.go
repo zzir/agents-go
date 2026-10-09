@@ -13,7 +13,7 @@ import (
 type SettingStore struct {
 	db *bun.DB
 	// isSecret says which keys hold credentials, sealed at rest (SealIf);
-	// handed in because the settings registry imports this package.
+	// handed in, since the settings registry imports this package.
 	isSecret func(key string) bool
 }
 
@@ -90,8 +90,9 @@ func (s *SettingStore) SetMany(ctx context.Context, kv map[string]string) error 
 	})
 }
 
-// Modify sets key from its stored value in one transaction: read locked
-// (found is false when none), ask value for the new one, upsert. value's error comes back as given.
+// Modify sets key from its stored value in one transaction: read locked (found
+// is false when none), ask value for the new one, upsert. value's error comes
+// back as given.
 func (s *SettingStore) Modify(ctx context.Context, key string, value func(prev string, found bool) (string, error)) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var prev string
@@ -123,8 +124,7 @@ func (s *SettingStore) Modify(ctx context.Context, key string, value func(prev s
 	})
 }
 
-// List returns all settings ordered by key — all but the secret key check,
-// which is the process's, not a setting.
+// List returns all settings ordered by key, the secret key check excepted.
 func (s *SettingStore) List(ctx context.Context) ([]Setting, error) {
 	var settings []Setting
 	if err := s.db.NewSelect().Model(&settings).

@@ -73,10 +73,9 @@ func maskJSONFields(raw json.RawMessage, maskHeaders bool, fields ...string) jso
 	return out
 }
 
-// restoreJSONFields resolves masked values against the stored JSON object
-// (the named fields, plus "headers" when restoreHeaders). A masked field with
-// no counterpart is ""; a masked header with none is an error, since the mask
-// cannot follow a renamed key.
+// restoreJSONFields resolves masked fields (plus "headers" when restoreHeaders)
+// against prev: a masked field with no counterpart is "", a masked header with
+// none an error.
 func restoreJSONFields(incoming, prev json.RawMessage, restoreHeaders bool, fields ...string) (json.RawMessage, error) {
 	if len(incoming) == 0 || !bytes.Contains(incoming, []byte(SecretMask)) {
 		return incoming, nil

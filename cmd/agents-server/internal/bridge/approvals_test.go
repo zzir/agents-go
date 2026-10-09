@@ -289,12 +289,9 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 	}
 }
 
-// TestResolveApprovalTaskNotYetInputRequiredKeepsPending locks: a task
-// approval that lands while the task row is still "working" — the fast-approve
-// window before the run's postRun marks it input_required — must NOT be lost. A
-// failed ReclaimWorking on a still-non-terminal task restores the pending row
-// (returning a retryable ApprovalNotReadyError) instead of deleting it and
-// stranding the paused run forever, which is what the old code did.
+// TestResolveApprovalTaskNotYetInputRequiredKeepsPending: a task approval
+// that lands while the row is still "working" (before postRun marks it
+// input_required) restores the pending row with a retryable ApprovalNotReadyError.
 func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 	pausedRun := store.NewID()
 	ctx := context.Background()

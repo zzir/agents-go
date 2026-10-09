@@ -177,8 +177,7 @@ func (h *AttachmentHandler) Upload(c *gin.Context) {
 		return
 	}
 	if err := h.store.Create(ctx, a); err != nil {
-		// The object is orphaned in the bucket; remove it best-effort rather
-		// than leaving an unreferenced key forever.
+		// Remove the orphaned object best-effort.
 		delCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		_ = client.Delete(delCtx, a.Key)
@@ -188,9 +187,8 @@ func (h *AttachmentHandler) Upload(c *gin.Context) {
 	c.JSON(http.StatusCreated, h.resp(ctx, a))
 }
 
-// Delete revokes an attachment that was never sent. Owner-only; someone
-// else's id reads as absent. A bound attachment is part of session history
-// and refuses deletion.
+// Delete revokes an attachment that was never sent; owner-only, and a bound
+// attachment refuses (invariant 57).
 //
 //	@Summary		Delete attachment
 //	@Description	Removes an uploaded image that has not been sent with a message yet (the composer's ✕). One already accepted by a run is part of session history and answers 409.
@@ -221,8 +219,7 @@ func (h *AttachmentHandler) Delete(c *gin.Context) {
 		abortError(c, http.StatusConflict, protocol.CodeConflict, "attachment was sent with a message and is part of session history")
 		return
 	}
-	// Object first, row second — the same order the reaper uses: a row whose
-	// object delete failed is retried, a dangling sentinel is forever.
+	// Object first, row second, as the reaper does: a failed object delete is retried.
 	if client := h.client(ctx); client != nil {
 		if err := client.Delete(ctx, a.Key); err != nil {
 			abortError(c, http.StatusBadGateway, protocol.CodeUpstream, err.Error())
@@ -298,9 +295,7 @@ func (req storageReq) isStorageClear() bool {
 		strings.TrimSpace(req.PublicBaseURL) == ""
 }
 
-// SaveStorage writes the attachment-storage section as one group: probed
-// before anything lands, stored in one transaction, and an all-empty body
-// clears the section (turning the feature off).
+// SaveStorage writes the attachment-storage section as one group — invariant 58.
 //
 //	@Summary		Save attachment storage
 //	@Description	Saves the whole attachment-storage section atomically. A non-empty section is probed end to end first (signed upload, anonymous public read, delete) and refused with 400 if any stage fails — so changing one field is validated against the section it will actually be stored with. An all-empty body clears the section and turns image input off. A masked secret_access_key ("********") keeps the stored secret.
@@ -348,8 +343,8 @@ func (h *AttachmentHandler) SaveStorage(c *gin.Context) {
 	h.Config(c)
 }
 
-// TestStorage runs the end-to-end probe against the SUBMITTED values without
-// storing anything — the form's Test button.
+// TestStorage probes the submitted storage section without storing it — the
+// form's Test button.
 //
 //	@Summary		Test attachment storage
 //	@Description	Probes the submitted section (signed upload, anonymous public read through the public base URL, delete) without storing it. 200 when the bucket is usable; 400 with the failing stage otherwise. A masked secret_access_key uses the stored secret.

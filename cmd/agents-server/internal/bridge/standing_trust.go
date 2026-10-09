@@ -8,8 +8,7 @@ import (
 
 // withholdsTrust reports whether a segment runs on its own grants instead of
 // its session's standing command trust — invariant 84. asked is a fresh chat
-// segment's own flag, and a resumed one stays what it started as; a task's run
-// answers from what started it.
+// segment's flag; a resume and a task's run answer from what started them.
 func (r *Runner) withholdsTrust(ctx context.Context, runID string, task *TaskMeta, fresh, asked bool) bool {
 	if task == nil {
 		return (fresh && asked) || r.runWithheld(runID)

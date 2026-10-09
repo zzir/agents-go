@@ -273,13 +273,9 @@ func awaitProcess(marker string, want bool, within time.Duration) bool {
 	}
 }
 
-// TestStopTaskClaimsAnEndingTheRunNeverRecorded is the third state, and the
-// one that used to leave a task un-stoppable: the run is over as far as the hub
-// is concerned, but nothing ever recorded its outcome on the row — a postRun
-// whose store write failed leaves exactly this. The stop must end the task
-// itself rather than answer "working" and change nothing, which showed a dead
-// task as live, with a ticking duration and a Stop button that did nothing
-// until the hub record aged out fifteen minutes later.
+// TestStopTaskClaimsAnEndingTheRunNeverRecorded is the third state: the run
+// is over in the hub but nothing recorded its outcome on the row (a postRun
+// whose store write failed). The stop must end the task itself, not answer "working".
 func TestStopTaskClaimsAnEndingTheRunNeverRecorded(t *testing.T) {
 	ctx := context.Background()
 	runner, sessions, tasks, _ := newTaskTestRunner(t)

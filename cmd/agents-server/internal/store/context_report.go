@@ -11,46 +11,52 @@ import (
 )
 
 // ContextReport is what a session's active branch occupies of the model's
-// context window. Its figures are not one ruler and are never mixed —
-// invariant 28. Sub-agents appear in none of them: a task runs on its own
-// session, and only its result text lands here, as any tool output.
+// context window; its figures are on different rulers and never mixed —
+// invariant 28. A sub-agent's own session is not in it, only its result text.
 type ContextReport struct {
 	Model string `json:"model,omitempty"`
-	// ContextWindow is the agent's declared window in tokens; 0 shows occupancy without a denominator.
+	// ContextWindow is the agent's declared window in tokens; 0 shows occupancy
+	// without a denominator.
 	ContextWindow int `json:"context_window,omitempty"`
 
-	// InputTokens is what the last model call on the branch sent, OutputTokens that call's completion.
+	// InputTokens is what the last model call on the branch sent, OutputTokens
+	// that call's completion.
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
-	// CachedTokens and CacheWriteTokens split that call's input by cache disposition, when the provider reports it.
+	// CachedTokens and CacheWriteTokens split that call's input by cache
+	// disposition, when the provider reports it.
 	CachedTokens     int64 `json:"cached_tokens"`
 	CacheWriteTokens int64 `json:"cache_write_tokens"`
 
-	// SessionInputTokens and SessionOutputTokens total every model call on the branch: spend, not window.
+	// SessionInputTokens and SessionOutputTokens total every model call on the
+	// branch: spend, not window.
 	SessionInputTokens  int64 `json:"session_input_tokens"`
 	SessionOutputTokens int64 `json:"session_output_tokens"`
 
-	// Growth is each model call's input tokens in order; a compaction pass shows as a drop.
+	// Growth is each model call's input tokens in order; a compaction pass
+	// shows as a drop.
 	Growth []int64 `json:"growth,omitempty"`
 
-	// CompactionEnabled reports whether the pass runs; Threshold is what it fires at, Tokens what it compares.
+	// CompactionEnabled reports whether the pass runs; Threshold is what it
+	// fires at, Tokens what it compares.
 	CompactionEnabled   bool `json:"compaction_enabled"`
 	CompactionThreshold int  `json:"compaction_threshold,omitempty"`
 	CompactionTokens    int  `json:"compaction_tokens"`
 	// CompactionMode is the agent's: summary, reset or hybrid.
 	CompactionMode string `json:"compaction_mode,omitempty"`
 
-	// ConversationTokens is the estimated size of the transcript still in context: active, uncompacted entries summed.
+	// ConversationTokens is the estimated size of the transcript still in
+	// context: active, uncompacted entries summed.
 	ConversationTokens int `json:"conversation_tokens"`
 
-	// Prompt is what the last build put in front of the conversation; absent until a run has built once.
+	// Prompt is what the last build put in front of the conversation; absent
+	// until a run has built once.
 	Prompt *PromptProfile `json:"prompt,omitempty"`
 }
 
-// ContextReport measures what the session named by ref currently puts in its
-// model's context window: the ACTIVE branch only, from lifted columns (so
-// its cost is the row count, not the size) — invariant 28. The caller fills
-// in Model, ContextWindow and the compaction settings from the agent config.
+// ContextReport measures what the session named by ref puts in its model's
+// context window: the ACTIVE branch, from lifted columns — invariant 28. The
+// caller fills in Model, ContextWindow and the compaction settings.
 func (s *EntryStore) ContextReport(ctx context.Context, ref session.Ref) (*ContextReport, error) {
 	var rows []entryRow
 	if err := s.db.NewSelect().Model(&rows).
@@ -112,7 +118,8 @@ func (s *EntryStore) UsageTotals(ctx context.Context, ref session.Ref) (int, err
 }
 
 // activeBranchOfRows marks the active branch over rows read without bodies;
-// only the leaf markers' bodies are fetched. Shared by the report and the compaction pass.
+// only the leaf markers' bodies are fetched. Shared by the report and the
+// compaction pass.
 func (s *EntryStore) activeBranchOfRows(ctx context.Context, ref session.Ref, rows []entryRow) (map[string]bool, error) {
 	var leaves []string
 	for i := range rows {

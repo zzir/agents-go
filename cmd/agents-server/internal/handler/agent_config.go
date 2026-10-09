@@ -1,4 +1,5 @@
-// Package handler implements the HTTP and WebSocket request handlers for the agents-server API.
+// Package handler implements the HTTP and WebSocket request handlers for the
+// agents-server API.
 package handler
 
 import (
@@ -18,14 +19,12 @@ import (
 // AgentConfigHandler serves CRUD endpoints for agent configurations.
 type AgentConfigHandler struct {
 	store *store.AgentConfigStore
-	// mcpServers, when set, lets save-time validation resolve the MCP server
-	// ids referenced by the tools field and predict tool-name collisions.
+	// mcpServers resolves the MCP server ids the tools field names, at save time.
 	mcpServers *store.McpServerStore
-	// guardrails, when set, lets save-time validation reject unresolvable
-	// guardrail names before they silently no-op at run time.
+	// guardrails resolves guardrail names at save time.
 	guardrails *guardrails.Resolver
-	// providers lets save-time validation reject a provider_id that names no
-	// row (the read side is ProviderStore.DeleteIfUnreferenced).
+	// providers resolves provider_id at save time (the read side is
+	// ProviderStore.DeleteIfUnreferenced).
 	providers *store.ProviderStore
 	// skills backs the reference-scope validation of the skills selection.
 	skills *store.SkillStore
@@ -54,14 +53,12 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	if !nameFits(c, ac.Name) {
 		return false
 	}
-	// No provider ships a default model: an empty one is a *UserError at run
-	// time, so refuse it at save.
+	// No provider ships a default model: an empty one is refused at save.
 	if ac.Model == "" {
 		badRequest(c, "model is required")
 		return false
 	}
-	// Only the built-in catalog: an external URL would be blocked by the CSP
-	// (img-src 'self') and render as a broken image, so refuse it honestly.
+	// Only the built-in catalog: the CSP blocks an external image URL — invariant 50.
 	if ac.Avatar != "" && !avatarPath.MatchString(ac.Avatar) {
 		badRequest(c, "avatar must be a built-in path (/avatars/<name>.svg) or empty")
 		return false
@@ -91,15 +88,14 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 		badRequest(c, err.Error())
 		return false
 	}
-	// The same decode backs the build, so a JSON field that does not parse or
-	// resolve is refused here rather than silently no-op'ing at run time.
+	// The same decode backs the build: what does not parse is refused here.
 	spec, err := bridge.DecodeAgentSpec(ac)
 	if err != nil {
 		badRequest(c, err.Error())
 		return false
 	}
-	// A fallback provider follows the primary's reference rule; an entry from
-	// before provider_id names an endpoint and is checked when the run resolves it.
+	// A fallback provider follows the primary's reference rule; an endpoint-only
+	// entry is checked when the run resolves it.
 	for i, e := range spec.FallbackModels {
 		if e.ProviderID == "" {
 			continue
@@ -122,9 +118,8 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 			return false
 		}
 	}
-	// MCP servers, skills and handoff targets must be ones this scope may
-	// name; a missing id is tolerated: the run drops it, the editor counts
-	// it and drops it on its next save (invariant 13).
+	// MCP servers, skills and handoff targets must be ones this scope may name;
+	// a missing id is tolerated — invariant 13.
 	for _, id := range spec.Tools {
 		if ms, err := h.mcpServers.Get(c.Request.Context(), id); err == nil {
 			if !store.RefVisible(ms.Scope, ms.OwnerID, ac.Scope, ac.OwnerID) {
@@ -166,8 +161,7 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 }
 
 // bindAgentConfig reads a Create/Update body; false means the response is
-// written. A fallback entry must name a provider: the endpoint fields are
-// read-only and a key lives on the provider row (decisions §5.69).
+// written. A fallback entry must name a provider — decisions §5.69.
 func bindAgentConfig(c *gin.Context, ac *store.AgentConfig) bool {
 	if err := c.ShouldBindJSON(ac); err != nil {
 		badRequest(c, err.Error())
@@ -230,7 +224,7 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 	if !stampCreateScope(c, &ac.Scope, &ac.OwnerID) {
 		return
 	}
-	// A new agent's approval mode is explicit; empty is only how older rows read.
+	// A new agent's approval mode is explicit.
 	if ac.Approval.Mode == "" {
 		ac.Approval.Mode = store.ApprovalModeNever
 	}
@@ -264,8 +258,7 @@ func (h *AgentConfigHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, ac)
 }
 
-// Update overwrites the agent configuration identified by the id path
-// parameter and responds with the updated configuration.
+// Update overwrites the agent configuration identified by the id path parameter.
 //
 //	@Summary		Update agent
 //	@Description	Full replace. Each resilience.fallback_models entry names a provider by provider_id; an entry from before provider_id (provider_type/base_url, read-only) is sent back as a provider_id or dropped. Tool selections whose statically known tool names would collide are rejected.
@@ -332,9 +325,8 @@ func (h *AgentConfigHandler) Delete(c *gin.Context) {
 	}
 }
 
-// SetScope promotes an agent to global — after checking every reference it
-// holds is global too — or demotes it back to its author's private set.
-// Entities still referencing a demoted agent fail loudly at their next use.
+// SetScope promotes an agent to global (every reference must be global too)
+// or demotes it back to its author's private set — decisions §5.29.
 //
 //	@Summary	Change an agent's scope
 //	@Tags		agents
@@ -363,14 +355,12 @@ func (h *AgentConfigHandler) SetScope(c *gin.Context) {
 	if sameScope(c, "agent", ac.Scope, scope) {
 		return
 	}
-	// A promote re-runs the reference validation AS the target scope: a
-	// global agent may only name global rows.
+	// A promote re-runs the reference validation as the target scope.
 	ac.Scope = scope
 	if !h.validateAgentConfig(c, ac) {
 		return
 	}
-	// The store re-checks the provider leg as the target scope inside its
-	// transaction, so a racing demote cannot leave a global agent on a private key.
+	// The store re-checks the provider leg inside its transaction (a racing demote).
 	if err := h.store.SetScope(ctx, id, scope); err != nil {
 		saveError(c, err)
 		return
@@ -403,8 +393,7 @@ func (h *AgentConfigHandler) SetOwner(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// References are re-validated AS THE NEW OWNER (decisions §5.29); the
-	// provider leg is re-checked again inside the store's transaction.
+	// References are re-validated as the new owner — decisions §5.29.
 	ac.OwnerID = req.UserID
 	if !h.validateAgentConfig(c, ac) {
 		return

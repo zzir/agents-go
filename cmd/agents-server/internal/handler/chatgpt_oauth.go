@@ -11,8 +11,7 @@ import (
 )
 
 // ChatGPTOAuthHandler serves a provider's ChatGPT OAuth flow under
-// /providers/:id/chatgpt/*: the token is the ENDPOINT credential, shared by
-// every agent pointed at the provider.
+// /providers/:id/chatgpt/*; the token is the endpoint's, shared by its agents.
 type ChatGPTOAuthHandler struct {
 	oauth     *providers.ChatGPTOAuth
 	providers *store.ProviderStore
@@ -59,8 +58,7 @@ func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
 			notFound(c)
 			return
 		}
-		// A backend that doesn't offer chatgpt_login is the caller's
-		// configuration problem, not a server fault.
+		// A backend without chatgpt_login is the caller's configuration problem: 400.
 		if errors.Is(err, providers.ErrChatGPTLoginUnavailable) {
 			badRequest(c, err.Error())
 			return
@@ -76,8 +74,7 @@ type chatgptCompleteReq struct {
 	RedirectURL string `json:"redirect_url"`
 }
 
-// Complete finishes the ChatGPT OAuth flow by redeeming the callback URL the
-// user pasted (decisions §5.41).
+// Complete finishes the ChatGPT OAuth flow — decisions §5.41.
 //
 //	@Summary		Complete ChatGPT login
 //	@Description	Redeems the callback URL the user pastes after authorizing (accepts the full URL or its query string).

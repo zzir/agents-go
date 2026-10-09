@@ -27,10 +27,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/web"
 )
 
-// The composition root, in the order the layers stack: stores on the
-// database, the bridge on the stores, handlers on both, then auth and the
-// server that mounts it all. run (root.go) calls these in sequence and keeps
-// the start-up and shutdown ordering that spans them.
+// The composition root, in the order the layers stack: stores, bridge,
+// handlers, then auth and the server; run (root.go) calls these in sequence.
 
 // stores is every table's store, on one database.
 type stores struct {
@@ -161,8 +159,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 }
 
 // Close releases what the bridge holds open: MCP connections and sandbox
-// instances. The runner and the scheduler are stopped by run's shutdown
-// sequence, which orders them against the drain.
+// instances; the runner and the scheduler are stopped by run's shutdown sequence.
 func (s *services) Close() {
 	s.Mcp.CloseAll()
 	s.Sandboxes.CloseAll()
@@ -177,8 +174,7 @@ type handlers struct {
 }
 
 // newHandlers builds the handlers on the stores and the bridge; info is the
-// process facts /server reports. Handlers.Auth is left for newServer: it needs
-// the auth service and the server's connection registry.
+// process facts /server reports. Handlers.Auth is left for newServer.
 func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string, info handler.ServerInfo) *handlers {
 	terminal := handler.NewTerminalHandler(st.SandboxDefs, st.Projects, svc.Sandboxes, st.SettingReader)
 	terminal.Audit = audit
@@ -225,11 +221,8 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 	}
 }
 
-// newAuth builds the auth service the --auth mode names. Both modes keep the
-// implicit local account, so ownership always has a referent — token mode
-// authenticates as it, OAuth mode leaves it dormant (no identity, no token,
-// no way to sign in as it). OAuth mode fails fast on a combination that could
-// not be signed in to, or that would admit everyone.
+// newAuth builds the auth service the --auth mode names; both modes keep the
+// implicit local account (token mode signs in as it, OAuth mode leaves it dormant).
 func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) (*authn.Service, error) {
 	localUser, err := st.Users.EnsureLocalUser(ctx)
 	if err != nil {
@@ -237,15 +230,13 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 	}
 	switch flagAuthMode {
 	case "token":
-		// Flag wins, then env (keeps the secret off argv/ps, like the secret-key
-		// and OAuth client-secret env vars), then a fresh one.
+		// Flag wins, then env, then a fresh one.
 		token := flagToken
 		if token == "" {
 			token = os.Getenv("AGENTS_TOKEN")
 		}
 		if token == "" {
-			// Logged only when generated: a token the operator chose is theirs
-			// to keep out of the log.
+			// Logged only when generated.
 			token = server.GenerateToken()
 			log.Info("auth token", "token", token)
 		}
@@ -321,14 +312,12 @@ func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) 
 }
 
 // newServer builds the HTTP server and mounts everything on it: the auth
-// handler (built here, on the server's connection registry), the REST API,
-// the WebSocket endpoints, the webhook hook, health, the OpenAPI document and
-// the embedded SPA.
+// handler, the REST API, the WebSocket endpoints, the hook, health, OpenAPI and
+// the SPA.
 func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, audit protocol.AuditFunc, st *stores, hs *handlers, baseURL string) (*server.Server, error) {
 	srv := server.New(log, authSvc.Authenticate, audit)
-	// img-src admits the avatar hosts plus the attachment bucket's public
-	// host; the latter is a runtime-editable setting, so the settings handler
-	// re-applies the list whenever a storage key changes.
+	// img-src admits the avatar hosts plus the attachment bucket's host,
+	// re-applied whenever a storage key changes (invariant 58).
 	imgHosts := func() []string {
 		hosts := authSvc.AvatarHosts()
 		if cfg := st.SettingReader.S3Config(ctx); cfg.Complete() {

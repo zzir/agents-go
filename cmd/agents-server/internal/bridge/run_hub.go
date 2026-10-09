@@ -30,9 +30,8 @@ const (
 )
 
 const (
-	// EventBufferCap bounds the per-run replay ring buffer. Consumers sizing
-	// their own delivery buffers (e.g. the SSE handler) should match it so a
-	// full-buffer replay is lossless.
+	// EventBufferCap bounds the per-run replay ring buffer; a consumer's own
+	// delivery buffer (the SSE handler) matches it for a lossless replay.
 	EventBufferCap = 512
 	// runRetention is how long a finished run stays queryable / replayable
 	// after it ends.
@@ -55,10 +54,9 @@ func terminalStatusForEvent(typ string) (RunStatus, bool) {
 	return "", false
 }
 
-// IsFinalRunEvent reports whether typ ends a run for good — as opposed to
-// run.interrupted, which only PAUSES it (the approval decision resumes the
-// SAME run id, continuing its sequence). Only a final event should terminate
-// a live stream.
+// IsFinalRunEvent reports whether typ ends a run for good; run.interrupted only
+// PAUSES it (the decision resumes the SAME run id). Only a final event ends a
+// live stream.
 func IsFinalRunEvent(typ string) bool {
 	st, ok := terminalStatusForEvent(typ)
 	return ok && st != RunInterrupted
@@ -107,8 +105,7 @@ type RunInfo struct {
 	Task *TaskMeta `json:"task,omitempty"`
 }
 
-// isTerminalRunStatus reports whether a run has ended: nothing can be
-// cancelled, and publishing a cancellation would rewrite what clients saw.
+// isTerminalRunStatus reports whether a run has ended (nothing left to cancel).
 func isTerminalRunStatus(s RunStatus) bool {
 	switch s {
 	case RunCompleted, RunErrored, RunCancelled:
@@ -117,8 +114,7 @@ func isTerminalRunStatus(s RunStatus) bool {
 	return false
 }
 
-// TaskStatusFor maps a run status onto the MCP Tasks (SEP-1686) five-state
-// task vocabulary — the single point where the two state models meet.
+// TaskStatusFor maps a run status onto the MCP Tasks (SEP-1686) five-state vocabulary.
 func TaskStatusFor(s RunStatus) string {
 	switch s {
 	case RunInterrupted:
@@ -143,9 +139,8 @@ func newRunFanout() *agents.Fanout[*protocol.Envelope] {
 	})
 }
 
-// SeqSink receives a hub event together with its sequence number. It is the
-// seq-aware form of EventSink used by SSE (which needs the seq for the
-// Last-Event-ID id line).
+// SeqSink receives a hub event together with its sequence number: the
+// seq-aware EventSink SSE uses for its Last-Event-ID line.
 type SeqSink func(SeqEnvelope)
 
 // runSegment is one execution of a run. The goroutine that started it is the
@@ -193,10 +188,9 @@ type runRecord struct {
 	injected int
 }
 
-// RunHub owns the lifecycle of active and recently-finished runs: it enforces
-// one live run per session, buffers events for replay, and fans them out to
-// subscribers independent of any single connection. A run's context descends
-// from the hub's root context, so a dropped client never cancels a run.
+// RunHub owns the lifecycle of active and recently-finished runs: one live
+// run per session, events buffered for replay and fanned out to subscribers.
+// A run's context descends from the hub's root context, never a client's.
 type RunHub struct {
 	rootCtx context.Context
 
@@ -207,20 +201,18 @@ type RunHub struct {
 	mu        sync.Mutex
 	runs      map[string]*runRecord
 	bySession map[string]string // sessionID -> live run id (only while running)
-	// draining latches when Shutdown begins: no new run may register or
-	// resume from then on, so the drain's snapshot is the complete set.
+	// draining latches when Shutdown begins: no new run registers or resumes
+	// from then on.
 	draining bool
-	// deleting marks sessions mid delete-cascade: register and resume refuse
-	// them, so no late resume or postRun drain starts a run on one.
+	// deleting marks sessions mid delete-cascade: register and resume refuse them.
 	deleting map[string]bool
 	// fenced marks sessions a transfer or branch is writing (reserveSessions):
 	// register and resume refuse them until the write releases — invariant 82.
 	fenced map[string]bool
 }
 
-// NewRunHub returns a hub scoped to rootCtx and starts its GC loop. The cap
-// resolver defaults to the built-in; NewRunner overrides it with the
-// settings-backed one.
+// NewRunHub returns a hub scoped to rootCtx and starts its GC loop; NewRunner
+// overrides the built-in cap resolver with the settings-backed one.
 func NewRunHub(rootCtx context.Context) *RunHub {
 	if rootCtx == nil {
 		rootCtx = context.Background()
@@ -241,8 +233,8 @@ func NewRunHub(rootCtx context.Context) *RunHub {
 // one's goroutine to finish, final persistence included.
 func (h *RunHub) Shutdown(ctx context.Context) {
 	h.mu.Lock()
-	// Latch FIRST, before snapshotting: a wake-up run spawned by a drained
-	// run's postRun must not slip in after the snapshot, un-waited-on.
+	// Latched FIRST, before the snapshot (a drained run's postRun may spawn a
+	// wake-up run).
 	h.draining = true
 	recs := make([]*runRecord, 0, len(h.runs))
 	for _, rec := range h.runs {
@@ -250,8 +242,8 @@ func (h *RunHub) Shutdown(ctx context.Context) {
 	}
 	h.mu.Unlock()
 
-	// Status decides only whether to CANCEL; every gate is waited on, since
-	// status flips terminal before the goroutine finishes persisting.
+	// Status decides only whether to CANCEL; every gate is waited on (status
+	// flips terminal before the goroutine finishes persisting).
 	var gates []chan struct{}
 	for _, rec := range recs {
 		rec.mu.Lock()
@@ -271,8 +263,7 @@ wait:
 			break wait
 		}
 	}
-	// End every broadcaster, interrupted runs' included, so a subscriber (an
-	// SSE stream) returns instead of holding the HTTP shutdown to its deadline.
+	// Every broadcaster ends, interrupted runs' included, so a subscriber returns.
 	h.mu.Lock()
 	for _, rec := range h.runs {
 		rec.fanout.Close()
@@ -280,17 +271,16 @@ wait:
 	h.mu.Unlock()
 }
 
-// markSessionDeleting records that sessionID's delete cascade has begun, so no
-// new run (fresh or resumed) is registered against it while it is torn down.
+// markSessionDeleting records that sessionID's delete cascade has begun: no
+// run registers or resumes against it.
 func (h *RunHub) markSessionDeleting(sessionID string) {
 	h.mu.Lock()
 	h.deleting[sessionID] = true
 	h.mu.Unlock()
 }
 
-// unmarkSessionDeleting clears the mark once the delete cascade has ended,
-// committed or rolled back; a run registered on a deleted session fails on
-// its own first session read (execStreamed).
+// unmarkSessionDeleting clears the mark once the delete cascade has ended
+// either way; a run on a deleted session fails on its first session read.
 func (h *RunHub) unmarkSessionDeleting(sessionID string) {
 	h.mu.Lock()
 	delete(h.deleting, sessionID)
@@ -325,9 +315,9 @@ func (h *RunHub) fencedLocked(sessionID string, task *TaskMeta) error {
 	return nil
 }
 
-// reserveSessions fences ids for a write that needs every one of them at
-// rest: ErrSessionBusy when any has a live run or is already fenced, else the
-// fence holds until release. Register and resume refuse a fenced session.
+// reserveSessions fences ids for a write that needs every one of them at rest
+// (invariant 82): ErrSessionBusy when any is live or fenced, else the fence
+// holds until release.
 func (h *RunHub) reserveSessions(ids ...string) (release func(), err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -354,17 +344,15 @@ func (h *RunHub) reserveSessions(ids ...string) (release func(), err error) {
 	}, nil
 }
 
-// ErrSessionDeleting is returned by register/resume when the session is being
-// torn down by a delete cascade — a new run must not be started on it.
+// ErrSessionDeleting is returned by register/resume on a session mid delete-cascade.
 type ErrSessionDeleting struct{ SessionID string }
 
 func (e ErrSessionDeleting) Error() string {
 	return "session is being deleted: " + e.SessionID
 }
 
-// ErrShuttingDown is returned by register/resume once Shutdown has begun: a run
-// started after the drain's snapshot would exit un-waited-on. The live case is a
-// drained run's postRun launching a wake-up run.
+// ErrShuttingDown is returned by register/resume once Shutdown has begun (a
+// drained run's postRun launching a wake-up run).
 type ErrShuttingDown struct{}
 
 func (ErrShuttingDown) Error() string { return "server is shutting down" }
@@ -380,9 +368,8 @@ func (e ErrSessionBusy) Error() string {
 	return "session already has an active run: " + e.RunID
 }
 
-// ErrTaskLimit is returned by register when the parent session is already at
-// its live-task cap. Enforced inside the hub lock so concurrent spawns in one
-// turn cannot collectively overshoot (check-then-act would).
+// ErrTaskLimit is returned by register when the parent session is at its
+// live-task cap, enforced inside the hub lock (concurrent spawns in one turn).
 type ErrTaskLimit struct{ Limit int }
 
 func (e ErrTaskLimit) Error() string {
@@ -392,8 +379,7 @@ func (e ErrTaskLimit) Error() string {
 // register creates a fresh run on sessionID, returning the caller's segment (finalize
 // it exactly once) and a hub-root context; ErrSessionBusy when a run is already live.
 func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, projectID string, task *TaskMeta) (*runSegment, context.Context, error) {
-	// Resolve the cap before the lock: the resolver reads the DB, and h.mu gates
-	// every register/deregister.
+	// The cap is resolved before the lock: the resolver reads the DB.
 	var limit int
 	if task != nil {
 		limit = h.maxTasks()
@@ -490,8 +476,7 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 		return seg, ctx, false, nil
 	}
 	rec.mu.Lock()
-	// Only a paused run resumes: reviving a finished record would let an approve
-	// race resurrect a task the user just cancelled.
+	// Only a paused run resumes (an approve must not resurrect a cancelled task).
 	if rec.info.Status != RunInterrupted {
 		st := rec.info.Status
 		rec.mu.Unlock()
@@ -500,12 +485,10 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 	}
 	rec.cancel = seg.cancel
 	rec.info.Status = RunRunning
-	// The identity is the caller's fresh read: the session may have changed
-	// owner while the run was paused, and attach/ownsRun key off this record.
+	// The identity is the caller's fresh read: the owner may have changed while paused.
 	rec.info.OwnerID, rec.info.AgentConfigID, rec.info.ProjectID = ownerID, agentConfigID, projectID
 	rec.info.GracefulStop = false
-	// Drop the old segment's control (it would steer the wrong run); the new
-	// segment installs its own via setControl.
+	// The old segment's control goes; the new segment installs its own via setControl.
 	rec.ctrl = nil
 	// Fresh segment, fresh done gate; the old goroutine still closes its own.
 	rec.done = seg.done
@@ -549,9 +532,8 @@ func (h *RunHub) abortResume(runID string, seg *runSegment, reopened bool) {
 	seg.finalize()
 }
 
-// ErrRunNotResumable is returned by resume when a run's segment is not paused
-// (Interrupted) — e.g. a concurrent stop finalized it. Handlers map it to 409:
-// the run reached a terminal state and cannot be continued.
+// ErrRunNotResumable is returned by resume when the run's segment is not
+// paused (a concurrent stop finalized it). Handlers map it to 409.
 type ErrRunNotResumable struct {
 	RunID  string
 	Status RunStatus
@@ -592,10 +574,10 @@ func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (func(), b
 	return cancel, ok
 }
 
-// SubscribeSeq attaches sink to the run's live event stream after replaying
-// buffered events with seq > fromSeq (0 = everything retained), returning the
-// idempotent detach, a channel closed once the stream has ended, and whether
-// the run exists. The sink runs on its own goroutine — invariant 14.
+// SubscribeSeq attaches sink to the run's live stream after replaying buffered
+// events with seq > fromSeq (0 = everything retained): the idempotent detach,
+// a channel closed once the stream ends, and whether the run exists. The sink
+// runs on its own goroutine — invariant 14.
 func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), <-chan struct{}, bool) {
 	h.mu.Lock()
 	rec := h.runs[runID]
@@ -635,7 +617,7 @@ func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), 
 				}
 			}
 			// An item can carry only a gap (end of stream, or a cursor past the
-			// head); the sink runs on its own goroutine, so never hand it nil.
+			// head): never nil to the sink.
 			if item.Value == nil {
 				continue
 			}
@@ -664,16 +646,15 @@ func (h *RunHub) finish(runID string, interrupted bool) {
 	} else if rec.info.Status == RunRunning {
 		rec.info.Status = RunCompleted
 	}
-	// The segment is over: its control would steer nothing, and a paused
-	// record must not hand a stop to a dead segment.
+	// The segment is over: a paused record must not hand a stop to it.
 	rec.ctrl = nil
 	rec.endedAt = time.Now()
 	rec.mu.Unlock()
 }
 
 // endPaused ends an interrupted record as cancelled, publishing run.cancelled
-// with the reason; false when the hub holds no paused run by that id. The
-// status flips under rec.mu, so a resume racing it is refused.
+// with the reason; false when the hub holds no paused run by that id (a racing
+// resume is refused).
 func (h *RunHub) endPaused(runID, reason string) bool {
 	h.mu.Lock()
 	rec := h.runs[runID]
@@ -725,8 +706,7 @@ func (h *RunHub) Cancel(runID string) bool {
 	if rec == nil {
 		return false
 	}
-	// resume swaps rec.cancel under rec.mu, so read it under the same lock or
-	// risk cancelling the wrong segment. Invoke outside the lock.
+	// Read under rec.mu (resume swaps it there), invoked outside the lock.
 	rec.mu.Lock()
 	cancel := rec.cancel
 	rec.mu.Unlock()
@@ -763,9 +743,8 @@ func (h *RunHub) control(runID string) agents.RunControl {
 	return rec.ctrl
 }
 
-// Inject delivers input to a live run through one of RunControl's three queues
-// (steer, next-turn, follow-up), chosen by the caller. Reports whether a live
-// run was there to receive it.
+// Inject delivers input to a live run through the RunControl queue the caller
+// chose (steer, next-turn, follow-up). Reports whether a live run received it.
 func (h *RunHub) Inject(runID, queue string, input any) (bool, error) {
 	ctrl := h.control(runID)
 	if ctrl == nil {
@@ -799,17 +778,15 @@ func (h *RunHub) nextInjection(runID string) int {
 }
 
 // StopAfterTurn requests a graceful stop of a live run: the current turn
-// finishes and the run ends cleanly before the next one. Reports whether a live
-// run with a stop hook existed. Falls back to nothing (returns false) for a run
-// that has not yet installed its hook.
+// finishes, the run ends before the next. false when no live run has a stop hook yet.
 func (h *RunHub) StopAfterTurn(runID string) bool {
 	h.mu.Lock()
 	var ctrl agents.RunControl
 	if rec := h.runs[runID]; rec != nil {
 		rec.mu.Lock()
 		if rec.ctrl != nil {
-			// Mark before signalling: the run goroutine's postRun must never
-			// observe a clean finish without the graceful-stop marker.
+			// Marked before signalling: postRun must never see a clean finish
+			// without it.
 			rec.info.GracefulStop = true
 			ctrl = rec.ctrl
 		}
@@ -852,8 +829,7 @@ func (h *RunHub) liveBySession() map[string]string {
 }
 
 // LiveRunIDs returns the ids of every currently executing run (one per busy
-// session), to attach a freshly connected client to all in-flight streams.
-// Interrupted runs are excluded — they re-enter this set when resumed.
+// session), interrupted runs excluded until resumed.
 func (h *RunHub) LiveRunIDs() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -887,8 +863,8 @@ func (h *RunHub) gcLoop() {
 				rec.mu.Unlock()
 				if expired {
 					delete(h.runs, id)
-					// Close the broadcaster too, or each attached sink's feeder
-					// goroutine blocks forever on an unreachable record.
+					// The broadcaster closes too, or each attached sink's
+					// feeder blocks forever.
 					rec.fanout.Close()
 				}
 			}

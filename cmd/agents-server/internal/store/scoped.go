@@ -33,8 +33,7 @@ func Visible(scope, rowOwner, callerID string, admin bool) bool {
 	return admin || scope == ScopeGlobal || rowOwner == callerID
 }
 
-// NormalizeScope defaults an empty scope to private — the default for every
-// creator; global is an explicit act. The owner is the creator either way.
+// NormalizeScope defaults an empty scope to private; global is an explicit act.
 func NormalizeScope(scope string) string {
 	if scope == ScopeGlobal {
 		return ScopeGlobal
@@ -75,9 +74,9 @@ const scopedListOrder = `CASE WHEN scope = 'global' THEN 0 ELSE 1 END, created_a
 // target scope (decisions §5.29). Handlers map it to 409.
 var ErrSameScope = errors.New("the row is already in that scope")
 
-// SetScopeOf moves one scoped row between global and private (decisions
-// §5.29); the owner never changes. expectOwner is carried into the WHERE, so
-// a transfer landing since the caller's check refuses the flip (ErrOwnershipChanged).
+// SetScopeOf moves one scoped row between global and private, the owner
+// unchanged (decisions §5.29); a transfer since the caller's check is
+// ErrOwnershipChanged.
 func SetScopeOf[T any](ctx context.Context, s *CrudStore[T], id, scope, expectOwner string) error {
 	res, err := s.db.NewUpdate().Model((*T)(nil)).
 		Set("scope = ?", scope).

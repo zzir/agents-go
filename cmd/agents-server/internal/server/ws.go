@@ -19,23 +19,20 @@ const (
 	// wsOutBuffer bounds a connection's outbound queue: a joiner is attached to
 	// EVERY live run of its user with a full replay (512 each); overflow closes it.
 	wsOutBuffer = 8 * 512
-	// wsWriteTimeout caps a single socket write so a client whose TCP receive
-	// window is full can never block the writer goroutine indefinitely.
+	// wsWriteTimeout caps a single socket write, so a stalled client cannot
+	// block the writer.
 	wsWriteTimeout = 15 * time.Second
-	// wsMaxMessageBytes bounds an inbound frame (gorilla's default is unlimited,
-	// pre-auth included); 1 MiB fits the largest legitimate message; over it, 1009.
+	// wsMaxMessageBytes bounds an inbound frame, pre-auth included; over it, 1009.
 	wsMaxMessageBytes = 1 << 20
-	// wsAuthDeadline caps how long an upgraded-but-unauthenticated connection
-	// may take to send its auth frame; the heartbeat's deadline takes over after.
+	// wsAuthDeadline caps how long an unauthenticated connection may take to
+	// send its auth frame.
 	wsAuthDeadline = 10 * time.Second
-	// wsHandshakeTimeout bounds the upgrade handshake itself, so a slow client
-	// dribbling the upgrade request cannot tie up the accepting goroutine.
+	// wsHandshakeTimeout bounds the upgrade handshake itself.
 	wsHandshakeTimeout = 10 * time.Second
-	// wsPongWait is the heartbeat's read deadline: a connection answering no
-	// ping within it is half-open and dropped, not left to TCP keepalive.
+	// wsPongWait is the heartbeat's read deadline: no pong within it drops the
+	// connection.
 	wsPongWait = 60 * time.Second
-	// wsPingInterval is how often the heartbeat pings; well under wsPongWait so
-	// one lost ping doesn't kill a healthy connection.
+	// wsPingInterval is how often the heartbeat pings; well under wsPongWait.
 	wsPingInterval = 25 * time.Second
 )
 
@@ -54,11 +51,8 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// WSConn is a websocket connection with a per-connection context and a write
-// mutex for concurrent sends. Event delivery goes through a bounded outbound
-// queue drained by a single writer goroutine (StartWriter), so a slow or stuck
-// client can never back-pressure the producers (the run goroutine / hub) that
-// enqueue events — it just fills its own queue and gets disconnected.
+// WSConn is a websocket connection: a per-connection context, a write mutex,
+// and a bounded outbound queue drained by one writer goroutine (StartWriter).
 type WSConn struct {
 	conn    *websocket.Conn
 	ctx     context.Context
@@ -67,11 +61,9 @@ type WSConn struct {
 	out     chan any
 	outOnce sync.Once
 
-	// User is who authenticated the connection (HandleWSWithAuth); the fan-out
-	// attaches a connection only to runs of sessions this user owns.
+	// User is who authenticated the connection (HandleWSWithAuth).
 	User protocol.UserInfo
-	// recheck resolves the credential the connection authenticated with,
-	// again — Recheck's half.
+	// recheck resolves the connection's credential again — Recheck's half.
 	recheck func(context.Context) (protocol.UserInfo, error)
 
 	// The heartbeat's read deadline, and whether PauseHeartbeat lifted it.
@@ -80,10 +72,9 @@ type WSConn struct {
 	pongWait time.Duration
 }
 
-// PauseHeartbeat lifts the heartbeat's read deadline for a stretch in which
-// the handler will not read — a terminal dialing a host, pulling an image —
-// since pongs are only processed by a read, and a deadline nobody can
-// extend would end the connection. ResumeHeartbeat re-arms it.
+// PauseHeartbeat lifts the heartbeat's read deadline for a stretch in which the
+// handler will not read (a terminal dialing, an image pull); ResumeHeartbeat
+// re-arms it.
 func (c *WSConn) PauseHeartbeat() {
 	c.hbMu.Lock()
 	c.hbPaused = true
@@ -99,14 +90,9 @@ func (c *WSConn) ResumeHeartbeat() {
 	_ = c.conn.SetReadDeadline(time.Now().Add(c.pongWait))
 }
 
-// Recheck resolves the connection's credential again and reports whether it
-// still names the same user with the same role. When it does not — revoked,
-// expired, demoted — the connection is closed with a policy-violation frame
-// and false is returned: the client reconnects, and the reconnect's auth
-// frame decides afresh. Called before a frame acts, so a revocation takes
-// effect at the next action rather than at the next reconnect. A credential
-// the store cannot resolve is not a revoked one: the connection stays and the
-// next frame asks again.
+// Recheck resolves the connection's credential again; when it no longer names
+// the same user and role, the connection is closed and false returned. A
+// credential the store cannot resolve keeps the connection — invariant 71.
 func (c *WSConn) Recheck() bool {
 	if c.recheck == nil {
 		return true
@@ -170,9 +156,7 @@ func (t *ConnTracker) remove(c *WSConn) {
 	}
 }
 
-// CloseAll closes every tracked connection with a going-away frame — the
-// shutdown's goodbye, so clients reconnect to the next process rather than
-// discover a dropped socket.
+// CloseAll closes every tracked connection with a going-away frame (shutdown).
 func (t *ConnTracker) CloseAll(reason string) {
 	if t == nil {
 		return
@@ -190,9 +174,8 @@ func (t *ConnTracker) CloseAll(reason string) {
 	}
 }
 
-// CloseForUser closes every connection the user holds, with reason. Each
-// client reconnects and authenticates afresh — a still-valid credential
-// comes straight back, a revoked one is refused.
+// CloseForUser closes every connection the user holds, with reason; each
+// client reconnects and authenticates afresh.
 func (t *ConnTracker) CloseForUser(userID, reason string) {
 	if t == nil {
 		return
@@ -216,9 +199,8 @@ func (c *WSConn) ReadJSON(v any) error {
 	return c.conn.ReadJSON(v)
 }
 
-// StartWriter launches the outbound writer goroutine (idempotent). After this,
-// use WriteAsync for event delivery; the goroutine serializes writes and
-// applies a deadline, so enqueueing never blocks on the network.
+// StartWriter launches the outbound writer goroutine (idempotent); after this,
+// WriteAsync delivers events without blocking on the network.
 func (c *WSConn) StartWriter() {
 	c.outOnce.Do(func() {
 		c.out = make(chan any, wsOutBuffer)
@@ -244,9 +226,8 @@ func (c *WSConn) writeLoop() {
 	}
 }
 
-// WriteAsync enqueues v for the writer goroutine. It returns false when the
-// outbound queue is full — a genuinely stuck client — so the caller can drop it
-// instead of blocking. It never blocks the calling (producer) goroutine.
+// WriteAsync enqueues v for the writer goroutine without blocking; false when
+// the outbound queue is full (a stuck client), so the caller drops it.
 func (c *WSConn) WriteAsync(v any) bool {
 	if c.out == nil {
 		return false
@@ -261,10 +242,8 @@ func (c *WSConn) WriteAsync(v any) bool {
 	}
 }
 
-// IsNormalClose reports whether err is an ordinary WebSocket disconnect — the
-// client closing cleanly (1000), navigating away or reloading the tab (1001),
-// or dropping without a close frame (1005). These are expected lifecycle
-// events, not failures, so callers should not log them as read errors.
+// IsNormalClose reports whether err is an ordinary WebSocket disconnect (1000,
+// 1001, 1005), which callers should not log as a read error.
 func IsNormalClose(err error) bool {
 	return websocket.IsCloseError(err,
 		websocket.CloseNormalClosure,
@@ -273,9 +252,8 @@ func IsNormalClose(err error) bool {
 	)
 }
 
-// WriteJSON writes v synchronously, holding the write mutex so concurrent sends
-// are safe, and bounding the write with a deadline. Used for handshake/control
-// replies on the connection's own goroutine; event delivery uses WriteAsync.
+// WriteJSON writes v synchronously under the write mutex with a deadline, for
+// handshake/control replies on the connection's own goroutine; events use WriteAsync.
 func (c *WSConn) WriteJSON(v any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -284,9 +262,8 @@ func (c *WSConn) WriteJSON(v any) error {
 }
 
 // WriteBinary writes a binary frame synchronously under the write mutex with
-// the standard deadline. Terminal byte streams use this instead of the JSON
-// event queue: they need frame ordering with backpressure on the producer
-// pump, not fire-and-forget enqueueing.
+// the standard deadline; terminal byte streams need ordering with backpressure,
+// not the queue.
 func (c *WSConn) WriteBinary(p []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -295,8 +272,7 @@ func (c *WSConn) WriteBinary(p []byte) error {
 }
 
 // ReadMessage reads the next frame and returns its websocket message type
-// (websocket.TextMessage or websocket.BinaryMessage) alongside the payload.
-// For JSON-only protocols prefer ReadJSON.
+// (text or binary) alongside the payload; JSON-only protocols use ReadJSON.
 func (c *WSConn) ReadMessage() (int, []byte, error) {
 	return c.conn.ReadMessage()
 }
@@ -341,14 +317,10 @@ func (c *WSConn) startHeartbeat(pongWait, pingInterval time.Duration) {
 // WSHandlerFunc handles a single upgraded websocket connection.
 type WSHandlerFunc func(conn *WSConn)
 
-// HandleWSWithAuth upgrades to WebSocket, then requires the client to send
-// {"type":"auth","token":"..."} as the first message — resolved by auth, so a
-// static token, a session token and a PAT all work. On success it replies
-// with {"type":"auth.ok"} and enters the normal handler loop; on failure it
-// closes the connection silently. Failures draw on guard's per-IP budget, the
-// same one REST draws on; an exhausted IP is refused before the upgrade. An
-// authenticated connection is held in conns (nil: untracked) for as long as
-// the handler runs.
+// HandleWSWithAuth upgrades to WebSocket and requires {"type":"auth","token":...}
+// as the first message, resolved by auth; it answers {"type":"auth.ok"} and runs
+// handler, or closes silently. Failures draw on guard's per-IP budget; conns
+// (nil: untracked) holds the connection while handler runs.
 func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc, guard *AuthGuard, conns *ConnTracker) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
@@ -362,14 +334,12 @@ func HandleWSWithAuth(handler WSHandlerFunc, auth AuthFunc, guard *AuthGuard, co
 			logging.Ctx(c.Request.Context()).Error("ws upgrade", "error", err)
 			return
 		}
-		// Cap inbound frame size immediately — before the auth handshake — so an
-		// unauthenticated peer cannot OOM the process with a giant frame.
+		// Cap inbound frame size before the auth handshake.
 		ws.SetReadLimit(wsMaxMessageBytes)
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		conn := &WSConn{conn: ws, ctx: ctx, cancel: cancel}
 
-		// Require the auth frame to arrive within a bounded window so an idle,
-		// unauthenticated connection can't hold a goroutine and buffer open.
+		// The auth frame must arrive within a bounded window.
 		_ = ws.SetReadDeadline(time.Now().Add(wsAuthDeadline))
 		var frame struct {
 			Type  string `json:"type"`

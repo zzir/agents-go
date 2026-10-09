@@ -16,9 +16,9 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// MemoryHandler serves memories: the configuration scopes under /memories,
-// a session's own under /sessions/:id/memory. Who may read and write each
-// scope is store.MemoryPolicies (invariant 64).
+// MemoryHandler serves memories: the configuration scopes under /memories, a
+// session's own under /sessions/:id/memory; the rules are store.MemoryPolicies
+// (invariant 64).
 type MemoryHandler struct {
 	store    *store.MemoryStore
 	sessions *store.SessionStore
@@ -34,7 +34,8 @@ func NewMemoryHandler(memories *store.MemoryStore, sessions *store.SessionStore,
 
 // memoryReq is the request body for Create and Update.
 type memoryReq struct {
-	// ScopeKind is global, agent or session; ScopeID the agent or session id, empty for global.
+	// ScopeKind is global, agent or session; ScopeID the agent or session id,
+	// empty for global.
 	ScopeKind string `json:"scope_kind"`
 	ScopeID   string `json:"scope_id"`
 	// Key is unique within the scope; path-like, at most 200 characters.
@@ -310,9 +311,8 @@ func (h *MemoryHandler) ReadSession(c *gin.Context) {
 	c.JSON(http.StatusOK, m)
 }
 
-// writable checks the caller may write req's scope and builds the row to
-// write; on refusal the response is already written. A session memory lands
-// under the session's current generation.
+// writable checks the caller may write req's scope and builds the row (a session
+// memory under the session's current generation); on refusal the response is written.
 func (h *MemoryHandler) writable(c *gin.Context, req memoryReq) (*store.Memory, bool) {
 	ctx := c.Request.Context()
 	u, ok := server.CurrentUser(c)

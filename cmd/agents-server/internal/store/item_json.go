@@ -12,10 +12,9 @@ const (
 	anthropicRedactedPrefix  = "redacted_thinking:"
 )
 
-// adaptForeignItemJSON adapts an item produced by a different model for
-// replay against backend (a provider type, "" when unknown): a reasoning item
-// is dropped (nil) unless it was written by the same backend family, and
-// provider-assigned item ids are stripped.
+// adaptForeignItemJSON adapts another model's item for replay against
+// backend ("" when unknown): a reasoning item is dropped (nil) outside its
+// backend family, and provider-assigned item ids are stripped.
 func adaptForeignItemJSON(raw []byte, backend string) []byte {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -41,9 +40,9 @@ func adaptForeignItemJSON(raw []byte, backend string) []byte {
 	return out
 }
 
-// NormalizeItemJSON rewrites a stored item for strict Responses-API backends
-// that require message `content` to be an array: a bare string is wrapped in
-// a one-part input_text array, and a literal `"content": null` is dropped.
+// NormalizeItemJSON rewrites a stored item for backends that require message
+// `content` as an array: a bare string becomes a one-part input_text array, a
+// null is dropped.
 func NormalizeItemJSON(raw []byte) []byte {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {

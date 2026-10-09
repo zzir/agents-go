@@ -24,8 +24,7 @@ import (
 	"github.com/zzir/agents-go/mcp"
 )
 
-// Manager manages MCP server connections. It maintains a map of active
-// connections keyed by config ID.
+// Manager holds the active MCP server connections, keyed by config ID.
 type Manager struct {
 	// rootCtx bounds the connections' own lifetime (an in-flight handshake
 	// included), independent of the request that triggered the connect.
@@ -48,8 +47,7 @@ type connectState struct {
 	gen    uint64
 }
 
-// NewManager returns a new manager with no active connections. rootCtx
-// scopes connection lifetimes: cancelling it severs every connection.
+// NewManager returns an empty manager; rootCtx scopes every connection's lifetime.
 func NewManager(rootCtx context.Context, cfg *settings.Reader) *Manager {
 	if rootCtx == nil {
 		rootCtx = context.Background()
@@ -113,21 +111,19 @@ func (m *Manager) finishConnect(id string, gen uint64, srv *mcp.Server, connErr 
 	return nil
 }
 
-// Connect creates and starts an MCP server connection from a stored config.
-// If the server is already connected, this is a no-op. ctx only bounds the
-// connection handshake; the connection itself lives until Disconnect,
-// CloseAll, or the manager's root context ends.
+// Connect starts an MCP server connection from a stored config; a no-op when
+// already connected. ctx bounds only the handshake: the connection lives until
+// Disconnect, CloseAll or the root context ends.
 func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error {
-	// Validate config before claiming the connect slot so a bad config fails
-	// fast and can't strand the in-progress flag.
+	// Validated before the connect slot is claimed.
 	var hc store.HTTPMcpConfig
 	if cerr := store.DecodeConfig(cfg.Config, &hc); cerr != nil {
 		return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 	}
 	transport := m.httpTransport(ctx, &hc, nil)
 	opts := buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent)
-	// Redial makes the connection self-healing (spec §2.16), rebuilt on the
-	// manager's own context — a request context is long gone by then.
+	// Redial makes the connection self-healing (spec §2.16), on the manager's
+	// own context.
 	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {
 		return m.httpTransport(m.rootCtx, &hc, nil), nil
 	}
@@ -137,8 +133,7 @@ func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error
 		return err // already connected (nil) or another connect is in flight
 	}
 
-	// Handshake OUTSIDE the lock, under hctx (which Disconnect can cancel): a
-	// slow server must not block Get/IsConnected/Disconnect/Connect.
+	// Handshake OUTSIDE the lock, under hctx (which Disconnect can cancel).
 	srv, err := mcp.NewWithTransport(hctx, cfg.Name, transport, opts)
 	if err != nil {
 		err = fmt.Errorf("connecting MCP server %s: %w", cfg.Name, err)
@@ -146,12 +141,10 @@ func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error
 	return m.finishConnect(cfg.ID, gen, srv, err)
 }
 
-// Reconcile makes the live connection match a server's desired config after a
-// config write: it always drops the current connection and, for an enabled
-// server, reconnects in the background under a bounded deadline off the root
-// context. A disabled server is left disconnected. An OAuth server reconnects
-// through the coordinator's silent path — a saved token connects without a
-// popup; without one it waits for the user to authorize interactively.
+// Reconcile makes the live connection match a server's config after a write:
+// the current connection is dropped, and an enabled server reconnects in the
+// background off the root context (an OAuth one through the coordinator's
+// silent path, waiting for the user when no saved token connects).
 func (m *Manager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordinator) {
 	if desired == nil {
 		return
@@ -172,8 +165,7 @@ func (m *Manager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordina
 		go func() {
 			ctx, cancel := context.WithTimeout(m.rootCtx, mcpAutoConnectTimeout)
 			defer cancel()
-			// Empty origin = non-interactive: connect with the saved token or
-			// report needs-authorization without parking a popup-wait goroutine.
+			// Empty origin = non-interactive: the saved token or needs-authorization.
 			result, err := oauth.ConnectWithOAuth(ctx, m, &cfg, &hc, "")
 			switch {
 			case err != nil:
@@ -187,17 +179,15 @@ func (m *Manager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordina
 	go func() {
 		ctx, cancel := context.WithTimeout(m.rootCtx, mcpAutoConnectTimeout)
 		defer cancel()
-		// The write already returned to the client, so this log is the only
-		// trace a failed reconnect leaves.
+		// The only trace a failed reconnect leaves: the write already returned.
 		if err := m.Connect(ctx, &cfg); err != nil {
 			logging.Ctx(ctx).Warn("mcp reconnect after config change failed", "error", err, "mcp", cfg.Name)
 		}
 	}()
 }
 
-// IsOAuthConfig reports whether cfg is a server using OAuth, which must be
-// (re)connected through the OAuth coordinator rather than the plain Connect
-// path.
+// IsOAuthConfig reports whether cfg is a server using OAuth, which connects
+// through the OAuth coordinator, never plain Connect.
 func IsOAuthConfig(cfg *store.McpServerConfig) bool {
 	var hc store.HTTPMcpConfig
 	if len(cfg.Config) > 0 {
@@ -270,8 +260,8 @@ func (rt *errorBodyRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 }
 
 // ConnectHTTPWithOAuth connects a streamable HTTP MCP server with the given
-// OAuth handler. It is called from OAuthCoordinator in a goroutine and blocks
-// until the OAuth flow completes (or the context is cancelled).
+// OAuth handler, blocking until the flow completes or ctx ends (the
+// coordinator calls it in a goroutine).
 func (m *Manager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServerConfig, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) error {
 	done, hctx, gen, err := m.beginConnect(ctx, cfg.ID)
 	if err != nil || done {
@@ -305,8 +295,7 @@ func buildMcpOptions(name string, retry store.McpRetryConfig, useStructuredConte
 		ToolNamePrefix:       ToolPrefix(name),
 		MaxRetryAttempts:     retry.MaxRetryAttempts,
 		UseStructuredContent: useStructuredContent,
-		// One fetch, then memory: every turn lists each server's tools, and a
-		// remote round trip costs >100ms. The SDK invalidates on list_changed.
+		// Tools are listed every turn; one fetch, then memory until list_changed.
 		CacheToolsList: true,
 	}
 	if retry.RetryBackoffMs > 0 {
@@ -315,11 +304,9 @@ func buildMcpOptions(name string, retry store.McpRetryConfig, useStructuredConte
 	return opts
 }
 
-// Disconnect closes an MCP server connection and removes it from the manager.
-// It also invalidates any in-flight handshake for the same id: the generation
-// is bumped (so a handshake completing after this returns is discarded, not
-// installed) and the handshake's context is cancelled (so it releases the
-// connect slot promptly instead of after its own timeout).
+// Disconnect closes an MCP server connection and removes it from the manager,
+// invalidating any in-flight handshake for the id: its generation is bumped
+// (a late completion is discarded) and its context cancelled.
 func (m *Manager) Disconnect(id string) error {
 	m.mu.Lock()
 	m.connectGen[id]++
@@ -344,9 +331,7 @@ func (m *Manager) Get(id string) *mcp.Server {
 }
 
 // ListToolsFor returns the server's display name and the tools it exposes
-// right now, for a caller sizing its share of an agent's tool surface. It is a
-// live call — MCP tools are the server's, not the agent's — so the caller bounds
-// it with a context deadline.
+// right now. A live call: the caller bounds it with a context deadline.
 func (m *Manager) ListToolsFor(ctx context.Context, id string) (string, []*agents.Tool, error) {
 	srv := m.Get(id)
 	if srv == nil {
@@ -364,10 +349,9 @@ func (m *Manager) IsConnected(id string) bool {
 	return ok
 }
 
-// IsConnecting reports whether a connection handshake for the given ID is in
-// flight. Note an interactive OAuth flow holds the connect slot for its whole
-// popup wait, so this stays true throughout — check the OAuth coordinator's
-// IsAuthorizing first when deriving a user-facing state.
+// IsConnecting reports whether a handshake for the given ID is in flight. An
+// interactive OAuth flow holds the slot for its whole popup wait: a
+// user-facing state checks the coordinator's IsAuthorizing first.
 func (m *Manager) IsConnecting(id string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -384,11 +368,8 @@ func (m *Manager) CloseAll() {
 	}
 }
 
-// ConnectEnabled connects every stored MCP server whose Enabled flag
-// is true. Disabled servers are skipped. For OAuth servers with a saved token
-// it uses the coordinator to reconnect silently. Failures are logged and
-// skipped so one bad server cannot block the others (or server startup).
-// Intended to be run in a goroutine.
+// ConnectEnabled connects every enabled stored MCP server (OAuth ones silently
+// through the coordinator); a failure is logged and skipped. Run it in a goroutine.
 func ConnectEnabled(ctx context.Context, mgr *Manager, servers *store.McpServerStore, oauth *OAuthCoordinator) {
 	log := logging.Ctx(ctx)
 	configs, err := servers.List(ctx)
@@ -396,8 +377,8 @@ func ConnectEnabled(ctx context.Context, mgr *Manager, servers *store.McpServerS
 		log.Warn("listing mcp servers for auto-connect", "error", err)
 		return
 	}
-	// Concurrently, each under its own handshake timeout, so a hung server does
-	// not stall the others; the connection's lifetime is the root context's.
+	// Concurrently, each under its own handshake timeout; the connection's
+	// lifetime is the root context's.
 	var wg sync.WaitGroup
 	for i := range configs {
 		cfg := &configs[i]

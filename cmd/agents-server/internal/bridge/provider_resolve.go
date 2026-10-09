@@ -15,11 +15,8 @@ import (
 // that unlocks it, and the retry and fallback decorators around it.
 
 // AgentProvider loads the endpoint an agent reaches its model through. An
-// empty provider_id yields the ZERO provider — the openai backend with no
-// credential, so the run fails its pre-flight until the agent names a
-// provider that carries one. An agent that NAMES a provider on a host with
-// no provider store is an error, never a silent fall-through to the default
-// — that would run it on the wrong backend with the wrong key.
+// empty provider_id yields the ZERO provider (keyless openai, which fails
+// pre-flight — decisions §5.30); a named one with no store is an error.
 func AgentProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig) (store.Provider, error) {
 	if ac.ProviderID == "" {
 		return store.Provider{}, nil
@@ -31,8 +28,7 @@ func AgentProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig) 
 	if err != nil {
 		return store.Provider{}, fmt.Errorf("agent %q: provider %s: %w", ac.Name, ac.ProviderID, err)
 	}
-	// Re-checked at run time: a scope flip past the write-time guards must fail
-	// loudly, never spend a now-private key (decisions §5.29).
+	// Re-checked at run time — decisions §5.29.
 	if !store.RefVisible(pv.Scope, pv.OwnerID, ac.Scope, ac.OwnerID) {
 		return store.Provider{}, fmt.Errorf("agent %q: provider %s is out of the agent's scope — repoint the agent", ac.Name, ac.ProviderID)
 	}
@@ -66,8 +62,8 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 		prefixBound = prefixBound || anthropic
 		provider = agents.NewFallbackProvider(provider, fallbacks...)
 	}
-	// Outermost, so every model — fallbacks included — resolves attachment
-	// sentinels at the request edge (see attachment_hydrate.go).
+	// Outermost: every model, fallbacks included, resolves attachment sentinels
+	// (attachment_hydrate.go).
 	provider = hydrateAttachments(provider, deps.Attachments, func(ctx context.Context) string {
 		return deps.Settings.S3Config(ctx).PublicBaseURL
 	})
@@ -98,8 +94,8 @@ func buildProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, 
 		return nil, def, nil
 	}
 	baseURL := pv.BaseURL
-	// Validation forbids a custom base_url with chatgpt_login; this is the belt
-	// to that: the OAuth token never rides to an operator-typed host.
+	// The belt to validation's braces: the OAuth token never rides to a custom
+	// base_url.
 	if chatgptCreds != nil {
 		baseURL = providers.ChatGPTBaseURL
 	}
@@ -136,9 +132,9 @@ func fallbackProviders(ctx context.Context, deps *AgentDeps, ac *store.AgentConf
 	return fallbacks, anthropic, nil
 }
 
-// fallbackProvider loads the entry's provider row: by id, re-checking the
-// reference rule like the primary; an entry from before provider_id names an
-// endpoint instead, and resolves to the first provider the agent may reference at it.
+// fallbackProvider loads the entry's provider row by id, re-checking the
+// reference rule like the primary; an endpoint entry resolves to the first
+// provider the agent may reference at it.
 func fallbackProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, i int, e store.FallbackModel) (store.Provider, error) {
 	if e.ProviderID != "" {
 		pv, err := deps.Providers.Get(ctx, e.ProviderID)
@@ -165,8 +161,8 @@ func fallbackProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfi
 		ac.Name, i, providers.NormalizeType(e.ProviderType), e.BaseURL)
 }
 
-// fixedModelProvider pins a provider to one model name: FallbackProvider asks
-// every fallback for the PRIMARY's model name, so a configured one needs this.
+// fixedModelProvider pins a provider to one model name (FallbackProvider asks
+// every fallback for the PRIMARY's).
 type fixedModelProvider struct {
 	inner agents.ModelProvider
 	model string

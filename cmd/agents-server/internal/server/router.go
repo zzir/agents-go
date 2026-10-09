@@ -21,16 +21,14 @@ func (s *Server) RegisterAPI(register func(*gin.RouterGroup)) {
 // the token middleware does not guard it: a hook proves itself by signature.
 const HooksPrefix = "/hooks"
 
-// RegisterHook mounts the webhook endpoint, POST HooksPrefix/:id. It is
-// auth-exempt (HMAC self-authenticating), so it carries its own per-IP rate
-// limit — signature verification alone would let anyone spend our reads.
+// RegisterHook mounts the webhook endpoint, POST HooksPrefix/:id: auth-exempt
+// (HMAC), with its own per-IP rate limit.
 func (s *Server) RegisterHook(hook gin.HandlerFunc) {
 	s.Engine.POST(HooksPrefix+"/:id", RateLimit(hookRatePerMinute, hookRateBurst), hook)
 }
 
-// RegisterWS mounts the WebSocket endpoints with application-level auth (the
-// first WS frame, resolved by the same AuthFunc as REST): /ws for run events,
-// /ws/terminal for one interactive sandbox terminal per connection.
+// RegisterWS mounts the WebSocket endpoints, authenticated by the first frame:
+// /ws for run events, /ws/terminal for one sandbox terminal per connection.
 func (s *Server) RegisterWS(ws, terminal WSHandlerFunc) {
 	s.Engine.GET("/ws", HandleWSWithAuth(ws, s.auth, s.guard, s.Conns))
 	s.Engine.GET("/ws/terminal", HandleWSWithAuth(terminal, s.auth, s.guard, s.Conns))

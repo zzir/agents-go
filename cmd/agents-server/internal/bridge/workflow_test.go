@@ -1023,12 +1023,9 @@ func TestRetryOfAPausedStepKeepsTheStepPrompt(t *testing.T) {
 	}
 }
 
-// A decision on a step approval whose task has not (yet) been paused — the
-// row exists, the task still says working under the same run — is refused as
-// not ready and the row put back, so nothing is left paused with no approval
-// to answer. (The launcher pauses first and files second, so this needs a
-// store write to have failed or a client to have raced; either way the
-// decision must not vanish.)
+// A decision on a step approval whose task is not (yet) paused — the row
+// exists, the task still says working under the same run — is refused as not
+// ready and the row put back; the decision must not vanish.
 func TestStepApprovalOnAnUnpausedTaskIsNotReady(t *testing.T) {
 	ctx := context.Background()
 	runner, sess, wf := workflowFixture(t, "http://127.0.0.1:1")

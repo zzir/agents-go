@@ -17,8 +17,7 @@ import (
 )
 
 // A sealed value is "enc:v2:<kid>:<base64 nonce+ciphertext>"; a stored value
-// without the prefix is plaintext from before a key and passes through
-// (docs/howto/workbench-deploy.md "Secret handling").
+// without the prefix passes through — docs/howto/workbench-deploy.md "Secret handling".
 const (
 	prefix   = "enc:"
 	version  = "v2"
@@ -88,9 +87,8 @@ func FromEnvOrFile(env, file string) (*Box, error) {
 	return New(key)
 }
 
-// Seal encrypts plain for the named place — "table.column", the additional
-// data the ciphertext is bound to, so it opens nowhere else. "" stays "".
-// A value that already looks sealed is sealed as the text it is.
+// Seal encrypts plain bound to label ("table.column"), so it opens nowhere
+// else; "" stays "", and a value that already looks sealed is sealed as text.
 func (b *Box) Seal(label, plain string) string {
 	if b == nil || plain == "" {
 		return plain
@@ -102,9 +100,7 @@ func (b *Box) Seal(label, plain string) string {
 }
 
 // looksSealed reports whether stored has the sealed envelope shape
-// (enc:v<n>:<kid>:<payload>), not merely a leading "enc:" — so a plaintext
-// value a user typed that happens to start with "enc:" is left alone instead
-// of being treated as ciphertext and failing to open.
+// (enc:v<n>:<kid>:<payload>), not merely a leading "enc:".
 func looksSealed(stored string) bool {
 	if !strings.HasPrefix(stored, prefix+"v") {
 		return false

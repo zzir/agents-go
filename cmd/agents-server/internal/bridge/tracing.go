@@ -23,11 +23,11 @@ const liveOmitted = "[omitted from the live update — reopen this trace to load
 // into the refs the client renders; nil when the server stores no attachments.
 type attachmentResolver func(ctx context.Context, ids []string) []protocol.AttachmentRef
 
-// wsProcessor streams spans to the client: a pending version on start, the
-// full version on end (the only one persisted). No batching — liveness is the point.
+// wsProcessor streams spans to the client unbatched: a pending version on
+// start, the full version on end (the only one persisted).
 type wsProcessor struct {
-	// ctx is what span persistence runs under: tracing.Processor's hooks take
-	// no context, so it is captured — detached from the run's cancellation.
+	// ctx is what span persistence runs under (the hooks take none), detached
+	// from the run's cancellation.
 	ctx    context.Context
 	send   func(string, any)
 	writer *store.SpanWriter
@@ -39,7 +39,7 @@ type wsProcessor struct {
 }
 
 // newWSProcessor returns the processor of one run; elemCap is the run's
-// resolved trace_span_data_kb in bytes, read once rather than per span.
+// resolved trace_span_data_kb in bytes, read once.
 func newWSProcessor(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, elemCap int, resolve attachmentResolver) *wsProcessor {
 	return &wsProcessor{
 		ctx:         context.WithoutCancel(ctx),
@@ -135,8 +135,8 @@ func (p *wsProcessor) OnSpanStart(span *tracing.Span) {
 }
 
 // OnSpanEnd pushes the finished span (same span_id; the client replaces the
-// pending one) and persists it, each bounded on its own. The images its input
-// references ride the live event resolved, as run.started carries them.
+// pending one) and persists it, each bounded on its own; the live event carries
+// its images resolved (invariant 70).
 func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 	ts := p.spanMessage(span)
 	data := spanDataJSON(span.Data)

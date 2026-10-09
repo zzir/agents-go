@@ -24,9 +24,8 @@ import (
 // back), which the per-element trace_span_data_kb does not bound as a total.
 const MaxReplayBodyBytes = 64 << 20
 
-// PlaygroundHandler serves one-off model calls for replaying a generation
-// from the trace panel with edited inputs. Calls go straight to the model —
-// no session history is read or written and no run is recorded.
+// PlaygroundHandler serves one-off model calls for replaying a generation with
+// edited inputs; no session history is read or written, no run recorded.
 type PlaygroundHandler struct {
 	deps *bridge.AgentDeps
 }
@@ -63,9 +62,11 @@ type playgroundTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
-	// ReadOnly reports a tool plan mode leaves usable, which "ask before changes" does not ask about.
+	// ReadOnly reports a tool plan mode leaves usable, which "ask before
+	// changes" does not ask about.
 	ReadOnly bool `json:"read_only,omitempty"`
-	// Source is where the tool comes from: sandbox, skills, tasks, workflows, context, checklist, or mcp:<server>.
+	// Source is where the tool comes from: sandbox, skills, tasks, workflows,
+	// context, checklist, or mcp:<server>.
 	Source string `json:"source,omitempty"`
 }
 
@@ -84,8 +85,7 @@ type playgroundResp struct {
 	TTFTMS int64 `json:"ttft_ms,omitempty"`
 }
 
-// Generate performs a single non-streaming model call with the given
-// instructions and input items, using the agent's provider configuration.
+// Generate performs a single model call with the given instructions and input items.
 //
 //	@Summary		Playground generate
 //	@Description	One-off model call for replaying a traced generation with edited inputs. Touches no session, records no run; tools are schema-only and never executed. output_schema replays structured output; stream=true switches the response to SSE (delta/reasoning events, then done or error).
@@ -119,8 +119,8 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 		badRequest(c, "building agent: "+err.Error())
 		return
 	}
-	// No sandbox is attached (the empty sandboxID above), so this is a no-op
-	// today — kept so a future sandbox-carrying build cannot leak its hold.
+	// A no-op with no sandbox attached; kept so a sandbox-carrying build cannot
+	// leak its hold.
 	defer built.Release()
 	if built.Provider == nil {
 		badRequest(c, "no API key configured for this agent")
@@ -312,10 +312,8 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 	})
 }
 
-// AgentTools returns the agent's CURRENT tool surface as schema-only
-// definitions (bridge built-ins, connected MCP servers' tools, the skills
-// reader, and the sandbox tools a project would add) for the Replay dialog's
-// tool picker and the agent editor's approval list.
+// AgentTools returns the agent's current tool surface as schema-only
+// definitions, for the Replay tool picker and the agent editor.
 //
 //	@Summary		Agent tool surface
 //	@Description	Schema-only definitions (name, description, parameters, read_only, source) of every tool the agent would carry right now; the sandbox tools are listed as a bound project would add them. Tools are never executed from here.
@@ -368,8 +366,7 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 	for i, t := range built.Agent.Tools {
 		out = append(out, describe(t, sources[i], false))
 	}
-	// A server whose listing fails is skipped rather than failing the
-	// endpoint: one broken server should not blank a picker.
+	// A server whose listing fails is skipped, not the endpoint.
 	for _, srv := range built.Agent.MCPServers {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), contextMCPTimeout)
 		tools, lerr := srv.ListTools(ctx, nil, built.Agent)

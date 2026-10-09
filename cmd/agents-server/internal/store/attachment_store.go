@@ -11,8 +11,9 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// AttachmentScheme prefixes an attachment id in the image_url a session
-// entry stores: "agents-attachment:<id>", resolved at the model boundary — invariant 56.
+// AttachmentScheme prefixes an attachment id in the image_url a session entry
+// stores: "agents-attachment:<id>", resolved at the model boundary — invariant
+// 56.
 const AttachmentScheme = "agents-attachment:"
 
 // AttachmentSentinelURL returns the image_url an entry stores for id.
@@ -63,8 +64,8 @@ func (s *AttachmentStore) Get(ctx context.Context, id string) (*Attachment, erro
 	return a, nil
 }
 
-// MetaBatch returns the named attachments keyed by id. Missing ids are simply
-// absent from the map — the caller decides whether absence degrades or fails.
+// MetaBatch returns the named attachments keyed by id; a missing id is absent
+// from the map.
 func (s *AttachmentStore) MetaBatch(ctx context.Context, ids []string) (map[string]Attachment, error) {
 	out := make(map[string]Attachment, len(ids))
 	if len(ids) == 0 {

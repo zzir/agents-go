@@ -13,18 +13,16 @@ import (
 )
 
 // AgentSpec is an agent config's JSON-encoded fields decoded once into typed
-// values. Save-time validation (handler.validateAgentConfig) and the build
-// (buildAgentFromConfig) both go through DecodeAgentSpec, so each field's
-// structural contract is defined in one place; a decode error is a bad config
-// (400 at save, a loud build failure at run). External resolution (guardrail
-// names, MCP server ids, sandbox) is NOT here — it needs live stores.
+// values, through DecodeAgentSpec at save time and at build time alike.
+// External resolution (guardrail names, MCP server ids, sandbox) is NOT here.
 type AgentSpec struct {
 	// ModelSettings is nil when unset. extra_body (which ModelSettings does not
 	// itself model) is merged in from the same JSON object.
 	ModelSettings *agents.ModelSettings
 	// OutputType is nil when no structured-output schema is configured.
 	OutputType agents.OutputSchema
-	// Approval is the HITL selection: the mode and the tool-name list (nil when unset/empty).
+	// Approval is the HITL selection: the mode and the tool-name list (nil when
+	// unset/empty).
 	Approval store.ApprovalGroup
 	// Tools is the selected MCP server id list (nil when unset).
 	Tools []string
@@ -44,10 +42,9 @@ type AgentSpec struct {
 	ErrorHandlers *ErrorHandlersSpec
 }
 
-// ErrorHandlersSpec is the decoded error_handlers config field: for each run
-// error kind, a static fallback that turns the failure into a normal
-// completion. Only the top-level agent's spec applies — like max_turns it is
-// forwarded to run-level options, so handoff targets share the run's handlers.
+// ErrorHandlersSpec is the decoded error_handlers config field: per run error
+// kind, a static fallback that turns the failure into a normal completion.
+// Only the top-level agent's applies (run-level options, like max_turns).
 type ErrorHandlersSpec struct {
 	MaxTurns           *ErrorHandlerEntry `json:"max_turns,omitempty"`
 	ModelRefusal       *ErrorHandlerEntry `json:"model_refusal,omitempty"`
@@ -55,9 +52,8 @@ type ErrorHandlersSpec struct {
 }
 
 // ErrorHandlerEntry is one kind's static fallback: the final output the run
-// completes with (a JSON value — a string for plain-text agents, an object
-// matching the output schema for structured ones) and whether to keep the
-// synthesized assistant message out of the conversation history.
+// completes with (a JSON string for a plain-text agent, else an object of the
+// output schema) and whether to keep the synthesized message out of the history.
 type ErrorHandlerEntry struct {
 	FinalOutput        json.RawMessage `json:"final_output"`
 	ExcludeFromHistory bool            `json:"exclude_from_history,omitempty"`
@@ -99,10 +95,10 @@ func decodeErrorHandlers(raw string, outputType agents.OutputSchema) (*ErrorHand
 	return &spec, nil
 }
 
-// BuildErrorHandlers converts the declarative spec into the SDK's run-level
-// handlers: each configured kind returns its static fallback. A nil spec (or
-// kind) leaves that error fatal. The fallback of an agent with an output
-// schema is validated against it by the SDK when the handler fires.
+// BuildErrorHandlers converts the spec into the SDK's run-level handlers, each
+// configured kind returning its static fallback; a nil spec (or kind) leaves
+// that error fatal. The SDK validates a fallback against the output schema when
+// it fires.
 func (s *ErrorHandlersSpec) BuildErrorHandlers() agents.RunErrorHandlers {
 	if s == nil {
 		return agents.RunErrorHandlers{}
@@ -120,8 +116,7 @@ func (e *ErrorHandlerEntry) staticHandler() agents.RunErrorHandler {
 	if e == nil {
 		return nil
 	}
-	// Decode once: a plain-text agent's final output must be the string value
-	// itself, and RunErrorData consumers expect plain Go values.
+	// Decoded once: RunErrorData consumers expect plain Go values.
 	var v any
 	if err := json.Unmarshal(e.FinalOutput, &v); err != nil {
 		return nil // unreachable: decodeErrorHandlers validated the JSON
@@ -132,15 +127,13 @@ func (e *ErrorHandlerEntry) staticHandler() agents.RunErrorHandler {
 	}
 }
 
-// DecodeAgentSpec decodes every JSON-encoded field of an agent config into typed
-// values exactly once, returning the first structural error (unprefixed, so the
-// caller can wrap it with "agent %q:" or surface it verbatim to an API client).
-// It performs no I/O and resolves no external references.
+// DecodeAgentSpec decodes every JSON-encoded field of an agent config into
+// typed values exactly once, returning the first structural error unprefixed
+// (the caller adds "agent %q:"). No I/O, no external references.
 func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 	spec := &AgentSpec{}
 
-	// Enum fields are refused at save, not coerced at run: an unknown value
-	// would parse as "error" while the UI showed something else.
+	// Enum fields are refused at save, not coerced at run.
 	switch ac.Compaction.Mode {
 	case "", store.CompactionModeSummary, store.CompactionModeReset, store.CompactionModeHybrid:
 	default:
@@ -167,13 +160,12 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 
 	if ac.ModelSettings != "" {
 		var ms agents.ModelSettings
-		// Malformed or wrong-typed model_settings is rejected rather than
-		// silently running on defaults.
+		// Malformed or wrong-typed model_settings is rejected.
 		if err := json.Unmarshal([]byte(ac.ModelSettings), &ms); err != nil {
 			return nil, fmt.Errorf("model_settings is invalid: %w", err)
 		}
-		// extra_body is not a ModelSettings field; carry it over from the same
-		// raw object so a configured extra_body survives the decode.
+		// extra_body is not a ModelSettings field; carried over from the same
+		// raw object.
 		var raw map[string]json.RawMessage
 		if json.Unmarshal([]byte(ac.ModelSettings), &raw) == nil {
 			if eb, ok := raw["extra_body"]; ok {
@@ -200,8 +192,7 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 	default:
 		return nil, fmt.Errorf("approval mode %q: use never, on_change, always, or leave it unset", ac.Approval.Mode)
 	}
-	// "*" would route exec_command around its per-command gate (invariant 90);
-	// a mode that asks already covers every tool it means to.
+	// "*" would route exec_command around its per-command gate (invariant 90).
 	if ac.Approval.Asks() && slices.Contains(ac.Approval.ApproveTools, "*") {
 		return nil, fmt.Errorf("approve_tools %q: with approval mode %s, name the tools to add or leave the list empty", "*", ac.Approval.Mode)
 	}
@@ -216,8 +207,8 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 			return nil, fmt.Errorf("retry_policy is invalid: %w", err)
 		}
 	}
-	// An entry without provider_id is one from before the field: an endpoint,
-	// resolved to a provider when the run builds (provider_resolve.go).
+	// An entry without provider_id names an endpoint, resolved when the run
+	// builds (provider_resolve.go).
 	spec.FallbackModels = ac.Resilience.FallbackModels
 
 	if ac.ErrorHandlers != "" {

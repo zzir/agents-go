@@ -14,8 +14,7 @@ import (
 // A turn that ended before the SDK's per-turn save — cancelled, or failed
 // before its first item — is persisted here so a reload still shows it.
 
-// partialTurn is what savePartialTurn writes. Its fields are all strings; build
-// it with keyed fields so a misordered pair cannot slip past the compiler.
+// partialTurn is what savePartialTurn writes; build it with keyed fields (all strings).
 type partialTurn struct {
 	sessionID string
 	runID     string
@@ -27,9 +26,8 @@ type partialTurn struct {
 	// injected are queued inputs the run announced as read (run.injected) after
 	// its last write; the failed attempt took them back.
 	injected []string
-	// annRole is the trailing marker's kind, "cancelled" or "error", and annMsg
-	// its optional detail; code is the error's run.error code. Empty annRole
-	// writes no marker.
+	// annRole is the trailing marker's kind ("cancelled" / "error", "" writes
+	// none), annMsg its optional detail, code the run.error code.
 	annRole string
 	annMsg  string
 	code    string
@@ -46,9 +44,9 @@ type partialTurn struct {
 	notRunReason string
 }
 
-// savePartialTurn records what the SDK cannot for a cancelled or failed run: streamed
-// reasoning/text and a stop marker as annotations, plus the prompt and any
-// injected input left unpersisted.
+// savePartialTurn records what the SDK cannot for a cancelled or failed run:
+// streamed reasoning/text and a stop marker as annotations, plus any
+// unpersisted prompt and injected input.
 func (r *Runner) savePartialTurn(t partialTurn) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -74,8 +72,8 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 		}
 	}
 
-	// An input the run read stays in the transcript, like the prompt. One read
-	// at the final output was written before its announcement: not twice.
+	// An input the run read stays in the transcript; one read at the final
+	// output is already written.
 	if len(t.injected) > 0 {
 		if held, err := es.RunEndsWithUserInputs(ctx, t.runID, t.injected); err != nil || !held {
 			for _, text := range t.injected {
@@ -90,8 +88,7 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 		}
 	}
 
-	// Annotations: a fabricated reasoning item would be rejected on replay,
-	// and an abandoned turn must not enter the model's history.
+	// Annotations: an abandoned turn must not enter the model's history.
 	if t.partialReasoning != "" {
 		entries = append(entries, session.NewAnnotationEntry(
 			agents.ItemDisplay{Kind: agents.DisplayReasoning, Text: t.partialReasoning},
@@ -114,8 +111,8 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 		if t.annRole == "cancelled" {
 			d.Kind = agents.DisplayCancelled
 		}
-		// The code and, for a guardrail block, its name and stage ride in the
-		// extra so a reload rebuilds the same card the live event drew.
+		// The code and a guardrail's name and stage ride in the extra (a reload
+		// rebuilds the card).
 		if t.code != "" || t.guardrail != "" {
 			d.Extra = map[string]any{}
 			if t.code != "" {
@@ -136,8 +133,7 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 		return
 	}
 	if err := es.Append(ctx, entries...); err != nil {
-		// The only durable record of a cancelled/failed turn's prompt and
-		// in-flight thinking; best-effort, but never silent.
+		// Best effort, never silent.
 		logging.Ctx(r.hub.rootCtx).Warn("persisting partial turn", "error", err, "run_id", t.runID, "session_id", t.sessionID)
 	}
 }
@@ -153,8 +149,7 @@ func isCancellation(ctx context.Context, err error) bool {
 func runHasPersistedItems(ctx context.Context, es *store.EntryStore, runID string) bool {
 	exists, err := es.RunHasItems(ctx, runID)
 	if err != nil {
-		// On a query error, assume something was saved: skipping a possibly
-		// duplicate prompt is safer than writing a guaranteed duplicate.
+		// On a query error, assume something was saved (no guaranteed duplicate).
 		return true
 	}
 	return exists

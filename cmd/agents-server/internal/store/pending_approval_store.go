@@ -68,7 +68,7 @@ type TaskApproval struct {
 }
 
 // ListByParentTasks returns the pending approvals of every background task
-// spawned from the given chat session — one join instead of a per-task query.
+// spawned from the given chat session, in one join.
 func (s *PendingApprovalStore) ListByParentTasks(ctx context.Context, parentSessionID string) ([]TaskApproval, error) {
 	var out []TaskApproval
 	if err := s.db.NewSelect().Model((*PendingApproval)(nil)).
@@ -129,9 +129,8 @@ func (s *PendingApprovalStore) Delete(ctx context.Context, runID string) error {
 	return nil
 }
 
-// ListOlderThan returns the approvals filed before cutoff — the reaper's
-// candidates. This read claims nothing; each row is claimed on its own
-// (TaskStore.ClaimApprovalCancelled), so the reaper never acts on one it did not remove.
+// ListOlderThan returns the approvals filed before cutoff, the reaper's
+// candidates; this read claims nothing (TaskStore.ClaimApprovalCancelled does).
 func (s *PendingApprovalStore) ListOlderThan(ctx context.Context, cutoff time.Time) ([]PendingApproval, error) {
 	var out []PendingApproval
 	if err := s.db.NewSelect().Model(&out).Where("created_at < ?", cutoff).OrderExpr("created_at ASC").Scan(ctx); err != nil {

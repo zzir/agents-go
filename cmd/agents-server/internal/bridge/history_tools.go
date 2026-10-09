@@ -13,9 +13,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// historyTools builds history_search / history_read for a chat run: the
-// session is opened per call from the run context, and a scope names one of
-// the session's own background tasks.
+// historyTools builds history_search / history_read for a chat run; the
+// session is opened per call, and a scope names one of its own background tasks.
 func (r *Runner) historyTools(_ context.Context, _ string) []*agents.Tool {
 	var lookup taskLookup
 	if r.Deps.Tasks != nil {

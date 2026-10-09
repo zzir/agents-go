@@ -347,12 +347,9 @@ func TestPersistCompactionSkipsWhenEntriesGone(t *testing.T) {
 	}
 }
 
-// The checkpoint parents at the tip the fold LEFT, whichever rows the fold took.
-// RunCompaction only ever folds a prefix, so its passes never move the tip;
-// persistCompaction folds whatever it is handed, and a fold reaching the tip
-// must carry the append point with it — otherwise the checkpoint hangs off a row
-// the fold removed from the view, and the branch ends at the checkpoint with the
-// kept history stranded behind it.
+// The checkpoint parents at the tip the fold LEFT, whichever rows the fold
+// took: RunCompaction folds a prefix, persistCompaction whatever it is handed,
+// and a fold reaching the tip must carry the append point with it.
 func TestPersistCompactionParentsTheCheckpointAtTheSurvivingTip(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

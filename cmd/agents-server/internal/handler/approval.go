@@ -11,25 +11,21 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// ApprovalHandler serves the REST surface for human-in-the-loop tool
-// approvals: listing what a session is waiting on, and approving/rejecting a
-// pending tool call. Decisions resume the run through the shared runner hub,
-// so the resulting events stream over GET /runs/{id}/events or the WebSocket.
+// ApprovalHandler serves the REST surface for human-in-the-loop approvals:
+// listing what waits, and approving or rejecting a pending tool call.
 type ApprovalHandler struct {
 	store  *store.PendingApprovalStore
 	runner *bridge.Runner
 }
 
 // NewApprovalHandler returns a handler backed by the pending-approval store
-// and the runner. The session listing also surfaces approvals paused inside
-// the session's background tasks (a join in the approval store).
+// and the runner.
 func NewApprovalHandler(s *store.PendingApprovalStore, runner *bridge.Runner) *ApprovalHandler {
 	return &ApprovalHandler{store: s, runner: runner}
 }
 
 // SessionApproval is a pending approval enriched with the background task it
-// belongs to — a sub-agent task or a workflow execution. Empty for the
-// session's own foreground run.
+// belongs to; empty for the session's own foreground run.
 type SessionApproval struct {
 	store.PendingApproval
 	TaskID    string `json:"task_id,omitempty"`
@@ -59,8 +55,8 @@ func (h *ApprovalHandler) ListBySession(c *gin.Context) {
 	for _, it := range items {
 		out = append(out, SessionApproval{PendingApproval: it})
 	}
-	// Approvals paused inside this session's background tasks surface here
-	// too, tagged with their task — one join, not a query per task.
+	// Approvals paused inside the session's background tasks surface here too,
+	// tagged with their task.
 	taskItems, err := h.store.ListByParentTasks(ctx, c.Param("id"))
 	if err != nil {
 		internalError(c, err)
@@ -101,8 +97,7 @@ type approvalResultResp struct {
 	Status string `json:"status"`
 }
 
-// Approve approves the pending tool call identified by the tool_call_id path
-// parameter and resumes its run.
+// Approve approves the pending tool call identified by the tool_call_id path parameter.
 //
 //	@Summary		Approve tool call
 //	@Description	Approves a pending tool call and resumes the run under its original run id; stream it via GET /runs/{id}/events (existing cursors stay valid). For exec_command, the optional body scope extends the approval: "once" (default), "same" (trust this exact command for the session), or "all" (trust every command).
@@ -123,8 +118,7 @@ func (h *ApprovalHandler) Approve(c *gin.Context) {
 	h.resolve(c, true, req.toScope(), "")
 }
 
-// Reject rejects the pending tool call identified by the tool_call_id path
-// parameter (with an optional reason) and resumes its run.
+// Reject rejects the pending tool call identified by the tool_call_id path parameter.
 //
 //	@Summary		Reject tool call
 //	@Description	Rejects a pending tool call and resumes the run under its original run id so the model can react.
@@ -148,7 +142,8 @@ func (h *ApprovalHandler) Reject(c *gin.Context) {
 // approveAllResp names the resumed run and how many calls were approved.
 type approveAllResp struct {
 	RunID string `json:"run_id"`
-	// Approved counts the calls approved; the pause's other calls (a plan, a workflow save, a memory proposal) stay for a decision each.
+	// Approved counts the calls approved; the pause's other calls (a plan, a
+	// workflow save, a memory proposal) stay for a decision each.
 	Approved int `json:"approved"`
 }
 
@@ -217,14 +212,13 @@ func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 		conflict(c, "session already has an active run: "+busy.RunID)
 		return
 	}
-	// Unresumable-by-version: a clear 409 with the reason, not a masked 500.
-	// The stale record was already discarded, so the run is gone.
+	// Unresumable by version: 409 with the reason; the stale record is already
+	// discarded.
 	if stale, ok := errors.AsType[*bridge.StaleApprovalStateError](err); ok {
 		conflict(c, stale.Error())
 		return
 	}
-	// The paused run reached a terminal state (a concurrent stop won) and
-	// cannot be continued — a state conflict, not a server fault.
+	// The paused run reached a terminal state (a concurrent stop won): 409.
 	if notResumable, ok := errors.AsType[bridge.ErrRunNotResumable](err); ok {
 		conflict(c, notResumable.Error())
 		return
@@ -234,14 +228,12 @@ func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
 		conflict(c, void.Error())
 		return
 	}
-	// The task was retried past the paused run — the approval belongs to a
-	// finished attempt and was discarded. 409, not 500.
+	// The task was retried past the paused run and the approval discarded: 409.
 	if staleAttempt, ok := errors.AsType[*bridge.StaleApprovalAttemptError](err); ok {
 		conflict(c, staleAttempt.Error())
 		return
 	}
-	// The paused run had not finished settling; the row is preserved for a
-	// retry, so it is a transient conflict.
+	// The paused run had not finished settling; the row is kept for a retry: 409.
 	if notReady, ok := errors.AsType[*bridge.ApprovalNotReadyError](err); ok {
 		conflict(c, notReady.Error())
 		return

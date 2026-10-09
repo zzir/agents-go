@@ -18,12 +18,9 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// buildAgentRegistry resolves the names in a serialized RunState back to live
-// agents, and that resolved agent is the one the SDK re-runs on approval. So
-// the registry MUST carry the run's sandbox-backed tools; building it with an
-// empty project id strips exec_command/read_file/… and the approved call fails
-// with "tool not found on agent" (regression: an approval-gated sandbox tool
-// could never be approved).
+// buildAgentRegistry's agent is the one the SDK re-runs on approval, so the
+// registry MUST carry the run's sandbox-backed tools: built with an empty
+// project id, the approved call fails with "tool not found on agent".
 func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)

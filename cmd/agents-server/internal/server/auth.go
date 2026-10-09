@@ -18,9 +18,8 @@ import (
 // expired or revoked — which of those, the transport never learns.
 var ErrUnauthorized = errors.New("unauthorized")
 
-// AuthFunc resolves a presented bearer credential to the calling user,
-// ErrUnauthorized when it is not one, or another error when it cannot tell
-// (the store is down) — refused 503 without charging the guess budget.
+// AuthFunc resolves a presented bearer to the calling user: ErrUnauthorized when
+// it is not one, another error when it cannot tell (refused 503, uncharged).
 type AuthFunc func(ctx context.Context, bearer string) (protocol.UserInfo, error)
 
 // GenerateToken returns a cryptographically random 32-character hex string.
@@ -30,9 +29,8 @@ func GenerateToken() string {
 	return hex.EncodeToString(b)
 }
 
-// BearerToken extracts the Authorization bearer credential, "" when absent.
-// Query-string tokens are not accepted — they end up in browser history and
-// proxy logs.
+// BearerToken extracts the Authorization bearer credential, "" when absent;
+// query-string tokens are not accepted.
 func BearerToken(c *gin.Context) string {
 	if h := c.GetHeader("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return h[7:]
@@ -73,10 +71,8 @@ func authExempt(path string) bool {
 	return false
 }
 
-// TokenAuth returns a gin middleware that authenticates /api/* requests via
-// auth and attaches the caller for CurrentUser. /ws uses application-level
-// auth (first WS message) against the same AuthFunc and guard. Failures
-// draw on guard's per-IP budget; an exhausted IP answers 429 unchecked.
+// TokenAuth returns the middleware authenticating /api/* requests via auth and
+// attaching the caller for CurrentUser; failures draw on guard's per-IP budget.
 func TokenAuth(auth AuthFunc, guard *AuthGuard) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path

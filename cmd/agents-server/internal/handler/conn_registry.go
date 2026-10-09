@@ -53,9 +53,8 @@ func (r *ConnRegistry) unregister(conn *server.WSConn) {
 	r.mu.Unlock()
 }
 
-// AttachAll subscribes every connection of the run's owner to runID with a
-// full replay, skipping connections already attached (an approval resume keeps
-// the run id). Wired to Runner.OnRunAttach. A record without an owner attaches nobody.
+// AttachAll subscribes every connection of the run's owner to runID with a full
+// replay, skipping those already attached (Runner.OnRunAttach); no owner, nobody.
 func (r *ConnRegistry) AttachAll(runID string) {
 	info, ok := r.hub.Info(runID)
 	if !ok || info.OwnerID == "" {
@@ -72,9 +71,9 @@ func (r *ConnRegistry) AttachAll(runID string) {
 	}
 }
 
-// Broadcast writes env to every connection of sessionID's owner not attached
-// to exceptRunID's stream (Runner.OnBroadcast). No replay: a later joiner
-// reads the durable rows. A session that cannot be resolved reaches nobody.
+// Broadcast writes env to every connection of sessionID's owner not attached to
+// exceptRunID's stream (Runner.OnBroadcast); no replay, and an unresolved
+// session reaches nobody.
 func (r *ConnRegistry) Broadcast(ctx context.Context, env *protocol.Envelope, exceptRunID, sessionID string) {
 	// Detached: the caller's ctx is often a run's that just ended.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), broadcastResolveTimeout)

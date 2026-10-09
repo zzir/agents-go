@@ -30,10 +30,8 @@ type taskStopReq struct {
 	Graceful bool `json:"graceful"`
 }
 
-// Stop cancels a background task, with the same status-aware semantics as the
-// model-facing task_stop tool: a live run is canceled (gracefully when asked),
-// a task paused on an approval is canceled by discarding the approval, and an
-// already-final task reports its actual status as an error.
+// Stop cancels a background task, with the status-aware semantics of the
+// model-facing task_stop tool.
 //
 //	@Summary		Stop a background task
 //	@Description	Cancels a running task, or discards the pending approval of a paused one. Errors if the task is already final.
@@ -67,14 +65,12 @@ func (h *TaskHandler) stopError(c *gin.Context, err error) {
 	case errors.Is(err, tasks.ErrNotFound), errors.Is(err, store.ErrNotFound):
 		notFound(c)
 	default:
-		// A store failure is a server fault, not a resource conflict —
-		// details go to the log, not the wire (error-envelope invariant).
+		// A store failure is a 500; the detail goes to the log.
 		internalError(c, err)
 	}
 }
 
-// Retry resumes a failed background task: the same task and session, a new
-// run, continuing from where the failed attempt stopped.
+// Retry resumes a failed background task with a new run in the same session.
 //
 //	@Summary		Retry a failed background task
 //	@Description	Starts a new attempt at a failed task, resuming its existing conversation. Errors if the task is not failed or has used every attempt.
@@ -181,8 +177,8 @@ type TaskPage struct {
 	Total int `json:"total"`
 }
 
-// List responds with a page of background tasks across every conversation,
-// newest first — the Workflows hub's Runs view.
+// List responds with a page of background tasks across every conversation —
+// the Workflows hub's Runs view.
 //
 //	@Summary		List background tasks across sessions
 //	@Description	One page of the tasks of every live session, newest first, each with the name of the conversation it belongs to, plus the total. kind narrows to one kind ("workflow" for executions); live=true keeps only working / input_required rows; limit is the page size (500 at most), offset where the page starts.

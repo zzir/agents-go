@@ -12,8 +12,7 @@ import (
 )
 
 // RunInput is what a person's message carries into a run: the text, and the
-// image attachments uploaded beforehand. Attachments ride only THIS path —
-// task spawns, workflow steps and injections stay text-only.
+// image attachments uploaded beforehand (invariant 57); every other path is text-only.
 type RunInput struct {
 	Text          string
 	AttachmentIDs []string

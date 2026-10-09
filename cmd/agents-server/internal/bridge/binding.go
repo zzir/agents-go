@@ -11,15 +11,12 @@ import (
 )
 
 // ErrBindingContention reports a first-run bind that lost its race
-// repeatedly. Transient by construction — another run of the same session is
-// binding it — so the client retries once it settles. Handlers map it to 409.
+// repeatedly (another run of the session is binding it). Handlers map it to 409.
 var ErrBindingContention = errors.New("the session is being bound; try again")
 
-// ErrInvalidBinding refuses a first-run project binding whose value could
-// never work: an unknown project, or one that is not the session owner's.
-// Refused at bind time, before anything is written — the binding is
-// permanent, so a bad value accepted here would disable the session's sandbox
-// for good. Handlers map it to 400.
+// ErrInvalidBinding refuses, before anything is written, a first-run project
+// binding that could never work: an unknown project, or one that is not the
+// session owner's (the binding is permanent, invariant 27). Handlers map it to 400.
 type ErrInvalidBinding struct{ Reason string }
 
 func (e ErrInvalidBinding) Error() string { return "invalid project binding: " + e.Reason }
@@ -50,22 +47,17 @@ func (r *Runner) planProjectBinding(ctx context.Context, sess *store.Session, pr
 		}
 		return bindingPlan{}, err
 	}
-	// A foreign project reads as absent — ownership is not an oracle for
-	// existence (the authz rule sessions follow).
+	// A foreign project reads as absent (ownership is not an existence oracle).
 	if proj.OwnerID != sess.OwnerID {
 		return bindingPlan{}, ErrInvalidBinding{Reason: "project not found: " + projectID}
 	}
 	return bindingPlan{projectID: proj.ID, needBind: true}, nil
 }
 
-// BindSessionProject binds a still-unbound session to a project with no run of
-// its own — for a start that is not a message but carries the composer's
-// project: a workflow into a fresh conversation. Same plan and CAS as a run's
-// first bind, and the same announcement, broadcast since there is no run
-// stream to ride. An empty projectID or a session already bound binds nothing
-// (false, nil): the standing binding is what the work then uses. A CAS lost
-// goes around, up to maxBindAttempts, then ErrBindingContention — never a
-// start on a session left unbound.
+// BindSessionProject binds a still-unbound session to a project with no run
+// of its own (a workflow into a fresh conversation), with a run's plan, CAS
+// and announcement. An empty projectID or a bound session binds nothing
+// (false, nil); a CAS lost retries up to maxBindAttempts, then ErrBindingContention.
 func (r *Runner) BindSessionProject(ctx context.Context, sessionID, projectID string) (bool, error) {
 	for attempt := 1; ; attempt++ {
 		sess, err := r.Deps.Sessions.Get(ctx, sessionID)
@@ -93,24 +85,21 @@ func (r *Runner) BindSessionProject(ctx context.Context, sessionID, projectID st
 			}
 			return true, nil
 		}
-		// Lost: either a run bound the session meanwhile (the next pass sees it
-		// and binds nothing) or the project vanished.
+		// Lost: a run bound the session meanwhile, or the project vanished.
 		if attempt >= maxBindAttempts {
 			return false, ErrBindingContention
 		}
 	}
 }
 
-// maxBindAttempts bounds the plan→register→bind loop in reserveRun:
-// three passes distinguish an unlucky race from a config under active edit.
+// maxBindAttempts bounds the plan→register→bind loop in reserveRun.
 const maxBindAttempts = 3
 
-// bindSessionAgent back-fills the session's bound agent once the run answered.
-// Detached from the run's context: a client that hung up must not decide it.
+// bindSessionAgent back-fills the session's bound agent once the run
+// answered, detached from the run's context.
 func (r *Runner) bindSessionAgent(sessionID, agentConfigID string) {
 	if err := r.Deps.Sessions.BindAgentIfEmpty(context.Background(), sessionID, agentConfigID); err != nil {
-		// Best-effort back-fill of the session's bound agent; log rather than
-		// swallow so a persistent failure is diagnosable.
+		// Best effort, logged.
 		logging.Ctx(r.hub.rootCtx).Warn("updating session agent config", "error", err, "session_id", sessionID)
 	}
 }
@@ -119,8 +108,7 @@ func (r *Runner) bindSessionAgent(sessionID, agentConfigID string) {
 // reservation (invariant 27). boundNow reports THIS run bound the session.
 func (r *Runner) reserveRun(runID, sessionID, agentConfigID, projectID string) (seg *runSegment, ctx context.Context, plan bindingPlan, boundNow bool, err error) {
 	for attempt := 1; ; attempt++ {
-		// Reject unknown sessions up front; the same lookup feeds the sandbox
-		// binding below.
+		// Unknown sessions are rejected up front; the lookup feeds the binding below.
 		sess, err := r.Deps.Sessions.Get(r.hub.rootCtx, sessionID)
 		if err != nil {
 			return nil, nil, bindingPlan{}, false, err
@@ -148,8 +136,8 @@ func (r *Runner) reserveRun(runID, sessionID, agentConfigID, projectID string) (
 		if won {
 			return seg, ctx, plan, true, nil
 		}
-		// The CAS refused (another run bound it, or the project/session vanished):
-		// withdraw and go around; the next pass re-validates. Then it is the client's.
+		// The CAS refused (another run bound it, or the project/session
+		// vanished): withdraw and go around.
 		r.withdrawRun(runID, sessionID, seg)
 		if attempt == maxBindAttempts {
 			return nil, nil, bindingPlan{}, false, ErrBindingContention

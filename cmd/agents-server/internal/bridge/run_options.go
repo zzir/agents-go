@@ -41,8 +41,7 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		Context: runContext,
 		Conversation: agents.ConversationOptions{
 			Session: sess,
-			// A non-positive HistoryLimit already means "no limit" on both
-			// sides, so it needs no translation.
+			// A non-positive HistoryLimit means "no limit" on both sides.
 			Settings: session.Settings{Limit: built.Session.HistoryLimit},
 		},
 		Exec: agents.ExecOptions{
@@ -52,15 +51,14 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 			ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
 			ToolNotFoundBehavior:  toolNotFoundBehavior(built.Behavior.ToolNotFoundBehavior),
 			ShouldStopAfterTurn:   stopAtTools(built.StopAtTools),
-			// Context overflow → forced compaction → retry, only on a
-			// compaction-aware session (spec §2.5g).
+			// Overflow → forced compaction → retry, on a compaction-aware
+			// session (spec §2.5g).
 			Overflow: agents.OverflowPolicy{MaxRetries: 2},
 		},
 		Guardrails: built.RunGuardrails,
 		Model:      agents.ModelOptions{Provider: provider},
 		Observe:    agents.ObserveOptions{Tracer: tracer, IncludeSensitiveData: &built.TraceIncludeSensitive},
-		// The run loop's own records join the server's stream. Most of what it
-		// says is Debug, so this shows only at --log-level debug.
+		// The run loop's own records join the server's stream (mostly Debug).
 		Log: agents.LogConfig{Logger: log, SensitiveData: built.LogSensitive},
 	}
 	if built.Behavior.HandoffInputFilter == "nest_history" {
@@ -81,8 +79,7 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 }
 
 // contextBudget is what the model is told about its window: the config's
-// declared size and the conversation's last measured call, invariant 28's
-// provider ruler, never an estimate. No window, nothing.
+// declared size and the last measured call (invariant 28). No window, nothing.
 func contextBudget(ctx context.Context, built *BuildResult, sa *store.EntryStore, ref session.Ref) agents.ContextBudget {
 	if built.ContextWindow <= 0 {
 		return agents.ContextBudget{}
@@ -103,7 +100,7 @@ func contextBudget(ctx context.Context, built *BuildResult, sa *store.EntryStore
 }
 
 // toolNotFoundBehavior: unset means RETURN TO MODEL, not the SDK's stricter
-// default — a model inventing a tool name is a routine slip; "error" aborts.
+// default; "error" aborts.
 func toolNotFoundBehavior(s string) agents.ToolNotFoundBehavior {
 	if s == "" {
 		return agents.ToolNotFoundReturnToModel
@@ -130,8 +127,7 @@ func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.Mo
 }
 
 // compactionModeFor is the mode a run compacts in: the agent's, except that a
-// background run summarizes. It has no memory tools to write down what a
-// reset would keep, and the parent conversation is not its to reset.
+// background run summarizes (it has no memory tools — invariant 34).
 func compactionModeFor(built *BuildResult, background bool) string {
 	if background {
 		return store.CompactionModeSummary

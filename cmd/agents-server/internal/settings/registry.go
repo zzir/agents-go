@@ -25,9 +25,8 @@ const (
 	KindBool   Kind = "bool"
 )
 
-// The keys. Every read, mask and validation names one of these rather than a
-// string literal, so a rename is a compile error instead of a setting that
-// silently stops being read.
+// The keys; every read, mask and validation names one of these, never a
+// string literal.
 const (
 	KeyProxyURL                  = "proxy_url"
 	KeySystemPrompt              = "system_prompt"
@@ -99,9 +98,7 @@ var defs = []Def{{
 	Placeholder: "Optional instructions prepended to all agents",
 	Description: "Prepended to every agent, whether or not it binds a sandbox; an agent opts out under its own Instructions. Keep it tool-agnostic: file and shell tools mount only when a session binds a sandbox, so put machine- and tool-specific instructions in that sandbox's own Prompt, not here.",
 }, {
-	// Defaulted: every model call adds a span row and a reference list as
-	// long as the conversation it was given — "keep everything" is a choice,
-	// not the absence of one.
+	// Defaulted: "keep everything" is a choice, not the absence of one.
 	Key:         KeyTraceRetentionDays,
 	Kind:        KindInt,
 	Group:       GroupTracing,
@@ -119,9 +116,8 @@ var defs = []Def{{
 	Description: "A session whose newest trace span is older than this many days loses its stored model requests, replies and tool payloads daily. The spans stay with their timing, usage and errors, so the trace panel reads as before; only Replay has nothing to seed from. Unset or 0 keeps payloads as long as their spans.",
 	Min:         0,
 }, {
-	// The server always passes this resolved value explicitly as
-	// Observe.IncludeSensitiveData; the SDK reads no env var (spec §2.14), so
-	// this switch is the one authority.
+	// Passed explicitly as Observe.IncludeSensitiveData; the SDK reads no env
+	// var (spec §2.14).
 	Key:         KeyTraceIncludeSensitiveData,
 	Kind:        KindBool,
 	Group:       GroupTracing,

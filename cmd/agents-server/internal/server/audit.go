@@ -28,11 +28,9 @@ func SetAuditResource(c *gin.Context, id string) { c.Set(auditResourceKey, id) }
 // (login, the OAuth exchange) — auth-exempt, so TokenAuth attached nobody.
 func SetAuditActor(c *gin.Context, u protocol.UserInfo) { c.Set(auditActorKey, u) }
 
-// Audit records every successful mutating API request after it completes:
-// "METHOD /route/pattern" with the first path parameter as the resource,
-// written before the handler chain returns (one INSERT, so a shutdown cannot
-// lose it). A request nobody authenticated (an auth-exempt route that did not
-// name its actor) leaves no line — there is no one to attribute it to.
+// Audit records every successful mutating API request as "METHOD
+// /route/pattern" plus the first path parameter, before the handler chain
+// returns; a request nobody authenticated leaves no line.
 func Audit(record protocol.AuditFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()

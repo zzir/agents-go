@@ -136,8 +136,7 @@ func (h *SkillHandler) Create(c *gin.Context) {
 }
 
 // Update overwrites a skill's content; name and description follow the new
-// frontmatter. Editing an imported skill detaches it from its source, so a
-// later re-import cannot overwrite the local edit.
+// frontmatter. Editing an imported skill detaches it from its source.
 //
 //	@Summary	Update skill
 //	@Tags		skills
@@ -167,8 +166,7 @@ func (h *SkillHandler) Update(c *gin.Context) {
 		return
 	}
 	sk := &store.Skill{Name: meta.Name, Description: meta.Description, Content: req.Content}
-	// Scope, owner and source lineage come from the row INSIDE the store's
-	// transaction, so a concurrent scope flip is not silently reverted.
+	// Scope, owner and source lineage come from the row inside the transaction.
 	err := h.store.Update(ctx, prev.ID, sk, ownershipGuard(prev.Scope, prev.OwnerID, skillScope,
 		func(p *store.Skill) error {
 			sk.Scope, sk.OwnerID = p.Scope, p.OwnerID
@@ -184,8 +182,8 @@ func (h *SkillHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, sk)
 }
 
-// Delete removes a skill. An agent whose selection still names the id simply
-// stops advertising it — same as the skill never having been installed.
+// Delete removes a skill; an agent whose selection still names it stops
+// advertising it (invariant 13).
 //
 //	@Summary	Delete skill
 //	@Tags		skills
@@ -200,10 +198,8 @@ func (h *SkillHandler) Delete(c *gin.Context) {
 	}
 }
 
-// SetScope promotes a workbench-authored skill to global or demotes it back
-// to its author's private set. An imported skill changes scope with its repo
-// group (SetRepoScope) — never alone, so a group stays one scope. Agents
-// still selecting a demoted skill stop advertising it — same as a delete.
+// SetScope flips a workbench-authored skill between private and global; an
+// imported one moves with its repo group (SetRepoScope) — decisions §5.31.
 //
 //	@Summary	Change a skill's scope
 //	@Tags		skills
@@ -216,8 +212,8 @@ func (h *SkillHandler) Delete(c *gin.Context) {
 //	@Security	BearerAuth
 //	@Router		/skills/{id}/scope [post]
 func (h *SkillHandler) SetScope(c *gin.Context) {
-	// Visibility decides FIRST: a foreign private row reads as absent, so the
-	// imported/authored refusal below is never an existence oracle.
+	// Visibility decides first, so the refusal below is never an existence
+	// oracle (decisions §5.29).
 	sk, ok := gatedRow(c, h.store.CrudStore, skillScope, visibleRow)
 	if !ok {
 		return
@@ -237,10 +233,8 @@ type repoScopeReq struct {
 	OwnerID string `json:"owner_id,omitempty"`
 }
 
-// SetRepoScope flips a whole repo group between private and global — all or
-// nothing, so a group is always one scope (decisions §5.31). Promote is
-// admin-only; demote is the admin's or the group owner's, returning the rows
-// to their author.
+// SetRepoScope flips a whole repo group between private and global, all or
+// nothing — decisions §5.31.
 //
 //	@Summary	Change an imported repo's scope (all of its skills at once)
 //	@Tags		skills
@@ -263,8 +257,7 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// The group is named, never guessed: (repo, owner), defaulting to the
-	// caller's own — decisions §5.31.
+	// The group is (repo, owner), defaulting to the caller's own — decisions §5.31.
 	groupOwner := req.OwnerID
 	if groupOwner == "" {
 		groupOwner = ownerID
@@ -295,9 +288,7 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// SetOwner transfers a skill to another account (admin). An imported skill
-// moves with its whole repo group — the group is the unit of ownership as it
-// is of scope, so one row may not leave it behind (decisions §5.31).
+// SetOwner transfers a skill to another account (admin) — decisions §5.31.
 //
 //	@Summary	Reassign a skill's owner (admin); an imported skill moves with its repo
 //	@Tags		skills

@@ -9,14 +9,13 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// WakeKindTask is the one wake kind — a task, of any kind, owes the turn.
-// Aliased from the store, where the wake-up model lives (a task's debt is
-// written there, atomically with the task's terminal state).
+// WakeKindTask is the one wake kind: a task, of any kind, owes the turn.
+// Aliased from the store, where the wake-up model lives.
 const WakeKindTask = store.WakeKindTask
 
 // Waker turns finished background work into a turn on the session that asked
-// for it: the debt is a store.Wakeup row, drained at the end of any run on the
-// session and at startup, one drain paying every same-inherit debt — invariant 32.
+// for it: a store.Wakeup row, drained at the end of any run on the session
+// and at startup — invariant 32.
 type Waker struct{ r *Runner }
 
 // Owe records that sessionID is owed a turn. The caller fills Kind, SourceID,
@@ -29,8 +28,7 @@ func (w Waker) Owe(ctx context.Context, wk *store.Wakeup) error {
 }
 
 // Cancel drops what a source still owes for one attempt (a task's run id):
-// its result already reached the session another way, or the work was
-// cancelled and a turn restating that would only repeat what the user just did.
+// its result reached the session another way, or the work was cancelled.
 func (w Waker) Cancel(ctx context.Context, kind, sourceID, attempt string) {
 	if w.r.Deps.Wakeups == nil {
 		return
@@ -40,9 +38,8 @@ func (w Waker) Cancel(ctx context.Context, kind, sourceID, attempt string) {
 	}
 }
 
-// Drain wakes the session with everything it is owed, if it can be woken now.
-// A refusal is not a failure: the debts stay pending and the next boundary
-// tries again.
+// Drain wakes the session with everything it is owed, if it can be woken now;
+// a refusal leaves the debts pending for the next boundary.
 func (w Waker) Drain(ctx context.Context, sessionID string) {
 	if w.r.Deps.Wakeups == nil || sessionID == "" {
 		return
@@ -56,8 +53,8 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 		log.Warn("listing wake-up debts", "error", err, "session_id", sessionID)
 		return
 	}
-	// A debt with no agent config is undeliverable for good (Inherit is frozen):
-	// cancel it now instead of re-warning at every boundary — invariant 32.
+	// A debt with no agent config is undeliverable for good (Inherit is
+	// frozen): cancelled — invariant 32.
 	deliverable := make([]store.Wakeup, 0, len(pending))
 	for i := range pending {
 		if store.DecodeInherit([]byte(pending[i].Inherit)).AgentConfigID == "" {
@@ -81,8 +78,7 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 
 	if _, err := w.r.StartWakeRun(sessionID, inherit.AgentConfigID, inherit.ProjectID,
 		strings.Join(payloads, "\n\n"), parentRunID, w.r.wakeWithheld(ctx, batch), nil); err != nil {
-		// Lost a race with a run that started between the guard and here. The
-		// debts stay pending and that run's own boundary re-drains them.
+		// Lost a race with a run that started meanwhile; its own boundary re-drains.
 		log.Debug("wake-up run did not start", "error", err, "session_id", sessionID)
 		return
 	}
@@ -124,9 +120,8 @@ func (w Waker) canWake(ctx context.Context, sessionID string) bool {
 	return !paused
 }
 
-// DrainAll pays every session owed something — the restart sweep. Runs after
-// the reconciliation that decides which work died with the process, so the
-// debts it finds are complete.
+// DrainAll pays every session owed something: the restart sweep, after the
+// reconciliation (FailOrphanedTasks) has written every debt.
 func (w Waker) DrainAll(ctx context.Context) {
 	if w.r.Deps.Wakeups == nil {
 		return

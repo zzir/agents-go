@@ -5,12 +5,9 @@ import (
 	"testing"
 )
 
-// AttachAll subscribes from a snapshot of the registry taken under its lock and
-// released before it subscribes, so a socket that closes in that window is
-// still in the snapshot. The subscription it then records would have nobody
-// left to detach it: closeAll already ran. It fed a dead connection — and
-// called Close on it once per event — until the run's fanout closed, minutes
-// later.
+// AttachAll subscribes from a snapshot taken under the registry's lock and
+// released before subscribing, so a socket closing in that window is still in
+// the snapshot; the subscription recorded after closeAll must detach itself.
 func TestConnSubs_SubscribeAfterCloseDetachesItself(t *testing.T) {
 	cs := &connSubs{subs: map[string]func(){}}
 	cs.closeAll()

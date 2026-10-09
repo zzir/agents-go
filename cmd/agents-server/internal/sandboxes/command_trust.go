@@ -41,8 +41,7 @@ func (t *CommandTrust) AllowAll() {
 	t.approveAll = true
 }
 
-// TrustStore maps a session id to its CommandTrust: in-memory on purpose, so
-// trust survives interrupt/resume within a process and resets on restart.
+// TrustStore maps a session id to its CommandTrust, in memory: trust resets on restart.
 type TrustStore struct {
 	mu        sync.Mutex
 	bySession map[string]*CommandTrust
@@ -106,8 +105,7 @@ func (s *TrustStore) ForSession(id string) *CommandTrust {
 	return t
 }
 
-// Forget drops a session's trust and its withheld runs — the session-delete
-// path calls it, since the maps otherwise grow for the process lifetime.
+// Forget drops a session's trust and its withheld runs (the session-delete path).
 func (s *TrustStore) Forget(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -115,10 +113,8 @@ func (s *TrustStore) Forget(id string) {
 	maps.DeleteFunc(s.withheld, func(_ string, w withheldRun) bool { return w.sessionID == id })
 }
 
-// CommandHash canonicalizes an exec_command argsJSON to a stable key, so
-// "approve this exact command" matches only a byte-identical (cmd, workdir)
-// pair. It is exact, not prefix/substring: approving `go test` never green-lights
-// `go test && rm -rf` — any change re-triggers approval.
+// CommandHash canonicalizes an exec_command argsJSON to a stable key: exact,
+// not prefix — only a byte-identical (cmd, workdir) pair matches.
 func CommandHash(argsJSON string) string {
 	var a struct {
 		Cmd     string `json:"cmd"`

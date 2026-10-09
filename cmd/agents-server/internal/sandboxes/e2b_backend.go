@@ -23,8 +23,7 @@ func (e2bBackend) Open(spec Spec) (sandbox.Sandbox, error) {
 	return e2bsb.New(opts)
 }
 
-// Reclaim kills the sandbox, which on these services destroys the filesystem
-// with it: the sandbox IS the storage. There is nothing else to remove.
+// Reclaim kills the sandbox; on these services the sandbox IS the storage.
 func (e2bBackend) Reclaim(ctx context.Context, spec Spec) error {
 	if spec.Project.InstanceRef == "" {
 		return nil // nothing was ever provisioned
@@ -76,26 +75,21 @@ func e2bOptions(spec Spec) (e2bsb.Options, error) {
 	}, nil
 }
 
-// Rebuild is refused: on these services the sandbox IS the storage, so
-// replacing the compute would destroy the working tree (that is Reclaim).
+// Rebuild is refused: the sandbox IS the storage (invariant 44).
 func (e2bBackend) Rebuild(context.Context, Spec) error {
 	return fmt.Errorf("this sandbox runs on an E2B-compatible service, where the sandbox IS the storage: " +
 		"replacing it would destroy the working tree. Export the project first, then create a new one")
 }
 
-// Check provisions a sandbox, runs the health command in it and destroys it
-// again — the only way to prove a remote service reachable and its template
-// runnable.
+// Check provisions a sandbox, runs the health command in it and destroys it again.
 func (e2bBackend) Check(ctx context.Context, sb *store.Sandbox) error {
-	// A synthetic project: the check needs a sandbox, not a tree, and nothing
-	// it provisions outlives the call.
+	// A synthetic project: nothing it provisions outlives the call.
 	spec := Spec{Sandbox: sb, Project: &store.Project{ID: "health-check", Name: "health-check"}}
 	opts, err := e2bOptions(spec)
 	if err != nil {
 		return err
 	}
-	// No callback: this sandbox is destroyed below, and recording it would
-	// write a handle onto a project that does not exist.
+	// No callback: the sandbox is destroyed below, and the project does not exist.
 	opts.OnSandboxID = nil
 	opts.Metadata = map[string]string{"agents_health_check": "1"}
 	inst, err := e2bsb.New(opts)
@@ -103,8 +97,7 @@ func (e2bBackend) Check(ctx context.Context, sb *store.Sandbox) error {
 		return err
 	}
 	defer func() {
-		// WithoutCancel: a cancelled request must not leave a billed sandbox.
-		// Bounded, so a hung control plane cannot wedge the check forever.
+		// WithoutCancel, bounded: a cancelled request must not leave a billed sandbox.
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
 		defer cancel()
 		if derr := inst.Destroy(dctx); derr != nil {

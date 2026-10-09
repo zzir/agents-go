@@ -24,15 +24,10 @@ const (
 	terminalReadChunk = 32 << 10
 )
 
-// TerminalHandler serves /ws/terminal: one interactive sandbox terminal per
-// WebSocket connection. The client opens with a terminal.open envelope, then
-// binary frames carry the byte stream both ways while text envelopes carry
-// control (resize, exit). Only a persistent container can host one
-// (sandbox.TerminalOpener). Live terminals are tracked per project so a
-// configuration change can tear them down, and capped per sandbox.
+// TerminalHandler serves /ws/terminal, one sandbox terminal per connection:
+// terminal.open, then binary frames for bytes and text envelopes for control.
 type TerminalHandler struct {
-	// Audit, when set, records every terminal opened: a shell on a sandbox
-	// host is the act most worth a line. Wired at bootstrap.
+	// Audit, when set, records every terminal opened. Wired at bootstrap.
 	Audit     protocol.AuditFunc
 	sandboxes *store.SandboxStore
 	projects  *store.ProjectStore
@@ -41,8 +36,9 @@ type TerminalHandler struct {
 
 	mu   sync.Mutex
 	live map[string]map[*liveTerminal]struct{} // project id → open terminals
-	// fence maps a project id to the lowest runtime generation still allowed
-	// to register: a terminal dials BEFORE registering, so a change in between is refused there.
+	// fence maps a project id to the lowest runtime generation still allowed to
+	// register: a terminal dials BEFORE registering, so a change in between is
+	// refused there.
 	fence map[string]int64
 }
 
@@ -56,9 +52,8 @@ type sandboxProvider interface {
 
 var _ sandboxProvider = (*sandboxes.Manager)(nil)
 
-// liveTerminal pairs a Terminal with its connection so a teardown can stop
-// both pumps; gen is the config generation it opened under, sandboxID what
-// the cap counts it against.
+// liveTerminal pairs a Terminal with its connection so a teardown stops both
+// pumps; gen is the config generation it opened under, sandboxID what the cap counts.
 type liveTerminal struct {
 	term      sandbox.Terminal
 	conn      *server.WSConn
@@ -84,8 +79,7 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 
 	term, proj, release, err := h.open(conn)
 	if err == nil && h.Audit != nil {
-		// Detail names the owner: an admin may open a shell into a member's
-		// tree (decisions §5.28), and the log must say whose.
+		// Detail names the owner: an admin may open a member's tree — decisions §5.28.
 		h.Audit(context.WithoutCancel(conn.Context()), protocol.AuditRecord{
 			Actor: conn.User, Action: "terminal.open", Resource: proj.ID,
 			Detail: "project " + proj.Name + " (owner " + proj.OwnerID + ")",
@@ -237,9 +231,8 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Pr
 	return term, proj, release, nil
 }
 
-// register adds a live terminal, enforcing the per-sandbox cap (projects on
-// one sandbox share a container) and the generation fence under one lock.
-// full is temporary, stale is final.
+// register adds a live terminal under one lock, enforcing the per-sandbox cap
+// and the generation fence; full is temporary, stale is final.
 func (h *TerminalHandler) register(projectID string, lt *liveTerminal, limit int) (ok, stale bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -281,10 +274,8 @@ func (h *TerminalHandler) unregister(projectID string, lt *liveTerminal) {
 	}
 }
 
-// CloseProjectTerminals severs the terminals a project opened before minGen
-// and fences that generation off, so a terminal still dialing is refused at
-// register. Every configuration change arrives as a project generation
-// (decisions §5.33); a delete passes maxTerminalGen.
+// CloseProjectTerminals severs the terminals a project opened before minGen and
+// fences that generation off (decisions §5.33); a delete passes maxTerminalGen.
 func (h *TerminalHandler) CloseProjectTerminals(projectID string, minGen int64) {
 	h.mu.Lock()
 	if h.fence[projectID] < minGen {

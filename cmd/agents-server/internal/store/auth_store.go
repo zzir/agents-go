@@ -33,8 +33,8 @@ const (
 	TokenKindPAT     = "pat"
 )
 
-// LocalUserID is the implicit account behind --auth token mode, so both auth
-// modes share one data model. A fixed UUID, as every id column is uuid-typed.
+// LocalUserID is the implicit account behind --auth token mode: a fixed UUID,
+// as every id column is uuid-typed.
 const LocalUserID = "00000000-0000-0000-0000-000000000001"
 
 const (
@@ -43,8 +43,7 @@ const (
 	// sessionTokenMaxAge is the ceiling sliding cannot pass: a session signs
 	// in again after this, however busy it was.
 	sessionTokenMaxAge = 90 * 24 * time.Hour
-	// tokenSlideEvery caps how often one token's use rewrites its row — the
-	// write budget is what the throttle protects, not correctness.
+	// tokenSlideEvery caps how often one token's use rewrites its row.
 	tokenSlideEvery = time.Hour
 )
 
@@ -179,12 +178,11 @@ type OAuthIdentity struct {
 	AvatarURL string
 }
 
-// ResolveOAuthLogin finds or creates the account for one completed OAuth
-// login. Merge order: the (provider, subject) identity; else the same
-// verified email; else a new account. A login matching bootstrapAdmin is an
-// admin; with none, the first OAuth account is (docs/howto/workbench-auth.md).
-// Concurrent logins are arbitrated by the unique indexes (one retry) and,
-// for two first logins, by firstAccountLock.
+// ResolveOAuthLogin finds or creates the account for one completed OAuth login:
+// by (provider, subject), else by verified email, else new. A login matching
+// bootstrapAdmin is an admin; with none, the first OAuth account is
+// (docs/howto/workbench-auth.md). Races settle on the unique indexes (one
+// retry) and firstAccountLock.
 func (s *UserStore) ResolveOAuthLogin(ctx context.Context, id OAuthIdentity, bootstrapAdmin string) (*User, error) {
 	u, err := s.resolveOAuthLogin(ctx, id, bootstrapAdmin)
 	if _, dup := UniqueViolation(err); dup {
@@ -208,8 +206,8 @@ func (s *UserStore) resolveOAuthLogin(ctx context.Context, id OAuthIdentity, boo
 		if !u.DisabledAt.IsZero() {
 			return ErrDisabled
 		}
-		// The provider's view of the person refreshes on every login; the
-		// email does not — it is the merge key, and identity follows subject.
+		// The provider's view of the person refreshes on every login; the email
+		// (the merge key) does not.
 		u.Name = id.Name
 		u.AvatarURL = id.AvatarURL
 		u.LastLoginAt = time.Now().UTC()
@@ -228,7 +226,8 @@ func (s *UserStore) resolveOAuthLogin(ctx context.Context, id OAuthIdentity, boo
 }
 
 // userForIdentity resolves the account inside the login transaction, creating
-// rows as the merge order requires; firstIsAdmin makes the first real account the admin.
+// rows as the merge order requires; firstIsAdmin makes the first real account
+// the admin.
 func userForIdentity(ctx context.Context, tx bun.Tx, id OAuthIdentity, email string, firstIsAdmin bool) (*User, error) {
 	idn := new(Identity)
 	err := tx.NewSelect().Model(idn).
@@ -250,8 +249,8 @@ func userForIdentity(ctx context.Context, tx bun.Tx, id OAuthIdentity, email str
 	case errors.Is(err, sql.ErrNoRows):
 		u = &User{Email: email, Role: RoleMember}
 		if firstIsAdmin {
-			// Two first logins must not both count zero: under PostgreSQL's
-			// READ COMMITTED the count is serialized by an advisory lock.
+			// The count is serialized by an advisory lock on PostgreSQL (two
+			// first logins).
 			if tx.Dialect().Name() == dialect.PG {
 				if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(?)", firstAccountLock); err != nil {
 					return nil, err

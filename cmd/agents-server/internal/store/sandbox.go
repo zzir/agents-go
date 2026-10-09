@@ -19,7 +19,7 @@ import (
 
 // This file is the single home of sandbox semantics (NormalizeSandboxConfig,
 // SandboxContentEqual, SandboxIdentityChanged); every other per-type question
-// is a sandboxKinds row, so a new backend is one entry plus its sandboxes.Backend.
+// is a sandboxKinds row (invariant 53).
 
 // sandboxKind is one backend type's semantics. Each field answers exactly one
 // question; the exported functions below route through it.
@@ -41,7 +41,8 @@ type sandboxKind struct {
 type SandboxSupports struct {
 	// Rebuild: the compute can be thrown away in place, keeping the storage.
 	Rebuild bool `json:"rebuild"`
-	// PublicHost: every port inside the sandbox is public at <port>-<sandbox id>.<domain>.
+	// PublicHost: every port inside the sandbox is public at <port>-<sandbox
+	// id>.<domain>.
 	PublicHost bool `json:"public_host"`
 }
 
@@ -64,8 +65,8 @@ var sandboxKinds = map[string]sandboxKind{
 	},
 }
 
-// kindOf resolves a type's descriptor. An unknown type panics:
-// NormalizeSandboxConfig refuses to store one, so reaching here is a programming error.
+// kindOf resolves a type's descriptor; an unknown type panics
+// (NormalizeSandboxConfig refuses to store one).
 func kindOf(typ string) sandboxKind {
 	k, ok := sandboxKinds[typ]
 	if !ok {
@@ -96,8 +97,7 @@ func SandboxStorageWhere(sb *Sandbox) string {
 }
 
 // NormalizeSandboxConfig strictly decodes raw and returns the canonical
-// payload to store (fields in struct order, unknown keys dropped): a payload
-// that decodes here builds later.
+// payload to store (fields in struct order, unknown keys dropped).
 func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, error) {
 	switch typ {
 	case "docker":
@@ -151,8 +151,8 @@ func NormalizeSandboxConfig(typ string, raw json.RawMessage) (json.RawMessage, e
 		if ec.TimeoutSeconds < 0 || ec.MaxReadFileBytes < 0 {
 			return nil, errors.New("timeout_seconds and max_read_file_bytes cannot be negative")
 		}
-		// auto_pause defaults to true when absent; a plain bool cannot tell
-		// absent from false, so detect the key and store the form explicitly.
+		// auto_pause defaults to true when absent: the key is detected and the
+		// form stored explicitly.
 		if !jsonHasKey(raw, "auto_pause") {
 			ec.AutoPause = true
 		}
@@ -228,17 +228,15 @@ func validHeaderValue(s string) bool {
 }
 
 // SandboxContentEqual reports whether two payloads mean the same runtime
-// CONTENT — the predicate behind contentChanged. Canonical typed comparison
-// ignores representation noise; a payload that cannot decode compares UNEQUAL.
+// CONTENT (the predicate behind contentChanged), compared canonically; one that
+// cannot decode is UNEQUAL.
 func SandboxContentEqual(typ string, a, b json.RawMessage) bool {
 	return kindOf(typ).contentEqual(a, b)
 }
 
 // SandboxIdentityChanged reports whether an update moves the sandbox's
-// IDENTITY — the fields that freeze while projects live on it (decisions
-// §5.36): type and destination, plus for e2b the fields a resume cannot
-// apply (template_id, auto_pause, allow_internet; timeout is re-sent). An
-// undecodable prev is NOT a change (fixing it is the only way out); an undecodable next is.
+// IDENTITY, the fields that freeze while projects live on it (identityOf,
+// decisions §5.36). An undecodable prev is NOT a change; an undecodable next is.
 func SandboxIdentityChanged(prev, next *Sandbox) bool {
 	if prev.Type != next.Type {
 		return true
@@ -255,7 +253,8 @@ func SandboxIdentityChanged(prev, next *Sandbox) bool {
 }
 
 // SandboxDestinationChanged reports whether incoming names a different
-// DESTINATION than prev — the mask guard (invariant 9). Either side undecodable counts as changed.
+// DESTINATION than prev — the mask guard (invariant 9). Either side undecodable
+// counts as changed.
 func SandboxDestinationChanged(typ string, prev, incoming json.RawMessage) bool {
 	p, perr := destinationOf(typ, prev)
 	n, nerr := destinationOf(typ, incoming)
@@ -272,7 +271,7 @@ func destinationOf(typ string, raw json.RawMessage) (string, error) {
 }
 
 // identityOf is the destination plus, for e2b, the fields a resume cannot
-// change on an existing sandbox.
+// change on an existing sandbox (template_id, auto_pause, allow_internet).
 func identityOf(typ string, raw json.RawMessage) (string, error) {
 	return kindOf(typ).identity(raw)
 }
@@ -301,8 +300,7 @@ func e2bIdentity(raw json.RawMessage) (string, error) {
 	return jsonKey(ec.APIURL, ec.Domain, ec.TemplateID, ec.AutoPause, ec.AllowInternet), nil
 }
 
-// The storageWhere pair ignores decode errors deliberately: a hint is
-// best-effort and the zero config still names the right service.
+// The storageWhere pair ignores decode errors: a hint is best-effort.
 func dockerStorageWhere(raw json.RawMessage) string {
 	var dc DockerConfig
 	_ = json.Unmarshal(raw, &dc)
@@ -363,7 +361,8 @@ func (s *SandboxStore) Create(ctx context.Context, sb *Sandbox) error {
 const noProjectsOnSandbox = "NOT EXISTS (SELECT 1 FROM projects WHERE sandbox_id = ?)"
 
 // pgGuardSandbox locks the sandbox row FOR UPDATE (the lock project
-// Create/Update take) and returns its revision and project count. ErrNotFound when gone.
+// Create/Update take) and returns its revision and project count. ErrNotFound
+// when gone.
 func pgGuardSandbox(ctx context.Context, tx bun.Tx, id string) (revision int64, projects int, err error) {
 	err = tx.NewSelect().Model((*Sandbox)(nil)).Column("revision").
 		Where("id = ?", id).For("UPDATE").Scan(ctx, &revision)
@@ -381,7 +380,8 @@ func pgGuardSandbox(ctx context.Context, tx bun.Tx, id string) (revision int64, 
 }
 
 // Update overwrites the sandbox under a compare-and-set on expectedRevision
-// (ErrRevisionConflict). Retiring what runs is the caller's next act (ProjectStore.BumpRuntimeGen).
+// (ErrRevisionConflict). Retiring what runs is the caller's next act
+// (ProjectStore.BumpRuntimeGen).
 func (s *SandboxStore) Update(ctx context.Context, id string, sb *Sandbox, expectedRevision int64) error {
 	sb.ID = id
 	var res sql.Result
@@ -463,9 +463,9 @@ func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id stri
 }
 
 // DeleteIfUnreferenced deletes the sandbox only while no project lives on it
-// (atomic under SQLite; PostgreSQL locks the row FOR UPDATE and re-reads the
-// guard). Returns how many projects blocked the delete; 0 with a nil error
-// means deleted; a missing sandbox is ErrNotFound. No cascade — decisions §5.33.
+// (atomic under SQLite; FOR UPDATE and a re-read on PostgreSQL) and returns how
+// many projects blocked it; a missing sandbox is ErrNotFound. No cascade —
+// decisions §5.33.
 func (s *SandboxStore) DeleteIfUnreferenced(ctx context.Context, id string) (projects int, err error) {
 	if s.db.Dialect().Name() == dialect.PG {
 		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {

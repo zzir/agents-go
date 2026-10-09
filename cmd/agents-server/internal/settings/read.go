@@ -12,8 +12,7 @@ import (
 )
 
 // Reader reads typed setting values, falling back to each key's registered
-// default; a nil Reader, or one without a store, yields every default. Reads
-// are uncached — every consumer reads per run, connect or tick, never per token.
+// default; a nil Reader, or one without a store, yields every default. Uncached.
 type Reader struct {
 	store *store.SettingStore
 	// transports pools one *http.Transport per proxy URL; see ProxyClient.
@@ -24,8 +23,7 @@ type Reader struct {
 func NewReader(s *store.SettingStore) *Reader { return &Reader{store: s} }
 
 // raw returns the stored value with surrounding space removed, or "" when the
-// setting is unset or unreadable. Operators type these by hand, so a stray
-// space must not turn a valid number into the default.
+// setting is unset or unreadable.
 func (r *Reader) raw(ctx context.Context, key string) string {
 	if r == nil || r.store == nil {
 		return ""
@@ -51,8 +49,7 @@ func (r *Reader) String(ctx context.Context, key string) string {
 	return r.resolve(ctx, key)
 }
 
-// Int returns the stored number; a value that does not parse (edited in the
-// database) falls back to the default rather than taking the feature down.
+// Int returns the stored number, or the key's default when unset or unparsable.
 func (r *Reader) Int(ctx context.Context, key string) int {
 	n, err := strconv.Atoi(r.resolve(ctx, key))
 	if err != nil {
@@ -73,8 +70,7 @@ func (r *Reader) Bool(ctx context.Context, key string) bool {
 }
 
 // ProxyClient returns a fresh *http.Client routed through the proxy_url
-// setting, or nil when none is set; the transport behind it is pooled per
-// proxy URL, so an edited setting lands on a new pool.
+// setting, or nil when none is set; the transport is pooled per proxy URL.
 func (r *Reader) ProxyClient(ctx context.Context) *http.Client {
 	u, err := url.Parse(r.String(ctx, KeyProxyURL))
 	if r == nil || err != nil || u.String() == "" {
@@ -95,8 +91,7 @@ func (r *Reader) SpanDataCap(ctx context.Context) int {
 }
 
 // SplitList parses a comma-separated flag or setting into trimmed, non-empty
-// entries: operators type these by hand, so stray spaces and trailing commas
-// are dropped rather than becoming names that match nothing.
+// entries; stray spaces and trailing commas are dropped.
 func SplitList(raw string) []string {
 	var out []string
 	for v := range strings.SplitSeq(raw, ",") {
@@ -107,10 +102,8 @@ func SplitList(raw string) []string {
 	return out
 }
 
-// S3Config is the attachment-storage section read as one value. Complete()
-// gates the feature: all-empty means image input is off, and a partial fill
-// reads as off too (the settings handler refuses to store one, but rows
-// predating a key's deletion must not half-configure the feature).
+// S3Config is the attachment-storage section read as one value; Complete gates
+// the feature, and a partial fill reads as off.
 type S3Config struct {
 	Endpoint      string
 	Region        string

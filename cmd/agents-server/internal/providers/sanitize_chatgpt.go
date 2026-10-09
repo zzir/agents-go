@@ -14,18 +14,10 @@ import (
 // The ChatGPT codex backend's request shape: the middleware that rewrites a
 // Responses request for it, and the input sanitizer the rewrite applies.
 
-// sanitizeChatGPTInput cleans a Responses-API input array for the ChatGPT
-// codex backend, which rejects fields the standard OpenAI API silently
-// ignores.  The approach is per-type allowlist: for each known item type only
-// the fields the backend accepts are kept; unknown types get a conservative
-// fallback (strip id + status, pass the rest through).
-//
-// Message content is passed through untouched — the codex backend accepts its
-// own nested format and external providers (e.g. Volcengine) produce minimal
-// nested parts anyway. Reasoning is the exception: the backend caps its content
-// at length 0 and rejects any encrypted_content it did not produce, so a
-// reasoning item replayed from another provider is dropped and a genuine one
-// keeps only its (emptied) content — see sanitizeChatGPTItem.
+// sanitizeChatGPTInput keeps, per known item type, only the fields the codex
+// backend accepts (unknown types lose id and status); item_reference is
+// dropped. Message content passes through untouched — see
+// docs/reference/protocol.md, ChatGPT OAuth.
 func sanitizeChatGPTInput(input []any) []any {
 	out := make([]any, 0, len(input))
 	for _, item := range input {
@@ -55,12 +47,9 @@ func sanitizeChatGPTItem(m map[string]any) (map[string]any, bool) {
 	case "function_call_output":
 		return pick(m, "type", "call_id", "output"), true
 	case "reasoning":
-		// The codex backend caps reasoning content at length 0 and rejects any
-		// encrypted_content it did not produce. A reasoning item replayed from
-		// another provider carries reasoning_text content and a foreign signature
-		// (the Anthropic adapter marks its blob "thinking_signature:"); Codex can
-		// use neither, so drop the whole item — it reasons fresh, as if the turn
-		// had none. A genuine codex reasoning item is kept, its content emptied.
+		// Only a codex-native encrypted_content survives, its content emptied;
+		// another provider's reasoning (no blob, or a thinking_signature: one)
+		// is dropped.
 		enc, _ := m["encrypted_content"].(string)
 		if enc == "" || strings.HasPrefix(enc, "thinking_signature:") {
 			return nil, false
@@ -84,9 +73,8 @@ func pick(src map[string]any, keys ...string) map[string]any {
 	return dst
 }
 
-// stripResponseMeta is the conservative fallback for unknown item types:
-// remove the two universal response-only metadata fields and keep everything
-// else, so new item types aren't silently dropped.
+// stripResponseMeta is the fallback for unknown item types: drop the two
+// response-only metadata fields, keep the rest.
 func stripResponseMeta(m map[string]any) map[string]any {
 	dst := make(map[string]any, len(m))
 	maps.Copy(dst, m)

@@ -28,10 +28,10 @@ func runEvery(ctx context.Context, period time.Duration, fn func()) {
 	}
 }
 
-// RunApprovalReaper expires pending tool approvals that have gone unanswered
-// past the TTL. On expiry it drops the record, writes a session annotation so
-// the timeout is visible, and calls onExpire with the session it was filed on.
-// It runs at startup and hourly until ctx ends — run it in a goroutine.
+// RunApprovalReaper expires pending tool approvals unanswered past the TTL: the
+// record dropped, a session annotation written, onExpire called with the
+// session it was filed on. At startup and hourly until ctx ends — run it in a
+// goroutine.
 func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, announce func(ctx context.Context, taskID string), onExpire func(ctx context.Context, sessionID string)) {
 	log := logging.Ctx(ctx)
 	reap := func() {
@@ -46,8 +46,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 			return
 		}
 		for _, p := range expired {
-			// Each row is claimed in the SAME transaction as the task it ends —
-			// invariant 37; a stale row is removed and moves nothing.
+			// Claimed in the SAME transaction as the task it ends — invariant 37.
 			var task *store.Task
 			claimed := false
 			if tasks != nil {
@@ -59,8 +58,8 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 				}
 			}
 			if task != nil {
-				// Against p.RunID, the attempt this approval belongs to — never the
-				// row's current run, which after a crash + retry is a healthy new attempt.
+				// Against p.RunID, the attempt this approval belongs to, never
+				// the row's current run.
 				var ended bool
 				claimed, ended, err = tasks.ClaimApprovalCancelled(ctx, task.ID, p.RunID, "approval expired after "+strconv.Itoa(ttl)+" minutes")
 				if err != nil {
@@ -68,8 +67,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 					continue
 				}
 				if ended && announce != nil {
-					// Cancellations owe no wake-up (dropped in the same write);
-					// the parent learns of it through the task's own state.
+					// Cancellations owe no wake-up (dropped in the same write).
 					announce(ctx, task.ID)
 				}
 			} else if derr := approvals.Delete(ctx, p.RunID); derr == nil {
@@ -81,8 +79,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 			if !claimed {
 				continue // a decision took it first
 			}
-			// The banner goes to the session the approval was filed on — a
-			// task's or step's hidden child session.
+			// The banner goes to the session the approval was filed on.
 			if ref, rerr := entries.RefFor(ctx, p.SessionID); rerr != nil {
 				log.Warn("cannot record an approval-timeout banner", "error", rerr, "session_id", p.SessionID)
 			} else {
@@ -102,12 +99,10 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 	runEvery(ctx, time.Hour, reap)
 }
 
-// RunTraceRetention prunes traces at startup and then once a day: span rows
-// older than trace_retention_days (with the blobs of sessions left without
-// rows), then the payload of sessions whose newest span is older than
-// trace_payload_retention_days — those rows stay, without payload. Either
-// setting unset or zero disables its half. It blocks until ctx ends — run it
-// in a goroutine.
+// RunTraceRetention prunes, at startup and daily, span rows older than
+// trace_retention_days (with orphaned blobs) and the payload of sessions idle
+// past trace_payload_retention_days; zero disables either half. Blocks until
+// ctx ends — run it in a goroutine.
 func RunTraceRetention(ctx context.Context, cfg *settings.Reader, traces *store.TraceStore) {
 	log := logging.Ctx(ctx)
 	prune := func() {
@@ -134,8 +129,7 @@ func RunTraceRetention(ctx context.Context, cfg *settings.Reader, traces *store.
 }
 
 // RunAuthTokenCleanup deletes expired session tokens and PATs at startup and
-// then hourly — the maintenance half of the lazy delete Authenticate does in
-// passing. It blocks until ctx ends — run it in a goroutine.
+// then hourly. It blocks until ctx ends — run it in a goroutine.
 func RunAuthTokenCleanup(ctx context.Context, tokens *store.AuthTokenStore) {
 	log := logging.Ctx(ctx)
 	sweep := func() {
@@ -152,8 +146,7 @@ func RunAuthTokenCleanup(ctx context.Context, tokens *store.AuthTokenStore) {
 	runEvery(ctx, time.Hour, sweep)
 }
 
-// wakeupRetention is how long a settled wake-up row stays readable after the
-// fact — long enough to inspect a recent task's delivery, not forever.
+// wakeupRetention is how long a settled wake-up row stays readable after the fact.
 const wakeupRetention = 7 * 24 * time.Hour
 
 // RunWakeupCleanup prunes settled wake-ups older than wakeupRetention at
@@ -174,14 +167,13 @@ func RunWakeupCleanup(ctx context.Context, wakeups *store.WakeupStore) {
 	runEvery(ctx, time.Hour, sweep)
 }
 
-// attachmentGrace is how long an uploaded image may wait unsent; uploads are
-// bound when a run accepts them, so past this an unbound row is a dead draft.
+// attachmentGrace is how long an uploaded image may wait unbound before it is a
+// dead draft.
 const attachmentGrace = 24 * time.Hour
 
-// RunAttachmentReaper collects orphan attachments (uploaded, never accepted by
-// a run) hourly: the bucket object first, then the row — a row whose object
-// delete failed is retried next sweep, while the reverse would leak the
-// object. It blocks until ctx ends — run it in a goroutine.
+// RunAttachmentReaper collects orphan attachments hourly: the bucket object
+// first, then the row (a failed object delete is retried next sweep). It
+// blocks until ctx ends — run it in a goroutine.
 func RunAttachmentReaper(ctx context.Context, cfg *settings.Reader, atts *store.AttachmentStore) {
 	log := logging.Ctx(ctx)
 	sweep := func() {
@@ -196,8 +188,7 @@ func RunAttachmentReaper(ctx context.Context, cfg *settings.Reader, atts *store.
 		client := attachments.ClientFrom(cfg.S3Config(ctx), cfg.ProxyClient(ctx))
 		removed := 0
 		for _, a := range orphans {
-			// With storage unconfigured the object is unreachable anyway;
-			// drop the row so the sentinel degrades cleanly.
+			// Storage unconfigured: the object is unreachable, the row goes.
 			if client != nil {
 				if err := client.Delete(ctx, a.Key); err != nil {
 					log.Warn("attachment reaper: object delete failed, will retry", "key", a.Key, "error", err)
@@ -240,11 +231,10 @@ func RunAuditRetention(ctx context.Context, audit *store.AuditStore, days int) {
 // task row: a hidden session younger than this is not yet an orphan.
 const hiddenSessionGrace = time.Hour
 
-// RunTaskSessionRetention collects hidden sessions at startup and then
-// hourly: the ones no task names (invariant 72), and with
-// task_session_retention_days set, the transcripts of tasks finished for
-// longer than that, task rows included. It blocks until ctx ends — run it in
-// a goroutine.
+// RunTaskSessionRetention collects, at startup and hourly, the hidden sessions
+// no task names (invariant 72) and, with task_session_retention_days set, the
+// transcripts of tasks finished longer ago. Blocks until ctx ends — run it in a
+// goroutine.
 func RunTaskSessionRetention(ctx context.Context, cfg *settings.Reader, sessions *store.SessionStore) {
 	log := logging.Ctx(ctx)
 	sweep := func() {

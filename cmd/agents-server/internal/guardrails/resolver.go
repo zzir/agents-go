@@ -12,10 +12,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// Resolver builds SDK guardrails from stored definitions and built-in
-// defaults. Names in the agent config that match a stored guardrail's name are
-// resolved from the database; unrecognized names fall back to the hardcoded
-// built-in set for backward compatibility.
+// Resolver builds SDK guardrails from stored definitions, a name no row
+// matches falling back to the built-in set.
 type Resolver struct {
 	store *store.GuardrailStore
 }
@@ -26,8 +24,7 @@ func NewResolver(s *store.GuardrailStore) *Resolver {
 }
 
 // Build resolves a JSON array of guardrail names into SDK guardrails; a
-// malformed list or an unknown name fails the build rather than silently
-// dropping (invariant 13).
+// malformed list or an unknown name fails the build (invariant 13).
 func (r *Resolver) Build(ctx context.Context, namesJSON string) ([]agents.Guardrail, error) {
 	var names []string
 	if namesJSON == "" {
@@ -47,10 +44,8 @@ func (r *Resolver) Build(ctx context.Context, namesJSON string) ([]agents.Guardr
 	return out, nil
 }
 
-// ValidateDef checks a guardrail definition at save time so a config
-// that would silently no-op (empty/invalid regex, unknown mode, no stages) is
-// rejected up front instead of failing — or resolving to "not found" — only
-// when an agent later references it.
+// ValidateDef rejects at save time a definition that would no-op or fail at
+// use: an empty or invalid regex, an unknown mode, no stages.
 func ValidateDef(g *store.Guardrail) error {
 	if len(g.Stages) == 0 {
 		return fmt.Errorf("at least one stage is required")
@@ -93,8 +88,7 @@ func validStage(s string) bool {
 }
 
 // ValidateNames reports the first guardrail name that is malformed or
-// unresolvable, for save-time rejection of a config that would otherwise run
-// unprotected.
+// unresolvable, for save-time rejection.
 func (r *Resolver) ValidateNames(ctx context.Context, namesJSON string) error {
 	_, err := r.Build(ctx, namesJSON)
 	return err
@@ -144,8 +138,7 @@ func (r *Resolver) findByName(ctx context.Context, name string) *store.Guardrail
 }
 
 // inspected returns the text a guardrail examines at the stage it was invoked
-// at: one definition covers several stages, so a content scanner is one
-// guardrail with three stages, not three copies.
+// at (one definition covers several stages).
 func inspected(p agents.GuardrailPayload) string {
 	switch p.Stage {
 	case agents.StageInput:
@@ -159,8 +152,7 @@ func inspected(p agents.GuardrailPayload) string {
 }
 
 // stagesOf converts stored stage names to the SDK's, dropping any this build
-// does not know rather than failing — the definition was validated on save, so
-// an unknown one here means a newer server wrote it.
+// does not know (a newer server wrote it; the definition was validated on save).
 func stagesOf(names []string) []agents.GuardrailStage {
 	out := make([]agents.GuardrailStage, 0, len(names))
 	for _, n := range names {
@@ -221,10 +213,8 @@ func buildFromDef(g *store.Guardrail) *agents.Guardrail {
 	}
 }
 
-// Def describes an available guardrail for listing via the API. The
-// edit form initializes from list items (the useCrud contract), so stored
-// guardrails must carry every editable field here; built-in defs have fixed
-// behavior and omit Config/Blocking.
+// Def describes an available guardrail for listing via the API: a stored one
+// carries every editable field (invariant 2); a built-in omits Config/Blocking.
 type Def struct {
 	ID          string          `json:"id,omitempty"`
 	Name        string          `json:"name"`
@@ -244,9 +234,8 @@ var builtinDefs = []Def{
 func builtin(name string) *agents.Guardrail {
 	switch name {
 	case "content_filter":
-		// Also at the tool-input stage: the phrasing this looks for is just as
-		// dangerous arriving in a tool's arguments, and the SDK models one
-		// guardrail covering both rather than two copies of it.
+		// Also at the tool-input stage: the phrasing is as dangerous in a
+		// tool's arguments.
 		return &agents.Guardrail{
 			Stages: []agents.GuardrailStage{agents.StageInput, agents.StageToolInput},
 			Name:   "content_filter",

@@ -14,9 +14,11 @@ import (
 )
 
 // WorkflowStep is one step of a fixed sequence: an agent and the prompt that
-// starts its turn — a full RUN on the execution's session, task/workflow tools withheld.
+// starts its turn — a full RUN on the execution's session, task/workflow tools
+// withheld.
 type WorkflowStep struct {
-	// ID is stable across edits of the definition; an execution in flight and a retry name the step by it.
+	// ID is stable across edits of the definition; an execution in flight and a
+	// retry name the step by it.
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
 	// AgentConfigID is which agent runs this step.
@@ -25,11 +27,14 @@ type WorkflowStep struct {
 	Prompt string `json:"prompt"`
 	// CompactBefore folds the conversation into a summary before this step runs.
 	CompactBefore bool `json:"compact_before,omitempty"`
-	// PauseBefore holds the sequence until a person approves this step; rejecting cancels the execution.
+	// PauseBefore holds the sequence until a person approves this step;
+	// rejecting cancels the execution.
 	PauseBefore bool `json:"pause_before,omitempty"`
-	// Gate makes the step a check whose final output picks the edge (StepGate); nil lets the run's outcome decide.
+	// Gate makes the step a check whose final output picks the edge (StepGate);
+	// nil lets the run's outcome decide.
 	Gate *StepGate `json:"gate,omitempty"`
-	// OnSuccess and OnFailure name the next step (an id or WorkflowStepEnd); empty falls through, or fails the execution.
+	// OnSuccess and OnFailure name the next step (an id or WorkflowStepEnd);
+	// empty falls through, or fails the execution.
 	OnSuccess string `json:"on_success,omitempty"`
 	OnFailure string `json:"on_failure,omitempty"`
 }
@@ -49,7 +54,8 @@ const (
 )
 
 // gateTrim is what Verdict strips off a candidate line before comparing
-// (markdown emphasis, sentence punctuation); normalizeGateWord holds a configured word to the same shape.
+// (markdown emphasis, sentence punctuation); normalizeGateWord holds a
+// configured word to the same shape.
 const gateTrim = "*_`.!:"
 
 // normalizeGateWord is a configured word as Verdict compares it.
@@ -203,7 +209,8 @@ type Workflow struct {
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	// Description says when to run this, in one line; an agent matches requests against it, so it is required.
+	// Description says when to run this, in one line; an agent matches requests
+	// against it, so it is required.
 	Description string        `bun:"description,notnull" json:"description"`
 	Steps       WorkflowSteps `bun:"steps,type:text,nullzero" json:"steps"`
 	// Budget bounds every execution of this workflow (zero fields = no bound).
@@ -217,11 +224,9 @@ type Workflow struct {
 	UpdatedAt time.Time `bun:"updated_at,notnull" json:"updated_at"`
 }
 
-// WorkflowBudget is what one execution may spend before it is failed with
-// the reason: step launches (at most MaxStepRuns), tokens (input + output on
-// the execution's session) and minutes of step run time. Each is checked
-// before a launch; a running step is not interrupted. Zero = no bound,
-// except MaxLaps, whose zero is defaultMaxLaps.
+// WorkflowBudget is what one execution may spend: step launches, tokens on its
+// session and minutes of step run time, each checked before a launch (a running
+// step is not interrupted). Zero = no bound, except MaxLaps (defaultMaxLaps).
 type WorkflowBudget struct {
 	MaxSteps   int `json:"max_steps,omitempty"`
 	MaxTokens  int `json:"max_tokens,omitempty"`
@@ -288,12 +293,15 @@ func (b WorkflowBudget) Exceeded(spent BudgetSpent) error {
 type StepRun struct {
 	StepID string `json:"step_id"`
 	RunID  string `json:"run_id"`
-	// Outcome is how the run ended (StepOutcome*), written when the sequence moves on; empty on the current run.
+	// Outcome is how the run ended (StepOutcome*), written when the sequence
+	// moves on; empty on the current run.
 	Outcome string `json:"outcome,omitempty"`
-	// StartedAt is stamped at launch and EndedAt with the outcome; the minutes budget sums them.
+	// StartedAt is stamped at launch and EndedAt with the outcome; the minutes
+	// budget sums them.
 	StartedAt time.Time `json:"started_at,omitzero"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
-	// Retry marks a run a person's task_retry launched, which is not a lap of the sequence's edges.
+	// Retry marks a run a person's task_retry launched, which is not a lap of
+	// the sequence's edges.
 	Retry bool `json:"retry,omitempty"`
 }
 
@@ -344,26 +352,32 @@ func (s StepRuns) Minutes() float64 {
 }
 
 // WorkflowState is what a workflow execution keeps in its task's State: a
-// SNAPSHOT of the definition and where the sequence stands. The driver
-// writes it atomically with the run it belongs to (tasks.Store.Advance) at
-// the start, every launch, every step transition, and the end.
+// SNAPSHOT of the definition and where the sequence stands, written
+// atomically with its run (tasks.Store.Advance).
 type WorkflowState struct {
-	// WorkflowID names the definition this came from; Steps is the snapshot that executes.
+	// WorkflowID names the definition this came from; Steps is the snapshot
+	// that executes.
 	WorkflowID string        `json:"workflow_id,omitempty"`
 	Steps      WorkflowSteps `json:"steps"`
 	// Budget is the definition's, snapshotted with the steps.
 	Budget WorkflowBudget `json:"budget,omitzero"`
-	// Input is the brief, written by whoever read the conversation; it leads the first step's turn only.
+	// Input is the brief, written by whoever read the conversation; it leads
+	// the first step's turn only.
 	Input string `json:"input,omitempty"`
-	// StepID is the step running, or the one a terminal state stopped at and a retry resumes from.
+	// StepID is the step running, or the one a terminal state stopped at and a
+	// retry resumes from.
 	StepID string `json:"step_id"`
-	// StepRuns is every (step, run) this execution launched, in order; a run that never started is not in it.
+	// StepRuns is every (step, run) this execution launched, in order; a run
+	// that never started is not in it.
 	StepRuns StepRuns `json:"step_runs,omitempty"`
-	// PendingInput is the turn a PauseBefore step starts with once approved; cleared at launch.
+	// PendingInput is the turn a PauseBefore step starts with once approved;
+	// cleared at launch.
 	PendingInput string `json:"pending_input,omitempty"`
-	// Stopped names the bound that ended the execution for good (StoppedBy*); a retry would be refused.
+	// Stopped names the bound that ended the execution for good (StoppedBy*); a
+	// retry would be refused.
 	Stopped string `json:"stopped,omitempty"`
-	// Origin is who started the execution when no run did; zero when a run's tool call started it.
+	// Origin is who started the execution when no run did; zero when a run's
+	// tool call started it.
 	Origin WorkflowOrigin `json:"origin,omitzero"`
 }
 
@@ -535,8 +549,7 @@ func (w *WorkflowState) NextStep(failed bool) (*WorkflowStep, bool) {
 		}
 		return nil, false
 	}
-	// A target that names nothing is refused when the workflow is saved; a
-	// snapshot that somehow holds one stops rather than guesses.
+	// Refused at save; a snapshot that somehow holds one stops here.
 	next := w.Step(target)
 	return next, next != nil
 }
@@ -621,8 +634,9 @@ func NewWorkflowStore(db *bun.DB) *WorkflowStore {
 	return &WorkflowStore{NewCrudStore[Workflow](db, "workflow", "created_at DESC")}
 }
 
-// Update overwrites the definition in one transaction that reads the stored
-// row (locked) and hands it to prepare (nil to skip), the shape every scoped entity uses.
+// Update overwrites the definition in one transaction that reads the stored row
+// (locked) and hands it to prepare (nil to skip), the shape every scoped entity
+// uses.
 func (s *WorkflowStore) Update(ctx context.Context, id string, m *Workflow, prepare func(prev *Workflow) error) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		return s.updateFrom(ctx, tx, id, m, prepare)
@@ -633,15 +647,14 @@ func (s *WorkflowStore) Update(ctx context.Context, id string, m *Workflow, prep
 	return nil
 }
 
-// Delete removes a definition and the triggers that fire it — a trigger with
-// no workflow could only fail. Executions keep their snapshot.
+// Delete removes a definition and the triggers that fire it; executions keep
+// their snapshot.
 func (s *WorkflowStore) Delete(ctx context.Context, id string) error {
 	return s.DeleteOwnedBy(ctx, id, "")
 }
 
-// DeleteOwnedBy removes the definition and its triggers, in one transaction,
-// only while it still belongs to expectOwner (decisions §5.29); an empty
-// expectOwner skips the check.
+// DeleteOwnedBy is Delete while the row still belongs to expectOwner ("" skips
+// the check) — decisions §5.29.
 func (s *WorkflowStore) DeleteOwnedBy(ctx context.Context, id, expectOwner string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if expectOwner != "" {

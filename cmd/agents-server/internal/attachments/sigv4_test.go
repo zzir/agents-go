@@ -13,13 +13,10 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 )
 
-// TestSignV4AWSVector checks the signature against the worked example in the
-// AWS sigv4 documentation (GET
-// https://examplebucket.s3.amazonaws.com/test.txt, SEC key
-// wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY, 2013-05-24) — the classic S3
-// test vector, with the Range header omitted (this implementation signs host
-// and x-amz-* only, which changes the expected signature; the value below was
-// derived by running the reference algorithm over that reduced header set).
+// TestSignV4AWSVector checks the signature against the AWS sigv4 documentation's
+// S3 example (GET examplebucket/test.txt, 2013-05-24) with the Range header
+// omitted: this implementation signs host and x-amz-* only, so the expected
+// value was derived by the reference algorithm over that reduced header set.
 func TestSignV4AWSVector(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "https://examplebucket.s3.amazonaws.com/test.txt", nil)
 	if err != nil {

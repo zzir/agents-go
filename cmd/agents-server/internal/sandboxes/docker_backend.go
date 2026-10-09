@@ -22,11 +22,9 @@ func (dockerBackend) Open(spec Spec) (sandbox.Sandbox, error) {
 	return dockersb.New(opts)
 }
 
-// Rebuild removes the container so the next Open creates a fresh one from the
-// current template. The REMOVE is the point: closing an instance only stops
-// the container, and a stopped one whose fingerprint still matches is adopted
-// again — an evict-only rebuild would hand back exactly what it was asked to
-// discard. The volume survives: this replaces the container, not the tree.
+// Rebuild REMOVES the container (a merely stopped one is re-adopted by
+// fingerprint, decisions §5.19) so the next Open creates a fresh one; the
+// volume survives.
 func (dockerBackend) Rebuild(ctx context.Context, spec Spec) error {
 	opts, err := DaemonOptions(spec.Sandbox)
 	if err != nil {
@@ -39,8 +37,7 @@ func (dockerBackend) Rebuild(ctx context.Context, spec Spec) error {
 	return nil
 }
 
-// Check runs the health command in a throw-away EPHEMERAL container: it needs
-// no project tree, and must not leave a persistent container behind.
+// Check runs the health command in a throw-away EPHEMERAL container, no project tree.
 func (dockerBackend) Check(ctx context.Context, sb *store.Sandbox) error {
 	opts, err := DaemonOptions(sb)
 	if err != nil {

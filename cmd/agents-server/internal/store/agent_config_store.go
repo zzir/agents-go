@@ -65,8 +65,7 @@ func (s *AgentConfigStore) Update(ctx context.Context, id string, m *AgentConfig
 }
 
 // DeleteOwnedBy removes the agent, while it still belongs to expectOwner,
-// with the memory scoped to it and the triggers that fire it — a trigger
-// with no agent could only fail — in one transaction.
+// with its memory and the triggers that fire it, in one transaction.
 func (s *AgentConfigStore) DeleteOwnedBy(ctx context.Context, id, expectOwner string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := deleteOwnedBy[AgentConfig](ctx, tx, s.label, id, expectOwner); err != nil {
@@ -79,9 +78,9 @@ func (s *AgentConfigStore) DeleteOwnedBy(ctx context.Context, id, expectOwner st
 	})
 }
 
-// TransferOwner hands the agent to newOwner, re-checking the provider leg AS
-// the new owner inside the transaction (decisions §5.29). The advisory legs
-// (MCP servers, skills, handoff targets) are the handler's to validate.
+// TransferOwner hands the agent to newOwner, the provider leg re-checked AS the
+// new owner in the transaction; the advisory legs are the handler's — decisions
+// §5.29.
 func (s *AgentConfigStore) TransferOwner(ctx context.Context, id, newOwner string) error {
 	err := s.rewriteScopeOrOwner(ctx, id, func(ac *AgentConfig) (string, string) {
 		return ac.Scope, newOwner
@@ -116,11 +115,11 @@ func (s *AgentConfigStore) SetScope(ctx context.Context, id, scope string) error
 	return nil
 }
 
-// rewriteScopeOrOwner locks the PROVIDER first and the agent second (the
-// order every agent write uses), re-checks the reference rule, then writes what want returns.
+// rewriteScopeOrOwner locks the PROVIDER first and the agent second (the order
+// every agent write uses), re-checks the reference rule, then writes what want
+// returns.
 func (s *AgentConfigStore) rewriteScopeOrOwner(ctx context.Context, id string, want func(*AgentConfig) (string, string), pre func(context.Context, bun.Tx) error) error {
-	// The provider id is read unlocked only to know WHICH row to lock first;
-	// the locked agent below is re-checked against it.
+	// Read unlocked only to know WHICH provider row to lock first; re-checked below.
 	probe, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -136,8 +135,8 @@ func (s *AgentConfigStore) rewriteScopeOrOwner(ctx context.Context, id string, w
 			return err
 		}
 		if ac.ProviderID != probe.ProviderID {
-			// Re-pointed between the probe and the lock: taking the other
-			// provider now would invert the lock order, so the caller retries.
+			// Re-pointed between the probe and the lock: the caller retries
+			// (lock order).
 			return ErrOwnershipChanged
 		}
 		scope, owner := want(ac)
@@ -164,9 +163,8 @@ func (s *AgentConfigStore) rewriteScopeOrOwner(ctx context.Context, id string, w
 }
 
 // checkFallbackRefs re-reads each fallback provider inside the write's
-// transaction: one deleted since validation is ErrProviderRef, one the holder
-// could not see at the scope/owner the row will hold is ErrProviderScope.
-// Entries from before provider_id name an endpoint and are resolved at run time.
+// transaction: gone is ErrProviderRef, out of the row's reach is
+// ErrProviderScope. An entry naming an endpoint instead is resolved at run time.
 func checkFallbackRefs(ctx context.Context, tx bun.Tx, entries FallbackModels, holderScope, holderOwner string) error {
 	for _, e := range entries {
 		if e.ProviderID == "" {

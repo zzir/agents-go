@@ -19,8 +19,7 @@ type EnvVar struct {
 	Value string `json:"value"`
 }
 
-// The environment's bounds. The whole set rides along on every container
-// create, so these keep that payload sane rather than the column small.
+// The environment's bounds; the whole set rides along on every container create.
 const (
 	MaxEnvVars       = 64
 	MaxEnvValueBytes = 32 << 10
@@ -31,8 +30,8 @@ const (
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // NormalizeProjectEnv validates vars and returns the canonical payload to
-// store, sorted by key (storage, the fingerprint — spec §2.7n — and
-// EnvContentEqual share one order). An empty environment stores as "".
+// store, sorted by key (one order for storage, the fingerprint — spec §2.7n —
+// and EnvContentEqual). An empty environment stores as "".
 func NormalizeProjectEnv(vars []EnvVar) (string, error) {
 	if len(vars) == 0 {
 		return "", nil
@@ -47,8 +46,7 @@ func NormalizeProjectEnv(vars []EnvVar) (string, error) {
 		if !envKeyPattern.MatchString(v.Key) {
 			return "", fmt.Errorf("environment variable name %q must match [A-Za-z_][A-Za-z0-9_]*", v.Key)
 		}
-		// Refused, not deduplicated: silently dropping one of two values for
-		// one name is a long debugging session.
+		// A duplicate name is refused, not deduplicated.
 		if seen[v.Key] {
 			return "", fmt.Errorf("environment variable %q is set twice", v.Key)
 		}
@@ -82,8 +80,8 @@ func DecodeProjectEnv(raw string) ([]EnvVar, error) {
 	return out, nil
 }
 
-// EnvMap is the stored payload as the sandbox takes it; an undecodable
-// payload is an error rather than a container started without its variables.
+// EnvMap is the stored payload as the sandbox takes it; an undecodable payload
+// is an error.
 func EnvMap(raw string) (map[string]string, error) {
 	vars, err := DecodeProjectEnv(raw)
 	if err != nil || len(vars) == 0 {
@@ -97,7 +95,8 @@ func EnvMap(raw string) (map[string]string, error) {
 }
 
 // EnvContentEqual reports whether two canonical payloads produce the same
-// CONTAINER — the predicate behind the runtime-generation bump. Undecodable compares unequal.
+// CONTAINER — the predicate behind the runtime-generation bump. Undecodable
+// compares unequal.
 func EnvContentEqual(a, b string) bool {
 	va, aerr := DecodeProjectEnv(a)
 	vb, berr := DecodeProjectEnv(b)

@@ -78,10 +78,9 @@ type oauthAttempt struct {
 	done   chan struct{} // closed once the attempt released the connect slot
 }
 
-// OAuthCoordinator manages the asynchronous OAuth authorization code flow for
-// MCP server connections. When a connection requires OAuth, it parks the
-// authorization and returns the authorize URL; a later callback delivers the
-// code and unblocks the connection.
+// OAuthCoordinator runs the asynchronous authorization-code flow for MCP
+// connections: a connect that needs OAuth parks on the authorize URL until
+// the callback delivers the code.
 type OAuthCoordinator struct {
 	store *store.McpServerStore
 
@@ -94,8 +93,7 @@ type OAuthCoordinator struct {
 	inflight map[string]*oauthAttempt
 }
 
-// NewOAuthCoordinator creates a coordinator backed by the given store for
-// token persistence.
+// NewOAuthCoordinator creates a coordinator persisting tokens through the given store.
 func NewOAuthCoordinator(s *store.McpServerStore) *OAuthCoordinator {
 	return &OAuthCoordinator{
 		store:    s,
@@ -142,21 +140,17 @@ func (c *OAuthCoordinator) clearInflight(id string, a *oauthAttempt) {
 
 // ConnectResult is returned by ConnectWithOAuth.
 type ConnectResult struct {
-	// Connected is true when the server connected without needing user
-	// authorization (e.g. cached token, or no OAuth required).
+	// Connected is true when the server connected without user authorization.
 	Connected bool
-	// AuthorizeURL is non-empty when user authorization is needed; the caller
-	// should open this URL in a popup.
+	// AuthorizeURL is non-empty when user authorization is needed: the URL to
+	// open in a popup.
 	AuthorizeURL string
 }
 
-// ConnectWithOAuth attempts to connect an MCP server that uses OAuth: it
-// creates the auth handler, kicks off the connection in a goroutine, and
-// returns at once with either a Connected result or an AuthorizeURL for the
-// frontend to open. redirectURI is the handler's absolute callback URL; empty
-// means a non-interactive caller. ctx bounds the SILENT paths only (so a
-// startup auto-connect's per-server timeout applies); the interactive flow
-// outlives the request (see connectCtx below).
+// ConnectWithOAuth starts connecting an OAuth MCP server and returns at once
+// with either Connected or the AuthorizeURL to open. redirectURI empty means a
+// non-interactive caller. ctx bounds the SILENT paths only; the interactive
+// flow outlives the request (connectCtx).
 func (c *OAuthCoordinator) ConnectWithOAuth(
 	ctx context.Context,
 	mgr *Manager,
@@ -167,8 +161,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// A non-interactive caller (startup auto-connect) cannot drive a popup; only
-	// an interactive request supersedes a prior attempt and may park.
+	// Only an interactive request supersedes a prior attempt and may park.
 	interactive := redirectURI != ""
 	if interactive {
 		c.supersedeInflight(cfg.ID)
@@ -190,8 +183,8 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	codeCh := make(chan *auth.AuthorizationResult, 1)
 	urlCh := make(chan string, 1)
 
-	// The fetcher uses the SDK's own context (from connectCtx) — NOT the outer
-	// request ctx, cancelled as soon as the handler returns the authorize URL.
+	// The fetcher runs on the SDK's context (connectCtx), not the request's,
+	// which ends when the handler returns the authorize URL.
 	fetcher, phase := newConnectFetcher(cfg.Name, urlCh, codeCh)
 
 	httpClient := oauthHTTPClient(mgr.proxyClient(context.Background()))
@@ -200,11 +193,10 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		RedirectURL:              redirectURI,
 		AuthorizationCodeFetcher: fetcher,
 		Client:                   httpClient,
-		// SEP-2207: request offline_access when the server advertises it, so
-		// the grant carries a refresh token at all.
+		// SEP-2207: offline_access, when advertised, is what makes the grant
+		// carry a refresh token.
 		RequestRefreshToken: true,
-		// Persist the fresh grant (token plus the resolved client credentials and
-		// token endpoint) and re-persist on every refresh — invariant 11.
+		// Persist the fresh grant and re-persist on every refresh — invariant 11.
 		NewTokenSource: func(rctx context.Context, ocfg *oauth2.Config, tok *oauth2.Token) (oauth2.TokenSource, error) {
 			// Persistence rides the caller's context for its logger, not rctx,
 			// which the SDK derives from its own background root.
@@ -223,8 +215,8 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 				ClientName:   "agents-go",
 				RedirectURIs: []string{redirectURI},
 				Scope:        hc.OAuthScopes,
-				// RFC 7591 defaults to authorization_code only; without
-				// advertising refresh_token many servers never issue one.
+				// RFC 7591 defaults to authorization_code only; many servers
+				// issue a refresh token only when it is advertised.
 				GrantTypes: []string{"authorization_code", "refresh_token"},
 			},
 		}
@@ -247,8 +239,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		}
 	}
 
-	// A non-interactive caller can't complete the browser flow: report it
-	// WITHOUT parking a 5-minute goroutine on the connect slot.
+	// A non-interactive caller is told, without parking on the connect slot.
 	if !interactive {
 		return &ConnectResult{Connected: false}, nil
 	}
@@ -321,12 +312,9 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 }
 
 // HandleCallback delivers the authorization code to the pending connect
-// goroutine exactly once; an unknown or consumed state is an error. iss is the
-// RFC 9207 issuer from the redirect (empty when absent); the SDK rejects the
-// exchange when its presence disagrees with the server's advertisement. The
-// pending entry is removed under the lock BEFORE delivery, so a duplicate
-// callback finds nothing rather than racing, and the send is non-blocking
-// (codeCh is buffered, the fetcher receives at most once).
+// goroutine exactly once; an unknown or consumed state is an error. iss is
+// the RFC 9207 issuer from the redirect (empty when absent). The pending
+// entry is removed under the lock BEFORE the non-blocking send.
 func (c *OAuthCoordinator) HandleCallback(state, code, iss string) error {
 	c.mu.Lock()
 	ch, ok := c.pending[state]

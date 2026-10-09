@@ -32,7 +32,8 @@ type McpServerHandler struct {
 // group. It must stay a path server.TokenAuth exempts (a redirect carries no bearer).
 const mcpOAuthCallbackPath = "/mcp-servers/oauth/callback"
 
-// NewMcpServerHandler returns a handler backed by the given store and connection manager.
+// NewMcpServerHandler returns a handler backed by the given store and
+// connection manager.
 func NewMcpServerHandler(s *store.McpServerStore, m *mcpservers.Manager, oc *mcpservers.OAuthCoordinator, baseURL string) *McpServerHandler {
 	return &McpServerHandler{store: s, manager: m, oauth: oc, baseURL: baseURL}
 }
@@ -131,8 +132,7 @@ func (r *mcpServerReq) validate() string {
 	if r.Name == "" {
 		return "name is required"
 	}
-	// Validate the config here so a broken server can't sit in the DB looking
-	// configured until the first connect attempt fails.
+	// Validate the config at save, not at the first connect.
 	var hc store.HTTPMcpConfig
 	if len(r.Config) > 0 {
 		if err := json.Unmarshal(r.Config, &hc); err != nil {
@@ -197,8 +197,7 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 		saveError(c, err) // duplicate name -> 409
 		return
 	}
-	// A newly created enabled server connects in the background, same as an
-	// update — "I added a server" should not need a separate connect click.
+	// A new enabled server connects in the background, as an update does (invariant 6).
 	h.manager.Reconcile(cfg, h.oauth)
 	created(c, cfg.ID, h.listItem(cfg))
 }
@@ -226,9 +225,7 @@ func (h *McpServerHandler) Get(c *gin.Context) {
 func mcpScope(m *store.McpServerConfig) (string, string) { return m.Scope, m.OwnerID }
 
 // Update overwrites the MCP server configuration identified by the id path
-// parameter and responds with the updated item. When enabled flips to false,
-// the server is disconnected; when flipped to true, a connection attempt is
-// made automatically.
+// parameter and responds with the updated item.
 //
 //	@Summary		Update MCP server
 //	@Description	Full replace; flipping enabled disconnects/reconnects the server. Masked secrets keep their stored values.
@@ -289,8 +286,8 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// Make the live connection match the persisted config (drop stale,
-	// reconnect in the background); the response status typically reads "connecting".
+	// Reconcile the live connection with the persisted config; the response
+	// usually reads "connecting".
 	h.manager.Reconcile(updated, h.oauth)
 	c.JSON(http.StatusOK, h.listItem(updated))
 }
@@ -316,8 +313,8 @@ func oauthIdentityChanged(next, prev json.RawMessage) bool {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id} [delete]
 func (h *McpServerHandler) Delete(c *gin.Context) {
-	// Delete the row first, then disconnect: a failed delete must not leave a
-	// persisted server whose live connection has already been torn down.
+	// Row first, then disconnect: a failed delete must not strand a persisted
+	// server offline.
 	if !deleteOwned(c, h.store.CrudStore, mcpScope) {
 		return
 	}
@@ -325,9 +322,8 @@ func (h *McpServerHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// SetScope promotes an MCP server to global or demotes it back to its
-// author's private set. Agents still referencing a demoted server lose its
-// tools at their next build (filtered with a visible count, like a delete).
+// SetScope promotes an MCP server to global or demotes it back to its author's
+// private set; agents still referencing a demoted server lose its tools (invariant 13).
 //
 //	@Summary	Change an MCP server's scope
 //	@Tags		mcp-servers
@@ -367,8 +363,6 @@ type mcpConnectResp struct {
 }
 
 // Connect opens a connection to the MCP server identified by the id path parameter.
-// For OAuth-enabled servers, it may return an authorize_url instead of connecting
-// directly; the frontend should open that URL in a popup and wait for the callback.
 //
 //	@Summary		Connect MCP server
 //	@Description	Establishes the connection. OAuth-enabled servers may answer with status "authorization_required" and an authorize_url to open in a browser popup. Disabled servers cannot be connected (409).
@@ -386,8 +380,7 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// A disabled server must never gain a live connection: agents pick tools
-	// by connection state, so connecting one would void the disable switch.
+	// A disabled server never gains a live connection — invariant 5.
 	if !cfg.Enabled {
 		conflict(c, "server is disabled; enable it before connecting")
 		return
@@ -432,9 +425,8 @@ func (h *McpServerHandler) externalOrigin(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-// ClearOAuth disconnects the MCP server identified by the id path parameter
-// and removes its persisted OAuth token, forcing a fresh authorization on the
-// next connect. This is the "sign out" action for OAuth-enabled servers.
+// ClearOAuth disconnects the MCP server and removes its persisted OAuth token:
+// the "sign out" for OAuth-enabled servers.
 //
 //	@Summary	Clear MCP OAuth token
 //	@Tags		mcp-servers
@@ -460,9 +452,8 @@ func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// OAuthCallback handles the OAuth redirect from the authorization server.
-// It delivers the authorization code to the pending connection and renders a
-// small HTML page that notifies the opener window via postMessage.
+// OAuthCallback delivers the authorization code to the pending connection and
+// renders the popup result page.
 //
 //	@Summary		MCP OAuth callback
 //	@Description	Browser-facing redirect target of the OAuth flow (no auth token required). Renders an HTML result page, not JSON.
@@ -476,11 +467,9 @@ func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 //	@Failure		400		{string}	string	"missing state or code parameter"
 //	@Router			/mcp-servers/oauth/callback [get]
 func (h *McpServerHandler) OAuthCallback(c *gin.Context) {
-	// The request logger records only the path (the query is redacted), so the
-	// outcome of the callback — the actionable half — is logged here explicitly.
+	// The request logger redacts the query, so the outcome is logged here.
 	log := logging.Ctx(c.Request.Context())
-	// Provider denial redirects (?error=access_denied&state=...) carry no
-	// code, so the error parameter must be checked before requiring one.
+	// A denial redirect carries no code: check error before requiring one.
 	if errMsg := c.Query("error"); errMsg != "" {
 		log.Warn("mcp oauth callback: authorization server returned an error", "error", errMsg)
 		writeOAuthCallbackPage(c, "error", errMsg)
@@ -530,12 +519,15 @@ func writeOAuthCallbackPage(c *gin.Context, status, errMsg string) {
 }
 
 type mcpToolInfo struct {
-	// Name is the tool as an agent sees it: the server's prefix and the tool's own name.
+	// Name is the tool as an agent sees it: the server's prefix and the tool's
+	// own name.
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	// OriginalName is the tool's own name on the server, the form read_only_tools lists.
+	// OriginalName is the tool's own name on the server, the form
+	// read_only_tools lists.
 	OriginalName string `json:"original_name"`
-	// ReadOnlyHint is the server's own claim that the tool only observes; a hint, never trusted on its own.
+	// ReadOnlyHint is the server's own claim that the tool only observes; a
+	// hint, never trusted on its own.
 	ReadOnlyHint bool `json:"read_only_hint,omitempty"`
 }
 

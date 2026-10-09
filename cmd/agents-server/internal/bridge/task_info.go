@@ -1,8 +1,7 @@
 package bridge
 
-// TaskInfo is the wire shape of a background task (REST and the OpenAPI spec):
-// its own struct, not agents/tasks' Info, so the SDK's view can move without
-// moving the contract.
+// TaskInfo is the wire shape of a background task (REST and the OpenAPI
+// spec), its own struct rather than agents/tasks' Info.
 type TaskInfo struct {
 	TaskID string `json:"task_id"`
 	Label  string `json:"label,omitempty"`

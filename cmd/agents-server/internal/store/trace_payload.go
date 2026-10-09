@@ -9,8 +9,8 @@ import (
 	"sync"
 )
 
-// PayloadFields are the span data keys held in trace_blobs rather than on the
-// row — nearly all of a session's trace bytes, which a listing never needs.
+// PayloadFields are the span data keys held in trace_blobs, not on the row
+// (invariant 62).
 var PayloadFields = []string{"input", "output", "system_instructions", "tools", "handoffs", "output_schema"}
 
 // The strings a payload element is replaced with: over the per-element cap
@@ -18,8 +18,7 @@ var PayloadFields = []string{"input", "output", "system_instructions", "tools", 
 const (
 	PayloadCapMarker    = "[omitted: over the stored span limit (trace_span_data_kb)]"
 	payloadPrunedMarker = "[omitted: the stored payload was pruned]"
-	// A reader tolerating a missing blob is the whole contract between a prune
-	// and a run starting in the same session at the same moment.
+	// A reader tolerates a missing blob (a prune racing a run on the session).
 )
 
 const hashSize = sha256.Size
@@ -43,8 +42,9 @@ func layoutTotal(layout []layoutField) int {
 	return n
 }
 
-// splitPayload splits a span's data document into row metadata, layout and element JSON
-// (past elemCap an element becomes PayloadCapMarker, 0 = no cap); no payload, nil layout.
+// splitPayload splits a span's data document into row metadata, layout and
+// element JSON (past elemCap an element becomes PayloadCapMarker, 0 = no cap);
+// no payload, nil layout.
 func splitPayload(data string, elemCap int) (meta string, layout []layoutField, elems [][]byte) {
 	var m map[string]json.RawMessage
 	if json.Unmarshal([]byte(data), &m) != nil || m == nil {
@@ -155,8 +155,8 @@ func unpackRefs(refs []byte) ([][hashSize]byte, bool) {
 	return out, true
 }
 
-// gzipFloor is the element size below which compressing is not tried: the
-// gzip framing alone is 18 bytes, and JSON this short rarely shrinks.
+// gzipFloor is the element size below which compressing is not tried (the
+// framing alone is 18 bytes).
 const gzipFloor = 256
 
 var gzipWriters = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}

@@ -22,8 +22,7 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 	defer cancel()
 	log := logging.Ctx(ctx)
 
-	// Only name an unnamed session. Checked first so a re-run on an already-named
-	// session (every message after the first) is a cheap Get + return.
+	// Only an unnamed session; checked first, so every later message is a cheap Get.
 	sess, err := r.Deps.Sessions.Get(ctx, sessionID)
 	if err != nil || sess.Name != store.DefaultSessionName {
 		return
@@ -45,8 +44,7 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 	} else {
 		title = store.ClipName(plainTitle(res.FinalOutputString()))
 	}
-	// A reachable provider that failed or garbled the title leaves the session
-	// nameless; fall back to the first message.
+	// A failed or garbled title falls back to the first message.
 	if title == "" {
 		title = fallbackTitle(userInput)
 	}
@@ -54,8 +52,7 @@ func (r *Runner) maybeGenerateTitle(parentCtx context.Context, sessionID, model,
 		return
 	}
 
-	// A CAS on the default name: a person may have named the session
-	// meanwhile — their name stands, and so does the first of two generators'.
+	// A CAS on the default name: a person's name, or an earlier generator's, stands.
 	won, err := r.Deps.Sessions.NameIfDefault(ctx, sessionID, title)
 	if err != nil {
 		log.Warn("title gen: save failed", "error", err)
@@ -89,9 +86,8 @@ var (
 	titleWraps = [][2]string{{"**", "**"}, {"__", "__"}, {"*", "*"}, {"_", "_"}, {"`", "`"}, {`"`, `"`}, {"'", "'"}, {"“", "”"}, {"‘", "’"}}
 )
 
-// plainTitle strips the markdown that wraps a WHOLE title — the sidebar shows a
-// name as text — and collapses its whitespace. Marks inside it stay: the title
-// may be the person's own words (user_id, *.go, 2 * 3).
+// plainTitle strips the markdown that wraps a WHOLE title and collapses its
+// whitespace; marks inside it stay (user_id, *.go, 2 * 3 may be the person's words).
 func plainTitle(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	for {

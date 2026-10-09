@@ -26,24 +26,29 @@ const (
 )
 
 // Trigger starts work without a conversation asking: a cron schedule or a
-// webhook, firing into the session it names with the brief its author wrote
-// (invariant 30). Target is a workflow (RunWorkflow) or an agent turn.
+// webhook, firing a workflow or an agent turn into the session it names with
+// its brief (invariant 30).
 type Trigger struct {
 	bun.BaseModel `bun:"table:triggers,alias:trg"`
 
 	ID string `bun:"id,pk,type:uuid" json:"id"`
-	// Target says what a fire starts; WorkflowID or AgentConfigID names it, the other stays empty.
+	// Target says what a fire starts; WorkflowID or AgentConfigID names it, the
+	// other stays empty.
 	Target        string `bun:"target,notnull"           json:"target"`
 	WorkflowID    string `bun:"workflow_id,nullzero,type:uuid" json:"workflow_id,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	// SessionID is the conversation the work reports to, or for an agent turn happens in.
+	// SessionID is the conversation the work reports to, or for an agent turn
+	// happens in.
 	SessionID string `bun:"session_id,notnull,type:uuid" json:"session_id"`
 	Kind      string `bun:"kind,notnull"       json:"kind"`
-	// Brief leads every execution or turn this trigger starts; a webhook's payload is appended.
+	// Brief leads every execution or turn this trigger starts; a webhook's
+	// payload is appended.
 	Brief string `bun:"brief,notnull" json:"brief"`
-	// Schedule is the cron expression (five fields, @hourly, @every 10m), optionally prefixed CRON_TZ=<IANA zone>; cron kind only.
+	// Schedule is the cron expression (five fields, @hourly, @every 10m),
+	// optionally prefixed CRON_TZ=<IANA zone>; cron kind only.
 	Schedule string `bun:"schedule,nullzero" json:"schedule,omitempty"`
-	// Secret signs a webhook's calls (HMAC-SHA256); the API shows it once, at creation or rotation.
+	// Secret signs a webhook's calls (HMAC-SHA256); the API shows it once, at
+	// creation or rotation.
 	Secret  string `bun:"secret,nullzero" json:"-"`
 	Enabled bool   `bun:"enabled,notnull" json:"enabled"`
 
@@ -69,7 +74,8 @@ func NewTriggerSecret() string {
 }
 
 // NormalizeTrigger trims and checks the shape of a trigger; the schedule's
-// syntax and the references are checked elsewhere. An empty target is read off the id given.
+// syntax and the references are checked elsewhere. An empty target is read off
+// the id given.
 func NormalizeTrigger(t *Trigger) error {
 	t.Kind = strings.TrimSpace(t.Kind)
 	t.Brief = strings.TrimSpace(t.Brief)
@@ -176,8 +182,7 @@ func (s *TriggerStore) Create(ctx context.Context, t *Trigger) error {
 }
 
 // UpdateSettings writes what a client may set (target, brief, schedule,
-// switch) and nothing else — the secret and the fire record have their own
-// writers. The references are checked in the same transaction.
+// switch), the references checked in the same transaction.
 func (s *TriggerStore) UpdateSettings(ctx context.Context, id string, t *Trigger) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := referencesExist(ctx, tx, t); err != nil {

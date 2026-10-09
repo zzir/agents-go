@@ -31,22 +31,21 @@ type Server struct {
 	Engine *gin.Engine
 	auth   AuthFunc
 	guard  *AuthGuard
-	// Conns tracks the authenticated WebSocket connections, so a revocation
-	// can close them.
+	// Conns tracks the authenticated WebSocket connections.
 	Conns *ConnTracker
 	// bodyLimits are the per-path overrides of maxBodyBytes (SetBodyLimit).
 	bodyLimits map[string]func() int64
-	// cspPolicy is the Content-Security-Policy every response carries: base from
-	// New, extended with inline-script hashes and image hosts. Atomic; inputs under cspMu.
+	// cspPolicy is the Content-Security-Policy every response carries: base
+	// from New, extended with inline-script hashes and image hosts. Atomic;
+	// inputs under cspMu.
 	cspPolicy    atomic.Value // string
 	cspMu        sync.Mutex
 	scriptHashes []string
 	imgHosts     []string
 }
 
-// SetImageHosts admits extra img-src sources — the login providers' picture
-// hosts and the attachment bucket's public host. Callable at any time: a
-// changed attachment setting re-admits its host without a restart.
+// SetImageHosts admits extra img-src sources (login picture hosts, the
+// attachment bucket); callable at any time.
 func (s *Server) SetImageHosts(hosts []string) {
 	s.cspMu.Lock()
 	defer s.cspMu.Unlock()
@@ -58,17 +57,14 @@ func (s *Server) SetImageHosts(hosts []string) {
 // webhook route has a tighter cap, and SetBodyLimit raises one route's.
 const maxBodyBytes = 1 << 20
 
-// SetBodyLimit gives one path its own body cap, read per request — for the
-// playground, whose replay carries a stored span payload the settings size.
-// Wire-time only: called before the engine serves (the map is unsynchronized).
+// SetBodyLimit gives one path its own body cap, read per request. Wire-time
+// only: the map is unsynchronized.
 func (s *Server) SetBodyLimit(path string, limit func() int64) {
 	s.bodyLimits[path] = limit
 }
 
-// NormalizeBaseURL validates a --base-url value — the server's public origin —
-// and returns it in canonical form (no trailing slash). Only a bare
-// scheme://host[:port] is accepted: every derived URL (OAuth callbacks, links)
-// assumes the app is mounted at the root.
+// NormalizeBaseURL validates a --base-url value and returns it canonical (no
+// trailing slash); only a bare scheme://host[:port] is accepted.
 func NormalizeBaseURL(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -84,9 +80,7 @@ func NormalizeBaseURL(raw string) (string, error) {
 }
 
 // SetTrustedProxies names the proxies (IPs or CIDRs) whose forwarding headers
-// gin's ClientIP may believe. New starts with none trusted — gin's own default
-// trusts everyone, which lets any direct client spoof its IP past the rate
-// limiter and the access log.
+// gin's ClientIP may believe; New starts with none trusted.
 func (s *Server) SetTrustedProxies(proxies []string) error {
 	return s.Engine.SetTrustedProxies(proxies)
 }
@@ -94,9 +88,8 @@ func (s *Server) SetTrustedProxies(proxies []string) error {
 // gzipMinLength is the response size from which gzip pays for its framing.
 const gzipMinLength = 1024
 
-// shouldGzip compresses an API response for a gzip-accepting client, except the
-// two streams (a run's events, the replay): their pieces are under the floor
-// and would be held back until it filled.
+// shouldGzip compresses an API response for a gzip-accepting client, except
+// the two streams (a run's events, the replay), whose pieces are under the floor.
 func shouldGzip(c *gin.Context) bool {
 	if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") || !strings.HasPrefix(c.Request.URL.Path, APIPrefix+"/") {
 		return false
@@ -108,10 +101,9 @@ func shouldGzip(c *gin.Context) bool {
 	return true
 }
 
-// New creates a Server with a gin engine configured for release mode, recovery, and request logging.
-// auth answers every /api/* request's credential; the auth ROUTES (login,
-// OAuth flows) are handlers and mount through RegisterAPI like the rest.
-// audit, when non-nil, receives every successful mutating request (see Audit).
+// New creates a Server over a gin engine (release mode, recovery, request
+// logging); auth answers every /api/* credential, audit (nil: none) every
+// successful mutation.
 func New(log *slog.Logger, auth AuthFunc, audit protocol.AuditFunc) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
@@ -153,18 +145,17 @@ func (s *Server) limitBody(c *gin.Context) {
 	c.Next()
 }
 
-// ServeHealth mounts an unauthenticated liveness endpoint at /health that
-// reports the server status and build version — for container probes and load
-// balancers. It carries no sensitive data and is safe to expose.
+// ServeHealth mounts the unauthenticated liveness endpoint /health: status and
+// build version.
 func (s *Server) ServeHealth(version string) {
 	s.Engine.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": version})
 	})
 }
 
-// ServeStatic serves files from staticFS, falling back to index.html for unmatched routes (SPA support).
-// Assets may be pre-compressed as .gz files; they are served transparently
-// with Content-Encoding: gzip (decompressed for a client that accepts none).
+// ServeStatic serves staticFS, falling back to index.html for unmatched routes;
+// a pre-compressed .gz asset is served as such, or decompressed for a client
+// that accepts none.
 func (s *Server) ServeStatic(staticFS fs.FS) {
 	s.cspMu.Lock()
 	s.scriptHashes = inlineScriptHashes(staticFS)
@@ -172,8 +163,7 @@ func (s *Server) ServeStatic(staticFS fs.FS) {
 	s.cspMu.Unlock()
 	httpFS := http.FS(staticFS)
 	s.Engine.NoRoute(func(c *gin.Context) {
-		// Unmatched API paths are client errors, not SPA routes: answer with a
-		// JSON 404 so a removed/mistyped endpoint doesn't return index.html.
+		// An unmatched API path is a JSON 404, not the SPA.
 		if strings.HasPrefix(c.Request.URL.Path, APIPrefix+"/") {
 			c.JSON(http.StatusNotFound, protocol.NewErrorResponse(protocol.CodeNotFound, "not found"))
 			return
@@ -235,8 +225,7 @@ func serveAsset(c *gin.Context, sfs fs.FS, httpFS http.FileSystem, p string) boo
 // buildCSP renders the policy: scriptHashes extends script-src with the sha256
 // sources of inline scripts, imgHosts extends img-src with login picture hosts.
 func buildCSP(scriptHashes, imgHosts []string) string {
-	// connect-src is same-origin: 'self' covers same-origin WebSockets in
-	// modern browsers.
+	// connect-src: 'self' covers same-origin WebSockets.
 	scriptSrc := "script-src 'self'"
 	for _, h := range scriptHashes {
 		scriptSrc += " 'sha256-" + h + "'"
@@ -254,9 +243,8 @@ func buildCSP(scriptHashes, imgHosts []string) string {
 		"frame-ancestors 'none'"
 }
 
-// securityHeaders sets the response headers every route carries: the CSP,
-// and the three the app never embeds, sniffs or leaks a URL to. HSTS is the
-// TLS-terminating proxy's to send.
+// securityHeaders sets the response headers every route carries: the CSP and
+// the three the app never embeds, sniffs or leaks a URL to; HSTS is the proxy's.
 func (s *Server) securityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Content-Security-Policy", s.cspPolicy.Load().(string))
@@ -324,8 +312,8 @@ func redactQuery(u *url.URL) string {
 
 func logMiddleware(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Make the logger reachable via logging.Ctx from handlers and from
-		// everything derived from the request context (e.g. WS connections).
+		// The logger is reachable via logging.Ctx from everything derived from
+		// the request context.
 		c.Request = c.Request.WithContext(logging.Into(c.Request.Context(), log))
 		c.Next()
 		log.Info("request", "method", c.Request.Method, "path", redactQuery(c.Request.URL), "status", c.Writer.Status())

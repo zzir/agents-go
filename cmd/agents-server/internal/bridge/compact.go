@@ -10,16 +10,13 @@ import (
 )
 
 // ErrCompactionUnavailable marks a session whose agent cannot run a compaction
-// pass — no agent bound, compaction disabled, or no usable provider/model. The
-// handler maps it to a 400 with the reason.
+// pass (none bound, disabled, no usable provider). The handler maps it to 400.
 var ErrCompactionUnavailable = errors.New("compaction unavailable")
 
 // CompactSession runs one forced compaction pass on the session's active
-// branch, outside any run — the Context panel's "Compact now" — with the bound
-// agent's compaction settings, through the run path's own construction (Force
-// only skips the threshold). Nothing to fold returns compacted=false and no
-// error. The busy check is advisory: persistCompaction is transactional and
-// refolds the append point, so a race costs at most one turn on the old history.
+// branch outside any run (the Context panel's "Compact now"), through the run
+// path's own construction; nothing to fold is compacted=false. The busy check
+// is advisory: persistCompaction is transactional and refolds the append point.
 func (r *Runner) CompactSession(ctx context.Context, sessionID string) (compacted bool, beforeItems, afterItems int, err error) {
 	sess, err := r.Deps.Sessions.Get(ctx, sessionID)
 	if err != nil {

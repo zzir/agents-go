@@ -101,10 +101,8 @@ func importTarget(c *gin.Context) importGroup {
 	return g
 }
 
-// Import fetches SKILL.md documents from a URL and upserts them: a GitHub
-// repository URL is traversed via the GitHub API (every SKILL.md at any
-// depth), any other http(s) URL is fetched as one raw SKILL.md. Re-importing
-// the same source refreshes rows that were not edited locally.
+// Import fetches SKILL.md documents from a URL and upserts them; a re-import
+// refreshes the rows not edited locally.
 //
 //	@Summary		Import skills from a URL
 //	@Description	https://github.com/owner/repo imports every SKILL.md in the repo (anonymous GitHub API — private repositories are not reachable). Any other http(s) URL is fetched as a single SKILL.md.

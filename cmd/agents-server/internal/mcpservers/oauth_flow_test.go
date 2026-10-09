@@ -132,11 +132,9 @@ func newFakeAS(t *testing.T) *fakeAS {
 }
 
 // newProtectedMCP serves a one-tool MCP server at /mcp behind a bearer check,
-// advertising PRM for the discovery chain. acceptToken decides which tokens the
-// resource server honors; nil accepts exactly the AS's issued access token. A
-// func that never accepts models a real mismatch — the authorization completes
-// but the issued token's audience/scope is not what this resource wants — so
-// every request 401s even after a successful authorize.
+// advertising PRM for the discovery chain. acceptToken decides which tokens
+// the resource server honors (nil: exactly the AS's issued token); one that
+// never accepts models an audience/scope mismatch, 401 after a successful authorize.
 func newProtectedMCP(t *testing.T, as *fakeAS, wrap func(http.Handler) http.Handler, acceptToken func(string) bool) *httptest.Server {
 	t.Helper()
 	if acceptToken == nil {

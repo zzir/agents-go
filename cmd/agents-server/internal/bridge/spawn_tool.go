@@ -26,9 +26,8 @@ type spawnArgs struct {
 	Label     string `json:"label" jsonschema:"Short human-readable task label shown in the UI (a workflow is labeled by its name)"`
 }
 
-// spawnTool is the server's spawn_task: the SDK's plus a workflow field, built
-// per run so the description lists the workflows on offer and the agents the
-// entry agent can hand off to — invariant 75.
+// spawnTool is the server's spawn_task: the SDK's plus a workflow field,
+// built per run with the workflows and handoff targets on offer — invariant 75.
 func (r *Runner) spawnTool(ctx context.Context, ownerID string, entry *BuildResult) *agents.Tool {
 	var offered []store.Workflow
 	if r.Deps.Workflows != nil {
@@ -75,8 +74,7 @@ func (r *Runner) spawnTool(ctx context.Context, ownerID string, entry *BuildResu
 			if err != nil {
 				return agents.ToolResult{}, err
 			}
-			// The id the build gave that target, not a name lookup: the one
-			// the model was offered — invariant 75.
+			// The id the build gave that target, not a name lookup — invariant 75.
 			if id, ok := entry.AgentIDs[target]; ok && target != "" {
 				target = id
 			}
@@ -92,7 +90,7 @@ func (r *Runner) spawnTool(ctx context.Context, ownerID string, entry *BuildResu
 				return agents.ToolResult{}, err
 			}
 			// A task finished before this call returned carries its result in
-			// the output; waking later to repeat it would burn a turn.
+			// the output: no wake-up.
 			r.tasks.ModelHasResult(ctx, info)
 			return tasks.ToolResult(info, r.tasks.Progress(info)), nil
 		})
@@ -113,8 +111,8 @@ func spawnTargets(entry *BuildResult) []*agents.Agent {
 	return out
 }
 
-// spawnWorkflow is spawn_task's workflow branch. The workflows are read NOW,
-// not from the description: a listing that failed must not read as "none".
+// spawnWorkflow is spawn_task's workflow branch; the workflows are read NOW,
+// not from the description.
 func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, parent, ownerID, name, input string) (agents.ToolResult, error) {
 	if r.Deps.Workflows == nil {
 		return agents.TextResult("Workflows are not available on this server. Leave workflow empty for a free-form task."), nil
@@ -126,13 +124,11 @@ func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, pare
 	if wf := matchWorkflow(offered, ownerID, name); wf != nil {
 		info, err := r.StartWorkflow(ctx, wf.ID, parent, input, tc.ToolCallID, store.WorkflowOrigin{})
 		if err != nil {
-			// The refusal is the model's to read and relay — a full budget or a
-			// deleted agent is something the person can act on.
+			// The refusal is the model's to read and relay.
 			return agents.TextResult(fmt.Sprintf("Could not start %q: %s", name, err.Error())), nil
 		}
 		r.tasks.ModelHasResult(ctx, info)
-		// The same card a spawned task gets, so the execution's state follows
-		// this call in the transcript; the text leads with what was set going.
+		// The same card a spawned task gets (invariant 30).
 		res := tasks.ToolResult(info, r.tasks.Progress(info))
 		res.Content = append([]agents.ToolOutputContent{
 			agents.ToolOutputText{Text: startedMessage(ctx, r, parent, info, len(wf.Steps))},
@@ -180,8 +176,7 @@ func describeTaskState(kind string, state json.RawMessage) string {
 		if name := st.Steps[idx].Name; name != "" {
 			line += " (" + name + ")"
 		}
-		// More runs than steps means the sequence looped back; a person's retry
-		// runs a step again too, but is not a loop.
+		// More runs than steps means the sequence looped back (a retry is not a loop).
 		if runs := st.StepRuns.SequenceRuns(); runs > len(st.Steps) {
 			line += fmt.Sprintf(", run %d", runs)
 		}

@@ -16,12 +16,10 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
-// Every exempt path must name a route this router actually serves. An
-// exemption for a path nothing serves is worse than dead config: whatever gets
-// mounted there later is unauthenticated without a line changing here. The
-// ChatGPT OAuth flow is the standing example of a path that needs NO exemption:
-// its redirect lands on localhost, never on this server, and the pasted code
-// returns through the authenticated /providers/:id/chatgpt/complete route.
+// Every exempt path must name a route this router actually serves: an
+// exemption for a path nothing serves unauthenticates whatever is mounted
+// there later. The ChatGPT OAuth flow needs no exemption (its redirect lands
+// on localhost; the pasted code returns through an authenticated route).
 func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	for _, p := range []string{
 		"/api/v1/auth/login",
@@ -52,13 +50,10 @@ func TestAuthExemptCoversOnlyServedRoutes(t *testing.T) {
 	}
 }
 
-// The non-2xx responses this package writes itself — the auth middleware and
-// the JSON 404 for unmatched API paths — go out as the envelope documented in
-// README "Errors". Compared against literal bytes rather than a re-marshalled
-// protocol.ErrorResponse: the bytes are the contract, and a renamed field
-// would move both sides of that comparison at once. handler/contract_test.go
-// pins the same bytes from the other emitter; the login endpoint's live in
-// handler/auth_test.go since the auth routes moved there.
+// The non-2xx responses this package writes itself (the auth middleware, the
+// JSON 404 for unmatched API paths) go out as the README "Errors" envelope,
+// compared against literal bytes: the bytes are the contract.
+// handler/contract_test.go pins the same bytes from the other emitter.
 func TestErrorEnvelopeMatchesTheSharedShape(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s := New(slog.New(slog.DiscardHandler), staticAuth("tok"), nil)

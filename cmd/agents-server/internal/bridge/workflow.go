@@ -20,12 +20,10 @@ import (
 // steps, or an agent that no longer exists. The handler maps it to a 400.
 var ErrWorkflowUnavailable = errors.New("workflow unavailable")
 
-// StartWorkflow begins a workflow for a session: it snapshots the definition
-// into the task's State and spawns a task of the workflow kind, whose first
-// run is the first step. input is the brief — what this execution is about,
-// written by the agent that asked for it; toolCallID is the spawn_task
-// call, so the card it produced follows the execution (workbench invariant 30).
-// origin is who started it when no run did, kept on the state; zero for a tool call's.
+// StartWorkflow begins a workflow for a session: the definition snapshotted
+// into the task's State, a task of the workflow kind spawned for the first
+// step. input is the brief; toolCallID the spawn_task call its card follows
+// (invariant 30); origin who started it when no run did (zero for a tool call's).
 func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID, input, toolCallID string, origin store.WorkflowOrigin) (*tasks.Info, error) {
 	if r.Deps.Workflows == nil || r.tasks == nil {
 		return nil, errors.New("workflows are not wired")
@@ -37,8 +35,7 @@ func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID,
 	if len(wf.Steps) == 0 {
 		return nil, fmt.Errorf("%w: %q has no steps", ErrWorkflowUnavailable, wf.Name)
 	}
-	// Every step's agent is checked up front: finding out at step 4 that its
-	// agent was deleted would leave the sequence half-run with no way to finish.
+	// Every step's agent is checked up front (invariant 13).
 	for i := range wf.Steps {
 		if _, err := r.Deps.AgentConfigs.Get(ctx, wf.Steps[i].AgentConfigID); err != nil {
 			return nil, fmt.Errorf("%w: step %d (%s) names no agent", ErrWorkflowUnavailable, i+1, wf.Steps[i].Name)
@@ -67,15 +64,12 @@ func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID,
 	})
 }
 
-// RunWorkflow starts a workflow for a session with no run asking — a person's
-// own run of it (the REST endpoint), or a trigger's — with the brief written
-// in advance. It is the same start the agent's tool makes, minus the call the
-// tool's card would follow; in its place the start leaves a NOTE on the
-// conversation (DisplayWorkflowStarted), which is what the result's wake-up
-// run is then labeled by and jumps to.
+// RunWorkflow starts a workflow for a session with no run asking (the REST
+// endpoint, a trigger) with the brief written in advance: the agent tool's
+// start, with a NOTE on the conversation (DisplayWorkflowStarted) in place of
+// the call's card.
 func (r *Runner) RunWorkflow(ctx context.Context, workflowID, sessionID, input string, origin store.WorkflowOrigin) (*TaskInfo, error) {
-	// A request may name a wrong session; a hidden (task's own) session is
-	// refused too — a start there could only fail, as a fault.
+	// A wrong session, a hidden one included, is refused.
 	sess, err := r.Deps.Sessions.Get(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -87,8 +81,7 @@ func (r *Runner) RunWorkflow(ctx context.Context, workflowID, sessionID, input s
 	if err != nil {
 		return nil, err
 	}
-	// Best effort, after the start: the note names the task, and a start
-	// that succeeded is not undone by a note that failed to write.
+	// Best effort, after the start: the note names the task.
 	if ref, rerr := store.RefFor(ctx, r.db, sessionID); rerr == nil {
 		wf, _ := r.Deps.Workflows.Get(ctx, workflowID)
 		name := workflowID
@@ -99,8 +92,8 @@ func (r *Runner) RunWorkflow(ctx context.Context, workflowID, sessionID, input s
 		if aerr := store.NewEntryStoreFor(r.db, ref).AppendWorkflowStarted(ctx, ref, note); aerr != nil {
 			logging.Ctx(ctx).Warn("recording the workflow-started note", "error", aerr, "task_id", info.TaskID)
 		}
-		// A conversation begun by a workflow has no first message to be named
-		// by, so the workflow and brief are its name. Same CAS as the generator.
+		// A conversation begun by a workflow is named after it (same CAS as the
+		// generator).
 		if sess.Name == store.DefaultSessionName {
 			r.nameSessionAfterWorkflow(ctx, sessionID, name, input)
 		}
@@ -172,8 +165,7 @@ func continueWorkflow(st *store.WorkflowState, runID string, out tasks.RunOutcom
 	if failed {
 		outcome = store.StepOutcomeFailed
 	}
-	// A gate step REPORTS; the routing is still the definition's. No verdict is
-	// a broken check, not a coin flip.
+	// A gate step REPORTS; the routing is still the definition's. No verdict fails.
 	var noVerdict error
 	if cur := st.Current(); cur != nil && cur.Gate != nil && !failed {
 		passed, ok := cur.Gate.Verdict(out.Text)
@@ -210,8 +202,8 @@ func continueWorkflow(st *store.WorkflowState, runID string, out tasks.RunOutcom
 	}
 	prompt := st.StepPrompt(*next)
 	if failed {
-		// A failed run leaves no usable account of itself in the transcript, so
-		// the handler step is told what it is handling.
+		// The handler step is told what it is handling (a failed run leaves no
+		// account of itself).
 		prompt = "The previous step failed: " + reason + "\n\n" + prompt
 	}
 	st.StepID = next.ID
@@ -240,8 +232,8 @@ func (r *Runner) launchWorkflowStep(ctx context.Context, req tasks.LaunchRequest
 	if step == nil {
 		return fmt.Errorf("%w: step %q is not in the snapshot", ErrWorkflowUnavailable, st.StepID)
 	}
-	// A retry past the budget or ceiling would run a whole step only to stop
-	// again: refuse before the run, saying so on the state (best effort).
+	// A retry past the budget or ceiling is refused before the run, said on the
+	// state (best effort).
 	tokens, err := r.executionTokens(ctx, st, req.SessionID)
 	if err != nil {
 		return err
@@ -250,8 +242,8 @@ func (r *Runner) launchWorkflowStep(ctx context.Context, req tasks.LaunchRequest
 		_, _ = r.Deps.Tasks.Advance(ctx, req.TaskID, req.RunID, req.RunID, st.Encode())
 		return err
 	}
-	// A retry re-issues the step's own instruction under the retry prompt,
-	// composed HERE so a paused step keeps the same turn when approved.
+	// A retry's turn is composed HERE, so a paused step keeps the same turn
+	// when approved.
 	if req.Retry {
 		req.Input = req.Input + "\n\nThe step to do again:\n" + st.StepPrompt(*step)
 	}
@@ -264,8 +256,7 @@ func (r *Runner) launchWorkflowStep(ctx context.Context, req tasks.LaunchRequest
 // startWorkflowStep records the launch in the state's log (under the run it
 // belongs to), compacts if the step asks, then starts the run.
 func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest, st *store.WorkflowState, step *store.WorkflowStep) error {
-	// The log names every launched run, written BEFORE the launch under the
-	// row's run id (invariant 31); a logged run never moved on from is a retried failure.
+	// The log names every launched run, written BEFORE the launch (invariant 31).
 	if n := len(st.StepRuns); n > 0 && st.StepRuns[n-1].Outcome == "" && st.StepRuns[n-1].RunID != req.RunID {
 		st.StepRuns[n-1].Outcome = store.StepOutcomeFailed
 	}
@@ -283,8 +274,7 @@ func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 		return fmt.Errorf("%w: the execution moved on before the step could start", ErrWorkflowUnavailable)
 	}
 	if step.CompactBefore {
-		// Best effort, before the launch while the child session is idle, with
-		// the step's own agent — the one about to read the summary.
+		// Best effort, before the launch, with the step's own agent.
 		rootCtx := r.hub.rootCtx
 		ac, cerr := r.Deps.AgentConfigs.Get(rootCtx, step.AgentConfigID)
 		if cerr == nil {
@@ -294,8 +284,7 @@ func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 			logging.Ctx(rootCtx).Warn("workflow: compact before step did not run", "error", cerr, "task_id", req.TaskID, "step_id", step.ID)
 		}
 	}
-	// The sandbox comes from the PARENT (Inherit) — every step shares the
-	// project of the conversation that asked; the agent is the step's own.
+	// The sandbox comes from the PARENT (Inherit); the agent is the step's own.
 	in := store.DecodeInherit(req.Inherit)
 	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.ProjectID, TextInput(req.Input), "", nil, nil)
 	return err
@@ -331,9 +320,8 @@ func (r *Runner) pauseWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 	return nil
 }
 
-// resolveStepApproval applies a decision on a paused step: approve reclaims the
-// task and starts the run; reject cancels the execution, its summary carrying
-// the reason when one was given — invariant 37.
+// resolveStepApproval applies a decision on a paused step: approve reclaims
+// the task and starts the run; reject cancels the execution — invariant 37.
 func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.PendingApproval, approve bool, reason string) (runID string, err error) {
 	mctx := context.WithoutCancel(ctx)
 	row, err := r.Deps.Tasks.ByChildSession(ctx, pending.SessionID)
@@ -341,8 +329,7 @@ func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.Pending
 		return "", fmt.Errorf("resolving the paused step's execution: %w", err)
 	}
 	if !approve {
-		// The claim and the ending in one write: the row deleted and the
-		// execution cancelled — the person's decision, so nobody is woken.
+		// The claim and the ending in one write; a person's decision wakes nobody.
 		summary := "step rejected"
 		if reason = strings.TrimSpace(reason); reason != "" {
 			summary += ": " + reason
@@ -379,8 +366,8 @@ func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.Pending
 		}
 		return "", &ApprovalVoidError{TaskID: row.ID}
 	}
-	// Working again, so a failure to start ends the execution failed via the
-	// store (the parent is owed the news); a lost finalize means a stop won: void.
+	// Working again: a failure to start ends the execution failed (the parent
+	// is owed the news); a lost finalize means a stop won.
 	fail := func(reason string, err error) (string, error) {
 		reason += ": " + err.Error()
 		won, ferr := store.NewTaskAdapter(r.Deps.Tasks).Finalize(mctx, row.ID, pending.RunID, tasks.StatusFailed, reason, reason, nil)

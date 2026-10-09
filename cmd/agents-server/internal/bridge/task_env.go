@@ -41,8 +41,7 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 			}
 		}
 	}
-	// A parent that never ran and is bound to nothing has no agent to be woken
-	// as; the task's own agent delivers then.
+	// A parent that never ran and is bound to nothing is woken as the task's own agent.
 	if parentAgentConfigID == "" {
 		parentAgentConfigID = cfg.ID
 	}
@@ -61,8 +60,7 @@ type taskLauncher struct{ r *Runner }
 
 // Launch implements tasks.Launcher.
 func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error {
-	// A workflow's run is a STEP: which agent, and what to do first, come from
-	// the execution's state rather than the inherit snapshot.
+	// A workflow's run is a STEP: agent and first turn come from the execution's state.
 	if req.Kind == store.TaskKindWorkflow {
 		return t.r.launchWorkflowStep(ctx, req)
 	}
@@ -76,8 +74,8 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 // taskStopper answers "cancel this run".
 type taskStopper struct{ r *Runner }
 
-// taskStopSettleTimeout bounds the wait for a finished task run's segment to
-// drain, so a stop in the "ended but not yet on the row" window reports truly.
+// taskStopSettleTimeout bounds a stop's wait for a finished task run's segment
+// to drain.
 const taskStopSettleTimeout = approvalSettleTimeout
 
 // Stop implements tasks.Stopper. A task paused on an approval has no run to
@@ -98,17 +96,15 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 		}
 	}
 	if !live {
-		// No hub record (never registered, or collected): say so, and the SDK
-		// records the ending itself instead of waiting on a run that never reports.
+		// No hub record (never registered, or collected): the SDK records the
+		// ending itself.
 		return tasks.StopUnknownRun, nil
 	}
 	if isTerminalRunStatus(info.Status) {
-		// Ended on its own before the stop: wait the settle window out, since a
-		// closed gate means postRun wrote the row (else the SDK sees a lost outcome).
+		// Ended on its own before the stop: a closed gate means postRun wrote the row.
 		deadline := time.Now().Add(taskStopSettleTimeout)
 		if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-			// A caller stopping many tasks under one bound (a session
-			// teardown) owns the budget; this wait must fit inside it.
+			// This wait fits inside a caller's own bound (a session teardown).
 			deadline = d
 		}
 		t.r.hub.waitDone(runID, deadline)
@@ -125,8 +121,8 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 	if t.ToolCallID == "" {
 		return
 	}
-	// Updates fold in append order: never record a non-terminal status over a
-	// task the store already says is terminal (the CAS makes it the arbiter).
+	// Never a non-terminal status over a task the store says is terminal
+	// (invariant 23).
 	if !isTerminalTaskStatus(string(t.Status)) && r.Deps.Tasks != nil {
 		if cur, err := r.Deps.Tasks.Get(ctx, t.ID); err == nil && isTerminalTaskStatus(cur.Status) {
 			return
@@ -160,10 +156,8 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 }
 
 // AnnounceTask tells the clients what a task now is, for a change made on the
-// store outside the manager (the approval reaper's expiry). Tasks are an
-// optional dep, as in taskMeta and the approval pause. A task ended while its
-// run sat paused in the hub ends that run too: left interrupted, the record
-// would hold a task slot and its subscribers until the retention GC.
+// store outside the manager (the approval reaper's expiry); a task ended while
+// its run sat paused in the hub ends that run too.
 func (r *Runner) AnnounceTask(ctx context.Context, taskID string) {
 	if r.Deps.Tasks == nil {
 		return
@@ -205,8 +199,7 @@ func (r *Runner) publishTaskUpdated(ctx context.Context, t *tasks.Task) {
 	if row, err := r.Deps.Tasks.Get(ctx, t.ID); err == nil {
 		upd.Dismissed = row.Dismissed
 	}
-	// A paused task names its decision, so a client can offer it without a
-	// run event to learn it from.
+	// A paused task names its decision.
 	if t.Status == tasks.StatusInputRequired && r.Deps.PendingApprovals != nil {
 		if p, err := r.Deps.PendingApprovals.Get(ctx, t.RunID); err == nil {
 			if calls := p.ParsedToolCalls(); len(calls) > 0 {

@@ -27,8 +27,8 @@ func (a *SessionRepoAdapter) Create(ctx context.Context, opts session.CreateOpti
 	if id == "" {
 		id = NewID()
 	}
-	// A served session (a task's transcript) inherits its parent's owner; one
-	// without a parent (the conformance suite, tooling) belongs to the local account.
+	// A served session inherits its parent's owner; one without a parent
+	// belongs to the local account.
 	owner := LocalUserID
 	if opts.ParentID != "" {
 		parent, err := a.sessions.Get(ctx, opts.ParentID)
@@ -44,15 +44,13 @@ func (a *SessionRepoAdapter) Create(ctx context.Context, opts session.CreateOpti
 		ID:      id,
 		OwnerID: owner,
 		Name:    opts.Title,
-		// Hidden sessions are the task transcripts: they are excluded from the
-		// chat list by the task-session filter the list query already applies.
+		// Hidden sessions are the task transcripts, excluded from the chat list.
 		Hidden: opts.Hidden,
 	}
 	if err := a.sessions.Create(ctx, row); err != nil {
 		return nil, err
 	}
-	// From the row this call just wrote: resolving the id again is a second
-	// chance for it to be deleted and recreated in between.
+	// From the row this call just wrote, not a second resolution of the id.
 	return session.NewSession(a.entries(session.Ref{ID: row.ID, Gen: row.Gen})), nil
 }
 
@@ -87,8 +85,7 @@ func (a *SessionRepoAdapter) List(ctx context.Context, opts session.ListOptions)
 			CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		})
 	}
-	// After the filter, so a hidden session does not consume a slot the caller
-	// asked for. The store already orders newest first.
+	// Limited after the filter; the store already orders newest first.
 	if opts.Limit > 0 && opts.Limit < len(out) {
 		out = out[:opts.Limit]
 	}

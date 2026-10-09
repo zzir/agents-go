@@ -17,9 +17,8 @@ var _ session.HistorySearcher = (*EntryStore)(nil)
 const historyPage = 64
 
 // SearchHistory implements session.HistorySearcher over the active branch,
-// compacted rows included: the branch is walked without bodies, the query
-// narrows the candidates in SQL where the JSON encoding allows, and bodies
-// are read newest first until the page is full.
+// compacted rows included: walked without bodies, narrowed in SQL where the
+// JSON encoding allows (likeSafe), bodies read newest first until the page is full.
 func (s *EntryStore) SearchHistory(ctx context.Context, q session.HistoryQuery) ([]session.Entry, bool, error) {
 	limit := q.Limit
 	if limit <= 0 {
@@ -133,10 +132,9 @@ func (s *EntryStore) callToolNames(ctx context.Context, tool string) (map[string
 	return session.CallToolNames(entries), nil
 }
 
-// likeSafe reports whether a query survives the JSON encoding of the stored
-// entry unchanged, so a SQL LIKE over the text is a sound narrowing: ASCII,
-// printable, none of the characters encoding/json escapes, and no
-// parenthesis, which RenderItem adds around a call's arguments.
+// likeSafe reports whether a query survives the stored entry's JSON encoding
+// unchanged (a sound SQL LIKE): printable ASCII, nothing encoding/json
+// escapes, no parenthesis (RenderItem adds them around a call's arguments).
 func likeSafe(query string) bool {
 	for _, r := range query {
 		if r > unicode.MaxASCII || r < ' ' || r == unicode.MaxASCII || strings.ContainsRune(`"\<>&()`, r) {

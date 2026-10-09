@@ -7942,8 +7942,8 @@ export interface components {
     schemas: {
         "agents.ContextManagement": {
             /**
-             * @description CompactThreshold is the token threshold at which compaction triggers for
-             *     this entry. nil leaves it unset.
+             * @description CompactThreshold is the token threshold at which compaction triggers. nil
+             *     leaves it unset.
              */
             compact_threshold?: number;
             type?: components["schemas"]["agents.ContextManagementType"];
@@ -7966,10 +7966,7 @@ export interface components {
         };
         /** @description InputTokensDetails aggregates the input token detail fields. */
         "agents.InputTokensDetails": {
-            /**
-             * @description CacheWriteTokens counts input tokens written to the prompt cache, for
-             *     providers that bill cache writes separately.
-             */
+            /** @description CacheWriteTokens counts input tokens written to the prompt cache. */
             cache_write_tokens?: number;
             cached_tokens?: number;
         };
@@ -7979,8 +7976,8 @@ export interface components {
             /** @description CallID ties a tool call to its output. */
             call_id?: string;
             /**
-             * @description Extra carries whatever a tool's CustomDataExtractor produced. It is
-             *     SDK-side only and never reaches the model.
+             * @description Extra carries whatever a tool's CustomDataExtractor produced; it never
+             *     reaches the model.
              */
             extra?: {
                 [key: string]: unknown;
@@ -7995,23 +7992,20 @@ export interface components {
             /** @description Output is a tool result rendered as text. */
             output?: string;
             /**
-             * @description Renderer is a tool's requested renderer ("diff", "terminal", "table", …),
-             *     from ToolResult.Display. A consumer that does not know the name falls
-             *     back to plain text rather than failing.
+             * @description Renderer is a tool's requested renderer ("diff", "terminal", "table", …)
+             *     from ToolResult.Display; an unknown name falls back to plain text.
              */
             renderer?: string;
             /**
-             * @description Summary is the one-line account of what happened ("3 files changed"),
-             *     for where the full Output would drown the timeline. Empty means render
-             *     what the other fields already carry.
+             * @description Summary is the one-line account of what happened ("3 files changed");
+             *     empty renders what the other fields carry.
              */
             summary?: string;
             /** @description Text is the human-readable body: a message's text, a reasoning summary. */
             text?: string;
             /**
-             * @description Title is the card heading, when the tool name is not it — a task's
-             *     label, "Apply patch" over "apply_patch". Empty means fall back to
-             *     ToolName: an override, never required, per the display contract.
+             * @description Title is the card heading when the tool name is not it ("Apply patch" over
+             *     "apply_patch"); empty falls back to ToolName.
              */
             title?: string;
             /** @description ToolName is the tool being called, or the handoff tool. */
@@ -8023,9 +8017,8 @@ export interface components {
          */
         "agents.ModelSettings": {
             /**
-             * @description ContextManagement configures server-side context management (e.g.
-             *     compaction) for OpenAI Responses API requests. A nil/empty slice leaves it
-             *     unset.
+             * @description ContextManagement configures server-side context management for OpenAI
+             *     Responses API requests.
              */
             context_management?: components["schemas"]["agents.ContextManagement"][];
             /** @description MaxTokens is the maximum number of output tokens to generate. */
@@ -8035,14 +8028,13 @@ export interface components {
                 [key: string]: string;
             };
             /**
-             * @description ParallelToolCalls controls whether the model may emit multiple tool calls
-             *     in a single turn. nil defers to the provider default.
+             * @description ParallelToolCalls controls whether the model may emit several tool calls
+             *     in one turn.
              */
             parallel_tool_calls?: boolean;
             /**
-             * @description PromptCacheKey is forwarded as the Responses API prompt_cache_key to
-             *     improve prompt-cache hit rates. Empty means unset. The runner never
-             *     generates a key — callers set this (or ExtraBody) themselves.
+             * @description PromptCacheKey is forwarded as the Responses API prompt_cache_key; the
+             *     runner never generates one.
              */
             prompt_cache_key?: string;
             prompt_cache_options?: components["schemas"]["agents.PromptCacheOptions"];
@@ -8070,16 +8062,10 @@ export interface components {
          * @enum {string}
          */
         "agents.PromptCacheMode": "implicit" | "explicit";
-        /**
-         * @description PromptCacheOptions configures prompt caching (mode and breakpoint TTL)
-         *     for OpenAI Responses API requests. nil leaves it unset.
-         */
+        /** @description PromptCacheOptions configures prompt caching for OpenAI Responses API requests. */
         "agents.PromptCacheOptions": {
             mode?: components["schemas"]["agents.PromptCacheMode"];
-            /**
-             * @description TTL is the minimum cache-entry lifetime, e.g. "30m" (currently the only
-             *     supported value). Empty leaves it unset.
-             */
+            /** @description TTL is the minimum cache-entry lifetime, e.g. "30m". Empty leaves it unset. */
             ttl?: string;
         };
         /**
@@ -8172,7 +8158,10 @@ export interface components {
             /** @description Kind is "step" for a workflow step waiting to start, empty for a tool call. */
             kind?: string;
             run_id?: string;
-            /** @description SessionID is the conversation to open; a task's call names its parent conversation. */
+            /**
+             * @description SessionID is the conversation to open; a task's call names its parent
+             *     conversation.
+             */
             session_id?: string;
             task_id?: string;
             task_label?: string;
@@ -8273,16 +8262,25 @@ export interface components {
         "handler.SessionApproval": {
             agent_config_id?: string;
             created_at?: string;
-            /** @description Kind is "" for a tool call the run paused on, ApprovalKindStep for a workflow step waiting to start. */
+            /**
+             * @description Kind is "" for a tool call the run paused on, ApprovalKindStep for a
+             *     workflow step waiting to start.
+             */
             kind?: string;
             project_id?: string;
             run_id?: string;
             session_id?: string;
             task_id?: string;
             task_label?: string;
-            /** @description ToolCalls is the JSON array of pending tool calls ([]PendingToolCall) shown to the user. */
+            /**
+             * @description ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
+             *     shown to the user.
+             */
             tool_calls?: number[];
-            /** @description UserInput is the text of the message that started the paused turn; the UI shows it while the run waits. */
+            /**
+             * @description UserInput is the text of the message that started the paused turn; the UI
+             *     shows it while the run waits.
+             */
             user_input?: string;
         };
         "handler.SessionMemoryInfo": {
@@ -8311,7 +8309,10 @@ export interface components {
         };
         "handler.TriggerView": {
             agent_config_id?: string;
-            /** @description Brief leads every execution or turn this trigger starts; a webhook's payload is appended. */
+            /**
+             * @description Brief leads every execution or turn this trigger starts; a webhook's
+             *     payload is appended.
+             */
             brief?: string;
             created_at?: string;
             enabled?: boolean;
@@ -8328,15 +8329,24 @@ export interface components {
              *     zone (ServerInfo.Timezone); absent for webhooks and disabled triggers.
              */
             next_fire_at?: string;
-            /** @description Schedule is the cron expression (five fields, @hourly, @every 10m), optionally prefixed CRON_TZ=<IANA zone>; cron kind only. */
+            /**
+             * @description Schedule is the cron expression (five fields, @hourly, @every 10m),
+             *     optionally prefixed CRON_TZ=<IANA zone>; cron kind only.
+             */
             schedule?: string;
             /** @description Secret is set on the response that minted it, and never again. */
             secret?: string;
             /** @description SecretHint is the secret's tail, to tell one from another. */
             secret_hint?: string;
-            /** @description SessionID is the conversation the work reports to, or for an agent turn happens in. */
+            /**
+             * @description SessionID is the conversation the work reports to, or for an agent turn
+             *     happens in.
+             */
             session_id?: string;
-            /** @description Target says what a fire starts; WorkflowID or AgentConfigID names it, the other stays empty. */
+            /**
+             * @description Target says what a fire starts; WorkflowID or AgentConfigID names it, the
+             *     other stays empty.
+             */
             target?: string;
             updated_at?: string;
             workflow_id?: string;
@@ -8355,7 +8365,10 @@ export interface components {
             status?: string;
         };
         "handler.approveAllResp": {
-            /** @description Approved counts the calls approved; the pause's other calls (a plan, a workflow save, a memory proposal) stay for a decision each. */
+            /**
+             * @description Approved counts the calls approved; the pause's other calls (a plan, a
+             *     workflow save, a memory proposal) stay for a decision each.
+             */
             approved?: number;
             run_id?: string;
         };
@@ -8425,10 +8438,16 @@ export interface components {
             status?: string;
         };
         "handler.mcpServerListItem": {
-            /** @description Config holds the connection settings as JSON (HTTPMcpConfig), exchanged with the API as a raw object. */
+            /**
+             * @description Config holds the connection settings as JSON (HTTPMcpConfig), exchanged
+             *     with the API as a raw object.
+             */
             config?: number[];
             created_at?: string;
-            /** @description Enabled carries no bun default tag: with one, bun would write SQL DEFAULT for a false on insert. */
+            /**
+             * @description Enabled carries no bun default tag: with one, bun would write SQL DEFAULT
+             *     for a false on insert.
+             */
             enabled?: boolean;
             /**
              * @description HasOAuthToken reports whether a persisted OAuth token exists. It gates
@@ -8457,11 +8476,20 @@ export interface components {
         };
         "handler.mcpToolInfo": {
             description?: string;
-            /** @description Name is the tool as an agent sees it: the server's prefix and the tool's own name. */
+            /**
+             * @description Name is the tool as an agent sees it: the server's prefix and the tool's
+             *     own name.
+             */
             name?: string;
-            /** @description OriginalName is the tool's own name on the server, the form read_only_tools lists. */
+            /**
+             * @description OriginalName is the tool's own name on the server, the form
+             *     read_only_tools lists.
+             */
             original_name?: string;
-            /** @description ReadOnlyHint is the server's own claim that the tool only observes; a hint, never trusted on its own. */
+            /**
+             * @description ReadOnlyHint is the server's own claim that the tool only observes; a
+             *     hint, never trusted on its own.
+             */
             read_only_hint?: boolean;
         };
         "handler.memoryReq": {
@@ -8470,7 +8498,10 @@ export interface components {
             key?: string;
             metadata?: string;
             scope_id?: string;
-            /** @description ScopeKind is global, agent or session; ScopeID the agent or session id, empty for global. */
+            /**
+             * @description ScopeKind is global, agent or session; ScopeID the agent or session id,
+             *     empty for global.
+             */
             scope_kind?: string;
         };
         "handler.playgroundReq": {
@@ -8519,9 +8550,15 @@ export interface components {
             parameters?: {
                 [key: string]: unknown;
             };
-            /** @description ReadOnly reports a tool plan mode leaves usable, which "ask before changes" does not ask about. */
+            /**
+             * @description ReadOnly reports a tool plan mode leaves usable, which "ask before
+             *     changes" does not ask about.
+             */
             read_only?: boolean;
-            /** @description Source is where the tool comes from: sandbox, skills, tasks, workflows, context, checklist, or mcp:<server>. */
+            /**
+             * @description Source is where the tool comes from: sandbox, skills, tasks, workflows,
+             *     context, checklist, or mcp:<server>.
+             */
             source?: string;
         };
         "handler.projectDeleteResp": {
@@ -8537,14 +8574,21 @@ export interface components {
             owner_id?: string;
             /**
              * @description Revision is the expected-revision CAS every update lands against.
-             *     RuntimeGen moves when the project's content or its sandbox changes; the instance cache and terminals fence on it.
+             *     RuntimeGen moves when the project's content or its sandbox changes; the
+             *     instance cache and terminals fence on it.
              */
             revision?: number;
-            /** @description SandboxID is what the project runs on; it may move only to a sandbox of the same type and destination (409 otherwise). */
+            /**
+             * @description SandboxID is what the project runs on; it may move only to a sandbox of
+             *     the same type and destination (409 otherwise).
+             */
             sandbox_id?: string;
             /** @description SessionCount is how many sessions bind this project, filled by List. */
             session_count?: number;
-            /** @description StorageHint names where the files live (the named volume), derived per response for admins only and never stored. */
+            /**
+             * @description StorageHint names where the files live (the named volume), derived per
+             *     response for admins only and never stored.
+             */
             storage_hint?: string;
             updated_at?: string;
         };
@@ -8595,7 +8639,10 @@ export interface components {
             ok?: boolean;
         };
         "handler.rebuildReq": {
-            /** @description SessionID is the caller's session, bound to this project, to leave the rebuilt note on; left out, no note is written. */
+            /**
+             * @description SessionID is the caller's session, bound to this project, to leave the
+             *     rebuilt note on; left out, no note is written.
+             */
             session_id?: string;
         };
         "handler.rejectReq": {
@@ -8655,21 +8702,33 @@ export interface components {
             /** @description Hidden marks a background task's transcript session; listings leave it out. */
             hidden?: boolean;
             id?: string;
-            /** @description LiveRunID is the session's own executing run; a run paused for approval is not live. */
+            /**
+             * @description LiveRunID is the session's own executing run; a run paused for approval
+             *     is not live.
+             */
             live_run_id?: string;
             name?: string;
             /** @description OldestPendingAt is when the longest-waiting decision was asked for. */
             oldest_pending_at?: string;
-            /** @description OwnerID is the user the conversation belongs to; a task's hidden session inherits its parent's. */
+            /**
+             * @description OwnerID is the user the conversation belongs to; a task's hidden session
+             *     inherits its parent's.
+             */
             owner_id?: string;
             /** @description Pending lists the decisions waited on, oldest first. */
             pending?: components["schemas"]["bridge.PendingCall"][];
             /** @description PendingCount is how many decisions the session and its background tasks wait on. */
             pending_count?: number;
             pinned?: boolean;
-            /** @description Planning is the session's plan phase: the next run starts read-only until a plan is approved. */
+            /**
+             * @description Planning is the session's plan phase: the next run starts read-only until
+             *     a plan is approved.
+             */
             planning?: boolean;
-            /** @description ProjectID is the project the session is bound to, set once by the first project-carrying run and never rewritten. */
+            /**
+             * @description ProjectID is the project the session is bound to, set once by the first
+             *     project-carrying run and never rewritten.
+             */
             project_id?: string;
             /** @description Status is idle, running, requires_action or failed. */
             status?: string;
@@ -8685,19 +8744,31 @@ export interface components {
             /** @description Hidden marks a background task's transcript session; listings leave it out. */
             hidden?: boolean;
             id?: string;
-            /** @description LiveRunID is the session's own executing run; a run paused for approval is not live. */
+            /**
+             * @description LiveRunID is the session's own executing run; a run paused for approval
+             *     is not live.
+             */
             live_run_id?: string;
             name?: string;
             /** @description OldestPendingAt is when the longest-waiting decision was asked for. */
             oldest_pending_at?: string;
-            /** @description OwnerID is the user the conversation belongs to; a task's hidden session inherits its parent's. */
+            /**
+             * @description OwnerID is the user the conversation belongs to; a task's hidden session
+             *     inherits its parent's.
+             */
             owner_id?: string;
             /** @description PendingCount is how many decisions the session and its background tasks wait on. */
             pending_count?: number;
             pinned?: boolean;
-            /** @description Planning is the session's plan phase: the next run starts read-only until a plan is approved. */
+            /**
+             * @description Planning is the session's plan phase: the next run starts read-only until
+             *     a plan is approved.
+             */
             planning?: boolean;
-            /** @description ProjectID is the project the session is bound to, set once by the first project-carrying run and never rewritten. */
+            /**
+             * @description ProjectID is the project the session is bound to, set once by the first
+             *     project-carrying run and never rewritten.
+             */
             project_id?: string;
             /** @description Status is idle, running, requires_action or failed. */
             status?: string;
@@ -8818,10 +8889,7 @@ export interface components {
         "session.ErrorCode": "unknown" | "max_turns_exceeded" | "model_behavior" | "model_refusal" | "user_error" | "tool_timeout" | "tool_loop" | "tool_panic" | "guardrail_tripwire" | "sandbox_exec" | "mcp";
         /** @description InputTokensDetails aggregates the input token detail fields. */
         "session.InputTokensDetails": {
-            /**
-             * @description CacheWriteTokens counts input tokens written to the prompt cache, for
-             *     providers that bill cache writes separately.
-             */
+            /** @description CacheWriteTokens counts input tokens written to the prompt cache. */
             cache_write_tokens?: number;
             cached_tokens?: number;
         };
@@ -8849,16 +8917,28 @@ export interface components {
         "settings.Kind": "string" | "text" | "secret" | "int" | "bool";
         "store.AgentConfig": {
             approval?: components["schemas"]["store.ApprovalGroup"];
-            /** @description Avatar is a same-origin path into the built-in catalog ("/avatars/<name>.svg"); empty renders an initial. */
+            /**
+             * @description Avatar is a same-origin path into the built-in catalog
+             *     ("/avatars/<name>.svg"); empty renders an initial.
+             */
             avatar?: string;
             behavior?: components["schemas"]["store.BehaviorGroup"];
             compaction?: components["schemas"]["store.CompactionGroup"];
-            /** @description ContextWindow is the model's window in tokens, declared per agent; 0 leaves the Context panel without a denominator. */
+            /**
+             * @description ContextWindow is the model's window in tokens, declared per agent; 0
+             *     leaves the Context panel without a denominator.
+             */
             context_window?: number;
             created_at?: string;
-            /** @description Description is what the agent is for, in a sentence; an agent picker matches requests against it. */
+            /**
+             * @description Description is what the agent is for, in a sentence; an agent picker
+             *     matches requests against it.
+             */
             description?: string;
-            /** @description ErrorHandlers is a JSON object keyed by error kind (max_turns, model_refusal, invalid_final_output); empty keeps every run error fatal. */
+            /**
+             * @description ErrorHandlers is a JSON object keyed by error kind (max_turns,
+             *     model_refusal, invalid_final_output); empty keeps every run error fatal.
+             */
             error_handlers?: string;
             guardrails?: components["schemas"]["store.GuardrailGroup"];
             /** @description Handoffs lists the ids of the agents this one can hand off to. */
@@ -8867,26 +8947,42 @@ export interface components {
             instructions?: string;
             memory?: components["schemas"]["store.MemoryGroup"];
             model?: string;
-            /** @description ModelSettings is a JSON object of model parameters (temperature, reasoning, extra_body, ...). */
+            /**
+             * @description ModelSettings is a JSON object of model parameters (temperature,
+             *     reasoning, extra_body, ...).
+             */
             model_settings?: string;
             name?: string;
             owner_id?: string;
-            /** @description ProviderID names the Provider the agent reaches its model through; empty fails the run's pre-flight. */
+            /**
+             * @description ProviderID names the Provider the agent reaches its model through; empty
+             *     fails the run's pre-flight.
+             */
             provider_id?: string;
             resilience?: components["schemas"]["store.ResilienceGroup"];
             /** @description Scope/OwnerID: row visibility and its permanent creator. */
             scope?: string;
             session?: components["schemas"]["store.SessionGroup"];
-            /** @description Skills lists the ids of the skills the agent may read; null means every skill its scope can see, [] none. */
+            /**
+             * @description Skills lists the ids of the skills the agent may read; null means every
+             *     skill its scope can see, [] none.
+             */
             skills?: string[];
             /** @description Tools lists the ids of the MCP servers whose tools the agent carries. */
             tools?: string[];
             updated_at?: string;
         };
         "store.ApprovalGroup": {
-            /** @description Mode is when the agent's tool calls pause for approval: never (only the listed tools), on_change (every tool plan mode would deny), always (every tool). Empty reads as never. */
+            /**
+             * @description Mode is when the agent's tool calls pause for approval: never (only the
+             *     listed tools), on_change (every tool plan mode would deny), always (every
+             *     tool). Empty reads as never.
+             */
             approval_mode?: string;
-            /** @description ApproveTools names tools that pause for approval before each call in every mode; ["*"] means every tool. */
+            /**
+             * @description ApproveTools names tools that pause for approval before each call in
+             *     every mode; ["*"] means every tool.
+             */
             approve_tools?: string[];
         };
         "store.AuditEvent": {
@@ -8901,32 +8997,57 @@ export interface components {
             id?: string;
             resource?: string;
         };
-        /** @description The run-level settings, one JSON column per category (agent_config_groups.go); each a nested object in the API. */
+        /**
+         * @description The run-level settings, one JSON column per category
+         *     (agent_config_groups.go); each a nested object in the API.
+         */
         "store.BehaviorGroup": {
-            /** @description Checklist gives the agent's chat runs the todo_write checklist tool; off by default. */
+            /**
+             * @description Checklist gives the agent's chat runs the todo_write checklist tool; off
+             *     by default.
+             */
             checklist?: boolean;
             handoff_description?: string;
             handoff_input_filter?: string;
             max_tool_concurrency?: number;
             max_turns?: number;
-            /** @description OverrideSystemPrompt sends this agent's instructions alone, empty included; the global system prompt is not prepended. */
+            /**
+             * @description OverrideSystemPrompt sends this agent's instructions alone, empty
+             *     included; the global system prompt is not prepended.
+             */
             override_system_prompt?: boolean;
-            /** @description ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across turns) or "omit". */
+            /**
+             * @description ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
+             *     turns) or "omit".
+             */
             reasoning_item_id_policy?: string;
-            /** @description StopAtTools is a comma-separated list of tool names the run ends after; empty lets the model decide. */
+            /**
+             * @description StopAtTools is a comma-separated list of tool names the run ends after;
+             *     empty lets the model decide.
+             */
             stop_at_tools?: string;
             /** @description Subagents grants the agent's chat runs the task tools; nil/true = on. */
             subagents?: boolean;
-            /** @description ThinkingBinding asks an Anthropic backend to drop a replayed thinking block it can no longer verify instead of failing the request; nil/true = on. */
+            /**
+             * @description ThinkingBinding asks an Anthropic backend to drop a replayed thinking
+             *     block it can no longer verify instead of failing the request; nil/true =
+             *     on.
+             */
             thinking_binding?: boolean;
-            /** @description ThinkingMode is how an Anthropic backend sends the reasoning effort: "" as adaptive thinking, "budget" as a thinking token budget. */
+            /**
+             * @description ThinkingMode is how an Anthropic backend sends the reasoning effort: ""
+             *     as adaptive thinking, "budget" as a thinking token budget.
+             */
             thinking_mode?: string;
             /** @description ToolChoiceReset resets a pinned tool_choice after a tool runs; nil/true = on. */
             tool_choice_reset?: boolean;
             tool_not_found_behavior?: string;
             /** @description Vision admits image attachments on this agent's runs; off by default. */
             vision?: boolean;
-            /** @description WorkflowAuthoring gives the agent's chat runs get_workflow / save_workflow; off by default. */
+            /**
+             * @description WorkflowAuthoring gives the agent's chat runs get_workflow /
+             *     save_workflow; off by default.
+             */
             workflow_authoring?: boolean;
         };
         "store.CompactionGroup": {
@@ -8959,26 +9080,47 @@ export interface components {
         };
         "store.ContextReport": {
             cache_write_tokens?: number;
-            /** @description CachedTokens and CacheWriteTokens split that call's input by cache disposition, when the provider reports it. */
+            /**
+             * @description CachedTokens and CacheWriteTokens split that call's input by cache
+             *     disposition, when the provider reports it.
+             */
             cached_tokens?: number;
-            /** @description CompactionEnabled reports whether the pass runs; Threshold is what it fires at, Tokens what it compares. */
+            /**
+             * @description CompactionEnabled reports whether the pass runs; Threshold is what it
+             *     fires at, Tokens what it compares.
+             */
             compaction_enabled?: boolean;
             /** @description CompactionMode is the agent's: summary, reset or hybrid. */
             compaction_mode?: string;
             compaction_threshold?: number;
             compaction_tokens?: number;
-            /** @description ContextWindow is the agent's declared window in tokens; 0 shows occupancy without a denominator. */
+            /**
+             * @description ContextWindow is the agent's declared window in tokens; 0 shows occupancy
+             *     without a denominator.
+             */
             context_window?: number;
-            /** @description ConversationTokens is the estimated size of the transcript still in context: active, uncompacted entries summed. */
+            /**
+             * @description ConversationTokens is the estimated size of the transcript still in
+             *     context: active, uncompacted entries summed.
+             */
             conversation_tokens?: number;
-            /** @description Growth is each model call's input tokens in order; a compaction pass shows as a drop. */
+            /**
+             * @description Growth is each model call's input tokens in order; a compaction pass
+             *     shows as a drop.
+             */
             growth?: number[];
-            /** @description InputTokens is what the last model call on the branch sent, OutputTokens that call's completion. */
+            /**
+             * @description InputTokens is what the last model call on the branch sent, OutputTokens
+             *     that call's completion.
+             */
             input_tokens?: number;
             model?: string;
             output_tokens?: number;
             prompt?: components["schemas"]["store.PromptProfile"];
-            /** @description SessionInputTokens and SessionOutputTokens total every model call on the branch: spend, not window. */
+            /**
+             * @description SessionInputTokens and SessionOutputTokens total every model call on the
+             *     branch: spend, not window.
+             */
             session_input_tokens?: number;
             session_output_tokens?: number;
         };
@@ -9026,11 +9168,17 @@ export interface components {
             model?: string;
             /** @description ProviderID names the provider the entry runs on; required on a write. */
             provider_id?: string;
-            /** @description ProviderType and BaseURL are read-only: the endpoint an entry named before provider_id, resolved to a provider at run time. */
+            /**
+             * @description ProviderType and BaseURL are read-only: the endpoint an entry named
+             *     before provider_id, resolved to a provider at run time.
+             */
             provider_type?: string;
         };
         "store.Guardrail": {
-            /** @description Blocking, at the input stage, runs the guardrail before the first model call as a gate; no effect at other stages. */
+            /**
+             * @description Blocking, at the input stage, runs the guardrail before the first model
+             *     call as a gate; no effect at other stages.
+             */
             blocking?: boolean;
             config?: number[];
             created_at?: string;
@@ -9039,12 +9187,18 @@ export interface components {
             /** @description regex | max_length */
             mode?: string;
             name?: string;
-            /** @description Stages are the run stages this guardrail inspects: input, output, tool_input, tool_output. */
+            /**
+             * @description Stages are the run stages this guardrail inspects: input, output,
+             *     tool_input, tool_output.
+             */
             stages?: string[];
             updated_at?: string;
         };
         "store.GuardrailGroup": {
-            /** @description Guardrails is a JSON array of guardrail names; each carries the stages it inspects. */
+            /**
+             * @description Guardrails is a JSON array of guardrail names; each carries the stages it
+             *     inspects.
+             */
             guardrails?: string;
             output_schema?: string;
         };
@@ -9055,10 +9209,16 @@ export interface components {
             /** @description Key is unique within the scope; a session memory's key is path-like. */
             key?: string;
             metadata?: string;
-            /** @description OwnerID is the user who wrote it: the caller, or the session's owner when the model did. */
+            /**
+             * @description OwnerID is the user who wrote it: the caller, or the session's owner when
+             *     the model did.
+             */
             owner_id?: string;
             scope_id?: string;
-            /** @description ScopeKind is global, agent or session; ScopeID names the agent or session, empty for global. */
+            /**
+             * @description ScopeKind is global, agent or session; ScopeID names the agent or
+             *     session, empty for global.
+             */
             scope_kind?: string;
             updated_at?: string;
             /** @description WrittenBy is user or model. */
@@ -9089,18 +9249,28 @@ export interface components {
             owner_id?: string;
             /**
              * @description Revision is the expected-revision CAS every update lands against.
-             *     RuntimeGen moves when the project's content or its sandbox changes; the instance cache and terminals fence on it.
+             *     RuntimeGen moves when the project's content or its sandbox changes; the
+             *     instance cache and terminals fence on it.
              */
             revision?: number;
-            /** @description SandboxID is what the project runs on; it may move only to a sandbox of the same type and destination (409 otherwise). */
+            /**
+             * @description SandboxID is what the project runs on; it may move only to a sandbox of
+             *     the same type and destination (409 otherwise).
+             */
             sandbox_id?: string;
             /** @description SessionCount is how many sessions bind this project, filled by List. */
             session_count?: number;
-            /** @description StorageHint names where the files live (the named volume), derived per response for admins only and never stored. */
+            /**
+             * @description StorageHint names where the files live (the named volume), derived per
+             *     response for admins only and never stored.
+             */
             storage_hint?: string;
             updated_at?: string;
         };
-        /** @description Prompt is what the last build put in front of the conversation; absent until a run has built once. */
+        /**
+         * @description Prompt is what the last build put in front of the conversation; absent
+         *     until a run has built once.
+         */
         "store.PromptProfile": {
             /** @description BackgroundChars is the suffix a background run is given; 0 on a chat run. */
             background_chars?: number;
@@ -9112,15 +9282,24 @@ export interface components {
             /** @description MCPServerIDs are the servers the build wired up, in config order. */
             mcp_server_ids?: string[];
             memory_chars?: number;
-            /** @description PlanPreambleChars is the plan-mode preamble, sent only while the session is planning. */
+            /**
+             * @description PlanPreambleChars is the plan-mode preamble, sent only while the session
+             *     is planning.
+             */
             plan_preamble_chars?: number;
             sandbox_prompt_chars?: number;
             skills_index_chars?: number;
-            /** @description Tools are the locally attached tools by origin; MCP tools are sized by the read path, not here. */
+            /**
+             * @description Tools are the locally attached tools by origin; MCP tools are sized by
+             *     the read path, not here.
+             */
             tools?: components["schemas"]["store.ToolBucket"][];
         };
         "store.Provider": {
-            /** @description APIKey is masked on the way out and restored from the stored row when the mask is sent back. */
+            /**
+             * @description APIKey is masked on the way out and restored from the stored row when the
+             *     mask is sent back.
+             */
             api_key?: string;
             /** @description AuthMode is "" (API key) or a mode the backend offers, validated on save. */
             auth_mode?: string;
@@ -9144,23 +9323,41 @@ export interface components {
             retry_policy?: string;
         };
         "store.Sandbox": {
-            /** @description Config holds the settings as JSON (DockerConfig or E2BConfig), exchanged with the API as a raw object. */
+            /**
+             * @description Config holds the settings as JSON (DockerConfig or E2BConfig), exchanged
+             *     with the API as a raw object.
+             */
             config?: number[];
             created_at?: string;
             id?: string;
             name?: string;
-            /** @description Prompt is appended to the instructions of every agent in a session bound to a project here; an edit reaches the next run. */
+            /**
+             * @description Prompt is appended to the instructions of every agent in a session bound
+             *     to a project here; an edit reaches the next run.
+             */
             prompt?: string;
-            /** @description Revision counts the row's writes, name-only included; every update carries the one it expects. */
+            /**
+             * @description Revision counts the row's writes, name-only included; every update
+             *     carries the one it expects.
+             */
             revision?: number;
             supports?: components["schemas"]["store.SandboxSupports"];
-            /** @description Type is the backend, one of SandboxTypes; frozen while projects live on the sandbox. */
+            /**
+             * @description Type is the backend, one of SandboxTypes; frozen while projects live on
+             *     the sandbox.
+             */
             type?: string;
             updated_at?: string;
         };
-        /** @description Supports is the type's capability row (SandboxSupports), derived per response and never stored. */
+        /**
+         * @description Supports is the type's capability row (SandboxSupports), derived per
+         *     response and never stored.
+         */
         "store.SandboxSupports": {
-            /** @description PublicHost: every port inside the sandbox is public at <port>-<sandbox id>.<domain>. */
+            /**
+             * @description PublicHost: every port inside the sandbox is public at <port>-<sandbox
+             *     id>.<domain>.
+             */
             public_host?: boolean;
             /** @description Rebuild: the compute can be thrown away in place, keeping the storage. */
             rebuild?: boolean;
@@ -9172,12 +9369,21 @@ export interface components {
             hidden?: boolean;
             id?: string;
             name?: string;
-            /** @description OwnerID is the user the conversation belongs to; a task's hidden session inherits its parent's. */
+            /**
+             * @description OwnerID is the user the conversation belongs to; a task's hidden session
+             *     inherits its parent's.
+             */
             owner_id?: string;
             pinned?: boolean;
-            /** @description Planning is the session's plan phase: the next run starts read-only until a plan is approved. */
+            /**
+             * @description Planning is the session's plan phase: the next run starts read-only until
+             *     a plan is approved.
+             */
             planning?: boolean;
-            /** @description ProjectID is the project the session is bound to, set once by the first project-carrying run and never rewritten. */
+            /**
+             * @description ProjectID is the project the session is bound to, set once by the first
+             *     project-carrying run and never rewritten.
+             */
             project_id?: string;
             updated_at?: string;
         };
@@ -9186,7 +9392,10 @@ export interface components {
             history_limit?: number;
         };
         "store.Skill": {
-            /** @description Content is the full SKILL.md, capped at write time (maxSkillBytes) and omitted from list responses. */
+            /**
+             * @description Content is the full SKILL.md, capped at write time (maxSkillBytes) and
+             *     omitted from list responses.
+             */
             content?: string;
             created_at?: string;
             description?: string;
@@ -9196,17 +9405,26 @@ export interface components {
             /** @description unique per scope */
             name?: string;
             owner_id?: string;
-            /** @description RepoLabel is SourceRepo reduced to the prefix the unique name indexes key on ("owner/repo" or the host), derived on write. */
+            /**
+             * @description RepoLabel is SourceRepo reduced to the prefix the unique name indexes key
+             *     on ("owner/repo" or the host), derived on write.
+             */
             repo_label?: string;
             /** @description Scope/OwnerID: row visibility and its permanent creator. */
             scope?: string;
             source_path?: string;
-            /** @description SourceRepo, SourcePath and SourceSHA record where an import came from, for a re-import to match; empty when authored here. */
+            /**
+             * @description SourceRepo, SourcePath and SourceSHA record where an import came from,
+             *     for a re-import to match; empty when authored here.
+             */
             source_repo?: string;
             source_sha?: string;
             updated_at?: string;
         };
-        /** @description Gate makes the step a check whose final output picks the edge (StepGate); nil lets the run's outcome decide. */
+        /**
+         * @description Gate makes the step a check whose final output picks the edge (StepGate);
+         *     nil lets the run's outcome decide.
+         */
         "store.StepGate": {
             fail?: string;
             pass?: string;
@@ -9217,20 +9435,32 @@ export interface components {
             attempt?: number;
             child_session_id?: string;
             created_at?: string;
-            /** @description Depth is how many task hops from a user-initiated run; the recursion bound (MaxDepth) reads it. */
+            /**
+             * @description Depth is how many task hops from a user-initiated run; the recursion
+             *     bound (MaxDepth) reads it.
+             */
             depth?: number;
-            /** @description Dismissed hides a terminal task from the conversation's live strip; a retry clears it. */
+            /**
+             * @description Dismissed hides a terminal task from the conversation's live strip; a
+             *     retry clears it.
+             */
             dismissed?: boolean;
             /** @description Kind is "" for a sub-agent task, TaskKindWorkflow for a workflow execution. */
             kind?: string;
             label?: string;
-            /** @description MaxAttempts is the task manager's ceiling on Attempt, filled for the wire and not stored. */
+            /**
+             * @description MaxAttempts is the task manager's ceiling on Attempt, filled for the wire
+             *     and not stored.
+             */
             max_attempts?: number;
             parent_run_id?: string;
             parent_session_id?: string;
             /** @description RunID is the task's current run; a retry and each workflow step replace it. */
             run_id?: string;
-            /** @description State is the SDK's opaque per-job record; a workflow's is its encoded WorkflowState. */
+            /**
+             * @description State is the SDK's opaque per-job record; a workflow's is its encoded
+             *     WorkflowState.
+             */
             state?: number[];
             status?: string;
             summary?: string;
@@ -9245,14 +9475,23 @@ export interface components {
             chars?: number;
             count?: number;
             source?: string;
-            /** @description Unavailable marks a bucket that could not be measured (a disconnected MCP server): unknown, never zero. */
+            /**
+             * @description Unavailable marks a bucket that could not be measured (a disconnected MCP
+             *     server): unknown, never zero.
+             */
             unavailable?: boolean;
         };
         "store.TraceEvent": {
-            /** @description Attachments are the image attachments the span's input references; URL is filled by the handler. */
+            /**
+             * @description Attachments are the image attachments the span's input references; URL is
+             *     filled by the handler.
+             */
             attachments?: components["schemas"]["store.EntryAttachment"][];
             created_at?: string;
-            /** @description Data is the span's metadata JSON; Layout and Refs (32-byte sha256 per element) address its payload in trace_blobs, NULL without one. */
+            /**
+             * @description Data is the span's metadata JSON; Layout and Refs (32-byte sha256 per
+             *     element) address its payload in trace_blobs, NULL without one.
+             */
             data?: string;
             detail?: string;
             ended_at?: string;
@@ -9261,9 +9500,15 @@ export interface components {
             kind?: string;
             name?: string;
             parent_id?: string;
-            /** @description ParentRunID is the run whose spawn started this run's chain; the panel groups runs by it. */
+            /**
+             * @description ParentRunID is the run whose spawn started this run's chain; the panel
+             *     groups runs by it.
+             */
             parent_run_id?: string;
-            /** @description PayloadOmitted marks a summary row whose payload was left out; GetBySpan serves it inlined into Data. */
+            /**
+             * @description PayloadOmitted marks a summary row whose payload was left out; GetBySpan
+             *     serves it inlined into Data.
+             */
             payload_omitted?: boolean;
             run_id?: string;
             session_id?: string;
@@ -9271,10 +9516,16 @@ export interface components {
             started_at?: string;
         };
         "store.User": {
-            /** @description AvatarURL is the provider's picture URL; the CSP admits the configured providers' image hosts. */
+            /**
+             * @description AvatarURL is the provider's picture URL; the CSP admits the configured
+             *     providers' image hosts.
+             */
             avatar_url?: string;
             created_at?: string;
-            /** @description DisabledAt is when an admin switched the account off; no credential authenticates until it is cleared. */
+            /**
+             * @description DisabledAt is when an admin switched the account off; no credential
+             *     authenticates until it is cleared.
+             */
             disabled_at?: string;
             /** @description lowercased; unique via idx_users_email */
             email?: string;
@@ -9288,7 +9539,10 @@ export interface components {
         "store.Workflow": {
             budget?: components["schemas"]["store.WorkflowBudget"];
             created_at?: string;
-            /** @description Description says when to run this, in one line; an agent matches requests against it, so it is required. */
+            /**
+             * @description Description says when to run this, in one line; an agent matches requests
+             *     against it, so it is required.
+             */
             description?: string;
             id?: string;
             name?: string;
@@ -9312,13 +9566,22 @@ export interface components {
             /** @description CompactBefore folds the conversation into a summary before this step runs. */
             compact_before?: boolean;
             gate?: components["schemas"]["store.StepGate"];
-            /** @description ID is stable across edits of the definition; an execution in flight and a retry name the step by it. */
+            /**
+             * @description ID is stable across edits of the definition; an execution in flight and a
+             *     retry name the step by it.
+             */
             id?: string;
             name?: string;
             on_failure?: string;
-            /** @description OnSuccess and OnFailure name the next step (an id or WorkflowStepEnd); empty falls through, or fails the execution. */
+            /**
+             * @description OnSuccess and OnFailure name the next step (an id or WorkflowStepEnd);
+             *     empty falls through, or fails the execution.
+             */
             on_success?: string;
-            /** @description PauseBefore holds the sequence until a person approves this step; rejecting cancels the execution. */
+            /**
+             * @description PauseBefore holds the sequence until a person approves this step;
+             *     rejecting cancels the execution.
+             */
             pause_before?: boolean;
             /** @description Prompt is the step's input, sent as the user turn that starts it. */
             prompt?: string;

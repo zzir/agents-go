@@ -15,8 +15,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// The error envelope is declared in internal/protocol (shared with the server
-// package); these aliases are what the swagger annotations refer to.
+// Aliases of the protocol error envelope, for the swagger annotations.
 type (
 	// APIError is the machine-readable error payload of every non-2xx response.
 	APIError = protocol.APIError
@@ -107,8 +106,7 @@ func saveError(c *gin.Context, err error) {
 }
 
 // pageParams reads the backwards-pagination query parameters before_id
-// (exclusive upper bound) and limit (absent or 0 = unbounded); a limit that is
-// not a non-negative integer answers 400 and returns ok=false.
+// (exclusive upper bound) and limit (absent or 0 = unbounded); a bad limit is 400.
 func pageParams(c *gin.Context) (beforeID string, limit int, ok bool) {
 	limit, ok = queryInt(c, "limit")
 	return c.Query("before_id"), limit, ok

@@ -42,9 +42,8 @@ func (rm *RunMemory) scope(ctx context.Context, sc memory.Scope) (MemoryScope, e
 	return MemoryScope{}, fmt.Errorf("%w: %q", ErrMemoryScope, sc.Kind)
 }
 
-// guard is the write rule re-checked inside the write's transaction: an
-// agent's memory is its editor's (decisions §5.29), a session's is open to
-// the run that owns it.
+// guard re-checks the write rule inside the transaction: an agent's memory is
+// its editor's (decisions §5.29), a session's is its own run's.
 func (rm *RunMemory) guard(sc MemoryScope) func(ctx context.Context, tx bun.Tx) error {
 	if sc.Kind != MemoryScopeAgent {
 		return nil

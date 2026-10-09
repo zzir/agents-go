@@ -45,9 +45,8 @@ func checklistMarkdown(todos []checklistItem) string {
 	return b.String()
 }
 
-// checklistTool builds todo_write: its schema carries the status enum, and the
-// call validates what the schema can only ask for — decisions §5.82. keep, when
-// set, receives each accepted list rendered as markdown.
+// checklistTool builds todo_write (decisions §5.82); keep, when set, receives
+// each accepted list rendered as markdown.
 func checklistTool(keep func(ctx context.Context, markdown string)) *agents.Tool {
 	schema := map[string]any{
 		"type": "object",

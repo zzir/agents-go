@@ -33,7 +33,8 @@ func repoLabelOf(sourceRepo string) string {
 }
 
 // QualifiedName is the model-facing skill name: "<repo label>:<name>" for an
-// imported skill, the bare frontmatter name for a workbench-authored one (decisions §5.31).
+// imported skill, the bare frontmatter name for a workbench-authored one
+// (decisions §5.31).
 func (m *Skill) QualifiedName() string {
 	if m.RepoLabel != "" {
 		return m.RepoLabel + ":" + m.Name
@@ -79,9 +80,8 @@ func (s *SkillStore) ListMeta(ctx context.Context, ownerID string, admin bool) (
 	return out, nil
 }
 
-// GetByNameFor returns the skill the given MODEL-FACING name (QualifiedName)
-// resolves to FOR ownerID — their own over a global one (decisions §5.29).
-// ErrNotFound-wrapping error when none matches.
+// GetByNameFor resolves a MODEL-FACING name (QualifiedName) for ownerID,
+// own-over-global (decisions §5.29); ErrNotFound-wrapping error when none matches.
 func (s *SkillStore) GetByNameFor(ctx context.Context, qualified, ownerID string) (*Skill, error) {
 	short := qualified
 	if _, after, ok := strings.CutLast(qualified, ":"); ok {
@@ -128,10 +128,9 @@ func (s *SkillStore) RepoGroup(ctx context.Context, repo, ownerID string) (scope
 // already holds a group for that repository. Handlers map it to 409.
 var ErrGroupExists = errors.New("the new owner already has this repository")
 
-// SetRepoOwner transfers a whole repo group to newOwner (decisions §5.31),
-// refused when newOwner ALREADY holds a group for the repo. Both groups are
-// locked (lockedRepoGroup) in one transaction. ErrNoSuchUser when the
-// account is gone; a taken name fails the whole transfer (UNIQUE -> 409).
+// SetRepoOwner transfers a whole repo group to newOwner, both groups locked
+// in one transaction (decisions §5.31): ErrGroupExists when newOwner already
+// holds one, ErrNoSuchUser when the account is gone, a taken name a UNIQUE error.
 func (s *SkillStore) SetRepoOwner(ctx context.Context, repo, ownerID, newOwner string) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		exists, err := tx.NewSelect().Model((*User)(nil)).Where("id = ?", newOwner).Exists(ctx)
@@ -201,8 +200,8 @@ type ImportOutcome struct {
 }
 
 // ApplyImport lands a whole fetched import in ONE transaction against the
-// group re-read under lock (decisions §5.31). wantScope/wantExisted are what
-// the caller resolved before fetching; a group that changed shape since is ErrOwnershipChanged.
+// group re-read under lock (decisions §5.31); a group whose shape moved since
+// the caller resolved wantScope/wantExisted is ErrOwnershipChanged.
 func (s *SkillStore) ApplyImport(ctx context.Context, repo, owner, wantScope string, wantExisted bool, docs []ImportDoc) ([]ImportOutcome, error) {
 	var out []ImportOutcome
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -248,8 +247,8 @@ func lockedRepoGroup(ctx context.Context, tx bun.Tx, repo, owner string) (scope 
 	return m.Scope, true, nil
 }
 
-// applyImportDoc lands one document in a savepoint, so a store fault skips
-// that document without aborting the transaction (as PostgreSQL otherwise would).
+// applyImportDoc lands one document in a savepoint: a store fault skips the
+// document, not the transaction (invariant 60).
 func applyImportDoc(ctx context.Context, tx bun.Tx, repo, owner, scope string, d ImportDoc) ImportOutcome {
 	label := d.Path
 	if label == "" {
@@ -305,8 +304,7 @@ func importDoc(ctx context.Context, tx bun.Tx, repo, owner, scope string, d Impo
 	return "updated", "", nil
 }
 
-// importWriteReason words a failed document write — a name collision reads as
-// itself rather than as a constraint dump.
+// importWriteReason words a failed document write (a name collision by name).
 func importWriteReason(err error, name string) string {
 	if _, dup := UniqueViolation(err); dup {
 		return "name " + name + " already in use"

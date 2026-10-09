@@ -40,9 +40,8 @@ var schemaModels = []any{
 	(*AuditEvent)(nil),
 }
 
-// CreateSchema creates every table and supporting index if they do not
-// already exist, then verifies the tables (verifySchema) and the unique
-// indexes (verifyIndexes) are the shape this build expects.
+// CreateSchema creates every table and supporting index IF NOT EXISTS, then
+// verifies their shape (verifySchema, verifyIndexes) — invariant 25.
 func CreateSchema(ctx context.Context, db *bun.DB) error {
 	for _, model := range schemaModels {
 		if _, err := db.NewCreateTable().Model(model).IfNotExists().Exec(ctx); err != nil {
@@ -96,7 +95,8 @@ func schemaIndexes(pg bool) []schemaIndex {
 	}
 	return []schemaIndex{
 		// Entry rows are addressed by (session, generation); both indexes are
-		// UNIQUE and load-bearing: seqs and entry ids are never issued twice (spec §2.5e2).
+		// UNIQUE and load-bearing: seqs and entry ids are never issued twice
+		// (spec §2.5e2).
 		{model: (*entryRow)(nil), name: "idx_entries_session_seq", unique: true, columns: []string{"session_id", "gen", "seq"}},
 		// Point lookups by entry id, else resolving one entry reads the session.
 		{model: (*entryRow)(nil), name: "idx_entries_entry_id", unique: true, columns: []string{"session_id", "gen", "entry_id"}},
@@ -106,11 +106,9 @@ func schemaIndexes(pg bool) []schemaIndex {
 		// run start), generation included.
 		{model: (*Task)(nil), name: "idx_tasks_parent_session_id", columns: []string{"parent_session_id", "parent_session_gen"}},
 		{model: (*Task)(nil), name: "idx_tasks_child_session_id", columns: []string{"child_session_id", "child_session_gen"}},
-		// Trace retention prunes by age; without this the periodic DELETE
-		// full-scans the largest table.
+		// Trace retention prunes by age.
 		{model: (*TraceEvent)(nil), name: "idx_trace_events_created_at", columns: []string{"created_at"}},
-		// Memories are read by scope; the key is unique within one, which is
-		// what lets a write be an upsert.
+		// Memories are read by scope; the key is unique within one (the upsert).
 		{model: (*Memory)(nil), name: "idx_memories_scope", columns: []string{"scope_kind", "scope_id"}},
 		{model: (*Memory)(nil), name: "idx_memories_scope_key", unique: true, columns: []string{"scope_kind", "scope_id", "gen", "key"}},
 		// The session list orders by recency OF CHANGE (spec §2.5e2), per
@@ -127,11 +125,10 @@ func schemaIndexes(pg bool) []schemaIndex {
 		{model: (*McpServerConfig)(nil), name: "idx_mcp_servers_name_global", unique: true, columns: []string{"name"}, where: "scope = 'global'"},
 		{model: (*McpServerConfig)(nil), name: "idx_mcp_servers_name_private", unique: true, columns: []string{"owner_id", "name"}, where: "scope = 'private'"},
 		// Skill uniqueness is per (visibility context, repo LABEL) — decisions
-		// §5.31. COALESCE because NULLs never collide in a unique index.
+		// §5.31; COALESCE, since NULLs never collide in a unique index.
 		{model: (*Skill)(nil), name: "idx_skills_name_global", unique: true, expr: "COALESCE(repo_label, ''), name", columns: []string{"repo_label", "name"}, where: "scope = 'global'"},
 		{model: (*Skill)(nil), name: "idx_skills_name_private", unique: true, expr: "owner_id, COALESCE(repo_label, ''), name", columns: []string{"owner_id", "repo_label", "name"}, where: "scope = 'private'"},
-		// Agents reference guardrails by name; a duplicate would make the
-		// reference order-dependent.
+		// Agents reference guardrails by name.
 		{model: (*Guardrail)(nil), name: "idx_guardrails_name", unique: true, columns: []string{"name"}},
 		// Workflow names follow the per-scope rule, case-insensitively (the
 		// tool matches names with EqualFold).
@@ -171,10 +168,9 @@ func verifySchema(ctx context.Context, db *bun.DB) error {
 	return nil
 }
 
-// verifyIndexes reads every UNIQUE index's definition from the catalog and
-// checks its shape — uniqueness, the indexed identifiers in order, the
-// partial predicate's literal — since CREATE INDEX IF NOT EXISTS keeps an
-// index of an older shape — invariant 25.
+// verifyIndexes checks every UNIQUE index's catalog definition for its shape:
+// uniqueness, the indexed identifiers in order, the partial predicate's
+// literal (IF NOT EXISTS keeps an older shape) — invariant 25.
 func verifyIndexes(ctx context.Context, db *bun.DB, indexes []schemaIndex) error {
 	defs, err := indexDefinitions(ctx, db)
 	if err != nil {

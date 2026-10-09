@@ -8,9 +8,8 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 )
 
-// ProviderTypeList responds with the registered provider backends — machine
-// facts only (auth modes, unsupported request features), so UI capability
-// hints derive from the declaration the build enforces.
+// ProviderTypeList responds with the registered provider backends' machine
+// facts (auth modes, unsupported request features).
 //
 //	@Summary		List provider types
 //	@Description	The backends agents and fallback entries can select via provider_type. "unsupported" lists request features that fail loudly on that backend.

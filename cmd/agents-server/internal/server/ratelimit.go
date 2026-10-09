@@ -12,7 +12,7 @@ import (
 )
 
 // rateLimiterMaxKeys caps the per-IP bucket map: at the cap stale entries are
-// pruned, and if all are fresh new clients get 429 rather than unbounded memory.
+// pruned, and if all are fresh new clients get 429.
 const rateLimiterMaxKeys = 10000
 
 // Per-IP budgets: a credential guess gets a tight one; the OAuth flow steps
@@ -88,8 +88,7 @@ func (l *ipLimiter) pruneLocked(now time.Time) {
 }
 
 // AuthRateLimit is the budget for the routes where every request is a
-// credential guess (token login, code exchange). Mounted by the route
-// registration in handler.
+// credential guess (token login, code exchange).
 func AuthRateLimit() gin.HandlerFunc {
 	return RateLimit(authRatePerMinute, authRateBurst)
 }
@@ -100,10 +99,8 @@ func FlowRateLimit() gin.HandlerFunc {
 	return RateLimit(flowRatePerMinute, flowRateBurst)
 }
 
-// AuthGuard is the per-IP budget of FAILED credential checks shared by every
-// place a bearer is resolved (REST, the WS auth frame): a failure consumes
-// one, an exhausted IP is refused before the check runs, and a credential
-// that authenticates costs nothing — so a valid client is never limited.
+// AuthGuard is the per-IP budget of failed credential checks shared by every
+// place a bearer is resolved; a credential that authenticates costs nothing.
 type AuthGuard struct{ fails *ipLimiter }
 
 // NewAuthGuard returns a guard with the credential-guess budget.
@@ -122,9 +119,8 @@ func (g *AuthGuard) Failed(ip string) {
 	}
 }
 
-// RateLimit is a gin middleware enforcing a per-client-IP request rate. The
-// client IP honors X-Forwarded-For only from proxies named in
-// SetTrustedProxies; everyone else is keyed by their direct address.
+// RateLimit is a gin middleware enforcing a per-client-IP request rate; the IP
+// honors X-Forwarded-For only from SetTrustedProxies.
 func RateLimit(perMinute, burst int) gin.HandlerFunc {
 	l := newIPLimiter(perMinute, burst)
 	return func(c *gin.Context) {

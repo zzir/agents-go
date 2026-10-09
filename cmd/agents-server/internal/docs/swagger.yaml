@@ -4,8 +4,8 @@ components:
       properties:
         compact_threshold:
           description: |-
-            CompactThreshold is the token threshold at which compaction triggers for
-            this entry. nil leaves it unset.
+            CompactThreshold is the token threshold at which compaction triggers. nil
+            leaves it unset.
           type: integer
         type:
           $ref: '#/components/schemas/agents.ContextManagementType'
@@ -38,9 +38,8 @@ components:
       description: InputTokensDetails aggregates the input token detail fields.
       properties:
         cache_write_tokens:
-          description: |-
-            CacheWriteTokens counts input tokens written to the prompt cache, for
-            providers that bill cache writes separately.
+          description: CacheWriteTokens counts input tokens written to the prompt
+            cache.
           type: integer
         cached_tokens:
           type: integer
@@ -56,8 +55,8 @@ components:
         extra:
           additionalProperties: {}
           description: |-
-            Extra carries whatever a tool's CustomDataExtractor produced. It is
-            SDK-side only and never reaches the model.
+            Extra carries whatever a tool's CustomDataExtractor produced; it never
+            reaches the model.
           type: object
         is_error:
           description: IsError marks a tool result that reports a failure.
@@ -72,15 +71,13 @@ components:
           type: string
         renderer:
           description: |-
-            Renderer is a tool's requested renderer ("diff", "terminal", "table", …),
-            from ToolResult.Display. A consumer that does not know the name falls
-            back to plain text rather than failing.
+            Renderer is a tool's requested renderer ("diff", "terminal", "table", …)
+            from ToolResult.Display; an unknown name falls back to plain text.
           type: string
         summary:
           description: |-
-            Summary is the one-line account of what happened ("3 files changed"),
-            for where the full Output would drown the timeline. Empty means render
-            what the other fields already carry.
+            Summary is the one-line account of what happened ("3 files changed");
+            empty renders what the other fields carry.
           type: string
         text:
           description: 'Text is the human-readable body: a message''s text, a reasoning
@@ -88,9 +85,8 @@ components:
           type: string
         title:
           description: |-
-            Title is the card heading, when the tool name is not it — a task's
-            label, "Apply patch" over "apply_patch". Empty means fall back to
-            ToolName: an override, never required, per the display contract.
+            Title is the card heading when the tool name is not it ("Apply patch" over
+            "apply_patch"); empty falls back to ToolName.
           type: string
         tool_name:
           description: ToolName is the tool being called, or the handoff tool.
@@ -103,9 +99,8 @@ components:
       properties:
         context_management:
           description: |-
-            ContextManagement configures server-side context management (e.g.
-            compaction) for OpenAI Responses API requests. A nil/empty slice leaves it
-            unset.
+            ContextManagement configures server-side context management for OpenAI
+            Responses API requests.
           items:
             $ref: '#/components/schemas/agents.ContextManagement'
           type: array
@@ -120,14 +115,13 @@ components:
           type: object
         parallel_tool_calls:
           description: |-
-            ParallelToolCalls controls whether the model may emit multiple tool calls
-            in a single turn. nil defers to the provider default.
+            ParallelToolCalls controls whether the model may emit several tool calls
+            in one turn.
           type: boolean
         prompt_cache_key:
           description: |-
-            PromptCacheKey is forwarded as the Responses API prompt_cache_key to
-            improve prompt-cache hit rates. Empty means unset. The runner never
-            generates a key — callers set this (or ExtraBody) themselves.
+            PromptCacheKey is forwarded as the Responses API prompt_cache_key; the
+            runner never generates one.
           type: string
         prompt_cache_options:
           $ref: '#/components/schemas/agents.PromptCacheOptions'
@@ -178,16 +172,14 @@ components:
       - PromptCacheModeImplicit
       - PromptCacheModeExplicit
     agents.PromptCacheOptions:
-      description: |-
-        PromptCacheOptions configures prompt caching (mode and breakpoint TTL)
-        for OpenAI Responses API requests. nil leaves it unset.
+      description: PromptCacheOptions configures prompt caching for OpenAI Responses
+        API requests.
       properties:
         mode:
           $ref: '#/components/schemas/agents.PromptCacheMode'
         ttl:
-          description: |-
-            TTL is the minimum cache-entry lifetime, e.g. "30m" (currently the only
-            supported value). Empty leaves it unset.
+          description: TTL is the minimum cache-entry lifetime, e.g. "30m". Empty
+            leaves it unset.
           type: string
       type: object
     agents.PromptCacheRetention:
@@ -369,8 +361,9 @@ components:
         run_id:
           type: string
         session_id:
-          description: SessionID is the conversation to open; a task's call names
-            its parent conversation.
+          description: |-
+            SessionID is the conversation to open; a task's call names its parent
+            conversation.
           type: string
         task_id:
           type: string
@@ -544,8 +537,9 @@ components:
         created_at:
           type: string
         kind:
-          description: Kind is "" for a tool call the run paused on, ApprovalKindStep
-            for a workflow step waiting to start.
+          description: |-
+            Kind is "" for a tool call the run paused on, ApprovalKindStep for a
+            workflow step waiting to start.
           type: string
         project_id:
           type: string
@@ -558,15 +552,17 @@ components:
         task_label:
           type: string
         tool_calls:
-          description: ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
+          description: |-
+            ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
             shown to the user.
           items:
             type: integer
           type: array
           uniqueItems: false
         user_input:
-          description: UserInput is the text of the message that started the paused
-            turn; the UI shows it while the run waits.
+          description: |-
+            UserInput is the text of the message that started the paused turn; the UI
+            shows it while the run waits.
           type: string
       type: object
     handler.SessionMemoryInfo:
@@ -615,8 +611,9 @@ components:
         agent_config_id:
           type: string
         brief:
-          description: Brief leads every execution or turn this trigger starts; a
-            webhook's payload is appended.
+          description: |-
+            Brief leads every execution or turn this trigger starts; a webhook's
+            payload is appended.
           type: string
         created_at:
           type: string
@@ -643,8 +640,9 @@ components:
             zone (ServerInfo.Timezone); absent for webhooks and disabled triggers.
           type: string
         schedule:
-          description: Schedule is the cron expression (five fields, @hourly, @every
-            10m), optionally prefixed CRON_TZ=<IANA zone>; cron kind only.
+          description: |-
+            Schedule is the cron expression (five fields, @hourly, @every 10m),
+            optionally prefixed CRON_TZ=<IANA zone>; cron kind only.
           type: string
         secret:
           description: Secret is set on the response that minted it, and never again.
@@ -653,12 +651,14 @@ components:
           description: SecretHint is the secret's tail, to tell one from another.
           type: string
         session_id:
-          description: SessionID is the conversation the work reports to, or for an
-            agent turn happens in.
+          description: |-
+            SessionID is the conversation the work reports to, or for an agent turn
+            happens in.
           type: string
         target:
-          description: Target says what a fire starts; WorkflowID or AgentConfigID
-            names it, the other stays empty.
+          description: |-
+            Target says what a fire starts; WorkflowID or AgentConfigID names it, the
+            other stays empty.
           type: string
         updated_at:
           type: string
@@ -691,8 +691,9 @@ components:
     handler.approveAllResp:
       properties:
         approved:
-          description: Approved counts the calls approved; the pause's other calls
-            (a plan, a workflow save, a memory proposal) stay for a decision each.
+          description: |-
+            Approved counts the calls approved; the pause's other calls (a plan, a
+            workflow save, a memory proposal) stay for a decision each.
           type: integer
         run_id:
           type: string
@@ -801,8 +802,9 @@ components:
     handler.mcpServerListItem:
       properties:
         config:
-          description: Config holds the connection settings as JSON (HTTPMcpConfig),
-            exchanged with the API as a raw object.
+          description: |-
+            Config holds the connection settings as JSON (HTTPMcpConfig), exchanged
+            with the API as a raw object.
           items:
             type: integer
           type: array
@@ -810,8 +812,9 @@ components:
         created_at:
           type: string
         enabled:
-          description: 'Enabled carries no bun default tag: with one, bun would write
-            SQL DEFAULT for a false on insert.'
+          description: |-
+            Enabled carries no bun default tag: with one, bun would write SQL DEFAULT
+            for a false on insert.
           type: boolean
         has_oauth_token:
           description: |-
@@ -856,16 +859,19 @@ components:
         description:
           type: string
         name:
-          description: 'Name is the tool as an agent sees it: the server''s prefix
-            and the tool''s own name.'
+          description: |-
+            Name is the tool as an agent sees it: the server's prefix and the tool's
+            own name.
           type: string
         original_name:
-          description: OriginalName is the tool's own name on the server, the form
+          description: |-
+            OriginalName is the tool's own name on the server, the form
             read_only_tools lists.
           type: string
         read_only_hint:
-          description: ReadOnlyHint is the server's own claim that the tool only observes;
-            a hint, never trusted on its own.
+          description: |-
+            ReadOnlyHint is the server's own claim that the tool only observes; a
+            hint, never trusted on its own.
           type: boolean
       type: object
     handler.memoryReq:
@@ -880,8 +886,9 @@ components:
         scope_id:
           type: string
         scope_kind:
-          description: ScopeKind is global, agent or session; ScopeID the agent or
-            session id, empty for global.
+          description: |-
+            ScopeKind is global, agent or session; ScopeID the agent or session id,
+            empty for global.
           type: string
       type: object
     handler.playgroundReq:
@@ -962,12 +969,14 @@ components:
           additionalProperties: {}
           type: object
         read_only:
-          description: ReadOnly reports a tool plan mode leaves usable, which "ask
-            before changes" does not ask about.
+          description: |-
+            ReadOnly reports a tool plan mode leaves usable, which "ask before
+            changes" does not ask about.
           type: boolean
         source:
-          description: 'Source is where the tool comes from: sandbox, skills, tasks,
-            workflows, context, checklist, or mcp:<server>.'
+          description: |-
+            Source is where the tool comes from: sandbox, skills, tasks, workflows,
+            context, checklist, or mcp:<server>.
           type: string
       type: object
     handler.projectDeleteResp:
@@ -997,19 +1006,22 @@ components:
         revision:
           description: |-
             Revision is the expected-revision CAS every update lands against.
-            RuntimeGen moves when the project's content or its sandbox changes; the instance cache and terminals fence on it.
+            RuntimeGen moves when the project's content or its sandbox changes; the
+            instance cache and terminals fence on it.
           type: integer
         sandbox_id:
-          description: SandboxID is what the project runs on; it may move only to
-            a sandbox of the same type and destination (409 otherwise).
+          description: |-
+            SandboxID is what the project runs on; it may move only to a sandbox of
+            the same type and destination (409 otherwise).
           type: string
         session_count:
           description: SessionCount is how many sessions bind this project, filled
             by List.
           type: integer
         storage_hint:
-          description: StorageHint names where the files live (the named volume),
-            derived per response for admins only and never stored.
+          description: |-
+            StorageHint names where the files live (the named volume), derived per
+            response for admins only and never stored.
           type: string
         updated_at:
           type: string
@@ -1101,8 +1113,9 @@ components:
     handler.rebuildReq:
       properties:
         session_id:
-          description: SessionID is the caller's session, bound to this project, to
-            leave the rebuilt note on; left out, no note is written.
+          description: |-
+            SessionID is the caller's session, bound to this project, to leave the
+            rebuilt note on; left out, no note is written.
           type: string
       type: object
     handler.rejectReq:
@@ -1204,8 +1217,9 @@ components:
         id:
           type: string
         live_run_id:
-          description: LiveRunID is the session's own executing run; a run paused
-            for approval is not live.
+          description: |-
+            LiveRunID is the session's own executing run; a run paused for approval
+            is not live.
           type: string
         name:
           type: string
@@ -1214,8 +1228,9 @@ components:
             for.
           type: string
         owner_id:
-          description: OwnerID is the user the conversation belongs to; a task's hidden
-            session inherits its parent's.
+          description: |-
+            OwnerID is the user the conversation belongs to; a task's hidden session
+            inherits its parent's.
           type: string
         pending:
           description: Pending lists the decisions waited on, oldest first.
@@ -1230,12 +1245,14 @@ components:
         pinned:
           type: boolean
         planning:
-          description: 'Planning is the session''s plan phase: the next run starts
-            read-only until a plan is approved.'
+          description: |-
+            Planning is the session's plan phase: the next run starts read-only until
+            a plan is approved.
           type: boolean
         project_id:
-          description: ProjectID is the project the session is bound to, set once
-            by the first project-carrying run and never rewritten.
+          description: |-
+            ProjectID is the project the session is bound to, set once by the first
+            project-carrying run and never rewritten.
           type: string
         status:
           description: Status is idle, running, requires_action or failed.
@@ -1263,8 +1280,9 @@ components:
         id:
           type: string
         live_run_id:
-          description: LiveRunID is the session's own executing run; a run paused
-            for approval is not live.
+          description: |-
+            LiveRunID is the session's own executing run; a run paused for approval
+            is not live.
           type: string
         name:
           type: string
@@ -1273,8 +1291,9 @@ components:
             for.
           type: string
         owner_id:
-          description: OwnerID is the user the conversation belongs to; a task's hidden
-            session inherits its parent's.
+          description: |-
+            OwnerID is the user the conversation belongs to; a task's hidden session
+            inherits its parent's.
           type: string
         pending_count:
           description: PendingCount is how many decisions the session and its background
@@ -1283,12 +1302,14 @@ components:
         pinned:
           type: boolean
         planning:
-          description: 'Planning is the session''s plan phase: the next run starts
-            read-only until a plan is approved.'
+          description: |-
+            Planning is the session's plan phase: the next run starts read-only until
+            a plan is approved.
           type: boolean
         project_id:
-          description: ProjectID is the project the session is bound to, set once
-            by the first project-carrying run and never rewritten.
+          description: |-
+            ProjectID is the project the session is bound to, set once by the first
+            project-carrying run and never rewritten.
           type: string
         status:
           description: Status is idle, running, requires_action or failed.
@@ -1552,9 +1573,8 @@ components:
       description: InputTokensDetails aggregates the input token detail fields.
       properties:
         cache_write_tokens:
-          description: |-
-            CacheWriteTokens counts input tokens written to the prompt cache, for
-            providers that bill cache writes separately.
+          description: CacheWriteTokens counts input tokens written to the prompt
+            cache.
           type: integer
         cached_tokens:
           type: integer
@@ -1613,25 +1633,29 @@ components:
         approval:
           $ref: '#/components/schemas/store.ApprovalGroup'
         avatar:
-          description: Avatar is a same-origin path into the built-in catalog ("/avatars/<name>.svg");
-            empty renders an initial.
+          description: |-
+            Avatar is a same-origin path into the built-in catalog
+            ("/avatars/<name>.svg"); empty renders an initial.
           type: string
         behavior:
           $ref: '#/components/schemas/store.BehaviorGroup'
         compaction:
           $ref: '#/components/schemas/store.CompactionGroup'
         context_window:
-          description: ContextWindow is the model's window in tokens, declared per
-            agent; 0 leaves the Context panel without a denominator.
+          description: |-
+            ContextWindow is the model's window in tokens, declared per agent; 0
+            leaves the Context panel without a denominator.
           type: integer
         created_at:
           type: string
         description:
-          description: Description is what the agent is for, in a sentence; an agent
-            picker matches requests against it.
+          description: |-
+            Description is what the agent is for, in a sentence; an agent picker
+            matches requests against it.
           type: string
         error_handlers:
-          description: ErrorHandlers is a JSON object keyed by error kind (max_turns,
+          description: |-
+            ErrorHandlers is a JSON object keyed by error kind (max_turns,
             model_refusal, invalid_final_output); empty keeps every run error fatal.
           type: string
         guardrails:
@@ -1652,7 +1676,8 @@ components:
         model:
           type: string
         model_settings:
-          description: ModelSettings is a JSON object of model parameters (temperature,
+          description: |-
+            ModelSettings is a JSON object of model parameters (temperature,
             reasoning, extra_body, ...).
           type: string
         name:
@@ -1660,8 +1685,9 @@ components:
         owner_id:
           type: string
         provider_id:
-          description: ProviderID names the Provider the agent reaches its model through;
-            empty fails the run's pre-flight.
+          description: |-
+            ProviderID names the Provider the agent reaches its model through; empty
+            fails the run's pre-flight.
           type: string
         resilience:
           $ref: '#/components/schemas/store.ResilienceGroup'
@@ -1671,8 +1697,9 @@ components:
         session:
           $ref: '#/components/schemas/store.SessionGroup'
         skills:
-          description: Skills lists the ids of the skills the agent may read; null
-            means every skill its scope can see, [] none.
+          description: |-
+            Skills lists the ids of the skills the agent may read; null means every
+            skill its scope can see, [] none.
           items:
             type: string
           type: array
@@ -1690,13 +1717,15 @@ components:
     store.ApprovalGroup:
       properties:
         approval_mode:
-          description: 'Mode is when the agent''s tool calls pause for approval: never
-            (only the listed tools), on_change (every tool plan mode would deny),
-            always (every tool). Empty reads as never.'
+          description: |-
+            Mode is when the agent's tool calls pause for approval: never (only the
+            listed tools), on_change (every tool plan mode would deny), always (every
+            tool). Empty reads as never.
           type: string
         approve_tools:
-          description: ApproveTools names tools that pause for approval before each
-            call in every mode; ["*"] means every tool.
+          description: |-
+            ApproveTools names tools that pause for approval before each call in
+            every mode; ["*"] means every tool.
           items:
             type: string
           type: array
@@ -1726,12 +1755,14 @@ components:
           type: string
       type: object
     store.BehaviorGroup:
-      description: The run-level settings, one JSON column per category (agent_config_groups.go);
-        each a nested object in the API.
+      description: |-
+        The run-level settings, one JSON column per category
+        (agent_config_groups.go); each a nested object in the API.
       properties:
         checklist:
-          description: Checklist gives the agent's chat runs the todo_write checklist
-            tool; off by default.
+          description: |-
+            Checklist gives the agent's chat runs the todo_write checklist tool; off
+            by default.
           type: boolean
         handoff_description:
           type: string
@@ -1742,29 +1773,34 @@ components:
         max_turns:
           type: integer
         override_system_prompt:
-          description: OverrideSystemPrompt sends this agent's instructions alone,
-            empty included; the global system prompt is not prepended.
+          description: |-
+            OverrideSystemPrompt sends this agent's instructions alone, empty
+            included; the global system prompt is not prepended.
           type: boolean
         reasoning_item_id_policy:
-          description: ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item
-            ids across turns) or "omit".
+          description: |-
+            ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
+            turns) or "omit".
           type: string
         stop_at_tools:
-          description: StopAtTools is a comma-separated list of tool names the run
-            ends after; empty lets the model decide.
+          description: |-
+            StopAtTools is a comma-separated list of tool names the run ends after;
+            empty lets the model decide.
           type: string
         subagents:
           description: Subagents grants the agent's chat runs the task tools; nil/true
             = on.
           type: boolean
         thinking_binding:
-          description: ThinkingBinding asks an Anthropic backend to drop a replayed
-            thinking block it can no longer verify instead of failing the request;
-            nil/true = on.
+          description: |-
+            ThinkingBinding asks an Anthropic backend to drop a replayed thinking
+            block it can no longer verify instead of failing the request; nil/true =
+            on.
           type: boolean
         thinking_mode:
-          description: 'ThinkingMode is how an Anthropic backend sends the reasoning
-            effort: "" as adaptive thinking, "budget" as a thinking token budget.'
+          description: |-
+            ThinkingMode is how an Anthropic backend sends the reasoning effort: ""
+            as adaptive thinking, "budget" as a thinking token budget.
           type: string
         tool_choice_reset:
           description: ToolChoiceReset resets a pinned tool_choice after a tool runs;
@@ -1777,8 +1813,9 @@ components:
             default.
           type: boolean
         workflow_authoring:
-          description: WorkflowAuthoring gives the agent's chat runs get_workflow
-            / save_workflow; off by default.
+          description: |-
+            WorkflowAuthoring gives the agent's chat runs get_workflow /
+            save_workflow; off by default.
           type: boolean
       type: object
     store.CompactionGroup:
@@ -1826,12 +1863,14 @@ components:
         cache_write_tokens:
           type: integer
         cached_tokens:
-          description: CachedTokens and CacheWriteTokens split that call's input by
-            cache disposition, when the provider reports it.
+          description: |-
+            CachedTokens and CacheWriteTokens split that call's input by cache
+            disposition, when the provider reports it.
           type: integer
         compaction_enabled:
-          description: CompactionEnabled reports whether the pass runs; Threshold
-            is what it fires at, Tokens what it compares.
+          description: |-
+            CompactionEnabled reports whether the pass runs; Threshold is what it
+            fires at, Tokens what it compares.
           type: boolean
         compaction_mode:
           description: 'CompactionMode is the agent''s: summary, reset or hybrid.'
@@ -1841,23 +1880,27 @@ components:
         compaction_tokens:
           type: integer
         context_window:
-          description: ContextWindow is the agent's declared window in tokens; 0 shows
-            occupancy without a denominator.
+          description: |-
+            ContextWindow is the agent's declared window in tokens; 0 shows occupancy
+            without a denominator.
           type: integer
         conversation_tokens:
-          description: 'ConversationTokens is the estimated size of the transcript
-            still in context: active, uncompacted entries summed.'
+          description: |-
+            ConversationTokens is the estimated size of the transcript still in
+            context: active, uncompacted entries summed.
           type: integer
         growth:
-          description: Growth is each model call's input tokens in order; a compaction
-            pass shows as a drop.
+          description: |-
+            Growth is each model call's input tokens in order; a compaction pass
+            shows as a drop.
           items:
             type: integer
           type: array
           uniqueItems: false
         input_tokens:
-          description: InputTokens is what the last model call on the branch sent,
-            OutputTokens that call's completion.
+          description: |-
+            InputTokens is what the last model call on the branch sent, OutputTokens
+            that call's completion.
           type: integer
         model:
           type: string
@@ -1866,8 +1909,9 @@ components:
         prompt:
           $ref: '#/components/schemas/store.PromptProfile'
         session_input_tokens:
-          description: 'SessionInputTokens and SessionOutputTokens total every model
-            call on the branch: spend, not window.'
+          description: |-
+            SessionInputTokens and SessionOutputTokens total every model call on the
+            branch: spend, not window.
           type: integer
         session_output_tokens:
           type: integer
@@ -1949,15 +1993,17 @@ components:
             a write.
           type: string
         provider_type:
-          description: 'ProviderType and BaseURL are read-only: the endpoint an entry
-            named before provider_id, resolved to a provider at run time.'
+          description: |-
+            ProviderType and BaseURL are read-only: the endpoint an entry named
+            before provider_id, resolved to a provider at run time.
           type: string
       type: object
     store.Guardrail:
       properties:
         blocking:
-          description: Blocking, at the input stage, runs the guardrail before the
-            first model call as a gate; no effect at other stages.
+          description: |-
+            Blocking, at the input stage, runs the guardrail before the first model
+            call as a gate; no effect at other stages.
           type: boolean
         config:
           items:
@@ -1976,8 +2022,9 @@ components:
         name:
           type: string
         stages:
-          description: 'Stages are the run stages this guardrail inspects: input,
-            output, tool_input, tool_output.'
+          description: |-
+            Stages are the run stages this guardrail inspects: input, output,
+            tool_input, tool_output.
           items:
             type: string
           type: array
@@ -1988,8 +2035,9 @@ components:
     store.GuardrailGroup:
       properties:
         guardrails:
-          description: Guardrails is a JSON array of guardrail names; each carries
-            the stages it inspects.
+          description: |-
+            Guardrails is a JSON array of guardrail names; each carries the stages it
+            inspects.
           type: string
         output_schema:
           type: string
@@ -2008,14 +2056,16 @@ components:
         metadata:
           type: string
         owner_id:
-          description: 'OwnerID is the user who wrote it: the caller, or the session''s
-            owner when the model did.'
+          description: |-
+            OwnerID is the user who wrote it: the caller, or the session's owner when
+            the model did.
           type: string
         scope_id:
           type: string
         scope_kind:
-          description: ScopeKind is global, agent or session; ScopeID names the agent
-            or session, empty for global.
+          description: |-
+            ScopeKind is global, agent or session; ScopeID names the agent or
+            session, empty for global.
           type: string
         updated_at:
           type: string
@@ -2056,26 +2106,30 @@ components:
         revision:
           description: |-
             Revision is the expected-revision CAS every update lands against.
-            RuntimeGen moves when the project's content or its sandbox changes; the instance cache and terminals fence on it.
+            RuntimeGen moves when the project's content or its sandbox changes; the
+            instance cache and terminals fence on it.
           type: integer
         sandbox_id:
-          description: SandboxID is what the project runs on; it may move only to
-            a sandbox of the same type and destination (409 otherwise).
+          description: |-
+            SandboxID is what the project runs on; it may move only to a sandbox of
+            the same type and destination (409 otherwise).
           type: string
         session_count:
           description: SessionCount is how many sessions bind this project, filled
             by List.
           type: integer
         storage_hint:
-          description: StorageHint names where the files live (the named volume),
-            derived per response for admins only and never stored.
+          description: |-
+            StorageHint names where the files live (the named volume), derived per
+            response for admins only and never stored.
           type: string
         updated_at:
           type: string
       type: object
     store.PromptProfile:
-      description: Prompt is what the last build put in front of the conversation;
-        absent until a run has built once.
+      description: |-
+        Prompt is what the last build put in front of the conversation; absent
+        until a run has built once.
       properties:
         background_chars:
           description: BackgroundChars is the suffix a background run is given; 0
@@ -2101,16 +2155,18 @@ components:
         memory_chars:
           type: integer
         plan_preamble_chars:
-          description: PlanPreambleChars is the plan-mode preamble, sent only while
-            the session is planning.
+          description: |-
+            PlanPreambleChars is the plan-mode preamble, sent only while the session
+            is planning.
           type: integer
         sandbox_prompt_chars:
           type: integer
         skills_index_chars:
           type: integer
         tools:
-          description: Tools are the locally attached tools by origin; MCP tools are
-            sized by the read path, not here.
+          description: |-
+            Tools are the locally attached tools by origin; MCP tools are sized by
+            the read path, not here.
           items:
             $ref: '#/components/schemas/store.ToolBucket'
           type: array
@@ -2119,8 +2175,9 @@ components:
     store.Provider:
       properties:
         api_key:
-          description: APIKey is masked on the way out and restored from the stored
-            row when the mask is sent back.
+          description: |-
+            APIKey is masked on the way out and restored from the stored row when the
+            mask is sent back.
           type: string
         auth_mode:
           description: AuthMode is "" (API key) or a mode the backend offers, validated
@@ -2167,8 +2224,9 @@ components:
     store.Sandbox:
       properties:
         config:
-          description: Config holds the settings as JSON (DockerConfig or E2BConfig),
-            exchanged with the API as a raw object.
+          description: |-
+            Config holds the settings as JSON (DockerConfig or E2BConfig), exchanged
+            with the API as a raw object.
           items:
             type: integer
           type: array
@@ -2180,29 +2238,34 @@ components:
         name:
           type: string
         prompt:
-          description: Prompt is appended to the instructions of every agent in a
-            session bound to a project here; an edit reaches the next run.
+          description: |-
+            Prompt is appended to the instructions of every agent in a session bound
+            to a project here; an edit reaches the next run.
           type: string
         revision:
-          description: Revision counts the row's writes, name-only included; every
-            update carries the one it expects.
+          description: |-
+            Revision counts the row's writes, name-only included; every update
+            carries the one it expects.
           type: integer
         supports:
           $ref: '#/components/schemas/store.SandboxSupports'
         type:
-          description: Type is the backend, one of SandboxTypes; frozen while projects
-            live on the sandbox.
+          description: |-
+            Type is the backend, one of SandboxTypes; frozen while projects live on
+            the sandbox.
           type: string
         updated_at:
           type: string
       type: object
     store.SandboxSupports:
-      description: Supports is the type's capability row (SandboxSupports), derived
-        per response and never stored.
+      description: |-
+        Supports is the type's capability row (SandboxSupports), derived per
+        response and never stored.
       properties:
         public_host:
-          description: 'PublicHost: every port inside the sandbox is public at <port>-<sandbox
-            id>.<domain>.'
+          description: |-
+            PublicHost: every port inside the sandbox is public at <port>-<sandbox
+            id>.<domain>.
           type: boolean
         rebuild:
           description: 'Rebuild: the compute can be thrown away in place, keeping
@@ -2224,18 +2287,21 @@ components:
         name:
           type: string
         owner_id:
-          description: OwnerID is the user the conversation belongs to; a task's hidden
-            session inherits its parent's.
+          description: |-
+            OwnerID is the user the conversation belongs to; a task's hidden session
+            inherits its parent's.
           type: string
         pinned:
           type: boolean
         planning:
-          description: 'Planning is the session''s plan phase: the next run starts
-            read-only until a plan is approved.'
+          description: |-
+            Planning is the session's plan phase: the next run starts read-only until
+            a plan is approved.
           type: boolean
         project_id:
-          description: ProjectID is the project the session is bound to, set once
-            by the first project-carrying run and never rewritten.
+          description: |-
+            ProjectID is the project the session is bound to, set once by the first
+            project-carrying run and never rewritten.
           type: string
         updated_at:
           type: string
@@ -2250,8 +2316,9 @@ components:
     store.Skill:
       properties:
         content:
-          description: Content is the full SKILL.md, capped at write time (maxSkillBytes)
-            and omitted from list responses.
+          description: |-
+            Content is the full SKILL.md, capped at write time (maxSkillBytes) and
+            omitted from list responses.
           type: string
         created_at:
           type: string
@@ -2269,8 +2336,9 @@ components:
         owner_id:
           type: string
         repo_label:
-          description: RepoLabel is SourceRepo reduced to the prefix the unique name
-            indexes key on ("owner/repo" or the host), derived on write.
+          description: |-
+            RepoLabel is SourceRepo reduced to the prefix the unique name indexes key
+            on ("owner/repo" or the host), derived on write.
           type: string
         scope:
           description: 'Scope/OwnerID: row visibility and its permanent creator.'
@@ -2278,8 +2346,9 @@ components:
         source_path:
           type: string
         source_repo:
-          description: SourceRepo, SourcePath and SourceSHA record where an import
-            came from, for a re-import to match; empty when authored here.
+          description: |-
+            SourceRepo, SourcePath and SourceSHA record where an import came from,
+            for a re-import to match; empty when authored here.
           type: string
         source_sha:
           type: string
@@ -2287,7 +2356,8 @@ components:
           type: string
       type: object
     store.StepGate:
-      description: Gate makes the step a check whose final output picks the edge (StepGate);
+      description: |-
+        Gate makes the step a check whose final output picks the edge (StepGate);
         nil lets the run's outcome decide.
       properties:
         fail:
@@ -2308,12 +2378,14 @@ components:
         created_at:
           type: string
         depth:
-          description: Depth is how many task hops from a user-initiated run; the
-            recursion bound (MaxDepth) reads it.
+          description: |-
+            Depth is how many task hops from a user-initiated run; the recursion
+            bound (MaxDepth) reads it.
           type: integer
         dismissed:
-          description: Dismissed hides a terminal task from the conversation's live
-            strip; a retry clears it.
+          description: |-
+            Dismissed hides a terminal task from the conversation's live strip; a
+            retry clears it.
           type: boolean
         kind:
           description: Kind is "" for a sub-agent task, TaskKindWorkflow for a workflow
@@ -2322,8 +2394,9 @@ components:
         label:
           type: string
         max_attempts:
-          description: MaxAttempts is the task manager's ceiling on Attempt, filled
-            for the wire and not stored.
+          description: |-
+            MaxAttempts is the task manager's ceiling on Attempt, filled for the wire
+            and not stored.
           type: integer
         parent_run_id:
           type: string
@@ -2334,8 +2407,9 @@ components:
             step replace it.
           type: string
         state:
-          description: State is the SDK's opaque per-job record; a workflow's is its
-            encoded WorkflowState.
+          description: |-
+            State is the SDK's opaque per-job record; a workflow's is its encoded
+            WorkflowState.
           items:
             type: integer
           type: array
@@ -2365,15 +2439,17 @@ components:
         source:
           type: string
         unavailable:
-          description: 'Unavailable marks a bucket that could not be measured (a disconnected
-            MCP server): unknown, never zero.'
+          description: |-
+            Unavailable marks a bucket that could not be measured (a disconnected MCP
+            server): unknown, never zero.
           type: boolean
       type: object
     store.TraceEvent:
       properties:
         attachments:
-          description: Attachments are the image attachments the span's input references;
-            URL is filled by the handler.
+          description: |-
+            Attachments are the image attachments the span's input references; URL is
+            filled by the handler.
           items:
             $ref: '#/components/schemas/store.EntryAttachment'
           type: array
@@ -2381,8 +2457,9 @@ components:
         created_at:
           type: string
         data:
-          description: Data is the span's metadata JSON; Layout and Refs (32-byte
-            sha256 per element) address its payload in trace_blobs, NULL without one.
+          description: |-
+            Data is the span's metadata JSON; Layout and Refs (32-byte sha256 per
+            element) address its payload in trace_blobs, NULL without one.
           type: string
         detail:
           type: string
@@ -2399,12 +2476,14 @@ components:
         parent_id:
           type: string
         parent_run_id:
-          description: ParentRunID is the run whose spawn started this run's chain;
-            the panel groups runs by it.
+          description: |-
+            ParentRunID is the run whose spawn started this run's chain; the panel
+            groups runs by it.
           type: string
         payload_omitted:
-          description: PayloadOmitted marks a summary row whose payload was left out;
-            GetBySpan serves it inlined into Data.
+          description: |-
+            PayloadOmitted marks a summary row whose payload was left out; GetBySpan
+            serves it inlined into Data.
           type: boolean
         run_id:
           type: string
@@ -2418,13 +2497,15 @@ components:
     store.User:
       properties:
         avatar_url:
-          description: AvatarURL is the provider's picture URL; the CSP admits the
-            configured providers' image hosts.
+          description: |-
+            AvatarURL is the provider's picture URL; the CSP admits the configured
+            providers' image hosts.
           type: string
         created_at:
           type: string
         disabled_at:
-          description: DisabledAt is when an admin switched the account off; no credential
+          description: |-
+            DisabledAt is when an admin switched the account off; no credential
             authenticates until it is cleared.
           type: string
         email:
@@ -2449,8 +2530,9 @@ components:
         created_at:
           type: string
         description:
-          description: Description says when to run this, in one line; an agent matches
-            requests against it, so it is required.
+          description: |-
+            Description says when to run this, in one line; an agent matches requests
+            against it, so it is required.
           type: string
         id:
           type: string
@@ -2496,20 +2578,23 @@ components:
         gate:
           $ref: '#/components/schemas/store.StepGate'
         id:
-          description: ID is stable across edits of the definition; an execution in
-            flight and a retry name the step by it.
+          description: |-
+            ID is stable across edits of the definition; an execution in flight and a
+            retry name the step by it.
           type: string
         name:
           type: string
         on_failure:
           type: string
         on_success:
-          description: OnSuccess and OnFailure name the next step (an id or WorkflowStepEnd);
+          description: |-
+            OnSuccess and OnFailure name the next step (an id or WorkflowStepEnd);
             empty falls through, or fails the execution.
           type: string
         pause_before:
-          description: PauseBefore holds the sequence until a person approves this
-            step; rejecting cancels the execution.
+          description: |-
+            PauseBefore holds the sequence until a person approves this step;
+            rejecting cancels the execution.
           type: boolean
         prompt:
           description: Prompt is the step's input, sent as the user turn that starts

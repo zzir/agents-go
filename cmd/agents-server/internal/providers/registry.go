@@ -32,20 +32,17 @@ const (
 // OpenAI-only: its middleware rewrites Responses-shaped request bodies.
 const AuthModeChatGPTLogin = store.AuthModeChatGPTLogin
 
-// Def is one backend the server can build providers for — an INTERNAL table,
-// not a plugin API: validation, construction, auth modes and capability
-// metadata all derive from this slice, so a backend is one entry here plus
-// its SDK module and a row in the frontend's PROVIDERS table.
+// Def is one backend the server can build providers for: validation,
+// construction, auth modes and capability metadata all derive from this
+// table. A new backend is one entry, its SDK module and a frontend PROVIDERS row.
 type Def struct {
 	// Type is the provider_type wire value.
 	Type string
 	// AuthModes lists auth_mode values beyond "" (API key) this backend
 	// accepts. Validation rejects any other combination.
 	AuthModes []string
-	// Build constructs the provider. creds is nil except for a
-	// chatgpt_login-authenticated agent (which validation limits to backends
-	// listing that auth mode); backends without that auth mode ignore it. The
-	// routes / fallback-entries path always passes nil.
+	// Build constructs the provider. creds is set only for a chatgpt_login
+	// provider; the fallback-entries path always passes nil.
 	Build func(apiKey, baseURL string, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider
 	// Capabilities is the adapter's own unsupported-feature declaration,
 	// served to config UIs via Types.
@@ -153,9 +150,7 @@ func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, p
 	}
 	p := openaiProvider.NewProvider(opts...)
 	if creds != nil {
-		// The Codex backend rejects non-streaming requests (400), so blocking
-		// Respond callers — title gen, compaction summaries, playground —
-		// are served by an internal stream instead.
+		// The Codex backend accepts only streaming requests — decisions §5.15.
 		return agents.NewStreamOnlyProvider(p)
 	}
 	return p
@@ -201,9 +196,8 @@ func SameEndpoint(typeA, baseA, typeB, baseB string) bool {
 	return normalizeType(typeA) == normalizeType(typeB) && NormalizeBaseURL(baseA) == NormalizeBaseURL(baseB)
 }
 
-// DefFor resolves a provider selector to its definition. The error
-// names the valid set, and every construction path handles it rather than
-// defaulting — a value outside the table must never silently run on OpenAI.
+// DefFor resolves a provider selector to its definition; the error names the
+// valid set, and no construction path defaults past it.
 func DefFor(t string) (Def, error) {
 	t = normalizeType(t)
 	for _, d := range providerDefs {
@@ -227,17 +221,16 @@ func BuildPlain(providerType, apiKey, baseURL string, proxyClient *http.Client) 
 	return def.Build(apiKey, baseURL, nil, proxyClient), nil
 }
 
-// ValidateType rejects a provider selector outside the registry. It
-// backs both save-time validation and build time, so a value that sneaks past
-// one still fails the other loudly instead of silently running on OpenAI.
+// ValidateType rejects a provider selector outside the registry; both save
+// time and build time run it.
 func ValidateType(t string) error {
 	_, err := DefFor(t)
 	return err
 }
 
-// Validate checks a provider row's cross-field constraints: a
-// registered type, and an auth_mode the backend actually offers. The zero
-// value passes — it is the keyless built-in default, which fails pre-flight.
+// Validate checks a provider row's cross-field constraints: a registered
+// type, and an auth_mode the backend offers. The zero value (the keyless
+// built-in default) passes.
 func Validate(pv *store.Provider) error {
 	def, err := DefFor(pv.Type)
 	if err != nil {
@@ -246,19 +239,17 @@ func Validate(pv *store.Provider) error {
 	if mode := pv.AuthMode; mode != "" && !slices.Contains(def.AuthModes, mode) {
 		return fmt.Errorf("auth_mode %q is not available on the %s provider — use an API key or switch the type", mode, def.Type)
 	}
-	// A ChatGPT-login provider sends the account's OAuth access token as its
-	// bearer. Pointed at a custom base URL, that token would be handed to
-	// whatever host it names — so the endpoint is fixed, not configurable.
+	// The OAuth access token is the bearer: it goes to ChatGPT only, so no
+	// custom base URL.
 	if pv.AuthMode == AuthModeChatGPTLogin && pv.BaseURL != "" {
 		return fmt.Errorf("base_url cannot be set with chatgpt_login: the OAuth token is only ever sent to ChatGPT")
 	}
 	return nil
 }
 
-// TypeInfo is the machine-readable slice of a provider definition
-// served to config UIs: which backends exist, what auth they offer, and which
-// request features fail loudly on them. Display copy (labels, placeholders)
-// deliberately stays in the frontend — this is facts, not wording.
+// TypeInfo is the slice of a provider definition served to config UIs:
+// which backends exist, what auth they offer, and which request features
+// fail on them. Display copy stays in the frontend.
 type TypeInfo struct {
 	Type string `json:"type"`
 	// AuthModes and Unsupported serialize as [] rather than being omitted:
@@ -269,9 +260,8 @@ type TypeInfo struct {
 	Unsupported []string `json:"unsupported"`
 }
 
-// Types lists the registered backends. The order is the registry's
-// (openai first), which UIs may rely on for a default. Slices are copies —
-// a caller mutating its result must not reach the registry.
+// Types lists the registered backends in registry order (openai first,
+// which UIs may take as the default); the slices are copies.
 func Types() []TypeInfo {
 	out := make([]TypeInfo, len(providerDefs))
 	for i, d := range providerDefs {

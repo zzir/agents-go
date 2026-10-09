@@ -33,12 +33,10 @@ type RunStopper interface {
 	// ReleaseSessionBinding releases the cached sandbox instance behind a
 	// deleted session's project binding when no other session references it.
 	ReleaseSessionBinding(projectID string)
-	// ForgetSessionTrust drops a deleted session's exec_command trust grants —
-	// in-memory state that would otherwise outlive the row until restart.
+	// ForgetSessionTrust drops a deleted session's exec_command trust grants.
 	ForgetSessionTrust(sessionID string)
-	// WithSessionTreeFenced runs fn with the session and the hidden sessions
-	// serving it at rest and fenced against new runs; bridge.ErrSessionBusy
-	// when a run is live on any of them.
+	// WithSessionTreeFenced runs fn with the session tree at rest and fenced
+	// against new runs; bridge.ErrSessionBusy when a run is live on any of them.
 	WithSessionTreeFenced(ctx context.Context, sessionID string, fn func() error) error
 }
 
@@ -127,7 +125,8 @@ type sessionView struct {
 	store.Session
 	// Status is idle, running, requires_action or failed.
 	Status string `json:"status"`
-	// LiveRunID is the session's own executing run; a run paused for approval is not live.
+	// LiveRunID is the session's own executing run; a run paused for approval
+	// is not live.
 	LiveRunID string `json:"live_run_id,omitempty"`
 	// PendingCount is how many decisions the session and its background tasks wait on.
 	PendingCount int `json:"pending_count"`
@@ -150,9 +149,8 @@ func newSessionView(sess store.Session, st bridge.SessionState) sessionView {
 	}
 }
 
-// List responds with the caller's sessions, each with its derived status.
-// `?all=true` is the admin's management view — every owner's sessions;
-// content stays behind the per-session owner checks.
+// List responds with the caller's sessions, each with its derived status;
+// `?all=true` is the admin's view of every owner's.
 //
 //	@Summary		List sessions
 //	@Description	Newest first by updated_at. Pinned sessions come whole with the first page; limit counts the unpinned ones and before (a session id from the previous page) continues after it. q matches the name or the first user message, case-insensitively. Without limit the whole list is returned.
@@ -237,8 +235,8 @@ func (h *SessionHandler) Create(c *gin.Context) {
 	ctx := c.Request.Context()
 	u, _ := server.CurrentUser(c)
 	if req.AgentConfigID != "" {
-		// A foreign private agent reads as absent to a member — the rule the
-		// run-time build applies (decisions §5.29); an admin is told (403).
+		// A foreign private agent reads as absent to a member, 403 to an admin
+		// — decisions §5.29.
 		ac, err := h.agents.Get(ctx, req.AgentConfigID)
 		if err != nil && !errors.Is(err, store.ErrNotFound) && !store.IsMalformedID(err) {
 			storeError(c, err)
@@ -293,8 +291,7 @@ func (h *SessionHandler) Get(c *gin.Context) {
 	if pending == nil {
 		pending = []bridge.PendingCall{}
 	}
-	// planning is a column of the row, so the response and the list carry it
-	// with no extra read.
+	// planning is a column of the row: no extra read.
 	c.JSON(http.StatusOK, sessionDetail{sessionView: newSessionView(*sess, st), Pending: pending})
 }
 
@@ -305,8 +302,8 @@ type sessionPatchReq struct {
 	Pinned *bool   `json:"pinned"`
 }
 
-// Patch applies a partial update (rename and/or pin) to the session
-// identified by the id path parameter and responds with the updated session.
+// Patch applies a partial update (rename and/or pin) to the session identified
+// by the id path parameter.
 //
 //	@Summary		Update session (partial)
 //	@Description	Applies a partial update; absent fields are unchanged.
@@ -350,10 +347,9 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 	c.JSON(http.StatusOK, sess)
 }
 
-// SetOwner reassigns the session (and the hidden sessions serving it) to
-// another account (admin). Refused while a run or a background task is live
-// anywhere in that tree, and a session bound to a project transfers only to
-// that project's owner (409 otherwise).
+// SetOwner reassigns the session tree to another account (admin); refused while
+// a run or task is live in it (invariant 82) or to a non-owner of its project
+// (invariant 52).
 //
 //	@Summary	Reassign session owner (admin)
 //	@Tags		sessions
@@ -387,8 +383,7 @@ func (h *SessionHandler) SetOwner(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// The immutable project binding runs the session in that project's
-	// container: only the project's owner may receive it.
+	// A project-bound session transfers only to the project's owner — invariant 52.
 	if sess.ProjectID != "" {
 		proj, perr := h.projects.Get(c.Request.Context(), sess.ProjectID)
 		if perr != nil && !errors.Is(perr, store.ErrNotFound) {
@@ -400,8 +395,7 @@ func (h *SessionHandler) SetOwner(c *gin.Context) {
 			return
 		}
 	}
-	// At rest, hub-fenced for the write: a run or task live anywhere in the
-	// tree would carry on under the old owner's identity — invariant 82.
+	// At rest and hub-fenced for the write — invariant 82.
 	err = h.stopper.WithSessionTreeFenced(c.Request.Context(), id, func() error {
 		return h.sessions.SetOwner(c.Request.Context(), id, req.UserID)
 	})
@@ -445,8 +439,7 @@ type SetOwnerRequest struct {
 //	@Router		/sessions/{id} [delete]
 func (h *SessionHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	// The binding, read before the cascade erases it: releasing the cached
-	// sandbox instance afterwards needs to know which pair this session held.
+	// Read the binding before the cascade erases it; the release below needs it.
 	var boundProject string
 	sess, err := h.sessions.Get(c.Request.Context(), id)
 	if err != nil {
@@ -459,8 +452,8 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 		return
 	}
 	boundProject = sess.ProjectID
-	// Stop the live run and every background task (bounded wait) BEFORE the
-	// cascade, or a task still executing keeps writing into the deleted rows.
+	// Stop the live run and every task before the cascade, or one keeps
+	// writing into deleted rows.
 	h.stopper.StopSessionTree(id)
 	err = h.sessions.Delete(c.Request.Context(), id)
 	h.stopper.EndSessionDelete(id)
@@ -468,8 +461,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// After the cascade: the reference count the release consults no longer
-	// includes this session (or its cascade-deleted task children).
+	// After the cascade, so the reference count no longer includes this session.
 	if boundProject != "" {
 		h.stopper.ReleaseSessionBinding(boundProject)
 	}
@@ -477,9 +469,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// Fork creates a new session by copying entries from the source session up
-// to (and including) a given entry id. When message_id is omitted, all
-// entries are copied.
+// Fork creates a new session by copying the source's entries up to message_id.
 //
 //	@Summary		Fork session
 //	@Description	Copies entries (and their traces) into a new session. message_id bounds the copy; omit it to copy everything. exclusive=true excludes the boundary entry itself.
@@ -527,15 +517,12 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		OwnerID:       src.OwnerID,
 		Name:          branchName(src.Name, label),
 		AgentConfigID: src.AgentConfigID,
-		// The project binding is copied, not re-bound: a fork continues the
-		// same conversation over the same file system context.
+		// The project binding is copied: a fork continues over the same files.
 		ProjectID: src.ProjectID,
-		// The plan phase carries over: a fork of a session mid-planning inherits
-		// the planning it forked in (workbench invariant 33).
+		// The plan phase carries over — invariant 33.
 		Planning: src.Planning,
 	}
-	// One transaction creates the session and copies its entries, so a failure
-	// (or a cancelled request) can't leave an orphaned empty session behind.
+	// One transaction creates the session and copies its entries.
 	srcRef, err := h.entries.RefFor(ctx, srcID)
 	if err != nil {
 		storeError(c, err)
@@ -543,13 +530,11 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	}
 	runIDs, err := h.entries.ForkSession(ctx, dst, srcRef, upTo, req.Exclusive)
 	if err != nil {
-		// A source deleted out from under the fork (ErrNotFound) is a 404, not a
-		// 500; storeError maps it.
+		// A source deleted meanwhile is a 404 (storeError).
 		storeError(c, err)
 		return
 	}
-	// Traces are a best-effort copy: the fork's entries already landed, so a
-	// failure here is logged rather than failing the request.
+	// Traces are a best-effort copy: a failure is logged, the fork stands.
 	if err := h.traces.ForkBySession(ctx, srcID, dst.ID, runIDs); err != nil {
 		logging.Ctx(ctx).Warn("fork: copying traces to the new session failed; session forked without traces", "error", err, "src_session", srcID, "dst_session", dst.ID)
 	}
@@ -579,8 +564,7 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 		internalError(c, err)
 		return
 	}
-	// The store contributes the attachment rows; the URL is a deployment
-	// fact (the current public base), filled here.
+	// The URL is a deployment fact (the current public base), filled here.
 	if base := h.settings.S3Config(ctx).PublicBaseURL; base != "" {
 		for i := range entries {
 			fillAttachmentURLs(base, entries[i].Attachments)
@@ -627,8 +611,8 @@ func (h *SessionHandler) Context(c *gin.Context) {
 			rep.CompactionEnabled = ac.Compaction.Enabled
 			rep.CompactionMode = ac.Compaction.Mode
 			if ac.Compaction.Enabled {
-				// Same fallback rule as NewCompactionAdapter (<= 0, not just
-				// 0), so the threshold drawn is the threshold that fires.
+				// Same fallback rule as NewCompactionAdapter (<= 0), so the
+				// drawn threshold is the one that fires.
 				rep.CompactionThreshold = ac.Compaction.Threshold
 				if rep.CompactionThreshold <= 0 {
 					rep.CompactionThreshold = store.DefaultCompactionThresholdTokens
@@ -636,8 +620,8 @@ func (h *SessionHandler) Context(c *gin.Context) {
 			}
 		}
 	}
-	// What the last run put in front of the conversation. Absent until a run
-	// has built the agent once — nothing else knows what a build assembled.
+	// What the last run put in front of the conversation; absent until a run
+	// has built the agent.
 	if prof, err := h.profiles.Get(ctx, sess.ID); err != nil {
 		logging.Ctx(ctx).Warn("context report: prompt profile unreadable", "error", err)
 	} else if prof != nil {
@@ -686,9 +670,8 @@ func (h *SessionHandler) Compact(c *gin.Context) {
 	c.JSON(http.StatusOK, CompactResponse{Compacted: compacted, BeforeItems: before, AfterItems: after})
 }
 
-// contextMCPTimeout bounds one tools/list made on a request's behalf (a
-// context report, a tool listing); a
-// slow server costs the report that server's row, not the report.
+// contextMCPTimeout bounds one tools/list made on a request's behalf; a slow
+// server costs the report that server's row, not the report.
 const contextMCPTimeout = 2 * time.Second
 
 // mcpBuckets sizes each connected MCP server's tool surface, asking the
@@ -767,13 +750,11 @@ func (h *SessionHandler) Branch(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// A live run keeps appending to the branch it started on; switching mid-run
-	// would graft its later turns onto the new branch — so the move happens
-	// with the session fenced against one (invariant 82).
+	// A live run keeps appending to the branch it started on, so the move
+	// happens with the session fenced — invariant 82.
 	var leaf, previousLeaf string
 	err = h.stopper.WithSessionTreeFenced(ctx, id, func() error {
-		// The leaf before the switch, so the client can roll the branch back if
-		// the run it meant to start never leaves the ground.
+		// The leaf before the switch, so the client can roll back.
 		var err error
 		if previousLeaf, err = h.entries.Leaf(ctx, ref); err != nil {
 			return err

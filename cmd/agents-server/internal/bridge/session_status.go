@@ -19,7 +19,8 @@ type PendingCall struct {
 	// Kind is "step" for a workflow step waiting to start, empty for a tool call.
 	Kind  string `json:"kind,omitempty"`
 	RunID string `json:"run_id"`
-	// SessionID is the conversation to open; a task's call names its parent conversation.
+	// SessionID is the conversation to open; a task's call names its parent
+	// conversation.
 	SessionID string    `json:"session_id"`
 	TaskID    string    `json:"task_id,omitempty"`
 	TaskLabel string    `json:"task_label,omitempty"`
@@ -173,8 +174,7 @@ func (r *Runner) LiveRun(sessionID string) (string, bool) {
 	return r.hub.ActiveRunForSession(sessionID)
 }
 
-// statusStripes bounds the locks that keep one conversation's status
-// broadcasts in the order they were derived.
+// statusStripes bounds the locks that order one conversation's status broadcasts.
 const statusStripes = 32
 
 // PublishSessionStatus derives the conversation's status and broadcasts it to

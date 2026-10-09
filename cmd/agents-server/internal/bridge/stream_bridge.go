@@ -15,9 +15,8 @@ import (
 // The stream bridge translates one way only: SDK run events into protocol
 // envelopes. It decides nothing about the run (that is runner.go's).
 
-// drainStream forwards a run's events to the hub, buffering unpersisted reasoning,
-// text and injected input for an abort; the buffer resets on ItemsPersistedEvent,
-// which no delta races.
+// drainStream forwards a run's events to the hub, buffering unpersisted
+// reasoning, text and injected input for an abort (reset on ItemsPersistedEvent).
 func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(string, any), partial *streamedPartial, agentIDs map[string]string) (res *agents.RunResult, runErr error) {
 	text, reasoning := &partial.text, &partial.reasoning
 	for event, err := range stream {
@@ -35,11 +34,10 @@ func (r *Runner) drainStream(stream agents.RunStream, runID string, send func(st
 			partial.injected = append(partial.injected, session.ItemText(*it.Item.RawInput))
 		}
 		if done, ok := event.(*agents.RunCompletedEvent); ok {
-			// The stream's terminal event carries the finished run; it is the
-			// loop's own bookkeeping and not something the client renders.
+			// The terminal event is the loop's own bookkeeping, not rendered.
 			res = done.Result
-			// Except the diagnostics: a retried or fallback answer looks like a
-			// first-time one, and the difference explains the latency.
+			// Except the diagnostics (a retried or fallback answer explains its
+			// latency).
 			for _, d := range res.Diagnostics {
 				send(protocol.EventRunDiagnostic, protocol.RunDiagnostic{
 					RunID:   runID,
@@ -75,10 +73,9 @@ type streamedPartial struct {
 func (p *streamedPartial) Text() string      { return p.text.String() }
 func (p *streamedPartial) Reasoning() string { return p.reasoning.String() }
 
-// runErrorFor builds the run.error: the SDK's code when it classified err, else
-// what the workbench can tell of a segment failure (the context overflowed, the
-// provider answered an error), else the caller's transport fallback; a
-// guardrail tripwire adds its name and stage.
+// runErrorFor builds the run.error: the SDK's code, else what the workbench can
+// tell (overflow, provider error), else the caller's fallback; a guardrail
+// tripwire adds its name and stage.
 func runErrorFor(runID string, err error, fallback string) protocol.RunError {
 	e := protocol.RunError{RunID: runID, Code: fallback, Message: err.Error()}
 	if code := agents.CodeOf(err); code != agents.CodeUnknown {
@@ -141,8 +138,8 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 				send(protocol.EventRunReasoningItem, protocol.RunReasoningItem{RunID: runID, Text: text, ItemID: rawItemID(e.Item)})
 			}
 		case agents.ItemToolCall:
-			// The tool call wrapping a handoff (IsHandoff) never gets an
-			// output, so its card would spin forever; run.handoff conveys it.
+			// The tool call wrapping a handoff never gets an output;
+			// run.handoff conveys it.
 			if e.Item.IsHandoff {
 				return
 			}
@@ -154,8 +151,8 @@ func (r *Runner) handleStreamEvent(event agents.StreamEvent, runID string, send 
 				Arguments:  fc.Arguments,
 			})
 		case agents.ItemToolCallOutput:
-			// The display rendering, not %v: a multimodal output is a content
-			// list, and the live card must match what a reload rebuilds.
+			// The display rendering, not %v: the live card must match a reload
+			// (invariant 16).
 			d := e.Item.Display()
 			send(protocol.EventRunToolResult, protocol.RunToolResult{
 				RunID:      runID,

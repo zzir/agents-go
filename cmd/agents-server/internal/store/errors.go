@@ -10,8 +10,8 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 )
 
-// ErrNotFound reports that the requested row does not exist. Store methods
-// wrap it (errors.Is-compatible) so handlers can map it to a 404.
+// ErrNotFound reports that the requested row does not exist; store methods
+// wrap it (errors.Is-compatible). Handlers map it to 404.
 var ErrNotFound = errors.New("not found")
 
 // rowsAffected is the subset of sql.Result the not-found checks need.
@@ -28,9 +28,9 @@ func requireRows(res rowsAffected) error {
 	return nil
 }
 
-// UniqueViolation reports the offending column list (e.g. "name" or
-// "type, name") and true when err is a UNIQUE constraint failure. SQLite is
-// matched by message (across drivers), PostgreSQL by SQLSTATE.
+// UniqueViolation reports the offending column list ("name", "type, name") and
+// true when err is a UNIQUE constraint failure (SQLite by message, PostgreSQL
+// by SQLSTATE).
 func UniqueViolation(err error) (string, bool) {
 	if err == nil {
 		return "", false
@@ -96,8 +96,7 @@ func updateColumn(ctx context.Context, db *bun.DB, model any, label, id, column 
 }
 
 // IsMalformedID reports whether err is PostgreSQL refusing a non-UUID for a
-// uuid column (SQLSTATE 22P02, message-guarded against other 22P02s); SQLite
-// stores anything. Handlers answer 400.
+// uuid column (SQLSTATE 22P02, message-guarded). Handlers answer 400.
 func IsMalformedID(err error) bool {
 	pgErr, ok := errors.AsType[pgdriver.Error](err)
 	return ok && pgErr.Field('C') == "22P02" && strings.Contains(pgErr.Field('M'), "uuid")

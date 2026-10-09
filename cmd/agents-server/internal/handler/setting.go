@@ -35,8 +35,7 @@ type SettingView struct {
 func settingViewOf(st store.Setting) SettingView {
 	v := SettingView{Key: st.Key, Value: st.Value}
 	if _, known := settings.Lookup(st.Key); !known {
-		// An unknown row exists only to be deleted, and whether it WAS a
-		// secret is unknowable once its def is gone — mask, never leak.
+		// Whether an unknown row was a secret is unknowable: mask it.
 		v.Unknown = true
 		v.Value = maskSecret(v.Value)
 		return v
@@ -76,7 +75,7 @@ func keepProxyUserinfo(next, prev string) string {
 }
 
 // storageReadable reports whether the caller may read key: the storage group
-// is the admin's in both directions, as its form is; the rest is everyone's.
+// is the admin's, the rest everyone's.
 func storageReadable(c *gin.Context, key string) bool {
 	if !settings.IsS3Key(key) {
 		return true
@@ -85,8 +84,7 @@ func storageReadable(c *gin.Context, key string) bool {
 	return u.Role == store.RoleAdmin
 }
 
-// List responds with all stored settings, secret values masked; a member's
-// listing leaves the storage group out.
+// List responds with all stored settings, secrets masked.
 //
 //	@Summary		List settings
 //	@Description	Every stored key/value. Secrets are masked, and so is the user:pass of proxy_url; the storage (s3_*) keys are listed for admins only. A key the registry no longer defines is flagged `unknown` with its value masked too (whether it was a secret is unknowable), so it can be deleted. The definitions themselves are at /setting-defs.
@@ -111,8 +109,8 @@ func (h *SettingHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// Get responds with the setting identified by the key path parameter, secret
-// values masked; a storage key is an admin's to read.
+// Get responds with the setting identified by the key path parameter, secrets
+// masked.
 //
 //	@Summary		Get setting
 //	@Description	Secrets are masked, and so is the user:pass of proxy_url; a storage (s3_*) key is 403 for a member.
@@ -142,9 +140,8 @@ type setSettingReq struct {
 	Value string `json:"value"`
 }
 
-// Set writes the value for the setting identified by the key path parameter
-// and responds with the stored setting (secret values masked). For secret
-// settings, a masked value keeps the stored one.
+// Set writes the value for the key path parameter and responds with the stored
+// setting; a masked value keeps a stored secret.
 //
 //	@Summary		Set setting
 //	@Description	The key must be one the registry defines (see /setting-defs) and the value must suit its kind; either failure is a 400. An empty value returns the setting to its default.
@@ -195,8 +192,8 @@ func (h *SettingHandler) Set(c *gin.Context) {
 	c.JSON(http.StatusOK, settingViewOf(store.Setting{Key: key, Value: req.Value}))
 }
 
-// Delete removes the setting identified by the key path parameter. Deliberately
-// unvalidated: deleting is how an unknown key left by an older build is cleared.
+// Delete removes the setting identified by the key path parameter; unvalidated,
+// so an unknown key can be cleared.
 //
 //	@Summary	Delete setting
 //	@Tags		settings
@@ -219,9 +216,8 @@ func (h *SettingHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// SettingDefList responds with the setting registry: every key the server
-// accepts, its kind, default and presentation. The panel renders from this, so
-// a new global setting needs no frontend change.
+// SettingDefList responds with the setting registry: every key, its kind,
+// default and presentation (invariant 40).
 //
 //	@Summary	List setting definitions
 //	@Tags		settings

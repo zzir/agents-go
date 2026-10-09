@@ -83,8 +83,7 @@ func matchWorkflow(list []store.Workflow, ownerID, name string) *store.Workflow 
 	return match
 }
 
-// errInvalidWorkflowSpec marks a save the model can fix. A store fault is not
-// one — that distinction decides whether a person is asked (see workflowTools).
+// errInvalidWorkflowSpec marks a save the model can fix (a store fault is not one).
 var errInvalidWorkflowSpec = errors.New("invalid workflow")
 
 func invalidWorkflowf(format string, args ...any) error {
@@ -105,8 +104,8 @@ func (r *Runner) workflowTools(ctx context.Context, ownerID string) []*agents.To
 		func(ctx context.Context, _ *agents.ToolContext, spec workflowSpec) (agents.ToolResult, error) {
 			return r.saveWorkflow(ctx, ownerID, spec)
 		})
-	// Approval-gated by the tool itself, not the agent's approve list; a
-	// proposal that would NOT save skips the person — invariant 39.
+	// Approval-gated by the tool itself; a proposal that would NOT save skips
+	// the person — invariant 39.
 	save.NeedsApproval = true
 	save.NeedsApprovalFunc = func(ctx context.Context, _ *agents.RunContext, argsJSON, _ string) (bool, error) {
 		var spec workflowSpec
@@ -187,8 +186,7 @@ func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflow
 		return agents.ToolResult{}, err
 	}
 	if existing == nil {
-		// A new definition is the saver's own (decisions §5.29); an admin promotes
-		// it over REST if the team should run it.
+		// A new definition is the saver's own (decisions §5.29).
 		wf.Scope, wf.OwnerID = store.ScopePrivate, ownerID
 		err = r.Deps.Workflows.Create(ctx, wf)
 		if _, dup := store.UniqueViolation(err); dup {
@@ -198,13 +196,12 @@ func (r *Runner) saveWorkflow(ctx context.Context, ownerID string, spec workflow
 		}
 	}
 	if err == nil && existing != nil {
-		// The REST edit gate holds here too: a published definition is its
-		// AUTHOR's to change, and an admin's — nobody else's (decisions §5.29).
+		// The REST edit gate holds here too (decisions §5.29).
 		if existing.OwnerID != ownerID && !ownerIsAdmin(ctx, r.Deps, ownerID) {
 			return agents.TextResult(fmt.Sprintf("Nothing was saved: %q is somebody else's workflow. Pick another name to save your own.", existing.Name)), nil
 		}
-		// Scope and owner come from the row inside the transaction; the pair this
-		// save was authorized against is re-checked there (decisions §5.29).
+		// The authorized scope/owner pair is re-checked inside the transaction
+		// (decisions §5.29).
 		want := *existing
 		err = r.Deps.Workflows.Update(ctx, existing.ID, wf, func(prev *store.Workflow) error {
 			if prev.Scope != want.Scope || prev.OwnerID != want.OwnerID {
@@ -297,8 +294,8 @@ func (r *Runner) resolveWorkflowSpec(ctx context.Context, ownerID string, spec w
 	}
 	existing = matchWorkflow(list, ownerID, name)
 
-	// The names the existing steps go by — a nameless one by its position, as
-	// get_workflow reported it — so a read saved back keeps every id.
+	// The names the existing steps go by (a nameless one by position), so a
+	// read saved back keeps every id.
 	var existingNames []string
 	if existing != nil {
 		existingNames = stepNames(existing.Steps)

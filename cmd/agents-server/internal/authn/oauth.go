@@ -42,16 +42,14 @@ const (
 type pendingLogin struct {
 	provider string
 	verifier string
-	// nonce is the browser's half: set in a cookie at start, it ties the
-	// callback to the tab that began the login (a state alone is a secret the
-	// attacker's own login hands them).
+	// nonce is the browser's half, set in a cookie at start: it ties the
+	// callback to the tab that began the login.
 	nonce   string
 	created time.Time
 }
 
 // pendingExchange is one minted session waiting for the SPA to collect it,
-// keyed by the one-time code the callback redirect carries. The session token
-// itself never appears in a URL.
+// keyed by the one-time code the callback redirect carries.
 type pendingExchange struct {
 	token   string
 	user    store.User
@@ -64,10 +62,9 @@ func randomToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// Google is the Google OIDC login. Identity comes from the userinfo endpoint
-// rather than the id_token: the code exchange talks to Google directly over
-// TLS, which is the source binding a signature check would re-prove, and
-// skipping JWT parsing keeps the dependency out.
+// Google is the Google OIDC login; identity comes from the userinfo endpoint,
+// not the id_token (the code exchange is already TLS-bound, and no JWT parsing
+// is needed).
 type Google struct {
 	ClientID     string
 	ClientSecret string

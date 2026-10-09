@@ -23,8 +23,8 @@ type Spec struct {
 	Sandbox *store.Sandbox
 	Project *store.Project
 	// SaveInstanceRef records the handle a service minted for this project's
-	// sandbox, so the next process finds it. The MANAGER fills it in; a backend
-	// that derives its own name (docker) never calls it.
+	// sandbox. The MANAGER fills it in; a backend that derives its own name
+	// (docker) never calls it.
 	SaveInstanceRef func(ctx context.Context, ref string) error
 }
 
@@ -57,7 +57,7 @@ type sandboxInstance struct {
 	// acquires it, and the LAST release closes it (invariant 27). Guarded by mu.
 	doomed bool
 	// expired marks a stop in flight: the instance stays under its key so an
-	// acquire waits on gone (decisions §5.28) rather than adopting it. Guarded by mu.
+	// acquire waits on gone (decisions §5.28). Guarded by mu.
 	expired bool
 	gone    chan struct{}
 	// stopOnRelease PAUSES the compute when the last holder of a doomed instance
@@ -104,10 +104,9 @@ func (i *sandboxInstance) stop() {
 	i.close()
 }
 
-// Manager caches and reuses sandbox instances keyed by (project, runtime
-// generation), with a reference count per instance: runs and terminals
-// Acquire and release, and eviction defers to the last holder (see
-// sandboxInstance).
+// Manager caches sandbox instances keyed by (project, runtime generation),
+// reference-counted: runs and terminals Acquire and release, and an eviction
+// defers to the last holder (sandboxInstance).
 type Manager struct {
 	mu        sync.Mutex
 	instances map[sandboxKey]*sandboxInstance
@@ -117,14 +116,13 @@ type Manager struct {
 	// closed latches on CloseAll: no new acquire, and every instance is doomed
 	// so the last holder's release closes it.
 	closed bool
-	// buildOverride, when set (tests only), replaces buildSandbox — see
-	// buildFn.
+	// buildOverride, when set (tests only), replaces buildSandbox (see buildFn).
 	buildOverride func(Spec) (sandbox.Sandbox, error)
 	// trust holds per-session exec_command approval grants, consulted by the
 	// commandGate and updated by the approval resolver.
 	trust *TrustStore
-	// writeInstanceRef persists a backend's handle on a project's sandbox; without
-	// it the build refuses rather than provisioning a fresh sandbox per restart.
+	// writeInstanceRef persists a backend's handle on a project's sandbox; a
+	// remote build refuses without it.
 	writeInstanceRef func(ctx context.Context, projectID, ref string) error
 	// idleAfter, when set, is how long an unreferenced instance lives (0 =
 	// never), read per release; the eviction STOPS the container (decisions §5.28).
@@ -149,8 +147,8 @@ func NewManager() *Manager {
 	}
 }
 
-// Trust exposes the session command-trust store so the approval resolver can
-// record "allow this command" / "allow all" grants for a session.
+// Trust exposes the session command-trust store the approval resolver records
+// grants on.
 func (m *Manager) Trust() *TrustStore { return m.trust }
 
 // commandGate is exec_command's per-call approval gate: required unless the
@@ -171,10 +169,9 @@ func (m *Manager) commandGate(ctx context.Context, rc *agents.RunContext, argsJS
 }
 
 // Acquire returns the cached sandbox for spec's project, building one if
-// absent, and takes a reference on it. The returned release MUST be called
-// exactly once when the holder is done — a run's teardown, a terminal's
-// close. It is idempotent (extra calls are no-ops) and performs the deferred
-// close when this holder was the last one keeping a doomed instance alive.
+// absent, and takes a reference on it. The returned release MUST be called once
+// the holder is done (idempotent); the last release of a doomed instance closes
+// it.
 func (m *Manager) Acquire(spec Spec) (sandbox.Sandbox, func(), error) {
 	inst, release, err := m.acquire(spec)
 	if err != nil {
@@ -258,8 +255,7 @@ func (m *Manager) acquire(spec Spec) (*sandboxInstance, func(), error) {
 	return inst, release, nil
 }
 
-// buildFn returns the sandbox builder — the real one, or a test's stand-in
-// (the only way to hold a build open in the concurrency tests).
+// buildFn returns the sandbox builder: the real one, or a test's stand-in.
 func (m *Manager) buildFn() func(Spec) (sandbox.Sandbox, error) {
 	if m.buildOverride != nil {
 		return m.buildOverride
@@ -267,9 +263,8 @@ func (m *Manager) buildFn() func(Spec) (sandbox.Sandbox, error) {
 	return m.buildSandbox
 }
 
-// SetBuildOverride replaces the sandbox constructor — tests (in this package
-// and the bridge's) inject an in-process fake so tool-execution paths run
-// without a Docker daemon.
+// SetBuildOverride replaces the sandbox constructor; tests (here and in the
+// bridge) inject an in-process fake.
 func (m *Manager) SetBuildOverride(fn func(Spec) (sandbox.Sandbox, error)) {
 	m.buildOverride = fn
 }
@@ -286,8 +281,7 @@ func (m *Manager) release(inst *sandboxInstance) {
 	m.mu.Lock()
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
-	// New work occupies the project: the compute is its now, so this instance
-	// only lets go and a deferred Stop is superseded — see decisions §5.66.
+	// New work occupies the project: this instance only lets go — decisions §5.66.
 	superseded := dead && m.projectCachedLocked(inst.key.projectID)
 	stopIntent := inst.stopOnRelease && !superseded
 	if dead && stopIntent {
@@ -336,8 +330,8 @@ func (m *Manager) idleExpire(inst *sandboxInstance) {
 		m.mu.Unlock()
 		return
 	}
-	// Fence BEFORE stopping: an acquire during the stop waits on gone rather
-	// than adopting a container it would judge dead (decisions §5.28).
+	// Fence BEFORE stopping: an acquire during the stop waits on gone —
+	// decisions §5.28.
 	inst.expired = true
 	inst.gone = make(chan struct{})
 	m.mu.Unlock()
@@ -372,8 +366,7 @@ func (m *Manager) evictLocked(key sandboxKey) (toClose *sandboxInstance) {
 }
 
 // RetireProject evicts every instance of a project built before minLive and
-// fences that generation off, so an in-flight build cannot repopulate the cache
-// with the old configuration; live holders finish on what they have (invariant 27).
+// fences that generation off; live holders finish on what they have (invariant 27).
 func (m *Manager) RetireProject(projectID string, minLive int64) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
@@ -395,8 +388,7 @@ func (m *Manager) RetireProject(projectID string, minLive int64) {
 }
 
 // RemoveProject evicts every cached instance of the project and fences its id
-// permanently (ids are never reused), so a late build cannot re-enter the cache.
-// In-flight holders finish on what they acquired.
+// permanently (ids are never reused); in-flight holders finish on what they acquired.
 func (m *Manager) RemoveProject(projectID string) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
@@ -430,8 +422,7 @@ func (m *Manager) ReclaimProject(ctx context.Context, spec Spec) error {
 }
 
 // RebuildContainer discards the project's compute and provisions it again
-// from the current template and environment (invariant 44); in-flight
-// commands in the old container fail.
+// from the current template (invariant 44); in-flight commands fail.
 func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
 	b, err := backendFor(spec)
 	if err != nil {
@@ -444,9 +435,8 @@ func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
 	return m.EnsureRunning(ctx, spec)
 }
 
-// Check reports whether the sandbox is reachable and runnable. It touches no
-// project: a health check must not create one, and must not leave anything
-// behind.
+// Check reports whether the sandbox is reachable and runnable, touching no
+// project and leaving nothing behind.
 func (m *Manager) Check(ctx context.Context, sb *store.Sandbox) error {
 	b, err := BackendFor(sb.Type)
 	if err != nil {
@@ -455,9 +445,8 @@ func (m *Manager) Check(ctx context.Context, sb *store.Sandbox) error {
 	return b.Check(ctx, sb)
 }
 
-// EvictProject drops the project's cached instances without fencing the id —
-// the eviction a rebuild and a last-session-released binding both need, which
-// must leave the project acquirable afterwards.
+// EvictProject drops the project's cached instances without fencing the id:
+// the project stays acquirable (a rebuild, a last-session-released binding).
 func (m *Manager) EvictProject(projectID string) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
@@ -535,9 +524,8 @@ const (
 
 // SandboxTools returns exec_command, read_file, write_file, list_files and
 // apply_patch for the project over one Sandbox, holding a reference the
-// returned release drops (see Acquire); the named shells exec_command offers
-// on a PTY-capable sandbox close with that release. commandApproval gates
-// exec_command per call through the session command-trust store.
+// returned release drops (with any named shells); commandApproval gates
+// exec_command per call.
 func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool, func(), error) {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
@@ -545,8 +533,8 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool,
 	}
 	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes}
 	var pools []io.Closer
-	// The schema advertises session_id only when the backend can actually hold
-	// a shell open — spec §2.7k's conditional-schema rule.
+	// session_id is advertised only on a backend that can hold a shell open —
+	// spec §2.7k.
 	_, codeCfg.Sessions = sb.(sandbox.TerminalOpener)
 	codeCfg.RegisterCloser = func(c io.Closer) { pools = append(pools, c) }
 	if commandApproval {
@@ -590,10 +578,8 @@ func (m *Manager) buildSandbox(spec Spec) (sandbox.Sandbox, error) {
 	return b.Open(spec)
 }
 
-// EnsureRunning provisions the project's sandbox and makes it ready to take
-// commands, rather than leaving that to the first command. It is what a
-// "Start" button and a rebuild both need: an image pull's worth of waiting
-// happens here, where a person is watching, instead of inside a run.
+// EnsureRunning provisions the project's sandbox and readies it for commands
+// now, not on the first command: the image pull's wait lands here, not in a run.
 func (m *Manager) EnsureRunning(ctx context.Context, spec Spec) error {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
@@ -607,9 +593,8 @@ func (m *Manager) EnsureRunning(ctx context.Context, spec Spec) error {
 	return lc.Start(ctx)
 }
 
-// Stop releases the project's compute, keeping its storage. It reports
-// whether the sandbox stopped NOW: with another holder — a run in flight, an
-// open terminal — the instance is only doomed, and the last release stops it.
+// Stop releases the project's compute, keeping its storage, and reports
+// whether it stopped NOW: with another holder the instance is only doomed.
 func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error) {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
@@ -620,12 +605,10 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 	if !ok {
 		return false, fmt.Errorf("%s sandbox: %w", spec.Sandbox.Type, sandbox.ErrLifecycleUnsupported)
 	}
-	// "Sole holder?" and "fence as stopping" under one lock, or a concurrent
-	// Acquire between them builds against the container this call stops.
+	// "Sole holder?" and "fence as stopping" under one lock.
 	finish, sole := m.detachIfSole(spec.Project.ID)
 	if !sole {
-		// Someone is still working in it: the last holder's release PAUSES it
-		// (close alone releases nothing remote for e2b).
+		// Held: the last holder's release PAUSES it.
 		m.stopProjectOnRelease(spec.Project.ID)
 		return false, nil
 	}
@@ -680,9 +663,8 @@ func (m *Manager) projectRefsLocked(projectID string) int {
 	return n
 }
 
-// Status reports what the project's compute is doing. It builds the sandbox
-// (a connection, not a container), so "never started" answers absent rather
-// than failing.
+// Status reports what the project's compute is doing; building the sandbox is
+// a connection, not a container, so "never started" answers absent.
 func (m *Manager) Status(ctx context.Context, spec Spec) (sandbox.State, error) {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
@@ -713,10 +695,9 @@ func (m *Manager) Address(ctx context.Context, spec Spec) (id, domain string, er
 	return a.Address(ctx)
 }
 
-// ExportProject streams the project's working tree as a tar archive. The
-// reference the export holds is released when the returned reader is closed:
-// the archive is produced lazily by the backend, so releasing at return would
-// let an eviction close the connection mid-stream.
+// ExportProject streams the project's working tree as a tar archive; the
+// reference it holds is released when the reader is closed (the backend
+// produces the archive lazily).
 func (m *Manager) ExportProject(ctx context.Context, spec Spec) (io.ReadCloser, error) {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
@@ -748,8 +729,7 @@ func (r *releasingReader) Close() error {
 	return err
 }
 
-// holders counts the live references across every cached generation of the
-// project.
+// holders counts the live references across every cached generation of the project.
 func (m *Manager) holders(projectID string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -777,10 +757,9 @@ func BuildOptions(spec Spec) (dockersb.Options, error) {
 	return opts, nil
 }
 
-// DaemonOptions assembles the SDK options reaching the sandbox's daemon — how
-// to talk to it, and nothing else. DOCKER ONLY: the managed-container calls
-// take it as it stands, and a real build adds the image and the project.
-// Anything reachable by more than one backend goes through Backend instead.
+// DaemonOptions assembles the SDK options for reaching the sandbox's daemon and
+// nothing else. DOCKER ONLY; anything more than one backend reaches goes
+// through Backend.
 func DaemonOptions(sb *store.Sandbox) (dockersb.Options, error) {
 	if sb.Type != "docker" {
 		return dockersb.Options{}, fmt.Errorf("sandbox %q is a %s sandbox; this is a Docker-only operation", sb.Name, sb.Type)
@@ -802,8 +781,7 @@ func DaemonOptions(sb *store.Sandbox) (dockersb.Options, error) {
 	return opts, nil
 }
 
-// DefaultContainerUser is what a sandbox that names no user runs as — root,
-// deliberately (decisions §5.33).
+// DefaultContainerUser is what a sandbox that names no user runs as — decisions §5.33.
 const DefaultContainerUser = "root"
 
 // applyImage layers the image and container shape onto the daemon options.
@@ -822,8 +800,7 @@ func applyImage(opts *dockersb.Options, sb *store.Sandbox) error {
 		opts.User = DefaultContainerUser
 	}
 	opts.Network = dc.Network
-	// A blank limit takes the workbench default, not "unlimited" (decisions
-	// §5.38); an operator raises them per sandbox.
+	// A blank limit takes the workbench default — decisions §5.38.
 	mem := dc.MemoryMB
 	if mem == 0 {
 		mem = DefaultMemoryMB
@@ -837,15 +814,13 @@ func applyImage(opts *dockersb.Options, sb *store.Sandbox) error {
 	return nil
 }
 
-// Default resource caps for a docker sandbox that leaves them blank; 0 means
-// this default, never "unlimited" (decisions §5.38).
+// Default resource caps for a docker sandbox that leaves them blank — decisions §5.38.
 const (
 	DefaultMemoryMB int64   = 4096
 	DefaultCPUs     float64 = 2
 )
 
-// shortID is a uuid's tail 12 hex chars — enough to tell ids apart in names
-// docker must carry.
+// shortID is a uuid's tail 12 hex chars, for the names docker must carry.
 func shortID(id string) string {
 	id = strings.ReplaceAll(id, "-", "")
 	if len(id) > 12 {
@@ -854,9 +829,8 @@ func shortID(id string) string {
 	return id
 }
 
-// ContainerName derives the docker container name serving a project.
-// Deterministic, so a restarted server (or an idle-stopped container) is
-// re-adopted by fingerprint instead of duplicated.
+// ContainerName derives the docker container name serving a project;
+// deterministic, so a restarted server re-adopts it — decisions §5.19.
 func ContainerName(projectID string) string {
 	return "agents-" + shortID(projectID)
 }

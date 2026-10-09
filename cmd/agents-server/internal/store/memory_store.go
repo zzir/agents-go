@@ -61,9 +61,8 @@ func (s *MemoryStore) ListInjectable(ctx context.Context, agentConfigID string) 
 	return memories, nil
 }
 
-// ListConfig lists the configuration memories the caller may see: global
-// rows, and agent rows of agents visible to the caller; kind and scopeID
-// narrow further. Session memory is read under its session, never here.
+// ListConfig lists the configuration memories the caller may see (global
+// rows, and the rows of visible agents), narrowed by kind and scopeID.
 func (s *MemoryStore) ListConfig(ctx context.Context, callerID string, admin bool, kind, scopeID string) ([]Memory, error) {
 	var memories []Memory
 	q := s.db.NewSelect().Model(&memories).
@@ -75,8 +74,7 @@ func (s *MemoryStore) ListConfig(ctx context.Context, callerID string, admin boo
 		q = q.Where("mem.scope_id = ?", scopeID)
 	}
 	if !admin {
-		// scope_id is text and the agent id a uuid: PostgreSQL compares the
-		// two only through a cast, which SQLite accepts as well.
+		// scope_id is text and the agent id a uuid: PostgreSQL needs the cast.
 		visible := s.db.NewSelect().Model((*AgentConfig)(nil)).ColumnExpr("CAST(id AS TEXT)").
 			Where("scope = ? OR owner_id = ?", ScopeGlobal, callerID)
 		q = q.Where("(mem.scope_kind = ? OR mem.scope_id IN (?))", MemoryScopeGlobal, visible)
@@ -109,9 +107,8 @@ func (s *MemoryStore) GetByKey(ctx context.Context, sc MemoryScope, key string) 
 	return m, nil
 }
 
-// Upsert writes m under its scope and key, creating or replacing, within the
-// scope's policy. guard runs first, in the same transaction, for the write
-// rules only the caller knows (an agent's edit rule); nil is unguarded.
+// Upsert writes m under its scope and key, creating or replacing; guard runs
+// first in the same transaction (an agent's edit rule), nil is unguarded.
 func (s *MemoryStore) Upsert(ctx context.Context, m *Memory, guard func(ctx context.Context, tx bun.Tx) error) error {
 	return s.write(ctx, m, false, guard)
 }
@@ -125,9 +122,8 @@ func (s *MemoryStore) AppendContent(ctx context.Context, sc MemoryScope, key, te
 	}, true, guard)
 }
 
-// write is the one transaction behind Upsert and AppendContent. Two writers
-// racing to CREATE the same key both pass the locked read; the unique index
-// stops the second, which is retried once against the row the first made.
+// write is the one transaction behind Upsert and AppendContent; a create the
+// unique index refuses (a racing creator won) is retried once against that row.
 func (s *MemoryStore) write(ctx context.Context, m *Memory, appendTo bool, guard func(ctx context.Context, tx bun.Tx) error) error {
 	var err error
 	for range 2 {
@@ -151,8 +147,7 @@ func upsertMemory(ctx context.Context, tx bun.Tx, m *Memory, appendTo bool, guar
 			return err
 		}
 	}
-	// The row is read under a lock, so two appends never both start from
-	// the same content and one overwrite the other's.
+	// Read under a lock: two appends never start from the same content.
 	sc := MemoryScope{Kind: m.ScopeKind, ID: m.ScopeID, Gen: m.Gen}
 	prev := new(Memory)
 	q := scopedMemories(tx.NewSelect().Model(prev), sc).Where("mem.key = ?", m.Key)
@@ -168,9 +163,8 @@ func upsertMemory(ctx context.Context, tx bun.Tx, m *Memory, appendTo bool, guar
 	}
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		// Two creates of different keys never meet on a row lock, so the
-		// count below is serialized per scope on PostgreSQL by an advisory
-		// lock; SQLite's single writer serializes by itself.
+		// The count below is serialized per scope by an advisory lock on
+		// PostgreSQL (creates of different keys share no row lock).
 		if tx.Dialect().Name() == dialect.PG {
 			if _, lerr := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", sc.Kind+"|"+sc.ID+"|"+sc.Gen); lerr != nil {
 				return fmt.Errorf("locking %s memories: %w", sc.Kind, lerr)

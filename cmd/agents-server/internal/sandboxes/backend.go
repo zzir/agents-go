@@ -13,8 +13,8 @@ import (
 
 // Backend is one sandbox TYPE: build a project's sandbox (Open), destroy what
 // it left behind (Reclaim), rebuild the compute keeping the storage (Rebuild)
-// and health-check the type (Check). Open takes no context: backends dial
-// lazily on the first command, so building one is configuration, not I/O.
+// and health-check the type (Check). Open is configuration, not I/O: backends
+// dial on the first command.
 type Backend interface {
 	// Open builds the Sandbox for spec.
 	Open(spec Spec) (sandbox.Sandbox, error)
@@ -24,9 +24,8 @@ type Backend interface {
 	// Rebuild replaces the compute from the current template, KEEPING the
 	// storage; a backend where the compute IS the storage refuses (invariant 44).
 	Rebuild(ctx context.Context, spec Spec) error
-	// Check reports whether the sandbox is reachable and runnable, without
-	// touching any project: the health check behind a Test button. It cleans
-	// up whatever it provisioned.
+	// Check reports whether the sandbox is reachable and runnable, touching no
+	// project and cleaning up whatever it provisioned.
 	Check(ctx context.Context, sb *store.Sandbox) error
 }
 
@@ -36,8 +35,7 @@ var backends = map[string]Backend{
 	"e2b":    e2bBackend{},
 }
 
-// backendFor resolves spec's sandbox type, naming the type when it is unknown
-// — a stored row with a type this build does not carry must fail loudly.
+// backendFor resolves spec's sandbox type, naming an unknown type in the error.
 func backendFor(spec Spec) (Backend, error) {
 	return BackendFor(spec.Sandbox.Type)
 }
@@ -54,10 +52,9 @@ func BackendFor(typ string) (Backend, error) {
 // checkHealthCmd is what a Check runs. It needs nothing an image might lack.
 var checkHealthCmd = []string{"sh", "-c", "echo ok"}
 
-// ErrHealthCommandFailed marks the health check's SECOND kind of failure: the
-// service was reached and ran the command, which then timed out or exited
-// non-zero. The handler answers it 200 ok=false, reserving 502 for the first
-// kind — the service could not be reached at all.
+// ErrHealthCommandFailed marks a health check whose service was reached but
+// whose command timed out or exited non-zero; the handler answers 200 ok=false
+// (502 is for an unreachable service).
 var ErrHealthCommandFailed = errors.New("the health command ran and did not succeed")
 
 // checkExec runs the health command and turns a non-zero exit into an error:

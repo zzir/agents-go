@@ -16,9 +16,8 @@ import (
 
 const signAlgorithm = "AWS4-HMAC-SHA256"
 
-// signV4 signs req in place: sets x-amz-date, x-amz-content-sha256, host and
-// Authorization. payloadHash is hex(sha256(body)) — the empty-body hash for
-// GET/DELETE.
+// signV4 signs req in place (x-amz-date, x-amz-content-sha256, host,
+// Authorization); payloadHash is hex(sha256(body)), the empty-body hash for GET/DELETE.
 func signV4(req *http.Request, accessKey, secretKey, region, service, payloadHash string, now time.Time) {
 	amzDate := now.UTC().Format("20060102T150405Z")
 	dateStamp := now.UTC().Format("20060102")
@@ -58,9 +57,7 @@ func signV4(req *http.Request, accessKey, secretKey, region, service, payloadHas
 }
 
 // canonicalURI is the path, URI-encoded per sigv4 (every segment encoded,
-// slashes kept). url.EscapedPath already preserves what Go parsed; S3 keys
-// here are uuid-based ASCII, so the practical risk is nil — but encode
-// defensively anyway.
+// slashes kept).
 func canonicalURI(u *url.URL) string {
 	if u.Path == "" {
 		return "/"

@@ -36,15 +36,14 @@ type entryRow struct {
 	RunID    string `bun:"run_id,nullzero,type:uuid" json:"run_id,omitempty"`
 	// Entry is the JSON of an session.Entry.
 	Entry string `bun:"entry,type:text,notnull" json:"-"`
-	// SourceModel records which model produced the entry, so a replay against
-	// another model can adapt or drop what it would reject.
+	// SourceModel records which model produced the entry (replay adapts across models).
 	SourceModel string `bun:"source_model" json:"-"`
 	// Usage (RequestUsage as JSON) and EstTokens (CharEstimator's size) are
-	// lifted out so a reader can size a session by row count, not bytes.
+	// lifted out: a session is sized without reading bodies.
 	Usage     string `bun:"usage,nullzero" json:"-"`
 	EstTokens int    `bun:"est_tokens"     json:"-"`
-	// Compacted marks an entry the compaction pass folded away. It is a
-	// soft delete: the row stays so the UI can still show what was folded.
+	// Compacted marks an entry the compaction pass folded away: a soft delete,
+	// the row stays.
 	Compacted bool      `bun:"compacted"          json:"compacted,omitempty"`
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 }
@@ -58,19 +57,18 @@ func (r *entryRow) BeforeAppendModel(_ context.Context, q bun.Query) error {
 }
 
 // appendPointRow is where one session stands: the branch tip and the highest
-// sequence number it holds. Not a cache: every path that moves either writes
-// it in the same transaction — invariant 59; foldAppendPointIn is the definition.
+// sequence number it holds, written by every path that moves either — invariant 59.
 type appendPointRow struct {
 	bun.BaseModel `bun:"table:append_points,alias:ap"`
 
 	SessionID string `bun:"session_id,pk,type:uuid"`
-	// Gen is the generation this point belongs to — part of the key, as it is
-	// part of every other address of an entry row (see EntryStore.scoped).
+	// Gen is the generation this point belongs to; part of the key (see
+	// EntryStore.scoped).
 	Gen string `bun:"gen,pk"`
 	// LeafEntryID is the tip the next append links to; empty starts a root.
 	LeafEntryID string `bun:"leaf_entry_id,notnull"`
-	// LastSeq is the highest sequence number the session HOLDS, which a
-	// removal lowers; SeqFor takes the clock over this floor, so that is safe.
+	// LastSeq is the highest sequence number the session HOLDS (a removal
+	// lowers it; SeqFor takes the clock over this floor).
 	LastSeq int64 `bun:"last_seq,notnull"`
 }
 
@@ -83,14 +81,13 @@ type EntryStore struct {
 	// model is what this run targets. Entries produced by a different model are
 	// adapted on the way out; see load.
 	model string
-	// backend is the family the model runs on ("anthropic", or "" / any other
-	// for a Responses-format backend); a foreign reasoning item is kept within
-	// the family that wrote it.
+	// backend is the family the model runs on ("anthropic", else a
+	// Responses-format one); reasoning replays within its family (invariant 88).
 	backend string
 }
 
-// NewEntryStoreFor returns storage addressed by ref, so the generation is
-// never resolved a second time (an id can be deleted and recreated between).
+// NewEntryStoreFor returns storage addressed by ref; the generation is never
+// resolved a second time.
 func NewEntryStoreFor(db *bun.DB, ref session.Ref) *EntryStore {
 	return &EntryStore{db: db, ref: ref}
 }
@@ -101,8 +98,8 @@ func NewSharedEntryStore(db *bun.DB) *EntryStore {
 	return &EntryStore{db: db}
 }
 
-// RefFor resolves the generation currently answering to a session id, for a
-// caller that holds a shared handle rather than the database.
+// RefFor resolves the generation currently answering to a session id, from a
+// shared handle.
 func (s *EntryStore) RefFor(ctx context.Context, sessionID string) (session.Ref, error) {
 	return RefFor(ctx, s.db, sessionID)
 }
@@ -120,9 +117,7 @@ func (s *EntryStore) scoped(q *bun.SelectQuery) *bun.SelectQuery {
 }
 
 // SessionIsPlanning reports whether the session should START its next run in
-// the planning phase: a single-row read of the materialized column
-// (Session.Planning), addressed by (id, generation) like every other read of
-// a session's state. The state belongs to the SESSION, not a run.
+// the planning phase: one read of Session.Planning, addressed by (id, generation).
 func (s *EntryStore) SessionIsPlanning(ctx context.Context, ref session.Ref) (bool, error) {
 	var planning bool
 	err := s.db.NewSelect().Model((*Session)(nil)).Column("planning").
@@ -136,9 +131,8 @@ func (s *EntryStore) SessionIsPlanning(ctx context.Context, ref session.Ref) (bo
 	return planning, nil
 }
 
-// SetSessionPlanning writes the session's plan phase; last write wins, the
-// approved submit_plan's unlock included (see armPlanUnlock). A replacement
-// generation under the same id is not this session: the write misses it.
+// SetSessionPlanning writes the session's plan phase; last write wins (see
+// armPlanUnlock). A replacement generation under the same id is not this session.
 func (s *EntryStore) SetSessionPlanning(ctx context.Context, ref session.Ref, planning bool) error {
 	_, err := s.db.NewUpdate().Model((*Session)(nil)).
 		Set("planning = ?", planning).
@@ -150,8 +144,7 @@ func (s *EntryStore) SetSessionPlanning(ctx context.Context, ref session.Ref, pl
 	return nil
 }
 
-// RunHasItems reports whether the run persisted any replayable item entry,
-// so a fallback record of a dead run does not duplicate what per-turn persistence saved.
+// RunHasItems reports whether the run persisted any replayable item entry.
 func (s *EntryStore) RunHasItems(ctx context.Context, runID string) (bool, error) {
 	exists, err := s.scoped(s.db.NewSelect().Model((*entryRow)(nil))).
 		Where("run_id = ?", runID).
@@ -207,17 +200,15 @@ func RefFor(ctx context.Context, db bun.IDB, sessionID string) (session.Ref, err
 	return session.Ref{ID: sessionID, Gen: row.Gen}, nil
 }
 
-// SetRunID stamps subsequent writes with the run that produced them, so the UI
-// can group a transcript by turn and a reaper can find one run's rows.
+// SetRunID stamps subsequent writes with the run that produced them.
 func (s *EntryStore) SetRunID(runID string) { s.runID = runID }
 
-// SetModel records the model this run targets, so history produced by another
-// one is adapted rather than replayed verbatim into a backend that rejects it.
+// SetModel records the model this run targets; another model's history is
+// adapted on load.
 func (s *EntryStore) SetModel(model string) { s.model = model }
 
 // SetBackend records the model's backend type (providers.TypeAnthropic or a
-// Responses-format one): another model's reasoning replays within its own
-// family and is dropped across — invariant 88. Unset, every switch drops it.
+// Responses-format one) — invariant 88. Unset, every model switch drops reasoning.
 func (s *EntryStore) SetBackend(providerType string) { s.backend = providerType }
 
 // Append implements session.Storage. The append point is read and written
@@ -231,8 +222,7 @@ func (s *EntryStore) Append(ctx context.Context, entries ...session.Entry) error
 	})
 }
 
-// appendTo is Append against a specific handle, so compaction can fold rows
-// and write its checkpoint in one transaction.
+// appendTo is Append against a specific handle (compaction's one transaction).
 func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...session.Entry) error {
 	if len(entries) == 0 {
 		return nil
@@ -293,8 +283,9 @@ func liftedFields(e session.Entry) (usageJSON string, estTokens int, err error) 
 	return usageJSON, compaction.CharEstimator{}.Estimate(e), nil
 }
 
-// appendPointAfter reports where the session stands once prepared is written
-// (a leaf moves the tip to its target, anything else becomes the tip), seeded with the previous point.
+// appendPointAfter reports where the session stands once prepared is written (a
+// leaf moves the tip to its target, anything else becomes the tip), seeded with
+// the previous point.
 func appendPointAfter(at session.AppendPoint, prepared []session.Entry) session.AppendPoint {
 	for _, e := range prepared {
 		at.LastSeq = max(at.LastSeq, e.Seq)
@@ -309,8 +300,9 @@ func appendPointAfter(at session.AppendPoint, prepared []session.Entry) session.
 	return at
 }
 
-// lockSessionIn takes the session row's lock FIRST — the order every
-// append-point write and deleteSessionRows share (PostgreSQL only). A repo session whose row is gone fails the write (spec §2.5e2).
+// lockSessionIn takes the session row's lock FIRST, the order every
+// append-point write and deleteSessionRows share (PostgreSQL only); a gone row
+// fails the write (spec §2.5e2).
 func (s *EntryStore) lockSessionIn(ctx context.Context, db bun.IDB) error {
 	if s.ref.Gen == "" || db.Dialect().Name() != dialect.PG {
 		return nil
@@ -331,7 +323,7 @@ func (s *EntryStore) lockSessionIn(ctx context.Context, db bun.IDB) error {
 // on the same handle as the change. No session row is nothing to record.
 func (s *EntryStore) touchSessionIn(ctx context.Context, db bun.IDB) error {
 	// Gen is part of the match: a handle held across a delete-and-recreate
-	// must not move the NEW owner of the name in anyone's listing.
+	// touches nothing.
 	res, err := db.NewUpdate().Model((*Session)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
@@ -340,20 +332,18 @@ func (s *EntryStore) touchSessionIn(ctx context.Context, db bun.IDB) error {
 		return fmt.Errorf("recording session change: %w", err)
 	}
 	if s.ref.Gen == "" {
-		// A store used outside the repo never had a session row; nothing to
-		// record is not a failure.
+		// A store used outside the repo has no session row to touch.
 		return nil
 	}
-	// For a repo session the touch doubles as proof the session still EXISTS;
-	// zero rows means deleted under this handle, and the write fails (spec §2.5e2).
+	// For a repo session the touch doubles as the existence check: zero rows
+	// fails the write (spec §2.5e2).
 	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
 		return fmt.Errorf("session %s: %w", s.ref.ID, session.ErrNotFound)
 	}
 	return nil
 }
 
-// appendPointIn reads where the session stands: one indexed row. No row falls
-// back to the fold — answering "nothing here" would make the next append a new root.
+// appendPointIn reads where the session stands: one indexed row, else the fold.
 func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
 	row := new(appendPointRow)
 	err := db.NewSelect().Model(row).
@@ -371,9 +361,8 @@ func (s *EntryStore) appendPointIn(ctx context.Context, db bun.IDB) (session.App
 // foldAppendPointIn computes the append point the long way, from the rows —
 // the definition the stored point must agree with (invariant 59).
 func (s *EntryStore) foldAppendPointIn(ctx context.Context, db bun.IDB) (session.AppendPoint, error) {
-	// Read with cross-model adaptation OFF, folded rows included: the stored
-	// tree is the same tree whichever model reads it, and its tip may well
-	// be a folded row (a reset folds the turn that asked for it).
+	// Cross-model adaptation OFF, folded rows included: the tip may well be a
+	// folded row.
 	bare := *s
 	bare.model = ""
 	entries, err := bare.loadIn(ctx, db, true, false)
@@ -381,8 +370,8 @@ func (s *EntryStore) foldAppendPointIn(ctx context.Context, db bun.IDB) (session
 		return session.AppendPoint{}, err
 	}
 	at := session.AppendPoint{Leaf: session.LeafOf(entries)}
-	// The high-water mark is a MAX over every row, compacted ones included — a
-	// folded-away entry still consumed its position.
+	// A MAX over every row, compacted ones included: a folded entry still
+	// consumed its position.
 	if err := db.NewSelect().Model((*entryRow)(nil)).
 		ColumnExpr("COALESCE(MAX(seq), 0)").
 		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
@@ -402,8 +391,8 @@ func (s *EntryStore) refreshAppendPointIn(ctx context.Context, db bun.IDB) error
 	return writeAppendPoint(ctx, db, s.ref, at)
 }
 
-// writeAppendPoint records where a session stands. Callers pass the handle that
-// carried the change, so the point and the rows it describes are one write.
+// writeAppendPoint records where a session stands, on the handle that carried
+// the change.
 func writeAppendPoint(ctx context.Context, db bun.IDB, ref session.Ref, at session.AppendPoint) error {
 	row := &appendPointRow{
 		SessionID:   ref.ID,
@@ -433,15 +422,13 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 	q := s.scoped(db.NewSelect().Model(&rows)).
 		OrderExpr("seq ASC")
 	if !includeCompacted {
-		// A folded row's body is what the fold saved reading; its id and
-		// parent still shape the tree, so the row comes back as a skeleton.
+		// A folded row comes back as a skeleton: id and parent still shape the tree.
 		q = q.ColumnExpr("id, entry_id, parent_id, kind, compacted, CASE WHEN compacted THEN '' ELSE entry END AS entry, source_model")
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("loading entries: %w", err)
 	}
-	// skipped remaps a dropped id onto its own parent so the survivors close
-	// the gap; a broken parent chain would truncate the branch walk there.
+	// skipped remaps a dropped id onto its own parent so the survivors close the gap.
 	skipped := map[string]string{}
 	resolve := func(id string) string {
 		for {
@@ -463,16 +450,14 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 		var e session.Entry
 		if err := json.Unmarshal([]byte(rows[i].Entry), &e); err != nil {
 			if strict {
-				// A REMOVAL cannot be decided on a view with a hole in it:
-				// skipping the newest row would silently take an older one.
+				// A REMOVAL cannot be decided on a view with a hole in it.
 				return nil, fmt.Errorf("entry %q cannot be decoded: %w", rows[i].EntryID, err)
 			}
 			// One unreadable row must not make the whole session unloadable.
 			skipped[rows[i].EntryID] = rows[i].ParentID
 			continue
 		}
-		// An item produced by another model may be one this backend rejects
-		// (a reasoning block above all): adapt it, or drop it.
+		// Another model's item is adapted for this backend, or dropped.
 		if e.Kind == session.EntryKindItem && s.model != "" &&
 			rows[i].SourceModel != "" && rows[i].SourceModel != s.model {
 			adapted := adaptForeignItemJSON(e.Item, s.backend)
@@ -530,8 +515,7 @@ func (s *EntryStore) Metadata(ctx context.Context) (session.Metadata, error) {
 		Where("id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Limit(1).Scan(ctx)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		// A store used outside the repo (or a handle to a deleted session):
-		// the entries are all there is to report.
+		// No session row (outside the repo, or deleted): the entries are all there is.
 		return md, nil
 	case err != nil:
 		return md, err
@@ -541,8 +525,7 @@ func (s *EntryStore) Metadata(ctx context.Context) (session.Metadata, error) {
 	return md, nil
 }
 
-// Clear implements session.Storage. Clearing is a change like any other,
-// so it moves the session in a listing.
+// Clear implements session.Storage; it moves the session in a listing like any change.
 func (s *EntryStore) Clear(ctx context.Context) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := s.lockSessionIn(ctx, tx); err != nil {
@@ -552,8 +535,8 @@ func (s *EntryStore) Clear(ctx context.Context) error {
 			Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
 			return err
 		}
-		// Nothing left to stand on: back where an empty session starts,
-		// numbering included (SeqFor's clock keeps the next one past them).
+		// Back where an empty session starts (SeqFor's clock keeps the next
+		// number past them).
 		if err := writeAppendPoint(ctx, tx, s.ref, session.AppendPoint{}); err != nil {
 			return err
 		}
@@ -726,8 +709,7 @@ func roleOf(e session.Entry) string {
 	case agents.SourceErrorHandler, agents.SourceGuardrail, agents.SourceHost:
 		return "system"
 	case agents.SourceModel:
-		// The zero source is the model's own output: savePartialTurn puts a
-		// failed run's text on ANNOTATION entries, which must not read as "system".
+		// The zero source is the model's own output (savePartialTurn's annotations).
 		return "assistant"
 	}
 	if e.Kind == session.EntryKindAnnotation {
@@ -742,8 +724,7 @@ func contentOf(e session.Entry) string {
 	if e.Display != nil && e.Display.Text != "" {
 		return e.Display.Text
 	}
-	// A checkpoint written by a compactor that set no display still has
-	// something to show — the summary standing in for what it folded.
+	// A checkpoint with no display shows its summary.
 	if e.Kind == session.EntryKindCompaction {
 		if p, err := e.CompactionPayload(); err == nil {
 			return p.Summary
@@ -811,7 +792,8 @@ func activeBranch(entries []session.Entry) map[string]bool {
 }
 
 // AppendCallDisplayUpdate records an amendment to the display of whichever
-// entry holds callID. An update may land before its target; projection pairs them by call id.
+// entry holds callID. An update may land before its target; projection pairs
+// them by call id.
 func (s *EntryStore) AppendCallDisplayUpdate(ctx context.Context, ref session.Ref, callID string, display agents.ItemDisplay) error {
 	e, err := session.NewCallUpdateEntry(callID, display)
 	if err != nil {
@@ -881,10 +863,9 @@ func (s *EntryStore) appendHostNote(ctx context.Context, ref session.Ref, kind, 
 	))
 }
 
-// forkEntriesTx copies a prefix of src's entries into dst, rewriting entry
-// ids to the destination's namespace and remapping parent links alongside.
-// A boundary that is not a row of src is ErrNotFound; a row whose entry does
-// not decode is left out of the copy.
+// forkEntriesTx copies a prefix of src's entries into dst with fresh ids and
+// remapped parent links. A boundary that is not a row of src is ErrNotFound;
+// a row whose entry does not decode is left out.
 func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID string, exclusive bool) ([]string, error) {
 	var rows []entryRow
 	q := tx.NewSelect().Model(&rows).
@@ -920,8 +901,7 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 	remap := make(map[string]string, len(rows))
 	copied := make([]entryRow, 0, len(rows))
 	now := time.Now().UTC()
-	// The fork's own numbering, from the shared allocator: the destination is a
-	// new session, so its positions start where any new session's would.
+	// The fork's own numbering, from the shared allocator.
 	seq := session.SeqFor(session.AppendPoint{})
 	for i := range rows {
 		var e session.Entry

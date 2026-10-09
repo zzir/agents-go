@@ -10,9 +10,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// memoryTools builds the memory_* tools for a chat run: session memory
-// always writable, agent memory under the agent's edit rule and behind
-// approval (store.MemoryPolicies).
+// memoryTools builds the memory_* tools for a chat run under store.MemoryPolicies.
 func (r *Runner) memoryTools(ctx context.Context, ownerID string, built *BuildResult) []*agents.Tool {
 	admin := ownerIsAdmin(ctx, r.Deps, ownerID)
 	specs := memoryScopes(built, ownerID, admin)
@@ -33,9 +31,8 @@ func (r *Runner) memoryTools(ctx context.Context, ownerID string, built *BuildRe
 	return memory.Tools(specs, resolve)
 }
 
-// memoryScopes is what the model may reach: the session first, then the
-// agent, writable only when the config allows it and the owner may edit the
-// agent (decisions §5.29), and then only after approval.
+// memoryScopes is what the model may reach: the session, then the agent when
+// the config allows it and the owner may edit it (decisions §5.29), after approval.
 func memoryScopes(built *BuildResult, ownerID string, admin bool) []memory.ScopeSpec {
 	session := store.MemoryPolicies[store.MemoryScopeSession]
 	agentP := store.MemoryPolicies[store.MemoryScopeAgent]

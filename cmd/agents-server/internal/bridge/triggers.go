@@ -19,11 +19,11 @@ import (
 var ErrTriggerDisabled = errors.New("trigger is disabled")
 
 // cronParser reads the five-field form and the descriptors (@hourly, @every
-// 10m); no seconds field — a workflow is not a per-second job.
+// 10m); no seconds field.
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
-// minEveryInterval is the shortest @every a trigger may ask for — the field
-// form cannot go below a minute either.
+// minEveryInterval is the shortest @every a trigger may ask for (the field
+// form's floor too).
 const minEveryInterval = time.Minute
 
 // NextCronFire is when expr next fires after now, in the schedule's zone (a
@@ -67,10 +67,8 @@ func scheduleFor(expr string, minEvery time.Duration) (cron.Schedule, error) {
 }
 
 // TriggerScheduler fires triggers: cron ones on their schedule from a table it
-// keeps in step with the store (Sync), webhook and manual ones through Fire.
-// Every fire is the same start a person's Run… makes (RunWorkflow); what it
-// did is recorded on the trigger. Ticks missed while the process was down are
-// not replayed.
+// keeps in step with the store (Sync), webhook and manual ones through Fire;
+// what a fire did is recorded on the trigger. Ticks missed while down are not replayed.
 type TriggerScheduler struct {
 	runner *Runner
 	store  *store.TriggerStore
@@ -91,8 +89,8 @@ type heldEntry struct {
 	schedule string
 }
 
-// reconcileEvery is how often the clock re-reads every trigger it holds: a
-// cascade delete leaves the store with no Sync (a year for @yearly otherwise).
+// reconcileEvery is how often the clock re-reads every trigger it holds (a
+// cascade delete makes no Sync).
 const reconcileEvery = time.Minute
 
 // NewTriggerScheduler returns a scheduler over the runner and store; Start
@@ -176,16 +174,12 @@ func (s *TriggerScheduler) reconcile(ctx context.Context) {
 	}
 }
 
-// Sync brings the clock in step with one trigger AS THE STORE NOW HAS IT: read
-// by id under the scheduler's lock, so racing syncs both apply the latest row.
-// Scheduled when it is an enabled cron trigger, off the clock otherwise (a
-// gone row included). An entry the row still matches is LEFT ALONE: re-adding
-// restarts its clock, and an @every interval is measured from when it was
-// added. Called after every create, update and delete, by the reconcile, and
-// by a fire that finds its trigger gone.
+// Sync brings the clock in step with one trigger AS THE STORE NOW HAS IT
+// (read by id under the scheduler's lock): on the clock when an enabled cron
+// trigger, off it otherwise. An entry the row still matches is LEFT ALONE
+// (re-adding restarts an @every interval).
 func (s *TriggerScheduler) Sync(ctx context.Context, triggerID string) {
-	// Detached: the write this follows has landed and its request may be gone;
-	// a clock out of step until the reconcile is not what a hang-up should cost.
+	// Detached: the write this follows has landed and its request may be gone.
 	ctx = context.WithoutCancel(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,8 +200,8 @@ func (s *TriggerScheduler) Sync(ctx context.Context, triggerID string) {
 	if !wanted {
 		return
 	}
-	// A stored row is held to the rule a new one is: one written before the
-	// rule, or past it, stays off the clock.
+	// A stored row is held to the rule a new one is: a violating one stays off
+	// the clock.
 	if _, err := scheduleFor(t.Schedule, s.minEvery); err != nil {
 		logging.Ctx(ctx).Warn("trigger schedule not scheduled", "error", err, "trigger_id", t.ID)
 		return
@@ -237,8 +231,8 @@ type Fired struct {
 	RunID string `json:"run_id,omitempty"`
 }
 
-// What started a fire. A person's fire is audited by its request; the clock's
-// and a webhook's have none, so Fire audits those, attributed to the owner.
+// What started a fire. A person's fire is audited by its request; Fire audits
+// the clock's and a webhook's, attributed to the owner.
 const (
 	FireManual  = "manual"
 	FireCron    = "cron"
@@ -257,17 +251,15 @@ func frameExternal(source, triggerID, payload string) string {
 	return fmt.Sprintf("<external source=%q trigger=%q>\n%s\n</external>\n%s", source, triggerID, payload, externalNote)
 }
 
-// Fire starts what the trigger names now — its workflow, or a turn of its
-// agent — with its brief followed by the framed payload when there is one (a
-// webhook's body), and records the outcome on the trigger. A disabled trigger does not
-// fire; a session at its background cap, busy with a run or paused on an
-// approval refuses, and that refusal is what the trigger then shows.
+// Fire starts what the trigger names now (its workflow, or a turn of its
+// agent) with its brief and the framed payload when there is one, and records
+// the outcome on the trigger. A disabled trigger does not fire; a session at
+// its cap, busy or paused refuses, and the trigger shows that refusal.
 func (s *TriggerScheduler) Fire(ctx context.Context, triggerID, payload, source string) (*Fired, error) {
 	t, err := s.store.Get(ctx, triggerID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			// Deleted under the clock — with its workflow or its session, which
-			// cascade without a Sync — so this tick is its last.
+			// Deleted under the clock (a cascade makes no Sync): this tick is its last.
 			s.Sync(ctx, triggerID)
 		}
 		return nil, err
@@ -308,11 +300,10 @@ func (s *TriggerScheduler) Fire(ctx context.Context, triggerID, payload, source 
 
 // fireWorkflow is the workflow target: the same start a person's Run… makes.
 func (s *TriggerScheduler) fireWorkflow(ctx context.Context, t *store.Trigger, input string) (*Fired, error) {
-	// A trigger whose workflow is gone (a delete that raced its creation) goes
-	// the way the cascade would have; a missing SESSION or AGENT stays, re-pointable.
+	// A trigger whose workflow is gone goes the way the cascade would have; a
+	// missing SESSION or AGENT stays, re-pointable.
 	if _, werr := s.runner.Deps.Workflows.Get(ctx, t.WorkflowID); errors.Is(werr, store.ErrNotFound) {
-		// Only while it still names that workflow: re-pointed under this fire,
-		// it is a live trigger again and stays.
+		// Only while it still names that workflow (re-pointed meanwhile, it stays).
 		if derr := s.store.DeleteIfWorkflow(ctx, t.ID, t.WorkflowID); derr != nil && !errors.Is(derr, store.ErrNotFound) {
 			logging.Ctx(ctx).Warn("removing a trigger whose workflow is gone", "error", derr, "trigger_id", t.ID)
 		}
@@ -339,16 +330,14 @@ func (s *TriggerScheduler) fireAgentTurn(ctx context.Context, t *store.Trigger, 
 	agent, err := s.runner.Deps.AgentConfigs.Get(ctx, t.AgentConfigID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			// The trigger stands, to be re-pointed; refused, not faulted, and
-			// not "trigger not found".
+			// The trigger stands, to be re-pointed: refused, not faulted.
 			return nil, fmt.Errorf("%w: agent %s of trigger %s is gone", ErrTriggerTarget, t.AgentConfigID, t.ID)
 		}
 		return nil, fmt.Errorf("agent: %w", err)
 	}
 	runID := store.NewID()
-	// Both run once the run holds the session (after the reservation, before
-	// the launch): a pause that landed first refuses the turn — invariant 19 —
-	// and a refused turn leaves no note. Detached context.
+	// Both run once the run holds the session, so a pause that landed first
+	// refuses the turn (invariant 19) and leaves no note. Detached context.
 	noteCtx := context.WithoutCancel(ctx)
 	note := func() {
 		ref, rerr := store.RefFor(noteCtx, s.runner.db, t.SessionID)
@@ -371,7 +360,8 @@ func (s *TriggerScheduler) fireAgentTurn(ctx context.Context, t *store.Trigger, 
 		note()
 		return nil
 	}
-	// No person asked for this turn, so it runs on nobody's standing trust — invariant 84.
+	// No person asked for this turn, so it runs on nobody's standing trust —
+	// invariant 84.
 	in := RunInput{Text: input, WithholdTrust: true}
 	if _, err := s.runner.startRunReserved(runID, t.SessionID, agent.ID, "", in, "", nil, nil, reserved); err != nil {
 		return nil, err

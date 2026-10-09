@@ -14,8 +14,7 @@ import (
 )
 
 // New builds the process logger from a level (debug/info/warn/error) and a
-// format (text/json), case-insensitively; an unrecognized value is an error,
-// never a silent fallback.
+// format (text/json), case-insensitively; an unrecognized value is an error.
 func New(w io.Writer, level, format string) (*slog.Logger, error) {
 	var lv slog.Level
 	switch strings.ToLower(strings.TrimSpace(level)) {
@@ -41,8 +40,7 @@ func New(w io.Writer, level, format string) (*slog.Logger, error) {
 	}
 }
 
-// shortTime prints the wall clock a person reads a terminal by, not the date
-// they already know. JSON keeps the full timestamp: it is parsed, not read.
+// shortTime prints the wall clock only (text format); JSON keeps the full timestamp.
 func shortTime(groups []string, a slog.Attr) slog.Attr {
 	if len(groups) == 0 && a.Key == slog.TimeKey {
 		if t, ok := a.Value.Any().(time.Time); ok {
@@ -59,8 +57,7 @@ func Into(ctx context.Context, l *slog.Logger) context.Context {
 	return context.WithValue(ctx, ctxKey{}, l)
 }
 
-// Ctx returns the logger carried by ctx, or one that discards when none was
-// wired, so no call site has to check.
+// Ctx returns the logger carried by ctx, or one that discards when none was wired.
 func Ctx(ctx context.Context) *slog.Logger {
 	if ctx != nil {
 		if l, ok := ctx.Value(ctxKey{}).(*slog.Logger); ok && l != nil {

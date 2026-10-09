@@ -23,13 +23,11 @@ func NewProjectStore(db *bun.DB) *ProjectStore {
 	return &ProjectStore{CrudStore: NewCrudStore[Project](db, "project", "name ASC").withSecrets(sealProject, openProject), db: db}
 }
 
-// Create inserts the project with the sandbox row locked (lockRow) for the
-// insert's duration, so a racing delete refuses the create (decisions
-// §5.28); ErrNotFound when it is missing. The insert bypasses the CrudStore
-// write path, hence sealedWrite here.
+// Create inserts the project with the sandbox row locked for the insert's
+// duration (decisions §5.28); ErrNotFound when it is missing. The insert
+// bypasses the CrudStore write path, hence sealedWrite.
 func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
-	// Assign the id before sealing: the env AAD binds to it, so it must be the
-	// final id at seal time, not one the insert stamps on afterwards.
+	// The id is assigned before sealing: the env AAD binds to it.
 	if p.ID == "" {
 		p.ID = NewID()
 	}
@@ -58,12 +56,10 @@ func (s *ProjectStore) Create(ctx context.Context, p *Project) error {
 	return nil
 }
 
-// Update overwrites the project's editable fields (name, sandbox,
-// environment) under a compare-and-set on expectedRevision
-// (ErrRevisionConflict); contentChanged also bumps the runtime generation. A
-// move between sandboxes is allowed only to one addressing the same machine
-// (ErrSandboxMoveDestination — decisions §5.36). It returns the runtime
-// generation the write landed on, which the caller's retire fence must use.
+// Update overwrites the project's editable fields under a compare-and-set on
+// expectedRevision (ErrRevisionConflict); contentChanged also bumps the
+// runtime generation, which is returned for the caller's retire fence. A move
+// between sandboxes must keep the machine (ErrSandboxMoveDestination, decisions §5.36).
 func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expectedRevision int64, contentChanged bool) (int64, error) {
 	p.ID = id
 	genBump := 0
@@ -73,8 +69,7 @@ func (s *ProjectStore) Update(ctx context.Context, id string, p *Project, expect
 	var res sql.Result
 	var newGen int64
 	err := sealedWrite(p, sealProject, openProject, func() error {
-		// The sandbox row is locked for the write's duration, as the create
-		// locks it: moving ONTO a sandbox racing its delete must not land.
+		// The sandbox row is locked for the write's duration, as Create locks it.
 		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			next := new(Sandbox)
 			if err := lockRow(ctx, tx, next, "id = ?", p.SandboxID); err != nil {
@@ -153,7 +148,7 @@ func checkMove(ctx context.Context, tx bun.Tx, projectID string, next *Sandbox) 
 }
 
 // SetInstanceRef records a backend's handle on the project's sandbox: a plain
-// overwrite that moves neither counter (bumping the runtime generation would replace the instance that just reported it).
+// overwrite that moves neither counter.
 func (s *ProjectStore) SetInstanceRef(ctx context.Context, id, ref string) error {
 	res, err := s.db.NewUpdate().Model((*Project)(nil)).
 		Set("instance_ref = ?", ref).
@@ -162,8 +157,7 @@ func (s *ProjectStore) SetInstanceRef(ctx context.Context, id, ref string) error
 	if err != nil {
 		return fmt.Errorf("recording the sandbox for project %s: %w", id, err)
 	}
-	// No row means the project was deleted while its sandbox was being
-	// created: report it so the backend kills the sandbox it just made.
+	// No row: the project was deleted mid-provision, and the backend kills the sandbox.
 	if n, aerr := res.RowsAffected(); aerr == nil && n == 0 {
 		return fmt.Errorf("recording the sandbox for project %s: %w", id, ErrNotFound)
 	}
@@ -218,11 +212,10 @@ func (s *ProjectStore) List(ctx context.Context, ownerID string) ([]Project, err
 	return out, nil
 }
 
-// DeleteIfUnreferenced deletes the project only while no session binds it:
-// an in-statement NOT EXISTS on SQLite; on PostgreSQL the row is locked FOR
-// UPDATE (against BindProjectIfEmpty's FOR KEY SHARE) and the guard re-read.
-// Returns how many sessions blocked the delete; 0 with a nil error means
-// deleted. Reclaiming the storage is the caller's act (decisions §5.33).
+// DeleteIfUnreferenced deletes the project only while no session binds it (NOT
+// EXISTS on SQLite; FOR UPDATE and a re-read on PostgreSQL) and returns how
+// many sessions blocked it. Reclaiming the storage is the caller's act
+// (decisions §5.33).
 func (s *ProjectStore) DeleteIfUnreferenced(ctx context.Context, id string) (refs int, err error) {
 	if s.db.Dialect().Name() == dialect.PG {
 		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
