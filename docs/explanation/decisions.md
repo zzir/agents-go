@@ -6,12 +6,12 @@ permanent addresses — code comments cite them as `decisions §5.29`, so a numb
 is never reused or renumbered; a retired decision keeps its heading as a
 tombstone.
 
-Every entry has one shape: **Decision**, **Rejected** (each alternative and
-the one reason it lost), **Cost accepted**, and — when the rules the decision
+Every entry has one shape: **Decision**, **Rejected** (each alternative and the
+one reason it lost), **Cost accepted**, and — when the rules the decision
 produced live elsewhere — a closing `Rules:` line naming the
-[spec](../reference/spec.md) section or the
-[workbench invariant](workbench-invariants.md) that holds them. What the
-project deliberately does not do lives in [scope](scope.md).
+[spec](../reference/spec.md) section or the [workbench
+invariant](workbench-invariants.md) that holds them. What the project
+deliberately does not do lives in [scope](scope.md).
 
 ---
 
@@ -27,55 +27,47 @@ in the same change. Every entry below currently carries its own reason.
 ### 5.1 Handoffs stay; graph orchestration does not replace them
 
 **Decision.** A handoff is "switch agent at runtime"; a graph is "declare the
-topology up front". They solve different problems, and handoffs carry an
-`InputFilter` and history folding that a graph model needs a lot of glue to
-express.
+topology up front". They solve different problems, and a handoff's
+`InputFilter` and history folding need a lot of glue in a graph model.
 
 **Rejected.** Graph orchestration as the multi-agent primitive — if it ever
-arrives it layers *above* handoffs, serving task orchestration, not replacing
-agent switching.
+arrives it layers *above* handoffs, for task orchestration, not agent switching.
 
-Rules: spec §2.4.
+Rules: spec §2.4; the non-goal is [scope §1.2](scope.md#12-non-goals).
 
 ### 5.2 Names describe the thing, and renames are batched
 
-Retired as a ledger 2026-09-04: the renames it listed rode the v0.3.0 window
-and live in the release notes. What survives: a name earns a rename only when
-it misdescribes or breaks a Go rule, never to "look less like Python"; a
-rename is a breaking change batched into a window users absorb once, and the
-next window is the next breaking minor (§5.8); an openai-go major, if one
-comes, rides in it (§5.5b).
+Retired as a ledger 2026-09-04; the renames rode the v0.3.0 window and live in
+the release notes. What survives: a name earns a rename only when it
+misdescribes or breaks a Go rule, never to "look less like Python", and a
+rename is a breaking change batched into one window (§5.8) — an openai-go
+major, if one comes, rides in it (§5.5b).
 
 ### 5.3 `Instructions` is a func type
 
 **Decision.** `Instructions` is a **func type**: `StaticInstructions` covers
-the fixed case, `WrapInstructions` composes, and resolution (nil handling) is
-the runner's job behind unexported entry points, not API surface. The
-stored-`Prompt` half was retired 2026-10-03 (v0.5.0) with OpenAI's shutdown of
-reusable prompts (2026-11-30); prompt text lives in `Instructions`.
+the fixed case, `WrapInstructions` composes, and nil handling is the runner's
+job behind unexported entry points. Prompt text lives in `Instructions` alone.
 
-**Rejected.** Single-method interfaces with `...Func` adapters — their only
-implementations were unexported types in this package, a plug point nothing
-ever plugged into; a func type is the same capability assigned directly. The
-same rule collapsed `tasks.AgentResolver`, `Launcher`, `Stopper` and
-`WakeGuard`; `tasks.Store` (multi-method) keeps being an interface. A
-single-method injection point is a func type unless a second method is
-already in sight.
+**Rejected.** Single-method interfaces with `...Func` adapters — a plug point
+nothing ever plugged into; a single-method injection point is a func type
+unless a second method is in sight (so `tasks.AgentResolver`, `Launcher`,
+`Stopper` and `WakeGuard` are funcs; `tasks.Store`, multi-method, stays an
+interface). A stored-`Prompt` half — retired with OpenAI's shutdown of
+reusable prompts.
 
 **Cost accepted.** A program that bound a stored prompt pastes its text into
 `Instructions`; variables become string formatting on the caller's side.
 
 ### 5.4 A tool is a struct, not an interface
 
-**Decision.** `*Tool` is the tool type. There is no `Tool` interface, which is
+**Decision.** `*Tool` is the tool type; there is no `Tool` interface. That is
 how the "no hosted tools" line ([scope §1.2](scope.md#12-non-goals)) is
-enforced: a provider-hosted tool has nowhere to be introduced, because there
-is nothing to implement. Behavior stays open because the fields are exported
-and a variant is a copy.
+enforced: nothing to implement. The fields are exported, so a variant is a copy.
 
-**Rejected.** A sealed interface with an unexported marker method — the seal
-closed the kind just as well, but it invited a wrapper hierarchy to carry
-optional behavior, and that hierarchy needed a lookup protocol to be usable.
+**Rejected.** A sealed interface with an unexported marker method — it closed
+the kind just as well, but invited a wrapper hierarchy for optional behavior,
+which then needed a lookup protocol to be usable.
 
 Rules: spec §2.7c.
 
@@ -90,25 +82,20 @@ somewhere to live, and the coupling in §5.5b.
 ### 5.5b The wire types couple our compatibility to openai-go's
 
 **Decision.** `InputItem` and friends are **type aliases of `openai-go/v3`
-union types**, and they appear in nearly every exported signature. A
-major-version bump of openai-go (v3→v4) is therefore a breaking change of this
-SDK's entire API surface, whatever else it contains; **when it comes it is the
-merge window** for every other API-surface change on the shelf, so users absorb
-one migration (§5.8), not two. Within a major, the provider SDKs (openai-go,
-anthropic-sdk-go) **track their latest release**, each bump read from the
-changelog as well as the compiler.
+union types**, so an openai-go major bump breaks this whole API and is the
+merge window for every shelved break (§5.8); within a major the provider SDKs
+(openai-go, anthropic-sdk-go) track their latest release, read from the changelog.
 
 **Rejected.** Wrapping the wire types behind our own structs — it costs the
-round-trip fidelity §5.5 exists for, plus a conversion layer that must chase
-every Responses API addition forever. Holding a low floor behind a compat shim
-— the fixes it skipped never reached users (an SSE keep-alive failed every
-stream from a server that sends one), and the skipped changes piled up.
+round-trip fidelity §5.5 exists for, plus a conversion layer chasing every
+Responses API addition forever. Holding a low floor behind a compat shim — the
+fixes it skipped never reached users (an SSE keep-alive failed every stream
+from a server that sends one), and the skipped changes piled up.
 
-**Cost accepted.** A bump raises the floor every consumer gets: a v3 minor
-that retypes a field (v3.54 did, to a function_call_output's `CallID`) is a
-source break for a consumer who names it, so the bump ships in a minor (§5.8).
-Behavior a bump takes away is restored in the adapter, not by pinning (the
-error body, spec §2.15). A CI job builds against `@latest` to show the next.
+**Cost accepted.** A bump raises every consumer's floor, and a v3 minor that
+retypes a field (v3.54 retyped a function_call_output's `CallID`) is a source
+break, so a bump ships in a minor (§5.8); behavior a bump takes away is restored
+in the adapter (spec §2.15), never by pinning. A CI job builds against `@latest`.
 
 ### 5.6 Background work runs in-process, not in isolated processes
 
@@ -129,10 +116,9 @@ Rules: spec §2.13.
 
 ### 5.6b Tracing stays vendor-neutral; OTel export is the consumer's job
 
-**Decision.** The core `tracing` package has no dependencies: a span is a
-flat record with string ids and a `Data` map, and export is a consumer-side
-`tracing.Processor`. Two rules keep the record portable — OTel id widths, and
-one root span per agent rather than per trace.
+**Decision.** The core `tracing` package has no dependencies: a span is a flat
+record with OTel-width string ids and a `Data` map, and export is a
+consumer-side `tracing.Processor`.
 
 **Rejected.** Emitting OTel spans from the core — a heavy, fast-moving
 dependency in every consumer's build for a feature most do not use. An
@@ -142,122 +128,102 @@ through its own store (§5.23).
 **Cost accepted.** An exporter that groups by trace must carry workflow
 metadata across an N-handoff run's N+1 parentless spans itself.
 
-Rules: [Tracing](../howto/tracing.md).
+Rules: spec §2.11e; [Tracing](../howto/tracing.md).
 
 ### 5.7 A submodule exists only to keep a heavy dependency out of the core
 
-**Decision.** The repository is a Go workspace with a root module (the SDK)
-plus submodules, and the **only** reason to split something into its own
-module is that it would otherwise pull a heavy dependency into the core. Test
-helpers, small utilities and anything dependency-free stay in root regardless
-of how self-contained they are.
+**Decision.** The repository is a Go workspace — a root module (the SDK) plus
+submodules — and the **only** reason to split a module out is a heavy dependency
+it would otherwise pull into the core; anything dependency-free stays in root.
 
 **Rejected.** Splitting by cohesion — `mcp` is a module because
 `modelcontextprotocol/go-sdk` brings a raft of indirect requirements, and for
-no other reason; the core holds servers through the `agents.MCPServer`
-inversion, so the split moved no import path.
+no other reason; the `agents.MCPServer` inversion means the split moved no
+import path.
 
-**Cost accepted.** A submodule is a separately released module: every release
-tags `<dir>/vX.Y.Z` beside `vX.Y.Z` on the one commit whose `go.mod`s require
-the root at `vX.Y.Z` (the `replace` stays, for CI) — the workflow does the
-tagging from the root tag — and a consumer-smoke job proves each `go get`
-once the release is out. A submodule pseudo-version from between releases may
-not build against the root it names.
+**Cost accepted.** A submodule is released separately: each release tags
+`<dir>/vX.Y.Z` beside `vX.Y.Z` on the one commit whose `go.mod`s require the
+root at that version (the `replace` stays, for CI), and a between-release
+pseudo-version may not build against the root it names.
 
 Rules: [Architecture](architecture.md#module-boundaries).
 
 ### 5.8 Public API compatibility begins at v1.0.0
 
-**Decision.** Any release before v1.0.0 may break exported identifiers; a
-release that breaks bumps the minor (v0.x.0), so a patch release (v0.x.y)
-carries only fixes and additions. Each break is recorded in the release notes
-with the old spelling beside the new, and breaks are batched into as few
-releases as the work allows, so a user absorbs one migration rather than a
-drip.
+**Decision.** Before v1.0.0 a release may break exported identifiers; a break
+bumps the minor and a patch carries only fixes and additions, and breaks are
+batched into as few releases as the work allows, each recorded in the release
+notes with the old spelling beside the new.
 
-**Rejected.** A deprecation cycle before v1.0.0 — it was promised once and
-not kept through the structural collapses, and a rule nobody follows teaches
-the reader that this document describes intentions rather than behavior. The
-cycle begins when the API stops finding its shape. Letting a patch break —
-`go get -u=patch` is the one upgrade Go users treat as safe.
+**Rejected.** A deprecation cycle before v1.0.0 — promised once and not kept
+through the structural collapses; a rule nobody follows teaches the reader
+this document describes intentions, and the cycle begins when the API stops
+finding its shape. Letting a patch break — `go get -u=patch` is the one
+upgrade Go users treat as safe.
 
 **Cost accepted.** A fix that needs a break waits for the next minor or ships
-as one. `scripts/release-check.sh` compares the exported API with the previous
-tag before a patch is tagged, and `release.yml` runs it again; a refusal there
-comes after the module proxy has the version, so the patch is retracted and
-the next minor tagged on the same commit. A constant's changed value passes.
+as one. `scripts/release-check.sh` and `release.yml` refuse a breaking patch —
+after the module proxy has it, so the patch is retracted and the minor tagged
+on the same commit. A constant's changed value passes.
 
 ### 5.9 A parent-linked checkpoint chain for execution state is declined
 
-**Decision.** No second history structure beside the session tree. The tree
-IS the parent chain (spec §2.5d): "re-run from message X" and "same history,
-different options from turn N" are branches from any leaf. `RunState`
-serializes the one state that cannot be rebuilt — the mid-turn pause awaiting
-approval — and per-turn persistence bounds crash loss to the in-flight turn,
-with repair (spec §2.5h) making the session loadable again.
+**Decision.** No second history structure beside the session tree: the tree IS
+the parent chain (spec §2.5d), `RunState` serializes the one state that cannot
+be rebuilt — the pause awaiting approval — and per-turn persistence plus
+repair (spec §2.5h) bound crash loss to the in-flight turn.
 
 **Rejected.** A parent-linked checkpoint per superstep, browsable as a tree
-(agent-framework-go's design) — it needs that structure because its session
-is a key-value bag with no other history; here the net gain is deterministic
-replay and byte-exact "resume turn N as it was", which does not justify a
-second structure with its own consistency rules against the tree.
+(agent-framework-go's design) — it needs one because its session is a key-value
+bag with no other history; here the net gain is deterministic replay, not worth
+a second structure with its own consistency rules. The repair deciding which
+dangling calls to redo — stored history holds a tool NAME and only the caller
+knows the agent, so `RecoveryPolicy.RetrySafe` is the caller's.
 
-**Cost accepted.** No time-travel debugger. Revisit only with a concrete
-replay need, and then on three terms: a checkpoint is a session ENTRY kind
-(a trimmed `RunState`, projected to nothing) so the tree stays the only
-history; a deterministic execution mode comes first, because replaying a
-nondeterministic run replays into different behavior; and the payload is
-trimmed — `RunState` carries every raw response, and a per-turn copy grows
-quadratically.
+**Cost accepted.** No time-travel debugger. Revisit only with a concrete replay
+need, and then a checkpoint is a session ENTRY kind (a trimmed `RunState`,
+projected to nothing), a deterministic execution mode comes first, and the
+payload is trimmed — a per-turn copy of every raw response grows quadratically.
 
 ### 5.10 Non-Responses backends adapt at the model boundary
 
-**Decision.** The canonical item and event format stays the Responses wire
-format (§5.5) even when the backend speaks something else. An adapter
-translates in both directions **inside its own package** — `models/anthropic`
-for the Messages API — so the runner, sessions, run state and the server never
-learn a second format. `models/modelkit` (root module, dependency-free) holds
-the shared halves: the input walker, item/event synthesizers that stamp
-round-trippable raw JSON, the feature-rejection helper, and the conformance
-suite every adapter runs. `models/anthropic` is a submodule per §5.7.
+**Decision.** The canonical format stays Responses (§5.5) whatever the backend
+speaks: an adapter translates both ways **inside its own package**
+(`models/anthropic`), so nothing outside it learns a second format, and
+`models/modelkit` holds the shared halves plus the conformance suite every adapter runs.
 
-**Rejected.** A second canonical format, or a neutral abstraction both
-backends map onto — a lowest-common-denominator model loses exactly the
-Responses semantics (reasoning ids, encrypted content, strict schemas) the
-SDK guarantees depth on. Chat Completions as the second backend — declined in
-favor of a native Anthropic adapter ([scope §1.2](scope.md#12-non-goals)).
+**Rejected.** A second canonical format, or a neutral abstraction both backends
+map onto — a lowest-common-denominator model loses exactly the Responses
+semantics (reasoning ids, encrypted content, strict schemas) the SDK guarantees
+depth on. Chat Completions as the second backend — [scope §1.2](scope.md#12-non-goals).
 
-**Cost accepted.** Each adapter re-implements the translation, and the
-adapter alone knows what its backend cannot express — which is why an
-unsupported feature must fail loudly rather than drop silently.
+**Cost accepted.** Each adapter re-implements the translation and alone knows
+what its backend cannot express — which is why an unsupported feature must
+fail loudly rather than drop silently.
 
-Rules: spec §2.15 (the adapter contract); the Anthropic mappings and defaults
-are in [Models](../howto/models.md).
+Rules: spec §2.15; the Anthropic mappings are in [Models](../howto/models.md).
 
 ### 5.11 Construction errors split by data provenance
 
 **Decision.** A constructor whose failure can only be a programmer error
-**panics**; one whose input is runtime data **returns an error**. `NewTool`,
-`AgentAsTool` and `OutputType` derive their schema from a Go type —
-deterministic per type, so a failure is a bug any test surfaces immediately
-(the `regexp.MustCompile` precedent), and panicking keeps them chainable
-inside `Agent{...}` literals. `NewRawTool` and `NewDynamicOutputSchema` take a
-schema that is data, so they return an error.
+**panics** (`NewTool`, `AgentAsTool`, `OutputType`: a schema derived from a Go
+type is deterministic per type); one whose input is runtime data **returns an error**.
 
-One failure is a shape rather than a bug: strict mode cannot express an `any`
-field or a map with arbitrary keys at all, and `Tool.NonStrict` cannot rescue
-it — it relaxes a tool that already exists, while the strict schema is built
-during construction. So `NewTool` has a non-strict twin, `NewToolNonStrict`,
-mirroring `OutputType` / `OutputTypeNonStrict`. `AgentAsTool` has none — a
-recorded gap, not a decision: no caller has needed an unconstrained field in a
-nested run's arguments, and until one does the way out is building the `Tool`
-value directly. The normalization errors say to turn strict off *where the
-schema was built*, because the same message is reached from `NewRawTool` and
-`NewDynamicOutputSchema`, where the switch is elsewhere.
+**Rejected.** Returning an error from a type-derived constructor — the failure
+is a bug any test surfaces at once (the `regexp.MustCompile` precedent), and
+the error return would cost chaining inside `Agent{...}` literals. Returning a
+tool that errors on every invocation, surfaced by the runner before the first
+model call — it deferred a deterministic bug to runtime and cost a field plus
+a runner check. Letting `Tool.NonStrict` rescue
+a type strict mode cannot express — it relaxes a tool that already exists,
+while the strict schema is built during construction; hence the twins
+`NewToolNonStrict` / `OutputTypeNonStrict`.
 
-**Rejected.** Returning a tool that errors on every invocation, surfaced by
-the runner before the first model call — it deferred a deterministic bug to
-runtime and cost a field plus a runner check.
+**Cost accepted.** `AgentAsTool` has no non-strict twin — a recorded gap, not
+a decision: no caller has needed an unconstrained field in a nested run's
+arguments, and until one does the way out is building the `Tool` value directly.
+
+Rules: spec §2.7h, §4 (strict schemas).
 
 ### 5.12 One user-context entry point
 
@@ -272,11 +238,10 @@ run's accumulators start empty" rests on.
 
 ### 5.13 AgentToolConfig configures the tool, ModifyRunOptions the run
 
-**Decision.** `AgentToolConfig` holds only what has no `RunOptions`
-counterpart: the tool's name, description, visibility, approval gate, error
-rendering, output extraction, streaming callback and input rendering.
-Everything about the nested run itself — session, turn budget, conversation,
-model, guardrails — goes through the single `ModifyRunOptions` channel.
+**Decision.** `AgentToolConfig` holds only what has no `RunOptions` counterpart
+— the tool's name, description, visibility, approval gate, error rendering,
+output extraction, streaming callback and input rendering; everything about the
+nested run itself goes through the single `ModifyRunOptions` channel.
 
 **Rejected.** Mirror fields (`MaxTurns`, `Session`, `ConversationID`) — each
 was a second spelling of a `RunOptions` field, and the escape hatch's
@@ -289,40 +254,30 @@ conversation.
 ### 5.14 Sandbox file tools share exec's path view
 
 **Decision.** The file operations resolve paths with shell semantics,
-identical to `exec_command`. The isolation boundary is the sandbox, not the
-working directory — exec already reaches everything on that filesystem, so
-pinning the file tools inside `WorkDir` adds no protection and creates a
-second path universe; the model learns real absolute paths from exec output
-(`pwd`, `ls`, `git status`) and echoes them into the file tools, so one shared
-view is what makes those calls work.
+identical to `exec_command`: the isolation boundary is the sandbox, not the
+working directory — exec already reaches the whole filesystem, and the model
+echoes the absolute paths it learns from exec output into the file tools.
 
 **Rejected.** A workdir-rooted "virtual chroot" — absolute paths got re-joined
 under `WorkDir` and read as "not found". Docker's archive API (`docker cp`)
-for persistent containers — it cannot see a tmpfs mount (the `/tmp` the
-backend mounts), so a file exec had just written there read back as absent; a
-volume is visible, which `ExportTar` relies on. Every file operation goes
-through `exec` instead.
+for persistent containers — it cannot see a tmpfs mount, so a file exec had
+just written to `/tmp` read back as absent. An interface over the docker
+backend's three file dispatches — never chosen dynamically, it would hide
+which one runs without removing a branch.
 
 **Cost accepted.** Docker bind-mount mode is the one exception: its file
-operations run on the host side of the mount, so there they are confined to
-`WorkDir` via `os.Root` and translated from the in-container mount point —
-`sandbox.ErrOutsideWorkDir` rather than a silent re-rooting.
-
-The docker backend's three-way file dispatch is written out in each method: an interface over two backends never chosen dynamically would hide which one runs without removing a branch.
+operations run on the host side of the mount, confined to `WorkDir` via
+`os.Root` (spec §2.7t).
 
 Rules: spec §2.7t.
 
 ### 5.15 Streaming-only backends adapt with a Model decorator
 
-**Decision.** A backend, or its client SDK, that refuses non-streaming
-requests — the ChatGPT Codex backend returns 400; anthropic-sdk-go refuses
-`max_tokens` above 21,333 client-side — is adapted by `NewStreamOnlyModel` /
-`NewStreamOnlyProvider`: `Respond` runs the request as an internal
-`StreamResponse` and assembles the final response from the terminal event,
-sharing the runner's own `responseAssembler` so the two paths cannot drift. It
-composes **innermost**, directly on the backend, so retry, fallback and
-routing above it see a severed stream as an ordinary `Respond` error. The
-Anthropic adapter's `Respond` is always served this way.
+**Decision.** A backend that refuses non-streaming requests (the ChatGPT Codex
+backend's 400; anthropic-sdk-go's client-side cap on `max_tokens` above 21,333)
+is adapted by `NewStreamOnlyModel` / `NewStreamOnlyProvider`, composed innermost
+so retry, fallback and routing see a severed stream as an ordinary `Respond`
+error.
 
 **Rejected.** Forcing `"stream": true` as an HTTP middleware — it hands an SSE
 body to a caller that parses a JSON response; the request shape and the
@@ -332,29 +287,27 @@ response parser must switch together, which only the model boundary sees.
 length-truncated `response.incomplete` counts as arrived, not failed — the
 same as the runner's streaming path.
 
+Rules: spec §2.15.
+
 ### 5.16 A severed stream retries only before output, with the preamble held back
 
 **Decision.** `NewRetryModel` and `NewFallbackModel` may replace a broken
 streaming attempt only while nothing the model **generated** has been
-delivered. Lifecycle preamble and terminal-failure events carry nothing
-generated, so they are buffered rather than delivered: an abandoned attempt's
-pending events are dropped and the consumer sees exactly one coherent
-response. A stream that ends cleanly without its terminal event is an
-adapter's truncation error, so the transport classification can retry it.
+delivered; lifecycle preamble and terminal-failure events carry nothing
+generated, so they are buffered rather than delivered.
 
 **Rejected.** Retrying after output — a delivered event commits the consumer
 to a response a second attempt then duplicates. Committing on the preamble —
-`response.created` arrives the moment the connection opens, which would make
-every severed stream unretryable. Treating a clean EOF at an event boundary
-as a finish — accurate but unretryable; the runner keeps that check only as
-the last line of defense. Failing a call on a transport error AFTER the
-terminal event — the response is complete, and a valid result would be thrown
-away over a connection with nothing left to say.
+`response.created` arrives the moment the connection opens, making every
+severed stream unretryable. Treating a clean EOF at an event boundary as a
+finish — accurate but unretryable; the runner keeps that check only as the
+last line of defense. Failing a call on a transport error AFTER the terminal
+event — a complete, valid result thrown away over a connection with nothing
+left to say.
 
-**Cost accepted.** A `response.incomplete` commits (a length-truncated
-response is output that arrived), so a retry never rescues one; and every
-decorator that saw a post-commit error records it, so a nested chain accounts
-for one break once per layer.
+**Cost accepted.** A `response.incomplete` commits, so a retry never rescues
+one; every decorator that saw a post-commit error records it, so a nested
+chain accounts for one break once per layer.
 
 Rules: spec §2.7e.
 
@@ -362,52 +315,35 @@ Rules: spec §2.7e.
 
 ### 5.17 The session layer is its own package
 
-**Decision.** `agents/session` owns stored history: entries, storage, the
-semantics struct, projection, the tree, forking, recovery and the wire codec.
-The runner imports session; session never imports the runner — its one upward
-need, building an entry from a live `RunItem`, stays in agents as
-`EntryFromRunItem`. Names inside drop their `Session` prefix; `session.Session`
-keeps the stutter the way `context.Context` does, because the concept IS the
-package.
-
-The value types both layers share — `Source`, `ItemDisplay`, `RequestUsage`,
-`Diagnostic`, `ErrorCode` — live in session (entries persist them) and are
-**aliased** in agents under the same names: an alias is transparent only while
-nothing spells the type out, and a renamed alias makes the compile error, the
-godoc and the reflected name disagree with the code. `ErrorCode`'s vocabulary
-sits in session; its derivation (`CodeOf`, `Classify`) stays in agents with
-the error types it reads.
+**Decision.** `agents/session` owns stored history and never imports the
+runner; the one upward need, `EntryFromRunItem`, stays in agents. The value
+types both layers share (`Source`, `ItemDisplay`, `RequestUsage`,
+`Diagnostic`, `ErrorCode`) live in session, **aliased** in agents under the same names.
 
 **Rejected.** Aliasing session-only names into agents — code that works with
-stored history imports the package that owns it.
+stored history imports the package that owns it. Renaming an alias — the
+compile error, the godoc and the reflected name then disagree with the code.
+Dropping the `session.Session` stutter — the concept IS the package, as with
+`context.Context`. Deriving `ErrorCode`s in session — `CodeOf` and `Classify`
+read error types that are agents'. Reading history in a row's own time-ordered
+key (a UUIDv7) — a clock can step back; `Seq` is the only order.
 
-Rules: spec §2.5c.
+Rules: spec §2.5c, §2.5e2.
 
 ### 5.18 A RunState decodes across a version window, and the window is earned
 
-**Decision.** `RunStateFromJSON` accepts the same schema major from
-`runStateOldestDecodableMinor` up to `RunStateSchemaVersion`. A pause waits on
-a human, the process may be redeployed while they decide, and refusing the
+**Decision.** `RunStateFromJSON` accepts a window of schema minors: a pause
+waits on a human, the process may be redeployed meanwhile, and refusing the
 state afterwards strands the run for a reason the user had no part in. The
-field-by-field fallbacks the decoder carries (a zero `MaxTurns`, a nil
-`UsagePending`, an absent cursor) are what make an older minor readable.
+floor is 4 — `"1.3"` was stamped on two incompatible payloads.
 
-The window is earned, not retroactive: **a minor may only ADD fields**, and a
-bump that replaces or reinterprets one raises the floor to itself, because
-such a state decodes *successfully* with its old fields dropped — worse than
-a refusal, since the caller is told the resume is faithful. The floor is 4:
-`"1.3"` was stamped on two incompatible payloads (before and after the
-guardrail-result keys collapsed), and accepting it would drop every recorded
-guardrail result from the older shape.
-
-`RunState.Extra` (1.6) is host-owned state riding the pause, marshalled
-verbatim and never read: a build-time agent transform (`middleware.Plan`)
-returns fresh state on rebuild, so what it knew must travel with the pause or
-the host invents a side channel. It covers pause→resume only; a fact that
-must survive a crash mid-run needs the host's own durable write.
-
-**Rejected.** Strict version equality — the fallbacks were cost with no
-payer, and an equality gate destroys states an additive bump resumes fine.
+**Rejected.** Strict version equality — the field-by-field fallbacks were cost
+with no payer, and an equality gate destroys states an additive bump resumes
+fine. A retroactive window — a reinterpreted field decodes *successfully* with
+its meaning dropped, worse than a refusal, since the caller is told the resume
+is faithful. A side channel for a host's pause-scoped state — a build-time
+transform (`middleware.Plan`) returns fresh state on rebuild, so what it knew
+rides `RunState.Extra` with the pause instead.
 
 Rules: spec §2.1 (`RunStateVersionSupported` is the consumer's gate).
 
@@ -415,14 +351,10 @@ Rules: spec §2.1 (`RunStateVersionSupported` is the consumer's gate).
 
 Revised 2026-08-24 with derived container names (§5.28).
 
-**Decision.** A persistent docker sandbox with a fixed `ContainerName` may
-take over a container already holding that name only when a label proves it
-ours and its fingerprint — a hash of every security-relevant option, on
-**effective** values — matches exactly. Ours-with-a-different-fingerprint is
-ours from an older configuration and is **replaced** (removed, recreated):
-with `KeepOnClose` the containers outlive the process, and every config edit
-would otherwise strand its old container on the derived name forever. A
-container without the label is foreign and a hard error naming the remedy.
+**Decision.** A persistent docker sandbox adopts a container holding its name
+only on a matching ownership label and fingerprint; ours with another
+fingerprint is **replaced**, since with `KeepOnClose` every config edit would
+otherwise strand its old container on the derived name forever.
 
 **Rejected.** Matching on image + mount alone — a container created under a
 laxer policy (network on, root, no limits) passed both checks and silently
@@ -432,19 +364,16 @@ Rules: spec §2.7n.
 
 ### 5.20 A shared connection is not a caller's to cancel
 
-**Decision.** An MCP session is shared by everyone configured with that
-server — several runs, their tasks, other conversations — while a run's
-context belongs to one of them. A request therefore rides the connection's
-context, and the caller's cancellation is honored by returning from the wait,
-not by cancelling the request. The rule generalizes: **a resource shared
-between runs may not be handed a single run's cancellation**.
+**Decision.** A request rides the connection's context, and the caller's
+cancellation is honored by returning from the wait: the session is shared by
+every run on that server, the context belongs to one. Generalized, **a
+resource shared between runs is never handed a single run's cancellation**.
 
 **Rejected.** Issuing each request on the caller's context — the go-sdk's
 streamable HTTP transport fails the whole CONNECTION when one request is
-cancelled mid-flight (a `sync.Once` closing its failure gate), and every later
-call by anyone answers "client is closing"; one person stopping one run was
-observed failing five background tasks across two conversations, each blamed
-on its own agent's server.
+cancelled mid-flight (a `sync.Once` closing its failure gate), so one person
+stopping one run was observed failing five background tasks across two
+conversations, each blamed on its own agent's server.
 
 **Cost accepted.** One in-flight request outlives its caller, bounded by the
 connection's lifetime and a request ceiling generous enough to fire only on a
@@ -454,137 +383,114 @@ Rules: spec §2.16.
 
 ### 5.21 A dead shared connection repairs itself, and the redial never repeats a tool call
 
-**Decision.** Nothing in the go-sdk re-establishes a dead session (it only
-resumes an interrupted SSE stream), so the connection owns its own recovery:
-given `mcp.Options.Redial`, a session found dead is replaced **in place**, so
-every holder of that server recovers rather than only the runs that start
-afterwards. Death is noticed by watching the connection, not by a caller
-tripping over it; healing is throttled; and the redial repeats only idempotent
-work — `tools/list` is re-issued, a failed tool CALL is reported to the model,
-because a dead line cannot say whether the server ran the tool, and running a
-write twice is worse than reporting it once.
+**Decision.** The go-sdk re-establishes nothing (it only resumes an interrupted
+SSE stream), so the connection owns its recovery, in place for every holder;
+the redial repeats only idempotent work, because a dead line cannot say whether
+the server ran a tool, and running a write twice is worse than reporting it once.
 
 **Rejected.** Reconnecting without `Redial` — only the configuration's owner
 can rebuild a transport (an `*exec.Cmd` is spent once; an endpoint needs its
-headers, proxy and OAuth handler), so recovery is opt-in and the default
-reports the failure.
+headers, proxy and OAuth handler).
+
+**Cost accepted.** Recovery is opt-in; without `Redial` the failure is reported.
 
 Rules: spec §2.16.
 
 ### 5.21b An MCP retry waits on the transport, never on an answer
 
-**Decision.** `MaxRetryAttempts` retries a transport failure — each attempt
-reloads the session, so a connection the watcher healed carries the next try
-— and never an answer the server sent (a JSON-RPC error means it understood
-the request and refused it; the same bytes earn the same refusal) or a call
-after `Close`. A `tools/call` is held to more: it is repeated only when the
-dial failed, the one failure that proves the request never left; a cut after
-the send, a deadline, the transport's "rejected" with any other cause may all
-have run the tool, and are reported. The delay is capped and jittered to match
-the model layer's timing, so a server shared by many runs is not retried in
-lockstep; the two bounds are what let `-1` be a real setting rather than a
-footgun.
+**Decision.** A retry answers a transport failure, never an answer the server
+sent (the same bytes earn the same refusal), and a `tools/call` only when the
+dial failed, the one failure proving the request never left; the capped,
+jittered delay keeps a shared server out of lockstep and lets `-1` be a real setting.
 
 **Rejected.** Sharing the model layer's `RetryPolicy` — its `DefaultRetryIf`
 (retry everything but cancellation) is exactly the policy that made an
-infinite MCP retry indistinguishable from a hang; one knob with two defaults
-serves neither. An uncapped exponent — a one-second base sleeps half an hour
-by the twelfth attempt. Retrying a call on the tool's `readOnlyHint` — an
-outside claim (§5.53).
+infinite MCP retry indistinguishable from a hang. An uncapped exponent — a
+one-second base sleeps half an hour by the twelfth attempt. Retrying a call on
+the tool's `readOnlyHint` — an outside claim (§5.53).
 
 **Cost accepted.** A call the server never received because the connection
-died after the dial is not retried either; the model hears about it and
-decides.
+died after the dial is not retried either; the model hears about it and decides.
 
 Rules: spec §2.16.
 
 ### 5.22 Retry policy lives in one layer
 
-**Decision.** `openai.NewProvider` and `anthropic.NewProvider` build their
-clients with `WithMaxRetries(0)`; the one retry layer for a model call is
-`NewRetryModel` — provider-agnostic, classifiable (`RetryIf`) and observable
-(a span per attempt). A provider used without it performs no retries; a
-caller's own `option.WithMaxRetries` is appended after the default and
-re-enables the transport layer.
+**Decision.** The one retry layer for a model call is `NewRetryModel` —
+provider-agnostic, classifiable (`RetryIf`), observable (a span per attempt) —
+so the providers build their clients with `WithMaxRetries(0)`;
+`modelkit.RetryableError` is the classifier each adapter wraps, `agents.DefaultRetryIf` the coarser SDK-level default.
 
 **Rejected.** Letting both layers retry — the official clients' default two
 attempts and `NewRetryModel` compose multiplicatively, and neither can see the
 other. Clamping a `Retry-After` longer than `MaxDelay` to the cap — a wait the
-caller capped below what the server asked for is a signal to stop, so the
-retries end with that attempt's error.
-
-
-`modelkit.RetryableError` classifies as it does for these reasons: a
-`DeadlineExceeded` is usually the attempt's own budget, the hung-request case
-retrying exists for, and when it is the caller's context the next wait sees
-`ctx.Err()` and stops anyway; an explicit `X-Should-Retry` outranks the status
-because the server knows whether THIS failure is transient, and only its two
-exact values carry meaning; `io.ErrUnexpectedEOF` is retryable because a
-gateway severing an SSE stream arrives as a plain io error, not a `net.Error`.
-`agents.DefaultRetryIf` is the coarser SDK-level default (everything but
-cancellation and deadline expiry); the two are different layers.
+caller capped below what the server asked for is a signal to stop. Treating
+`DeadlineExceeded` as fatal — it is usually the attempt's own budget, the
+hung-request case retrying exists for, and a caller's deadline stops the next
+wait anyway. Letting the status outrank an explicit `X-Should-Retry` — the
+server knows whether THIS failure is transient, and only its two exact values
+carry meaning. Treating `io.ErrUnexpectedEOF` as fatal — a gateway severing an
+SSE stream arrives as a plain io error, not a `net.Error`.
 
 Rules: spec §2.16.
 
 ### 5.23 Zero-consumer surface was cut to the workbench's actual needs
 
-Retired 2026-08 as a ledger of cuts under the standing rule that a
-zero-consumer feature is removed, not kept (`tracing/otel`, `filesession`,
-`tools/bravesearch`, `cmd/verify`, MCP serve).
-What survives: `internal/agentstest` is test infrastructure, not API — testing
-against the SDK means implementing `agents.Model` — and docs are synced inside
-the change that moved the code, never by a checker run afterwards.
+Retired 2026-08 as a ledger of cuts (`tracing/otel`, `filesession`,
+`tools/bravesearch`, `cmd/verify`, MCP serve) under the standing rule that a
+zero-consumer feature is removed, not kept. What survives: `internal/agentstest`
+is test infrastructure, not API — testing against the SDK means implementing
+`agents.Model` — and docs sync inside the change that moved the code.
 
 ### 5.24 The workbench has no provider routes
 
 Decided 2026-08-24.
 
 **Decision.** An agent names its provider (`provider_id`), full stop;
-cross-provider mixing inside one run is `fallback_models`, per agent and
-visible in its config. The SDK's `RouterProvider` stays as documented API for
-embedders; the workbench never builds one.
+cross-provider mixing inside one run is `fallback_models`, per agent and visible
+in its config. `RouterProvider` stays as SDK API for embedders; the workbench
+never builds one.
 
 **Rejected.** A global prefix→provider table (`provider_routes`) — two
 selector surfaces for one decision, and the global one silently overrode the
-agent's. Do not reintroduce it; a future need for shared endpoint selection
-belongs on the provider rows themselves.
+agent's; a future need for shared endpoint selection belongs on the provider rows.
 
 ### 5.25 The workbench speaks one MCP transport: streamable HTTP
 
 Decided 2026-08-24.
 
-**Decision.** `McpServerConfig` carries no transport discriminator: `Config`
-IS an `HTTPMcpConfig`. A local stdio-only server joins through a stdio→HTTP
-proxy run and supervised by the operator, outside the workbench's authority.
-The SDK's `mcp` module keeps its stdio transport — an embedder spawning a
-subprocess in their own program is their own trust decision.
+**Decision.** `McpServerConfig` carries no transport discriminator: `Config` IS
+an `HTTPMcpConfig`, and a stdio-only server joins through a stdio→HTTP proxy the
+operator runs outside the workbench's authority. The SDK's `mcp` module keeps
+its stdio transport — an embedder spawning a subprocess is their own trust
+decision.
 
-**Rejected.** Stored stdio servers — arbitrary command execution on the host
-as the server's process user behind one admin write, and the blocker for ever
-letting non-admins configure MCP. A sandboxed variant would be a new decision
-argued here first.
+**Rejected.** Stored stdio servers — arbitrary command execution on the host as
+the server's process user behind one admin write, and the blocker for ever
+letting non-admins configure MCP; a sandboxed variant is a new decision argued
+here first.
+
+Rules: [MCP servers](../reference/protocol.md#mcp-servers--apiv1mcp-servers).
 
 ### 5.26 A skill is one SKILL.md document
 
 Decided 2026-08-24, a deliberate narrowing of the Agent Skills format.
 
-**Decision.** A skill is the SKILL.md document alone — no bundled
-`scripts/`, `references/` or `assets/`. A single document lives in the
-workbench's database like every other configuration entity, and the SDK's
-`skills` module shrinks to storage-free primitives: `Parse` validates a
-document, `RenderIndex` renders discovery, and activation is a `read_skill`
-tool the caller provides.
+**Decision.** A skill is the SKILL.md document alone — no bundled `scripts/`,
+`references/` or `assets/` — living in the workbench's database like every
+other configuration entity; the SDK's `skills` module is storage-free primitives
+(`Parse`, `RenderIndex`), and activation is a `read_skill` tool the caller
+provides.
 
 **Rejected.** The full format's file trees — they force skills onto a
-filesystem, and a path-based reader needs an os.Root confinement the
-document model does not.
+filesystem, and a path-based reader needs an os.Root confinement the document
+model does not. Per-skill file storage, ever — a skill needing an artifact
+inlines it or instructs the model to fetch it.
 
 **Cost accepted.** A skill that instructs the model to run bundled scripts
 does not get them; references to a repo's other files dangle, and the model
-follows the instructions by writing its own code in the sandbox. Import URLs
-are member-supplied outbound requests with no SSRF defense — §5.29's accepted
-risk. Do not add per-skill file storage back; a skill needing an artifact
-inlines it or instructs the model to fetch it.
+writes its own code in the sandbox. Import URLs are member-supplied outbound
+requests with no SSRF defense — §5.29's accepted risk.
 
 Rules: [Skills](../reference/protocol.md#skills--apiv1skills) in the wire surface.
 
@@ -593,69 +499,54 @@ Rules: [Skills](../reference/protocol.md#skills--apiv1skills) in the wire surfac
 Decided 2026-08-24; revised 2026-08-28, see §5.36.
 
 **Decision.** A workbench sandbox is a Docker container or, since §5.34, an
-E2B-compatible one. For Docker what varies is WHERE: `host` empty for the
-local daemon, `ssh://user@host` for a remote one, `tcp://` for the exposed
-case. SSH lives on inside `sandbox/docker` as a TRANSPORT — a pure-Go dialer
-opening streamlocal channels to the remote `docker.sock` over one shared,
-self-healing connection, needing only sshd with streamlocal forwarding and
-socket access for the SSH user. Self-healing covers transport failures only:
-a rejected channel open (a container port nothing listens on yet) arrives on a
-healthy transport, and reconnecting on it would sever every terminal
-multiplexed on the same client. The SDK's `sandbox.LocalSandbox` stays for
-embedders and tests; the server never offers it.
+E2B-compatible one; for Docker what varies is WHERE (`host` empty, `ssh://`,
+`tcp://`), and SSH lives on inside `sandbox/docker` as a TRANSPORT — a pure-Go
+dialer to the remote `docker.sock` over one shared, self-healing connection.
 
 **Rejected.** A `local` sandbox type — host execution behind one admin write
-and one approval, and the reason a web terminal had to be special-cased off.
+and one approval, and the reason a web terminal had to be special-cased off;
+`sandbox.LocalSandbox` stays for embedders and tests, never offered by the server.
 A generic `ssh` sandbox — a login user's full privileges, no limits, on a
-machine the server merely had credentials to; an embedder wanting raw remote
-exec uses x/crypto/ssh directly, since the value this repo adds is the
-sandboxing SSH never provided. A remote docker CLI or a local ssh binary as
-the transport — the server shells out to nothing.
+machine the server merely had credentials to; raw remote exec is
+x/crypto/ssh, the value here is the sandboxing SSH never provided. A remote
+docker CLI or a local ssh binary as the transport — the server shells out to
+nothing. Healing a rejected channel open — it arrives on a healthy transport,
+and reconnecting would sever every terminal multiplexed on the same client.
 
 **Cost accepted.** An isolation need beyond containers (VMs, gVisor) is a new
 backend decision argued here first — gVisor is already reachable via
 `runtime: runsc`. Do not reintroduce a host-exec or raw remote-exec type.
 
-Rules: workbench invariant 45 (only a sandbox's identity freezes); invariant
-27 (a session binds a project).
+Rules: workbench invariant 45 (only a sandbox's identity freezes); invariant 27
+(a session binds a project);
+[Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes).
 
 ### 5.28 A project is the unit of working storage, and containers are per project
 
 Decided 2026-08-24; revised 2026-08-25 (§5.29), 2026-08-28 (§5.33, §5.36)
 and 2026-08-29 (deletion contracts in SQL).
 
-**Decision.** A **project** is one user's working tree on one sandbox, named
-per (owner, sandbox) and display-only — storage is keyed by id, so a rename
-moves nothing, and no user-typed path ever reaches a mount. The machine
-affinity is deliberate: a tree lives on one daemon, and a project that could
-"move" between daemons would silently be two different sets of files. A
-session's permanent binding is `project_id`; execution is always the
-container's `/workspace`, which mounts the project's storage. Containers are
-persistent-only, **one per project**, deterministically named so restarts
-re-adopt by fingerprint (§5.19) instead of duplicating, and kept (stopped, not
-removed) so installed packages survive idle. A run naming no project gets no
-sandbox tools at all.
-
-Projects are the first PERSONAL configuration entity: every member manages
-their own, scoped in the handlers rather than the admin gate, and an admin
-additionally MANAGES the plane (§5.29's manage-not-author line). The web
-terminal follows the same line — a member opens a shell into their OWN
-project's container, an admin into any: the operator's escape hatch, and a
-deliberate exception to "session content is owner-only".
+**Decision.** A **project** is one user's working tree on one sandbox, keyed by
+id and never by a typed path, with one persistent container per project —
+derived-named so restarts re-adopt (§5.19), kept stopped so installed packages
+survive idle. The affinity is deliberate: a tree that could "move" between
+daemons would silently be two sets of files.
 
 **Rejected.** A free-form working directory per session — it made "which tree
 did that command touch?" a question with a surprising answer. Cascading a
 sandbox delete onto its projects — a project delete reclaims storage, so the
-cascade would destroy working trees as a side effect of removing a machine;
-the sandbox delete refuses instead.
+cascade would destroy working trees as a side effect of removing a machine.
+Projects behind the admin gate — they are the first PERSONAL configuration
+entity, scoped in the handlers; an admin MANAGES the plane (§5.29).
 
 **Cost accepted.** Deletion and binding contracts settle in SQL per dialect —
-single-statement guards on SQLite, parent-row locks on PostgreSQL — two
-shapes to keep equivalent. Sessions, forks and tasks on one project share its
-tree; a regenerate or fork rewinds the transcript, not the files.
+single-statement guards on SQLite, parent-row locks on PostgreSQL — two shapes
+to keep equivalent. Sessions, forks and tasks on one project share its tree; a
+regenerate or fork rewinds the transcript, not the files.
 
 Rules: workbench invariant 27 (binding, fences, locks); the operational
-surface is [Projects](../reference/protocol.md#projects--apiv1projects).
+surface, the terminal's ownership rule included, is
+[Projects](../reference/protocol.md#projects--apiv1projects).
 
 ---
 
@@ -664,48 +555,31 @@ surface is [Projects](../reference/protocol.md#projects--apiv1projects).
 Decided 2026-08-24; owner semantics revised 2026-08-25, listing order
 2026-08-31.
 
-**Decision.** The five configuration entities members compose runs from —
-agent configs, providers, MCP servers, skills, workflows — carry two
-independent columns: `scope ∈ {private, global}` decides **who sees** the
-row, `owner_id` names **who wrote** it. The owner is permanent — stamped at
-create, surviving every scope flip, changed only by an explicit transfer. A
-private row is invisible to other members (404, absent from listings), so
-scope is not an existence oracle; a create defaults to private.
+**Decision.** Configuration rows carry two independent columns — `scope` decides
+**who sees** a row, `owner_id` **who wrote** it, permanent across every flip —
+and the write matrix follows: publishing is the admin's alone, because
+publishing to every member is the review point and the reviewing role does it;
+unpublishing is the admin's or the author's, and the row returns to its author,
+who never left it.
 
-The write matrix follows from the two columns. The author edits what they
-wrote, private or published; an admin edits any global row but **not** a
-member's private one — a config an admin could silently rewrite under a
-member's name would blur whose credentials and instructions a run carries.
-Publishing is the admin's alone, because publishing to every member is the
-review point and the reviewing role does it; unpublishing is the admin's or
-the author's, and the row returns to its author, who never left it. A
-transfer re-validates the row's references AS THE NEW OWNER exactly as a
-save does — a config that answers 204 and then fails every run is the state a
-save already rejects. Names are unique per visibility context, and wherever a
-name resolves it is **own-over-global**: scope, not authorship, is what "own"
-means, so an author who published a name still gets a private row of it.
-
-References split by whether they are load-bearing. `RefVisible` holds at
-write time where a dangling reference breaks the holder, and a **global
-holder may reference only global rows** — otherwise promoting it would publish
-a config whose parts most members cannot see. The provider leg, the one that
-spends a credential, settles its races in SQL and is re-checked at run time;
-the advisory legs filter to the run owner's visible subset instead. Scoped
-listings order by AUTHORSHIP — others' shared rows first, then one's own — on
-the permanent `owner_id`, so only a transfer ever reorders a row.
-
-**Rejected.** Admin edits on private rows — the ownership blur above. A
-per-row ACL — one team, one trust boundary. A same-scope flip as a no-op — a
-flip is defined FROM the other scope only, so two racing demotes cannot both
-flip a row.
+**Rejected.** Admin edits on private rows — a config an admin could silently
+rewrite under a member's name would blur whose credentials and instructions a
+run carries. A per-row ACL — one team, one trust boundary. A same-scope flip
+as a no-op — a flip is defined FROM the other scope only, so two racing
+demotes cannot both flip a row. A transfer that skips validation — a config
+that answers 204 and then fails every run is the state a save already rejects.
+A global holder referencing private rows — promoting it would publish a config
+whose parts most members cannot see. Listings ordered by scope — on the
+permanent `owner_id`, only a transfer ever reorders a row.
 
 **Cost accepted.** A member's published row stays theirs to change after the
 admin approved it. Member-supplied URLs (MCP endpoints, provider base URLs,
 skill imports) get **no private-network/SSRF defense**: one team, one trust
 boundary, and egress control is applied outside the server.
 
-Rules: workbench invariant 42 (the in-write re-check); the status matrix and
-list ordering are in [the wire surface](../reference/protocol.md#authorization).
+Rules: workbench invariant 42 (the in-write re-check); the matrix, the reference
+rule and list ordering are in [the wire
+surface](../reference/protocol.md#authorization).
 
 ---
 
@@ -723,36 +597,24 @@ pre-flight, and settings' only secret is attachment storage's own S3 key.
 
 Decided 2026-08-25, refining §5.29 for skills alone.
 
-**Decision.** An import lands a whole repository's `SKILL.md` files at once,
-and two repositories may each ship a `review`, so **the repo is part of the
-name**: the model-facing name is `<repo label>:<frontmatter name>`, and
-uniqueness keys on `(repo_label, name)` within a visibility context. The
-label is materialized on the row (`repo_label`) because two source URLs can
-reduce to one label, and a duplicate qualified name would make `read_skill`'s
-answer a coin flip. **A repo group is one scope and one owner**: scope and
-ownership move per `(source_repo, owner_id)` group in one statement, all or
-nothing, and every operation on a group NAMES it rather than searching for a
-plausible one — otherwise an admin holding a private copy of a repository
-somebody else published would refresh their own copy believing they synced
-the published one. A sync's new files inherit the group's scope and owner,
-and an import fetches everything first, then writes in one transaction that
-re-reads the group under lock and refuses, nothing written, when its
-`(owner, scope)` moved during the minutes of network.
+**Decision.** The repository is part of a skill's name, materialized as
+`repo_label` on the row, and **a repo group is one scope and one owner**,
+moved per `(source_repo, owner_id)` in one statement, every operation naming its group.
 
-**Rejected.** Keying uniqueness on the raw source URL — it lets the
-two-URLs-one-label pair through. Merging on a transfer into an owner who
-already holds a group for that repository — that is how a mixed-scope pile
-forms, and the unique indexes cannot see it because they partition BY scope.
-A persisted aggregate root for the group — the invariant needs one consistent
-instant, not a table; the rows already carry the identity, and only the write
-needs serializing.
+**Rejected.** Searching for a plausible group instead of naming it — an admin
+holding a private copy of a repository somebody else published would refresh
+their own copy believing they synced the published one. Keying uniqueness on the
+raw source URL — two URLs can reduce to one label, and a duplicate qualified
+name makes `read_skill`'s answer a coin flip. Merging on a transfer into an
+owner who already holds a group for that repository — that is how a mixed-scope
+pile forms, and the unique indexes cannot see it because they partition BY
+scope. A persisted aggregate root for the group — the invariant needs one
+consistent instant, not a table; only the write needs serializing.
 
 **Cost accepted.** The author of a published repo can add global skills by
 pushing upstream and syncing, without a second admin act — accepted on the
-one-team trust boundary (§5.29), because a group whose scope stays coherent
-is worth more than a review of each added file. The same repo imported by two
-people is two independent groups whose qualified names collide and resolve
-own-over-global.
+one-team trust boundary (§5.29). The same repo imported by two people is two
+groups whose qualified names collide and resolve own-over-global.
 
 Rules: [Skills](../reference/protocol.md#skills--apiv1skills) in the wire surface.
 
@@ -760,24 +622,21 @@ Rules: [Skills](../reference/protocol.md#skills--apiv1skills) in the wire surfac
 
 Decided 2026-08-26.
 
-**Decision.** A project's environment — the variables its container is
-created with — is sealed at rest, masked in every response, replaceable but
-never readable back. Names stay plaintext so one variable can be rewritten
-without retyping its neighbours and the audit log stays answerable. The seal's
-AAD is the project id, so a ciphertext pasted into another project refuses to
-open there rather than acting as a decryption oracle for an attacker with DB
-write access but not the key.
+**Decision.** A project's environment is sealed at rest, masked in every
+response, replaceable but never readable back; names stay plaintext so one
+variable can be rewritten alone and the audit log stays answerable, and the
+seal's AAD is the project id, so a ciphertext moved to another project is not a
+decryption oracle.
 
 **Rejected.** A per-entry "secret" flag masking only marked values — it would
 make this the ONE credential surface whose visibility is a per-item choice,
-against provider keys, MCP secrets, SSH passwords and trigger secrets, which
-are all unconditionally write-only; and a forgotten flag writes a token to a
-readable field silently, a failure with no upper bound.
+against provider keys, MCP secrets, SSH passwords and trigger secrets, all
+unconditionally write-only; and a forgotten flag writes a token to a readable
+field silently, a failure with no upper bound.
 
-**Cost accepted.** Confirming that `TZ` says what you think takes a look
-inside the container — one `env` away in the terminal the workbench offers,
-and the honest place to look, because the environment is readable to
-everything running in that container anyway. Sealing defends the database
+**Cost accepted.** Confirming that `TZ` says what you think takes one `env` in
+the terminal the workbench offers — the honest place, since the environment is
+readable to everything in that container anyway; sealing defends the database
 and the screen, never hides a value from the model, and the UI says so.
 
 Rules: workbench invariant 27 (the environment is content, not identity).
@@ -787,66 +646,55 @@ Rules: workbench invariant 27 (the environment is content, not identity).
 Decided 2026-08-28. The target/template split this entry introduced was
 reversed the same week — §5.36 holds what replaced it. What stands:
 
-**Decision.** One runtime axis: the runtime generation lives only on the
-PROJECT, and a content change to a sandbox bumps it on every project naming
-the row (`ProjectStore.BumpRuntimeGen`), so the instance cache, the terminal
-fences and `RetireProject` watch exactly one thing. For Docker, storage is a
-volume, always — a workbench container runs as root unless the sandbox names
-a user (overriding spec §2.7o's image-user default), with all capabilities
-dropped; the container is the isolation boundary, and its files live in a
-volume nothing else mounts. A project delete destroys its storage: a volume
-nobody has a listing for is an unbounded leak, and the row was its only
-handle. The session binding is `project_id` alone — a project pins its
-machine, so a second column could only disagree.
+**Decision.** The runtime generation lives only on the PROJECT, bumped by
+every content change to its sandbox, so the instance cache, the terminal
+fences and `RetireProject` watch one thing; Docker storage is a volume the
+project delete destroys, since a volume nobody has a listing for is an unbounded leak.
 
 **Rejected.** The local daemon's bind mount (`--workspace`, the `DOCKER_HOST`
-guard, the operator uid:gid default) — that default kept the container
-unable to install a package into itself. A per-owner "scratch" project for
-unbound runs — it made "which tree did that command touch?" surprising. A
-sandbox generation beside the project generation — two maps that must not
-reach each other's rows.
+guard, the operator uid:gid default) — that default kept the container unable
+to install a package into itself. A per-owner "scratch" project for unbound
+runs — it made "which tree did that command touch?" surprising. A sandbox
+generation beside the project generation — two maps that must not reach each
+other's rows. A second binding column beside `project_id` — a project pins its
+machine, so it could only disagree.
 
 **Cost accepted.** The tree is no longer a directory on the operator's
-machine; `docker cp` and the export route are how it comes out.
+machine; `docker cp` and the export route are how it comes out. A workbench
+container runs as root unless the sandbox names a user (overriding spec
+§2.7o's image-user default), with all capabilities dropped: the container is
+the isolation boundary.
 
-Rules: workbench invariant 27; [Projects](../reference/protocol.md#projects--apiv1projects).
+Rules: workbench invariant 27;
+[Projects](../reference/protocol.md#projects--apiv1projects).
 
 ### 5.34 One E2B-compatible backend, written here, not one backend per cloud
 
-Decided 2026-08-28; verified against E2B's cloud, Alibaba Cloud Function Compute and Bailian.
+Decided 2026-08-28; verified against E2B's cloud, Alibaba Cloud Function Compute
+and Bailian.
 
-**Decision.** Function Compute's cloud sandbox is E2B SDK compatible across
-everything the workbench needs, so the second backend is **one backend that
-speaks the E2B API** and a sandbox row naming the service — `api_url`,
-`domain`, `api_key`, `headers` — with no `flavor` discriminator: the moment
-one appears that configuration cannot express, it is a new decision, not a
-switch to grow. The client is written here — five REST calls and
-Connect-over-JSON, a ~150-line Connect codec on the standard library — which
-keeps `sandbox/e2b` in the ROOT module (§5.7). The sandbox is remembered, not
-searched for: its id lands in `projects.instance_ref` before the client will
-use it, and a failure to record fails the create, since an unrecorded sandbox
-is billed compute nobody will ever stop. The lease is extended on demand — every control call sends
-`max(configured TTL, the operation's own bound)` through `connect`, which
-resumes a paused sandbox and only extends a running one — never by a keepalive. Stop
-is pause and Reclaim is kill: the sandbox IS the storage, so killing it is
-the whole of §5.33's delete, and `auto_pause` defaults to true. Every create
-asks for a per-sandbox token (`secure: true`), because without it E2B's
-daemon takes no credential at all.
+**Decision.** The second backend is **one backend that speaks the E2B API**,
+written here — five REST calls and a ~150-line Connect codec on the standard
+library, which keeps `sandbox/e2b` in the root module (§5.7) — configured by a
+row naming the service (`api_url`, `domain`, `api_key`, `headers`), with no
+`flavor` discriminator.
 
 **Rejected.** One backend per cloud — the services differ in four fields. An
 auth-scheme switch (`X-API-Key` vs `Authorization: Bearer`) instead of
 `headers` — Bailian wants both at once, and `headers` is the E2B SDK's own
 parameter. `/timeout` for the extension — Bailian lacks it, and its 404 would
-read as a dead sandbox. A community Go SDK, or a protobuf toolchain with generated stubs — two module
-dependencies for six messages; generate them if the surface grows past that.
-A metadata query to find a sandbox — a filter syntax the compatible services
-do not document identically. A keepalive goroutine — the extension rides the
-control call the operation already forces.
+read as a dead sandbox. A community Go SDK, or a protobuf toolchain with
+generated stubs — two module dependencies for six messages. A metadata query
+to find a sandbox — a filter syntax the compatible services do not document
+identically; the id is recorded before use instead, since an unrecorded
+sandbox is billed compute nobody will ever stop. A keepalive goroutine — the
+extension rides the control call the operation already forces.
 
 **Cost accepted.** The hand-written codec is checked against a fake and a
-probe, not a schema. A terminal idle past one full lease can lose its
-sandbox. Pausing on Function Compute is gated behind a per-function feature,
-and the client passes the service's refusal through verbatim.
+probe, not a schema. A terminal idle past one full lease can lose its sandbox.
+Pausing on Function Compute is gated behind a per-function feature, and the
+client passes the service's refusal through verbatim. A service those four
+fields cannot express is a new decision, not a switch to grow.
 
 Rules: spec §2.7u; [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes);
 the services' rendering quirks live on the code that absorbs them (`sandbox/e2b`).
@@ -865,26 +713,21 @@ Decided 2026-08-28, reversing §5.33's target/template split the same week it
 landed.
 
 **Decision.** One `sandboxes` row carries where it runs and what runs on it,
-and a project names one. The mutability line is drawn between FIELDS instead
-of between tables — which is where it always was: only the type and the
-destination ever froze, while the credentials sat in the "frozen" table and
-were always editable. A project may still change its image by moving between
-sandboxes that share a destination, and no further — the files live at that
-address and do not travel.
+and a project names one; the mutability line is drawn between FIELDS, not
+tables — where it always was: only the type and destination ever froze, while
+the credentials sat in the "frozen" table and were always editable.
 
 **Rejected.** Separate `sandbox_targets` and `sandbox_templates`, justified
 by reuse — for the common case there was nothing to reuse (a local docker
-target's whole config is `{}`, so pairing it with a template was ceremony on
-every project create), and the split generated a bug class of its own: a
-target and a template of different types, needing a type check on the
-project write, another on the health check, filtered dropdowns in two places,
-and still reaching a screen as `unknown sandbox target type: e2b`.
+target's whole config is `{}`), and the split bred its own bug class: a
+target and a template of different types, needing a type check on the project
+write, another on the health check, filtered dropdowns in two places, and
+still reaching a screen as `unknown sandbox target type: e2b`.
 
 **Cost accepted.** A second image on one remote daemon repeats that daemon's
-host and credential, and rotating a key touches every row that carries it —
-against a two-dropdown project create paid on every use. `Duplicate` copies
-everything but the identity and the credential, which is dropped rather than
-carried as a mask that would resolve to empty and look copied.
+host and credential, and rotating a key touches every row that carries it.
+`Duplicate` copies everything but the identity and the credential, dropped
+rather than carried as a mask that would resolve to empty and look copied.
 
 Rules: workbench invariant 45 (which fields freeze, and why e2b freezes three
 more).
@@ -894,13 +737,13 @@ more).
 Decided 2026-08-28.
 
 **Decision.** The `sandbox` package promises isolation by default and the
-docker backend keeps it (`NetworkMode("none")`), so the E2B create sends
-`allow_internet_access` explicitly on every create — `false` unless the
-sandbox opts in. Both backends read the same way: an un-opted-in sandbox has
-no outbound network.
+docker backend keeps it, so the E2B create sends `allow_internet_access`
+explicitly on every create — `false` unless the sandbox opts in.
 
 **Rejected.** Omitting the field and inheriting the service's own default —
 which is internet ON.
+
+Rules: spec §2.7o.
 
 ### 5.38 A workbench docker sandbox caps memory and CPU by default
 
@@ -908,35 +751,32 @@ Decided 2026-08-28.
 
 **Decision.** A docker sandbox whose config leaves `memory_mb` or `cpus` at
 `0` gets the workbench's default cap (4096 MiB, 2 CPUs) in
-`sandboxes.applyImage`: `0` means "this default", never "unlimited". Agent
-code runs in that container, and an uncapped one is a host-DoS surface — a
-runaway build or a leak can OOM or starve the host (the docker backend already
-caps the process count), and on a shared workbench that is everyone's.
+`sandboxes.applyImage`: agent code runs there, and an uncapped container is a
+host-DoS surface that on a shared workbench is everyone's.
 
 **Rejected.** Putting the default in the SDK's `sandbox` package — its
 isolation-by-default promise covers network, filesystem, capabilities and the
 per-command timeout, and a library embedded on its own has no context to
 assume it is running untrusted code for many users.
 
+Rules: [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes).
+
 ### 5.39 The SDK reads no environment variable of its own
 
 Decided 2026-08-29.
 
 **Decision.** The `agents` package calls no `os.Getenv`; every knob is passed
-in, and the trace toggle `Observe.IncludeSensitiveData` reads nil as include.
-What a wrapped vendor library (openai-go's `OPENAI_API_KEY`) or an OS tool the
-docker backend drives (`SSH_AUTH_SOCK`) reads is its own visible, overridable
-contract — the distinction is authorship: the SDK decides nothing from ambient
-state.
+in. What a wrapped vendor library or an OS tool the docker backend drives
+reads is its own visible, overridable contract — the distinction is
+authorship: the SDK decides nothing from ambient state.
 
 **Rejected.** A nil toggle falling back to
 `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA` — the one place the package read
-process environment, contradicting the stated stance
-([Models](../howto/models.md): no global registry, no init hook, no ambient
-default) and fighting the embedder, who always passed an explicit value and
-carried a comment saying the variable "is not consulted".
+process environment, contradicting the stated stance (no global registry, no
+init hook, no ambient default) and fighting the embedder, who always passed an
+explicit value.
 
-**Cost accepted.** Turning tracing content off is now `IncludeSensitiveData:
+**Cost accepted.** Turning tracing content off is `IncludeSensitiveData:
 new(false)`, an explicit per-run decision — which is the point.
 
 Rules: spec §2.14.
@@ -945,10 +785,9 @@ Rules: spec §2.14.
 
 Decided 2026-08-30.
 
-**Decision.** The function-call output the runner synthesizes for a handoff
-carries the transfer marker `{"assistant": <target name>}` AND a plain-language
-line, `You are now "<name>", handling this conversation directly.` Small
-models act on the sentence; large ones are unaffected by the redundancy.
+**Decision.** The acknowledgement carries the transfer marker AND a
+plain-language identity line: small models act on the sentence; large ones
+are unaffected by the redundancy.
 
 **Rejected.** The marker alone — a weak model reads it as the output of a
 tool *it* called and narrates the transfer in the third person (observed: a
@@ -962,12 +801,11 @@ Rules: spec §2.4.
 
 Decided 2026-08-31.
 
-**Decision.** With OpenAI's Codex OAuth client the redirect a client can name
-is loopback-only, so the authorize URL still names `localhost:1455`, but
-nothing listens: the redirect fails to load, the user pastes its URL back, and
-the server redeems the code against the PKCE verifier it stored by `state`. A
-common headless-OAuth pattern, behaving identically whether the server is
-local or remote.
+**Decision.** With OpenAI's Codex OAuth client the redirect must be loopback, so
+the authorize URL names `localhost:1455` but nothing listens: the user pastes
+the failed redirect's URL back and the server redeems the code against the PKCE
+verifier it stored by `state` — a common headless-OAuth pattern, the same local
+or remote.
 
 **Rejected.** A CLI-style listener on `127.0.0.1:1455` — deployed to a remote
 host, the popup's `localhost` is the *user's* laptop, so the redirect never
@@ -984,12 +822,9 @@ Rules: [ChatGPT OAuth](../reference/protocol.md#chatgpt-oauth).
 
 **Decision.** Image bytes go to a configured S3-compatible bucket and the
 request carries a **public-read, unsigned, stable URL** under an unguessable
-key (`attachments/<owner>/<uuid v4>.<ext>` — v4 deliberately, since v7's
-timestamp prefix narrows a brute-force window). Entries store a sentinel
-reference; a `ModelProvider` decorator hydrates it at the model boundary,
-the one seam every path crosses (fresh, resume, replay, compaction,
-fallbacks). sigv4 is implemented in-repo (~150 lines, PUT and DELETE),
-verified against an openssl reference vector.
+key; entries store a sentinel a `ModelProvider` decorator hydrates at the model
+boundary — the one seam every path crosses (fresh, resume, replay, compaction,
+fallbacks).
 
 **Rejected.** The database as the only backend — every turn re-inlines every
 image as base64, and a local-first server cannot hand a provider a
@@ -998,39 +833,36 @@ URL that differs per request re-bills the whole history after an image, and
 an expired signature 404s a replay. Hydrating in the entry store's load — it
 covers only HISTORY; the current turn's input and a resumed state's input
 reach the model without a storage read. The AWS SDK — the server module's
-heaviest dependency for two calls.
+heaviest dependency for two calls; sigv4 is ~150 lines in-repo, verified
+against an openssl reference vector. A uuid v7 key — its timestamp prefix
+narrows a brute-force window.
 
 **Cost accepted.** Anyone holding a link can read that image; the setting
 says so. An install without a bucket has no image input — attachment storage
-is a power-user step (scope §1.1). The scheme constant lives in `store`
-beside the row it names, because `attachments` → `settings` → `store` leaves
-the client package unable to own it without a cycle.
+is a power-user step (scope §1.1). The scheme constant lives in `store`, since
+`attachments` → `settings` → `store` leaves the client package unable to own it without a cycle.
 
 Rules: workbench invariants 56–58.
 
 ### 5.43 Config booleans are stated positively
 
-**Decision.** Every boolean in stored configuration — JSON, REST bodies, the
-panel — names the capability it grants, and `true` turns it on. A default-on
-knob added late is a `*bool` where nil (the key absent, every row predating
-the knob) means the default; the job of "zero value means unchanged" is done
-by type, not by name. The SDK keeps Go's own idiom for zero-value structs
-(`Agent.DisableToolChoiceReset`, like `http.Transport.DisableKeepAlives`),
-and the bridge flips polarity in one place.
+**Decision.** Every boolean in stored configuration names the capability it
+grants, and `true` turns it on; a default-on knob added late is a `*bool` where
+nil means the default, so "zero value means unchanged" is done by type, not by
+name.
 
 **Rejected.** Negated flags (`disable_x`) on the config surface — they
 existed only to keep a late knob from flipping existing rows, which the
-pointer already does. The old keys decode past silently, the
-`compaction_threshold` precedent.
+pointer already does; the old keys decode past silently, the
+`compaction_threshold` precedent. Negating the SDK's own fields to match — the
+SDK keeps Go's zero-value idiom (`Agent.DisableToolChoiceReset`, like
+`http.Transport.DisableKeepAlives`), and the bridge flips polarity in one place.
 
 ### 5.44 Middleware and sessions: the session is the memory, not the input
 
 **Decision.** With a session attached, a re-entering middleware sends only
-what the session does not yet hold. `Loop` sends the evaluator's feedback
-alone — the attempt it judged completed and is persisted. A middleware that
-must know whether an attempt stored its input reads the SDK's own
-announcement: the user-input save emits `ItemsPersistedEvent` like every
-other save that leaves nothing behind.
+what the session does not yet hold; one that must know whether an attempt
+stored its input reads the SDK's own announcement, `ItemsPersistedEvent`.
 
 **Rejected.** Rebuilding the next attempt's input by hand (`Loop` feeding the
 whole attempt back through `ToInputList`) — right without a session and wrong
@@ -1046,19 +878,17 @@ Rules: spec §2.5, §2.12.
 
 ### 5.45 A middleware resumes under the caller's control
 
-**Decision.** `RunInput` carries the caller's `RunControl` (`Control`), and
-`ResumeRunWith` continues a paused run under it, so `middleware.Approval`'s
-resume leaves the handle `Run` returned live. The control's queue is carried
-as is, never reseeded from `RunState.PendingInput` — the pause copied the
-queue into the state without draining it, so a reseed would deliver every
-item twice — and `ResumeRunWith` panics on a control this package did not
-mint: the interface exists so a host can hold one, not implement one.
+**Decision.** `RunInput` carries the caller's `RunControl`, and `ResumeRunWith`
+continues a paused run under it, so an in-chain resume leaves the handle `Run`
+returned live; the queue is carried as is, since the pause copied it into the
+state without draining it, and a reseed would deliver every item twice.
 
 **Rejected.** Resuming through `ResumeRun`, which mints a fresh control —
 correct for a serialized state in a new process, wrong in-chain: every
 `StopAfterTurn` or `Steer` on the original handle after the first policy
 resume reached a run that had already ended, and the caller had no way to
-know.
+know. Accepting a host-built control — the interface exists so a host can
+hold one, not implement one.
 
 **Cost accepted.** `Loop` needs `RunResult.StoppedEarly` to tell "finished"
 from "stopped", so the stop is never cleared and is reported wherever the run
@@ -1070,9 +900,8 @@ Rules: spec §2.11b, §2.12.
 
 **Decision.** The recover lives in `invokeTool` on both the timed and untimed
 paths, so a panic is an error from the call like any other and takes the one
-error tail (`IsError`, output guardrails, span error, the valve of spec §2.7d).
-The per-call goroutine's own recover is only a net for a panic outside the
-tool body, and that net aborts the run — it is not the tool's failure.
+error tail; the per-call goroutine's own recover is only a net for a panic
+outside the tool body.
 
 Rules: spec §2.2 (concurrency), §2.7 (Errors).
 
@@ -1085,10 +914,11 @@ option is removed, not kept; each returns with its caller. See §5.23.
 ### 5.48 apply_patch parks a large file instead of snapshotting it
 
 **Decision.** apply_patch's atomicity rests on an in-memory snapshot of every
-file it touches, so a failed commit rolls each one back — and a Delete of a
-file over the read limit, the one operation that needs no content, is parked
-by an atomic rename instead of refused. `Sandbox.Rename` stays on the
-interface for it. Update and Move are not parked: they need the content, and
+file it touches, so a failed commit rolls each back; a Delete of a file over
+the read limit — the one operation that needs no content — is parked by an
+atomic rename instead of refused, which is why `Sandbox.Rename` stays on the interface.
+
+**Cost accepted.** Update and Move are not parked: they need the content, and
 the read limit is the limit.
 
 Rules: spec §2.7s.
@@ -1096,41 +926,34 @@ Rules: spec §2.7s.
 ### 5.49 The Anthropic adapter decides its output items at the stop reason
 
 **Decision.** Three translation choices share one reason: the runner reads a
-turn as ONE assistant message and executes its tool calls before it looks for
-a refusal, while the Messages API reports its verdict LAST. So consecutive
-`text` blocks become one message item with a part each; when streaming,
-`output_item.done` is emitted only at `message_stop`, from the same
-`convertOutput` the blocking path uses; and a `refusal` part in replayed
-history is dropped rather than sent back as assistant text — a refusal is not
-an answer the model gave, and replaying it as one teaches the next turn that
-it was.
+turn as ONE assistant message and executes its tool calls before it looks for a
+refusal, while the Messages API reports its verdict LAST — so text blocks merge
+into one item, `output_item.done` waits for `message_stop`, and a replayed
+`refusal` part is dropped.
 
 **Rejected.** A message item per text block — the runner keeps only a turn's
 last message, so every text but the last was silently dropped. Per-block done
 events — they leaked a `function_call` done for a response whose stop reason
 turned out to be `refusal`, an item the terminal output rightly did not
-carry, breaking the contract that the two are interchangeable.
+carry, breaking the contract that the two are interchangeable. Replaying a
+refusal part as assistant text — a refusal is not an answer the model gave,
+and replaying it as one teaches the next turn that it was.
 
 **Cost accepted.** Finished items wait for the verdict; text deltas still
 stream live. Under a refusal, the items announced past index 0 get no
-`output_item.done`, and index 0's finished type may differ from the announced
-one (a thinking-first refusal finishes as a message). The other lossy input
-translations are listed in [Models](../howto/models.md).
+`output_item.done`, and index 0's finished type may differ from the announced one.
 
-Rules: spec §2.15.
+Rules: spec §2.15; the mappings and the other lossy translations are in
+[Models](../howto/models.md#what-the-translation-does).
 
 ### 5.50 Trace payloads are content-addressed per session, not stored per span
 
 Decided 2026-09-02.
 
-**Decision.** A span's payload elements — an input item, a reply item, a tool
-definition, the system prompt — are stored once per session in `trace_blobs`
-under their sha256, and the span row keeps metadata plus a packed list of
-hashes. Blobs are keyed `(session_id, hash)` and never shared: per session,
-every lifecycle operation — delete, fork, retention — is a whole-session one,
-and no reference count or sweep exists. Elements are split by shape, not by
-type — an array is one element per item, anything else one element — so the
-store knows nothing of the SDK's item types.
+**Decision.** A span's payload elements are stored once per session in
+`trace_blobs` under their sha256, the span row keeping metadata plus a packed
+list of hashes; blobs are keyed `(session_id, hash)` and never shared, because
+every lifecycle operation is whole-session and no reference count or sweep exists.
 
 **Rejected.** A payload per span — every model call re-stored the whole
 conversation, so a session's trace grew with the square of its length (a
@@ -1139,13 +962,13 @@ cap bounded one span, never the sum. Global content addressing — it would
 dedupe tool schemas across sessions, but needs a reference count or
 mark-and-sweep with a concurrency story, and muddies per-user erasure. A
 reference table — a row per reference costs ~150 bytes with its index, five
-times the hash it points at.
+times the hash it points at. Splitting elements by item type — split by shape
+(an array is one element per item, anything else one), the store knows
+nothing of the SDK's item types.
 
 **Cost accepted.** A copy of the tool schemas per session — kilobytes,
 against the quadratic term removed. The replay body cap no longer derives
-from the span cap and is a constant. This is the shape of LangGraph's
-checkpointer (`checkpoint_blobs` per thread), with a content hash where it
-uses a version.
+from the span cap and is a constant.
 
 Rules: workbench invariant 62.
 
@@ -1159,155 +982,122 @@ an older state's flag is ignored and the schema floor stays. See §5.52.
 
 ### 5.52 Overflow recovery writes on the side the pass can survive
 
-Decided 2026-08. Overflow recovery rebuilds the turn's context from the log
-and throws the in-flight items away, so the turn must be written to the
-session first — or the retry hands the model a conversation the caller's
-steer never reached while the next write past its mark counts it delivered
-(§2.11b). WHEN it is written depends on which recovery applies, and the two
-want opposite answers.
+Decided 2026-08.
 
-**Decision.** A `Compactor` reads the log and returns a projection of it, so
-the turn has to be IN the log before the pass: write first. A
-`CompactionAware` storage may answer with a replacement that keeps nothing of
-the newest turn (a reset keeps the newest user message alone), so a write made
-first is a write the pass folds — stored, counted delivered by that very
-write, then gone, with nothing in flight to roll back: write after the pass,
-then read the log once more so the turn stands on the compacted history. The
-path is chosen up front from whether the storage compacts itself. A forced
-self-compaction buys a retry only if the context came back weighing strictly
-less (summed stored bytes over the same windowed read the model gets): a
-saturated window hides growth perfectly — a storage that abandons its
-replacement mid-pass leaves one extra entry, which pushes the oldest out of
-the window and comes back the same LENGTH, while that append is exactly what
-makes the history "changed" — so neither the count nor "did anything change"
-decides it, and "strictly less" rules the no-op out on its own. Bytes are a
-deliberately conservative proxy for tokens.
+**Decision.** With a `Compactor` the turn is written BEFORE the pass — it reads
+the log, so the turn has to be in it; with a `CompactionAware` storage AFTER —
+its replacement may keep nothing of the newest turn, so a write made first is
+stored, counted delivered by that very write, then gone with nothing in flight
+to roll back.
 
-**Rejected.** Treating every 400 as an overflow: it would compact and retry
+**Rejected.** Treating every 400 as an overflow — it would compact and retry
 after a malformed request, hiding a bug behind a shrinking conversation.
-Writing the turn when no recovery is available: there is no pass to prepare
+Writing the turn when no recovery is available — there is no pass to prepare
 for, and the write would only spend the rollback the failing run is about to
-want. Retrying on a no-op pass: an identical request fails identically.
+want. Retrying on a no-op pass — an identical request fails identically.
+Retrying before the turn is written — the model would get a conversation the
+caller's steer never reached, while the next write past its mark counts it
+delivered (spec §2.11b). Judging a forced pass by entry count or by "did
+anything change" — a storage that abandons its replacement mid-pass leaves one
+extra entry, pushing the oldest out of a saturated window: the same LENGTH,
+and an append that reads as "changed"; only "strictly less bytes" rules the
+no-op out, bytes being a deliberately conservative proxy for tokens.
 
 **Cost accepted.** `MaxRetries` is zero by default, so an overflow is reported
-unless the caller opts in. A write that fails abandons the recovery with a
-`compaction_failed` diagnostic rather than retrying blind. A pass whose result
+unless the caller opts in; a write that fails abandons the recovery with a
+`compaction_failed` diagnostic rather than retrying blind; a pass whose result
 does not weigh less costs a retry the run would have spent on a request that
-already failed. Anthropic's success-shaped `model_context_window_exceeded` is
-surfaced as an error carrying the marker: resending unchanged stops at the
-same wall.
+already failed.
 
 Rules: spec §2.5g, §2.15
 
 ### 5.53 Plan mode denies rather than hides
 
-Decided 2026-08 with the `Plan` middleware. While a run is planning, a tool
-outside the read-only set stays in the model's toolset and answers a call with
-a refusal naming `submit_plan`, as a normal tool OUTPUT.
+Decided 2026-08 with the `Plan` middleware.
 
-**Decision.** A model carries priors about tool NAMES and reaches for them
-unprompted: a hidden tool gets called anyway, and "tool not found" teaches it
-nothing about the phase. The refusal is an output because an error without
-`FailureErrorFunction` aborts the run, and a phase decision is not a failure.
-Handoffs are the deliberate asymmetry, hidden via `Handoff.IsEnabled`: a
-target's full toolset is a side door out of plan mode, and a model has no
-priors about THIS agent's handoff targets, so hiding one wastes no turn; the
-cost is on the request prefix — the unlock changes the system text and the
-tool list at once, which a backend that binds reasoning to its prefix answers
-by dropping the thinking produced while planning (spec §2.15). An MCP tool's
-`readOnlyHint` is a claim an outside server makes about itself; admission is
-by the caller's `ReadOnlyTools` name. The refusal outranks approval because
-the approval partition runs before a tool invokes, so `Apply` translates
-`ApproveTools` into per-tool predicates the phase can suppress. `PlanPhase`
-is per run because the SDK has no notion of a session; `OnUnlock` lets a
-host keep its own record and `Unlock` before the run; `Plan.Apply` is
-unconditional so the same agent is rebuilt for a durable resume, which must
-carry the `submit_plan` the paused state names. The host persists the UNLOCK
-as its precondition: the approval ledger records approvals whose execution
-then failed. Only a PERSON turns plan mode on: a model that judges "simple,
-no plan needed" is the failure the gate exists to catch.
+**Decision.** A gated tool stays in the toolset and answers with a refusal
+naming `submit_plan`, as a tool OUTPUT: a model carries priors about tool NAMES
+and reaches for them unprompted, so a hidden tool is called anyway and "not
+found" teaches it nothing; an error would abort the run, and a phase decision is
+not a failure.
 
-**Rejected.** Hiding gated tools. A second pause mechanism for plan review:
-`submit_plan` is an ordinary approval-gated tool. A session-scoped phase in
-the SDK. Trusting `readOnlyHint`.
+**Rejected.** Hiding gated tools. Denying handoffs the same way — a target's
+full toolset is a side door out of plan mode, and a model has no priors about
+THIS agent's targets, so hiding one wastes no turn; the cost lands on the
+prefix (spec §2.12). A second pause mechanism for plan review — `submit_plan`
+is an ordinary approval-gated tool. A session-scoped phase in the SDK — the
+SDK has no notion of a session; `OnUnlock` and `Unlock` let a host keep its
+own record. Trusting `readOnlyHint` — an outside server's claim about itself.
+The approval ledger as the unlock record — it records approvals whose
+execution then failed, so the host persists the UNLOCK itself. Letting the
+model decide whether to plan — "simple, no plan needed" is the failure the
+gate exists to catch (workbench invariant 33).
 
 **Cost accepted.** A gated write tool spends a model turn on a refusal. A
 read-only tool named in `ApproveTools` keeps its approval in both phases.
 Nothing checks that a tool claiming read-only behaves.
 
-Rules: spec §2.12
+Rules: spec §2.12; workbench invariants 33, 89.
 
 ### 5.54 A task's ending is claimed, not observed
 
-Decided 2026-08 across the task_retry, task_stop and workflow-as-task work. A
-task's terminal state is won by compare-and-set, and every consumer acts on
-the transition it claimed, never on a row it read.
+Decided 2026-08 across the task_retry, task_stop and workflow-as-task work.
 
-**Decision.** Finalization is a CAS because a read-modify-write cannot
-arbitrate two finalizers — hence no file-backed store. Reopening a terminal
-task for retry removed the invariant "non-terminal means the current run", so
-every attempt-scoped write names its run id: a stop that read the row just
-before a retry would otherwise cancel the new attempt while its run kept
-executing, unkillable, and an approval persisted before its pause landed
-would pause, reclaim or reap the attempt that replaced it. A stop reports
-what it DID because a host asked to stop a run it has never heard of
-(ordinary during a launch) can only answer success, which read as "it will
-wind itself up" leaves the task running to completion unrecorded;
-`StopAlreadyFinished` neither writes a
-cancellation (overwriting a real completion, with the retry it earned) nor
-ends the call ("that run is over" is also what a stop hears after a retry
-landed). A late outcome and a lost one are the same dead run under a live
-row, so the stop waits briefly and boundedly, then cancels: waiting keeps a
-real completion, the bound keeps a task whose outcome never landed from being
-un-stoppable. Compensation consults whether `OnRunFinished` spoke, since a
-quick finish and a run ended while the host was unreachable leave the same
-terminal row. Delivery counts on the model's path only: a
-result that landed after the answer was decided is unseen, and a person
-reading it over HTTP has told the model nothing. A failed launch is released
-rather than counted, or a shutdown would spend the ceiling on runs that never
-existed. The sweep runs before requests are accepted because `FailOrphans`
-would declare a just-claimed retry's fresh run dead. Notification fields
-escape both delimiters, or a crafted result could re-aim the task id and
-status on its own line.
+**Decision.** A task's ending is won by compare-and-set, and every consumer
+acts on the transition it claimed, never on a row it read: a read-modify-write
+cannot arbitrate two finalizers, and once a failed task can be reopened for
+retry, "non-terminal means the current run" no longer holds.
 
-**Rejected.** A file-backed task store. A second lifecycle beside tasks for
-step sequences and loops, or a fifth model-facing verb: two tools that both
-mean "start background work" are the tool-choice errors a small model makes.
-A precomputed `retryable` boolean (it lags a round trip; capacity changes
-between offer and click). Cancelling on the row alone.
+**Rejected.** Cancelling on the row alone — a stop that read the row just before
+a retry would cancel the new attempt while its run kept executing, unkillable,
+and an approval persisted before its pause landed would pause, reclaim or reap
+the attempt that replaced it. A stop that only answers success — a host asked to
+stop a run it has never heard of (ordinary during a launch) reads "it will wind
+itself up" and leaves the task running to completion unrecorded. A stop that
+ends on "that run is over" — it is also what a stop hears after a retry landed,
+so `StopAlreadyFinished` sends the stop round again. Cancelling a late outcome
+at once, or waiting on a lost one forever — the two are the same dead run under
+a live row, so the stop waits boundedly: waiting keeps a real completion, the
+bound keeps the task stoppable. Compensating from the row alone — a quick finish
+and a run ended while the host was unreachable leave the same terminal row.
+Counting a result read over HTTP, or one that landed after the answer was
+decided, as delivered — the model has been told nothing. Counting a failed
+launch as an attempt — a shutdown would spend the ceiling on runs that never
+existed. Checking the attempt ceiling in the caller — two processes could both
+claim the last attempt. Sweeping orphans after requests are accepted —
+`FailOrphans` would declare a just-claimed retry's fresh run dead. Escaping only
+the line delimiter in a notification — a crafted result could re-aim the task id
+and status on its own line. A second lifecycle beside tasks for step sequences
+and loops, or a fifth model-facing verb — two tools that both mean "start
+background work" are the tool-choice errors a small model makes. A precomputed
+`retryable` boolean — it lags a round trip.
 
 **Cost accepted.** One stop chases at most one retry. Two processes sharing
 one store keep the sweep-vs-retry race. A durable host's debt-row guarantees
 cannot live on the interface (an in-memory store has no debt), so they are
-spec text. A stop against a genuinely lost outcome waits out the bound.
+spec text.
 
 Rules: spec §2.13
 
 ### 5.55 Fan-out buffers per subscriber, not per channel
 
-Decided with `Fanout[T]`. One producer's events reach many consumers through
-per-subscriber buffers; a slow subscriber loses items and is told so.
+Decided with `Fanout[T]`.
 
-**Decision.** Fan-out is a requirement, not an optimization, and that was
-measured rather than assumed: a slow consumer couples to the producer under
-`iter.Seq2` (13.1× the ideal wall clock), and it also couples under a buffered
-channel, just later — with `chan(64)` the producer still finished at 992 ms
-against a 100 ms ideal once the buffer filled. Neither stream shape isolates a
-slow consumer on its own, so per-subscriber buffering is needed either way. A
-drop is always announced as a `*GapError` because a consumer cannot otherwise
-distinguish a timeline missing content from one that never had it. A cursor
-ahead of the head is a timeline reset delivered immediately on subscribe,
-because the stream a stale cursor lands on has often already ended and a gap
-waiting for a delivery that never comes leaves the consumer in exactly the
-silence it exists to break; it must not read as `AtEnd`, which would tell a
-consumer to stop reading a run that is still going, and its sequence must
-never run backwards past the deliveries that follow it. `Close` waits for a
-publish already accepted because that item has a sequence number and sits in
-replay with no gap to report it.
+**Decision.** Fan-out is a requirement, not an optimization — measured: a slow
+consumer couples to the producer under `iter.Seq2`, and under a buffered channel
+too once it fills — so each subscriber gets its own buffer, and a drop is always
+announced, since a consumer cannot otherwise tell a timeline missing content
+from one that never had it.
 
 **Rejected.** Dropping silently — corrupts the consumer's view undetectably.
 Disconnecting the slow subscriber — turns a recoverable hiccup into a visible
-failure. A single shared buffer.
+failure. A single shared buffer — it couples every consumer to the slowest,
+the measured `chan(64)` case. Delivering a timeline reset on the next publish
+— the stream a stale cursor lands on has often already ended, and a gap
+waiting for a delivery that never comes leaves the consumer in the silence it
+exists to break. Reporting that reset `AtEnd` — it tells a consumer to stop
+reading a run that is still going. `Close` dropping an accepted publish — the
+item has a sequence number and sits in replay with no gap to report it.
 
 **Cost accepted.** Memory per subscriber. The zero-value item beside an
 `AtEnd` gap, which a forwarding consumer must skip (a nil pointer, for a
@@ -1322,11 +1112,9 @@ Rules: spec §2.11
 Decided 2026-08 with `agents/compaction`.
 
 **Decision.** A function call and its output belong together (the API rejects
-one without the other), and so do a reasoning block and the tool call it
-precedes. Entries are grouped first; a strategy only ever includes or
-excludes whole groups, so cutting through a pair is not a mistake a strategy
-can make. An exclusion is `settled` once a later model call has priced it in,
-so the size estimate stops subtracting what the newest usage never counted.
+one without the other), as do a reasoning block and the tool call it precedes;
+entries are grouped first and a strategy only ever includes or excludes whole
+groups, so cutting through a pair is not a mistake a strategy can make.
 
 **Rejected.** Per-entry strategies with a pairing check afterwards: every
 strategy re-implements the check, and one forgets.
@@ -1342,19 +1130,14 @@ Decided 2026-08 with the workbench's task plane (invariant 32).
 
 **Decision.** A task finishes while its parent session may be busy, paused on
 a human decision, or gone with the process, so "session S is owed a turn
-carrying P" is a durable row written in the same transaction as the task's
-terminal status; the SDK keeps no debt of its own and only reports endings
-and deliveries, because when a session may be interrupted is host policy.
-Debts drain when a session can take a turn (end of any run on it, startup),
-and one drain pays every debt with the configuration snapshotted from the
-agent that ASKED, so three results landing while a person types produce one
-turn, through the agent that started them. A task a person stopped owes
-nothing; one a shutdown ended is left working for the restart sweep, which
-fails it with its debt.
+carrying P" is a durable row written with the task's terminal status; the SDK
+keeps no debt of its own, because when a session may be interrupted is host policy.
 
-**Rejected.** A callback at completion time: it lands mid-run or on a paused
-session, or never, after a crash. Draining per debt: three turns for three
-results.
+**Rejected.** A callback at completion time — it lands mid-run or on a paused
+session, or never, after a crash. Draining per debt — three turns for three
+results; one drain pays every debt through the agent that ASKED. Waking for a
+task a person stopped — it owes nothing; one a shutdown ended is left for the
+restart sweep, which fails it with its debt.
 
 **Cost accepted.** A result waits for the next turn boundary; `FailOrphans`
 must run before requests are accepted, and the drain after handlers are wired.
@@ -1366,18 +1149,17 @@ Rules: workbench invariant 32.
 Decided 2026-08 with `save_workflow` (invariant 39).
 
 **Decision.** Authoring is a WRITE to configuration, so the tool carries
-`NeedsApproval` itself, not the agent's `approve_tools`; its approval
-predicate runs the same resolve the write does, so an unsaveable proposal
-executes at once into a refusal the model reads, and only a store fault
-still asks a person. The pair is per-agent opt-in and chat-only: a
-background run has nobody to approve. The model addresses workflows by NAME,
-the server owns ids and reuses a kept step's id on update so a retry in
-flight keeps naming the same step; same name means the same workflow, so a
-save is an upsert. The approval card shows the proposal as it will be
-stored, not as the model spelled it.
+`NeedsApproval` itself and its predicate runs the same resolve the write does
+— an unsaveable proposal executes at once into a refusal the model reads, and
+only a store fault still asks a person; the model addresses workflows by NAME,
+the server owns ids.
 
-**Rejected.** A schema on every agent's every request. Model-chosen ids.
-Letting the model switch the gate off.
+**Rejected.** A schema on every agent's every request — the pair is per-agent
+opt-in and chat-only, since a background run has nobody to approve.
+Model-chosen ids — the server reuses a kept step's id on update, so a retry in
+flight keeps naming the same step; same name means the same workflow, so a
+save is an upsert. Letting the model switch the gate off. Showing the card as
+the model spelled the proposal — it shows what will be stored.
 
 **Cost accepted.** A proposal that needs a person costs a pause even when the
 change is trivial. Whether model authoring stays is decided on a signal the
@@ -1397,10 +1179,9 @@ if a mismatch is loud, which is what the startup zero-row probe buys.
 **Rejected.** `ALTER TABLE` migrations — a second schema language to keep
 correct for a store that is rebuilt anyway.
 
-**Cost accepted.** Production use needs this decision reversed first: before
-team mode is promoted for production use, or before multi-instance work
-starts, whichever comes first. Every release that changes the layout says so
-in its release body, and the database must be recreated across such a release.
+**Cost accepted.** Production use needs this decision reversed first — before
+team mode is promoted for production, or before multi-instance work starts.
+Every release that changes the layout says so in its release body.
 
 Rules: workbench invariant 25.
 
@@ -1409,8 +1190,8 @@ Rules: workbench invariant 25.
 Decided 2026-09 with `ContextBudget`.
 
 **Decision.** The figure the model gets about its own window is appended as
-the last input item of every call, a system text item, and is never written
-to the session. Every call carries the current number.
+the last input item of every call, a system text item never written to the
+session; every call carries the current number.
 
 **Rejected.** Putting it in the instructions: the number changes every call,
 and an instructions prefix that changes defeats prompt caching for the whole
@@ -1421,11 +1202,10 @@ reasons with. Persisting it as an entry: it describes the moment it was sent,
 replays wrong later, and inflates the history it measures.
 
 **Cost accepted.** Roughly two dozen tokens per call. Before the run's first
-call the figure is the host's, the conversation's last measured call, so a
-run right after a manual compaction reports the pre-fold number once.
-Dropping the previous notice makes a backend that binds replayed reasoning to
-its prefix (Anthropic) discard it, so the workbench sends such an agent none:
-under reset or hybrid compaction it gets no warning before its window fills.
+call the figure is the host's, so a run right after a manual compaction reports
+the pre-fold number once. Dropping the previous notice makes a prefix-binding
+backend (Anthropic) discard its reasoning, so the workbench sends such an agent
+none (invariant 83).
 
 Rules: spec §2.5i
 
@@ -1435,9 +1215,8 @@ Decided 2026-09 with `agents/history`.
 
 **Decision.** The model gets two read-only tools over its own session's log,
 search and read, so a compaction pass may fold freely: what it folded is one
-call away. The log was already kept whole for fork and replay (§2.5f, nothing
-is deleted); the tools are a read on that property, not a second store.
-Search is a case-insensitive literal substring, newest first, bounded.
+call away. The log was already kept whole for fork and replay; the tools are a
+read on that property, not a second store.
 
 **Rejected.** A summary that must carry everything: it grows toward what it
 replaced, and a detail it dropped is gone. Ranked or indexed search: a session
@@ -1457,28 +1236,24 @@ Rules: spec §2.5i
 
 Decided 2026-09 with `agents/memory` and the rebuilt memories table.
 
-**Decision.** One memories table keyed by (scope_kind, scope_id, gen, key):
-global rows every agent reads, an agent's rows that agent reads, and a
-session's rows the model keeps for itself across compaction and a reset.
-The rules per kind, injection, who writes, whether the model writes and
-after what, size and count, are one Go table (`store.MemoryPolicies`) that
-the handler, the run adapter and the injection consult. The model writes
-session memory freely and proposes agent memory through the approval gate
-save_workflow established (§5.58), under the agent's edit rule (§5.29).
+**Decision.** One memories table keyed by (scope_kind, scope_id, gen, key) —
+global, agent and session scopes — with the rules per kind in one Go table
+(`store.MemoryPolicies`); the model writes session memory freely and proposes
+agent memory through the approval gate save_workflow established (§5.58), under
+the agent's edit rule (§5.29).
 
 **Rejected.** A separate session_notes table: two concepts for one kind of
 thing, a promotion from session to agent scope crossing tables, and a second
-tool family later for the memory tool the roadmap already wanted. Notes as
-custom session entries: the compaction pass would fold them and the timeline
-read would carry them. Notes as sandbox files: a sandbox retires on a content
-change, and not every session has one. Model writes to global memory: they
-reach every user's every agent; the policy table has the row for it when wanted.
+tool family later. Notes as custom session entries: the compaction pass would
+fold them and the timeline read would carry them. Notes as sandbox files: a
+sandbox retires on a content change, and not every session has one. Model
+writes to global memory: they reach every user's every agent; the policy
+table has the row for it when wanted.
 
 **Cost accepted.** The memories API is breaking (`scope_kind` and `scope_id`
-replace `agent_config_id`) and the table is rebuilt, so existing rows are
-exported and written back. One table carries three lifecycles, a session's
-rows following its fork and delete, an agent's its delete, global's the
-database's; the policy table is what keeps them apart.
+replace `agent_config_id`) and the table is rebuilt. One table carries three
+lifecycles — a session's rows following its fork and delete, an agent's its
+delete, global's the database's — and the policy table is what keeps them apart.
 
 Rules: spec §2.5i; workbench invariant 64.
 
@@ -1488,31 +1263,24 @@ Decided 2026-09 with `new_context` and the reset compaction mode.
 
 **Decision.** A context reset is the compaction checkpoint the log already
 has, with everything but the newest user message in `ExcludedIDs` and the
-model's own session memory in the summary slot. The model asks through
-`new_context`; the run grants it at the turn's save point, on the persisted
-log. Summary stays the default mode; reset and hybrid are an agent's opt-in.
+model's own session memory in the summary slot; the model asks through
+`new_context`, the run grants it at the save point, on the persisted log, and summary stays the default mode.
 
 **Rejected.** Resetting mid-turn, when the tool runs: the turn's items are
 not yet persisted, so a call could lose its output and the pairing rule with
-it; the save point is where the log is whole. A second projection path for
-the carried memory: the summary slot already renders up front as a system
-message, and the transcript shows what the model kept. Reset as the default:
-a provider not trained to keep notes loses the task on the first fold. A
-save-point compaction pass for self-compacting storages, so a run could
-reset itself when the threshold trips mid-run: it changes the point contract
-of §2.5f for every such storage; the budget notice and `new_context` cover
-the case this round — `new_context` alone where a host withholds the notice,
-as the workbench does for an Anthropic backend (workbench invariant 83).
+it. A second projection path for the carried memory: the summary slot already
+renders up front as a system message. Reset as the default: a provider not
+trained to keep notes loses the task on the first fold. A save-point
+compaction pass for self-compacting storages, so a run could reset itself when
+the threshold trips mid-run: it changes the point contract of §2.5f for every
+such storage; the budget notice and `new_context` cover the case (invariant 83).
 
 **Cost accepted.** Two booleans on `RunState` (a schema minor), so a request
-made in a turn that pauses for approval is performed when the run resumes,
-and the guard below holds across the pause, `new_context` itself
-approval-gated included. A reset folds the turn's own tool calls with the
-rest, `new_context` included, which is what Codex does too, and which is why
-a fresh context refuses another reset until the model has done some work:
-the kept user message ("reset now") would otherwise be obeyed in every new
-window, seventy times over in the first live run. The checkpoint's first
-line says who reset for the same reason.
+made in a turn that pauses is performed on resume. A reset folds the turn's own
+tool calls, `new_context` included — which is why a fresh context refuses
+another reset until the model has done some work (the kept "reset now" message
+would otherwise be obeyed in every new window) and why the checkpoint's first
+line says who reset.
 
 Rules: spec §2.5i; workbench invariant 65.
 
@@ -1522,15 +1290,14 @@ Decided 2026-09-08.
 
 **Decision.** `--allowed-domains`, `--allowed-emails` and `--bootstrap-admin`
 admit an address the provider verified, and that is the whole admission check
-for every login provider. A GitHub sign-in is admitted by the account's
-primary verified address, the key logins merge on, so one allowlist covers
-Google and GitHub alike.
+for every login provider; a GitHub sign-in is admitted by the account's primary
+verified address.
 
-**Rejected.** A GitHub organization allowlist — a second admission key beside
-the address, a `read:org` scope on every login, one more API call, and an
-organization that restricts OAuth App access answers the membership query
-with "not a member" until an owner approves the app. A GitHub handle
-allowlist — a handle is renamed at will and is nothing the merge rule keys on.
+**Rejected.** A GitHub organization allowlist — a second admission key, a
+`read:org` scope on every login, one more API call, and an organization that
+restricts OAuth App access answers "not a member" until an owner approves the
+app. A GitHub handle allowlist — a handle is renamed at will and is nothing
+the merge rule keys on.
 
 **Cost accepted.** A team on personal GitHub accounts lists its addresses one
 by one with `--allowed-emails`; a domain allowlist admits only the people who
@@ -1543,12 +1310,9 @@ Rules: [OAuth mode](../howto/workbench-auth.md#oauth-mode).
 Decided 2026-09-08.
 
 **Decision.** `behavior.override_system_prompt` drops the `system_prompt`
-setting from that agent's instructions wholesale: the model's system prompt
-is the agent's own text, and an agent with no text sends none. The other
-layers — memories, the sandbox prompt, the skills index — keep their own
-switches, and the harness's mode layers stay: the plan preamble while the
-session plans, the suffix a background run is told nobody reads through. A
-handoff target decides for itself.
+setting from that agent's instructions wholesale, an agent with no text
+sending none; the other layers keep their own switches, the harness's mode
+layers stay, and a handoff target decides for itself.
 
 **Rejected.** Falling back to the global prompt when the agent's text is
 empty — the empty case is the point: an agent meant to run on nothing but its
@@ -1564,15 +1328,11 @@ Rules: [invariant 67](workbench-invariants.md).
 
 Decided 2026-09-11 (workbench invariant 27).
 
-**Decision.** A content change bumps the project's runtime generation, but the
-docker adoption fingerprint (§5.19) covers only what a container IS — image,
-runtime, user, network, limits, environment. A change outside it (a read cap,
-an SSH setting) has the successor generation adopt the SAME running container.
-So when a retired instance's last holder releases while a successor of the
-project occupies the cache, it releases only its connection
-(`sandbox.Detacher`), stopping and removing nothing; a deferred user Stop that
-new work overtook is superseded the same way. Without a successor it closes as
-before.
+**Decision.** The docker adoption fingerprint (§5.19) covers only what a
+container IS, so a content change outside it has the successor generation adopt
+the SAME running container; a retired instance whose successor occupies the
+cache releases only its connection (`sandbox.Detacher`), stopping and removing
+nothing.
 
 **Rejected.** Widening the fingerprint to the whole content — every unrelated
 edit would replace the container and discard what was installed into it.
@@ -1581,22 +1341,21 @@ next call cold-starts the container it was already using.
 
 **Cost accepted.** A successor that replaced rather than adopted sees the old
 handle go stale harmlessly. Once a successor exists, only its own idle timer or
-stop ends the container.
+stop ends the container; a deferred user Stop that new work overtook is
+superseded the same way.
 
-Rules: workbench invariant 27; [spec §2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else).
+Rules: workbench invariant 27; [spec
+§2.7p](../reference/spec.md#27p-stop-keeps-the-filesystem-and-promises-nothing-else).
 
 ### 5.67 A list is an array on the wire and JSON text in the column
 
 Decided 2026-09-11 (workbench invariant 1).
 
-**Decision.** An agent's `tools`, `skills`, `handoffs` and
-`approval.approve_tools` are `[]string` on the REST API (`store.StringList`),
-typed in the OpenAPI document and the generated client, and refused at bind
-when they are not arrays. The column stays `text`: the type's Valuer/Scanner
-writes the JSON array and reads it back, `nil` as `""`, so a row written
-before the change reads unchanged and no schema moves. `skills` keeps its
-third value — `null` is "not customized" (every skill the scope can see),
-`[]` is none — and so travels without `omitempty`.
+**Decision.** An agent's four lists are `[]string` on the REST API
+(`store.StringList`), typed in OpenAPI and the generated client and refused at
+bind when not arrays; the column stays `text`, the type's Valuer/Scanner writing
+the JSON array, so a row written before the change reads unchanged and no schema
+moves.
 
 **Rejected.** Strings holding JSON — the shape the review found: the
 OpenAPI type is `string`, the generated client is untyped, a typo in a name
@@ -1617,15 +1376,10 @@ Rules: [invariant 1](workbench-invariants.md);
 Decided 2026-09-11 (workbench invariant 19).
 
 **Decision.** A chat run paused for tool approval ends when the person sends a
-new message, or when the paused run is cancelled: the `pending_approvals`
-row is deleted (the claim a racing decision loses), the calls it waited on
-persist as `tool_call` annotations whose display carries `not_run` with the
-reason, and the hub ends the record with `run.cancelled {reason}` —
-`superseded` or `stopped`. The UI resolves the cards from the live event,
-from the stored marker on reload, and from the newer run's `run.started`
-when the event never came (a restart between the pause and the message).
-A background task's paused run is its task's to stop and is left alone.
-A trigger's agent turn refuses while a pause stands, as a wake-up does.
+new message or cancels it: the `pending_approvals` row is deleted (the claim a
+racing decision loses), the calls it waited on persist as `tool_call`
+annotations marked `not_run`, and the hub ends the record with `run.cancelled
+{reason}`.
 
 **Rejected.** Refusing the send (`409`) — the composer sat locked on a
 question the person had moved past. Letting both stand — the later approval
@@ -1634,8 +1388,10 @@ of order and out of context. Persisting the pending calls as items — an
 abandoned call must not enter the model's history.
 
 **Cost accepted.** A newer message discards a pause by design; the cards say
-so. A stale hub record on a restarted server publishes nothing, so the
-client's `run.started` rule carries that case.
+so. A stale hub record on a restarted server publishes nothing, so the client
+resolves the cards from the newer run's `run.started` as well as the live
+event and the stored marker. A background task's paused run is its task's to
+stop and is left alone.
 
 Rules: [invariant 19](workbench-invariants.md);
 [protocol.md, Approvals](../reference/protocol.md#approvals--apiv1approvals).
@@ -1645,21 +1401,16 @@ Rules: [invariant 19](workbench-invariants.md);
 Decided 2026-09-11 (workbench invariant 9).
 
 **Decision.** `resilience.fallback_models` is a typed array of
-`{provider_id, model}`: the entry runs on the provider row it names, under
-the primary's reference rule (§5.29), and carries no credential of its own — a
-key in an entry is `400`. A row from before the field holds the endpoint an
-entry named (`provider_type`, `base_url`) and, at rest, the key it carried;
-the decode drops the key, the read returns the endpoint, and the build
-resolves it to a provider the agent may reference at that endpoint, with a
-warning, or fails loudly. The form offers the resolved provider and drops an
-entry no provider reaches.
+`{provider_id, model}`: the entry runs on the provider row it names, under the
+primary's reference rule (§5.29), and carries no credential of its own.
 
 **Rejected.** Keeping the inline key with mask round-tripping — the one
 place a model key is entered was the provider (§5.30), and the agent form
 asking for a raw key beside it contradicted that in the UI and in the
 handler's second masking path. Refusing legacy rows outright — an agent
-that ran yesterday must read and run today; only the inline key stops being
-honored.
+that ran yesterday must read and run today: the decode drops the stored key
+and the build resolves the endpoint to a provider the agent may reference,
+with a warning, or fails loudly.
 
 **Cost accepted.** A breaking wire change: the entry shape and the field's
 type. A legacy entry whose endpoint has no provider row fails the run until
@@ -1674,12 +1425,10 @@ Rules: [invariant 9](workbench-invariants.md);
 Decided 2026-09-14 (workbench invariant 53).
 
 **Decision.** On a service speaking the E2B API every sandbox port is already
-public at `<port>-<sandbox id>.<domain>`, so the workbench shows that address
-— the id and the domain the service returned, `<port>` left to the reader —
-in a dialog to copy. Nothing is proxied, granted or published, and the read
-neither creates nor resumes the sandbox. The row declares it through
-`supports.public_host`; docker, whose ports are not public, declares nothing
-and offers nothing.
+public at `<port>-<sandbox id>.<domain>`, so the workbench shows that address in
+a dialog to copy; nothing is proxied, granted or published, and the row declares
+it through `supports.public_host` — docker, whose ports are not public, declares
+nothing.
 
 **Rejected.** A port input in the menu — the port is the server's inside the
 sandbox, which the person knows and the workbench does not. Reviving the port
@@ -1687,12 +1436,10 @@ preview (§5.35) for e2b — its cost was the gateway, which this needs none of.
 Persisting the domain beside `instance_ref` — a schema column for a fact one
 GET returns.
 
-**Cost accepted.** One control-plane GET per open. The address is what the
-service publishes; reachability is its policy — a service may gate port
-traffic with a token, or answer every response with
-`Content-Disposition: attachment` (Bailian's gateway does, whatever the
-content type), which leaves the URL to `curl` and `fetch` and takes a browser
-page off the table.
+**Cost accepted.** One control-plane GET per open. Reachability is the
+service's policy — a token gate, or a gateway answering every response with
+`Content-Disposition: attachment` (Bailian's does), which leaves the URL to
+`curl` and `fetch` and takes a browser page off the table.
 
 Rules: [invariant 53](workbench-invariants.md);
 [protocol.md, Projects](../reference/protocol.md#projects--apiv1projects).
@@ -1701,14 +1448,11 @@ Rules: [invariant 53](workbench-invariants.md);
 
 Decided 2026-09-14; verified against Bailian.
 
-**Decision.** `Status` trusts a record that says `paused` and a 404, and
-confirms one that says `running` with a GET of the daemon's `/health`: a 5xx
-from the sandbox's gateway (502 on E2B, 500 on Bailian) answers stopped, any
-answer the daemon gives is running, and a transport failure is the error.
-Bailian's record says `running` for a paused sandbox — after its own `pause`
-returned 204, and past the `endAt` it auto-paused at — while the same
-service's `?state=paused` filter and its gateway both tell the truth. The
-probe is E2B's own SDK's definition of "is running".
+**Decision.** `Status` trusts a `paused` record and a 404 and confirms a
+`running` one through the daemon's `/health`, E2B's own SDK's definition of
+"is running": Bailian's record says `running` for a paused sandbox — after its
+own `pause` returned 204, and past the `endAt` it auto-paused at — while its
+gateway tells the truth.
 
 **Rejected.** Trusting the record — the workbench's menu offered "Stop
 sandbox" on a sandbox it had just stopped. The `?state=` list filter — a scan
@@ -1725,16 +1469,12 @@ Rules: spec §2.7u.
 
 ### 5.72 spawn_task chooses from the handoff graph
 
-Decided 2026-09-14. The agents a `spawn_task` call may name are the spawning
-agent's handoff targets, plus itself.
+Decided 2026-09-14.
 
 **Decision.** `agent_name` is resolved against `Agent.Handoffs` before the
-host's Resolver sees it. The model already has those names from its
+host's Resolver sees it: the model already has those names from its
 `transfer_to_*` tools, so the set needs no second listing to stay in step, and
-one declaration names an agent's collaborators for both shapes of delegation:
-hand the conversation over, or run in the background. The workbench lists the
-targets in the tool's description as well and passes the SDK the config id its
-build gave each target, not the name (invariant 75).
+one declaration names an agent's collaborators for both shapes of delegation.
 
 **Rejected.** Resolving any agent the host knows: the model cannot discover
 the names, and a guessed one either fails or lands on an agent nobody wired to
@@ -1750,17 +1490,12 @@ Rules: spec §2.13; [invariant 75](workbench-invariants.md)
 
 ### 5.73 An echoed assistant message carries no logprobs
 
-Decided 2026-09-22. `OutputToInput` and `normalizeStoredInput` remove
-`logprobs` from every content part of an assistant message before it goes
-back as input.
+Decided 2026-09-22.
 
 **Decision.** Logprobs annotate one response's tokens; as input they carry
-nothing the model reads. Observed 2026-09-21 on a gateway fronting two
-upstreams: one emits `"logprobs": []` on every message, the other rejects any
-input carrying the key, so a conversation that touched both died on the next
-turn. The strip runs at both entry points so a history written before this
-rule is scrubbed on load as well as a fresh echo; the id, status, text and
-annotations ride through untouched.
+nothing the model reads. Observed on a gateway fronting two upstreams: one
+emits `"logprobs": []` on every message, the other rejects any input carrying
+the key, so a conversation that touched both died on the next turn.
 
 **Rejected.** Stripping in the OpenAI adapter alone: the canonical format is
 provider-agnostic and a stored session would still carry the field. A setting:
@@ -1797,8 +1532,7 @@ Decided 2026-10-02 (workbench invariant 84).
 
 **Decision.** A trigger's agent turn, the tasks it spawns, a trigger-started
 workflow's steps and the wake-ups that report any of them each run on their
-own grants: a gated `exec_command` asks until a card of that run says `same`
-or `all`, whatever the session holds. The grant is the session's too.
+own grants, and the grant is the session's too.
 
 **Rejected.** Reading the session's trust again once a person answered:
 "approve once" then ran every later command on an older `all`. Asking for
@@ -1832,9 +1566,8 @@ it, so the default keeps growing with the effort.
 
 **Cost accepted.** A caller on Claude Haiku 4.5 or older who sets an effort
 must opt into the budget; `minimal` reads as `low`; past `high` the default
-`max_tokens` stops growing and the caller sets it. Only the budget path keeps
-the sampling and forced-tool-choice prechecks: what adaptive thinking refuses
-is the API's to say.
+`max_tokens` stops growing and the caller sets it. Only the budget path keeps the sampling and
+forced-tool-choice prechecks: what adaptive thinking refuses is the API's to say.
 
 Rules: [models how-to](../howto/models.md#anthropic-backend-defaults)
 
@@ -1844,8 +1577,8 @@ Decided 2026-10-03.
 
 **Decision.** A request that already carries a thinking object also carries
 `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` and its beta
-header: the API drops a replayed thinking block whose prefix changed, and the
-adapter reports each drop as a `thinking_dropped` diagnostic.
+header, so the API drops a replayed block whose prefix changed and the adapter
+reports each drop.
 
 **Rejected.** Stripping blocks client-side from the middle of the history: a
 400, and reasoning lost on every request. Leaving the default `error`: a host
@@ -1895,10 +1628,9 @@ message: a provider refuses a replayed call cut from the reasoning it came
 with.
 
 **Cost accepted.** The session holds a call whose result the model never
-sees, and the stream showed an output the store does not hold. The notice is
-fixed English text. A cancelled run still saves nothing. A turn
-`ShouldStopAfterTurn` ended is out of reach: its save point wrote the real
-outputs before the refusal.
+sees, and the stream showed an output the store does not hold; the notice is
+fixed English text. A turn `ShouldStopAfterTurn` ended is out of reach: its
+save point wrote the real outputs before the refusal.
 
 Rules: spec §2.5
 
@@ -1908,7 +1640,7 @@ Decided 2026-10-03 (workbench invariant 85).
 
 **Decision.** A webhook's body follows the author's brief inside an
 `<external source trigger>` block whose closing tag the payload cannot write,
-then one fixed line saying the block is not the person's request. A task
+then one fixed line saying the block is not the person's request; a task
 notification's closing line says the same of its reports.
 
 **Rejected.** `Payload:` and the raw body: a third party's text read as the
@@ -1928,7 +1660,7 @@ Decided 2026-10-03.
 
 **Decision.** When a run reads an input queued on it, the workbench publishes
 `run.injected {run_id, input, index}` and the live view splits its turn there,
-as a reload does at the stored user entry. The composer queues over REST and
+as a reload does at the stored user entry; the composer queues over REST and
 drops its own queued bubble by the text the event names.
 
 **Rejected.** Shipping `run.entry` first: half the streaming reducer is
@@ -1948,11 +1680,10 @@ Rules: [invariant 16](workbench-invariants.md)
 
 Decided 2026-10-03.
 
-**Decision.** The workbench owns `todo_write`: a tool of its own, on an
-agent's runs when `behavior.checklist` is set, off by default, refused
-while the session plans — background runs too, where it is the live progress
-signal, each accepted list kept as the run's session `checklist.md`. The SDK
-ships no checklist: its `middleware.Todo` lost its one consumer here.
+**Decision.** The workbench owns `todo_write`: a tool of its own, on an agent's
+runs when `behavior.checklist` is set, off by default, refused while the session
+plans; the SDK ships no checklist, its `middleware.Todo` having lost its one
+consumer here.
 
 **Rejected.** On for every chat agent, as since 2026-08 ("when a job is worth
 tracking is the model's judgement"): the judgement needs the tool listed on
@@ -1969,21 +1700,18 @@ it by hand, per agent rather than per model: the project keeps no table of
 model capabilities (scope §1.2). An agent that had `todo_write` loses it until
 the switch is turned on. Revisit when the checklist benchmark reports.
 
-Rules: [invariant 34](workbench-invariants.md), [invariant 67](workbench-invariants.md), [invariant 91](workbench-invariants.md)
+Rules: [invariant 34](workbench-invariants.md), [invariant
+67](workbench-invariants.md), [invariant 91](workbench-invariants.md)
 
 ### 5.83 A stateful request is not replayed into the dark, and an attempt has its own clock
 
 Decided 2026-10-03.
 
 **Decision.** A request carrying `PreviousResponseID` or `ConversationID`
-appends to a chain the server keeps, so a retry after an ambiguous failure
-(a timeout, a connection severed after the send) could land the turn twice;
-such an attempt is retried only when the server answered it or the dial
-failed. The retry layer carries the attempt's deadlines — `AttemptTimeout`,
-released once a stream commits, and `IdleTimeout` between a stream's events —
-as `context.WithCancelCause` clocks whose cause is the policy's own error, so
-a timed-out attempt is retried whatever `RetryIf` says and the error a caller
-sees is never mistaken for its own cancellation.
+appends to a chain the server keeps, so a retry after an ambiguous failure could
+land the turn twice; the attempt and idle clocks are `context.WithCancelCause`
+clocks carrying the policy's own error, so a timed-out attempt is retried
+whatever `RetryIf` says and is never mistaken for the caller's cancellation.
 
 **Rejected.** A `ReplaySafe` classifier on the policy: no caller needs a
 different rule, and the transport shape of an error is visible without the
@@ -2005,15 +1733,10 @@ Rules: spec §2.16.
 Decided 2026-10-03.
 
 **Decision.** The Anthropic adapter writes a fingerprint of the request prefix
-— the system text and the tool definitions, 16 hex characters of a SHA-256 —
-into each thinking block's `encrypted_content`, behind the existing
-`thinking_signature:` / `redacted_thinking:` prefix. On replay it computes the
-current fingerprint and leaves out the newest block bound to another prefix
-together with every block before it: a leading run of thinking may be
-removed, a block in the middle may not. The host re-renders its instruction
-layer every run (memories, skills, a background suffix), so the prefix moves
-mid-session as a matter of course; §5.77's `drop_block` remains the net under
-an account that enforces the binding without this adapter's knowledge.
+(system text and tool definitions) into each thinking block's
+`encrypted_content` and on replay leaves out the newest block bound to another
+prefix with every block before it: the host re-renders its instruction layer
+every run, so the prefix moves mid-session as a matter of course.
 
 **Rejected.** Storing the fingerprint on the SDK entry: a field on
 `session.Entry` every provider would carry for one adapter's rule. Hashing the
@@ -2023,7 +1746,8 @@ side: no failure has been reproduced there.
 
 **Cost accepted.** Blocks written before fingerprints replay no more; the
 first request after the upgrade thinks from scratch. An instruction edit
-costs the conversation its earlier thinking, as the API would have.
+costs the conversation its earlier thinking, as the API would have; §5.77's
+`drop_block` remains the net under an account that enforces the binding.
 
 Rules: spec §2.15.
 
@@ -2031,16 +1755,10 @@ Rules: spec §2.15.
 
 Decided 2026-10-03.
 
-**Decision.** An agent asks in one of three modes: `never` (only the tools
-its list names), `on_change` (every tool plan mode would refuse), `always`
-(every tool). "A change" is plan mode's own answer, `Plan.ReadOnlySet().Admits`
-over the same read-only names the build hands `Plan` — so the set the mode
-asks about and the set planning denies are one set, including which MCP
-tools count (invariant 89). The mode is installed per tool, on every built
-agent, handoff targets and background runs included; `exec_command` keeps its
-per-command gate in every mode that asks, so trusting a command still means
-something. The per-tool list only ever adds a question. A new agent is
-`never`; an empty mode is how older rows read, and means the same.
+**Decision.** An agent asks in one of three modes — `never`, `on_change`,
+`always` — where "a change" is plan mode's own answer,
+`Plan.ReadOnlySet().Admits`, so the set the mode asks about and the set
+planning denies are one set; the per-tool list only ever adds a question.
 
 **Rejected.** The 18-box checklist of built-in tool names: hard-coded, so it
 missed every tool added after it, and MCP tools were a text box beside it.
@@ -2081,16 +1799,16 @@ Decided 2026-10-03.
 
 **Decision.** `agents/session/sessiontest` carries `StorageConformance` and
 `RepoConformance`, the suites the SDK's own session backends pass, so a
-backend written outside the repository (scope §3 tells its author to
-implement `session.Storage`) runs the same checks from its tests. The fake
-model and the run-level assertion helpers stay in `internal/agentstest`:
-§5.23 still holds for them.
+backend written outside the repository runs the same checks from its tests; the
+fake model and the run-level assertion helpers stay in `internal/agentstest`
+(§5.23).
 
 **Rejected.** Leaving the suites internal: the contract in spec §2.5e2 is then
 checked only for the backends in this repository, and the Redis or encrypted
-store the scope points people at is written against prose. A conformance
-check for atomic batch appends: no backend can prove the negative from the
-outside, so it stays a documented contract.
+store [scope §3](scope.md#3-capabilities-deliberately-not-provided) points
+people at is written against prose. A conformance check for atomic batch
+appends: no backend can prove the negative from the outside, so it stays a
+documented contract.
 
 **Cost accepted.** One more public package to keep compatible; its surface is
 two functions and one struct.
@@ -2101,12 +1819,9 @@ Rules: spec §2.5e2.
 
 Decided 2026-10-03.
 
-**Decision.** A deferred tool is withheld by the runner: `ModelRequest.Tools`
-carries the disclosed tools only, and no adapter renders a provider-native
-deferral (OpenAI's `defer_loading` with a client `tool_search`, Anthropic's
-`defer_loading` with the tool-addition beta). When a producer appears, the
-runner's own retrieval matches by literal name, as §5.61 does, never by
-a model-side search.
+**Decision.** A deferred tool is withheld by the runner, and no adapter
+renders a provider-native deferral; when a producer appears, the runner's own
+retrieval matches by literal name, as §5.61 does, never by a model-side search.
 
 **Rejected.** Adapter-rendered deferral: the two providers' mechanics differ
 and both are still moving, and each disclosure is a prefix edit on either
@@ -2116,10 +1831,8 @@ alone: the filter is backend-agnostic, and the prefix cost is the same one
 mechanism spec §2.7i specifies, and it is tested.
 
 **Cost accepted.** Every disclosure changes the tools array: a prompt-cache
-miss on OpenAI, dropped reasoning on a prefix-binding backend. Nothing in
-this repository produces a deferred tool. Reopened when a producer appears
-(a tool catalog past what one listing bears) or a provider's native deferral
-settles; absent either by the next breaking minor, the surface goes under the
-zero-consumer rule.
+miss on OpenAI, dropped reasoning on a prefix-binding backend. Nothing in this
+repository produces a deferred tool; absent a producer or a settled native
+deferral by the next breaking minor, the surface goes under the zero-consumer rule.
 
 Rules: spec §2.7i.

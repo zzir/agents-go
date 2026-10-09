@@ -13,11 +13,10 @@ Every invariant below is implemented and stable unless flagged:
 - ❓ open — see [§6](#6-open-questions)
 
 Two companions carry what this document deliberately leaves out. *Why* an
-invariant is what it is lives in
-[design decisions](../explanation/decisions.md) (§5); what the project does
-**not** do lives in [scope](../explanation/scope.md) (§1.2, §3). Section
-numbers are permanent addresses across all three — a number is never reused
-or renumbered.
+invariant is what it is lives in [design decisions](../explanation/decisions.md)
+(§5); what the project does **not** do lives in [scope](../explanation/scope.md)
+(§1.2, §3). Section numbers are permanent addresses across all three — a number
+is never reused or renumbered.
 
 ---
 
@@ -27,13 +26,14 @@ Non-goals (§1.2) moved to [scope](../explanation/scope.md#12-non-goals).
 
 ### 1.1 What this is
 
-A Go SDK for building agents on the **OpenAI Responses API**. Other backends
-are supported by translating at the adapter
-([decisions §5.10](../explanation/decisions.md#510-non-responses-backends-adapt-at-the-model-boundary)).
+A Go SDK for building agents on the **OpenAI Responses API**. Other backends are
+supported by translating at the adapter ([decisions
+§5.10](../explanation/decisions.md#510-non-responses-backends-adapt-at-the-model-boundary)).
 It began as a port of openai-agents-python and shares its core concepts —
 agents, handoffs, guardrails, sessions — but evolves independently. See
-[migration_from_python.md](../explanation/migration_from_python.md) if you are arriving from the
-Python SDK, and [upstream_watch.md](../explanation/upstream_watch.md) for what we have reviewed
+[migration_from_python.md](../explanation/migration_from_python.md) if you are
+arriving from the Python SDK, and
+[upstream_watch.md](../explanation/upstream_watch.md) for what we have reviewed
 from upstream.
 
 ## 2. Core invariants
@@ -160,9 +160,8 @@ for turn := 1; ; turn++ {
 **Termination conditions**, highest precedence first:
 
 1. `ctx` cancelled → the run ends there, and `ctx.Err()` reaches the caller
-   wrapped in a `*RunError` carrying the turns that did complete. A
-   cancellation noticed inside the loop is a failure like any other; only
-   failures from *before* the loop are returned bare.
+   wrapped in a `*RunError` carrying the turns that did complete
+   ([§2.10](#210-errors-and-recovery)).
 2. Budget exhausted → `*MaxTurnsError`, unless `ToolLoop.FinalTurnWithoutTools`
    buys one last tool-free model call ([§2.7d](#27d-tool-loop-safety-valves)).
 3. HITL interruption → return a `RunResult` carrying `Interruptions` and `State`.
@@ -187,7 +186,8 @@ works.
   the two is a bug.
 - **`RunState.Extra` is host-owned and opaque**: marshalled verbatim, never read
   by the SDK. It covers pause→resume only; a fact that must survive a crash
-  mid-run needs the host's own durable write (`PlanPhase.OnUnlock`, [§2.12](#212-middleware)).
+  mid-run needs the host's own durable write (`PlanPhase.OnUnlock`,
+  [§2.12](#212-middleware)).
 - **The run keeps one item log.** `RunResult.NewItems` and `RunState.SessionItems`
   are that log in full, append-only.
 - **`RunState.GeneratedItems` is the suffix of `SessionItems` the model still
@@ -208,7 +208,8 @@ works.
   agent and every agent an item or interruption carries; `RunStateFromJSON`
   fails with a `*UserError` listing the misses rather than leaving any nil.
 
-— see [decisions §5.18](../explanation/decisions.md#518-a-runstate-decodes-across-a-version-window-and-the-window-is-earned)
+— see [decisions
+§5.18](../explanation/decisions.md#518-a-runstate-decodes-across-a-version-window-and-the-window-is-earned)
 
 ### 2.1b Items
 
@@ -552,9 +553,6 @@ when its answer is right.
 - **A constructor where the id names the STORAGE** (`sessions.New`) keeps its
   meaning: opening it twice is the same conversation, and it shares storage
   with a repo's sessions in neither direction. *Per backend.*
-- **A lookup that failed is not an answer.** "This id has no session" is a
-  fact; a cancelled context or an unreachable store is a failure to look, and
-  is never resolved to absence. *Shared.*
 
 #### Entry identity
 
@@ -571,8 +569,7 @@ when its answer is right.
 `Seq` is a **cursor position**, and that is the whole of its meaning.
 
 - **Monotonic within a session**, and the ONLY order a backend reads history
-  in — a row's own time-ordered key (a UUIDv7) is not, since a clock can step
-  back.
+  in — a row's own time-ordered key (a UUIDv7) is not.
 - **Never reused**, including after the entry holding it is removed.
 - **Never moved for an entry that stays.** The one exception is a
   `ReplaceEntries` that re-adds an entry: ids are kept, numbers are fresh, so a
@@ -613,10 +610,9 @@ when its answer is right.
   serialization prevents.
 - **Reading what is being removed, then removing it.** An undecodable record is
   still the only copy of what it holds.
-- **Claiming and acting.** The check that a session is still the one meant is
-  part of the delete, never a step before it.
-- **Selecting a row to remove and removing it.** A caller whose delete affects
-  nothing lost the race and retries.
+- **Claiming and acting; selecting a row to remove and removing it.** The
+  check that a session is still the one meant is part of the delete, never a
+  step before it; a caller whose delete affects nothing lost the race and retries.
 - **Writing and proving the destination still exists.** A handle held across
   its session's deletion REFUSES the write (`session.ErrNotFound`) inside the
   same step as the write. Deletion honors the same serialization as writes,
@@ -625,8 +621,9 @@ when its answer is right.
 
 #### Absence
 
-- Only "there is no such thing" is absence. Every other failure reaches the
-  caller. *Shared.*
+- **Only "there is no such thing" is absence.** A cancelled context or an
+  unreachable store is a failure to look, never resolved to absence; every
+  other failure reaches the caller. *Shared.*
 
 ### 2.5f Compaction
 
@@ -692,8 +689,8 @@ belong to the run.
 Compaction predicts; overflow recovery reacts where the prediction was wrong.
 
 - **`ExecOptions.Overflow.MaxRetries` enables "compact, then try this turn
-  again". Zero by default**: an overflow is reported, never silently shrunk
-  away.
+  again"; off unless set** ([§4](#4-reference-behavior-you-can-rely-on)): an
+  overflow is reported, never silently shrunk away.
 - **The retry does not spend the turn budget.** The budget counts model calls
   the model made; an overflow is one it never got.
 - **A no-op compaction buys no retry.**
@@ -748,8 +745,7 @@ Compaction predicts; overflow recovery reacts where the prediction was wrong.
   tool succeeded.
 - **An unfinished call is never retried by default.** Only a tool declaring
   `RetrySafe: true` is left dangling for the next run to redo.
-- **`RecoveryPolicy.RetrySafe` is supplied by the caller**, since the stored
-  history holds a tool NAME and only the caller knows the agent;
+- **`RecoveryPolicy.RetrySafe` is supplied by the caller**;
   `RetrySafeNames(tools)` builds it.
 - **It is the counterpart of `RunState`, not a replacement**: `RunState`
   handles a run that paused on purpose; this handles a process that died and
@@ -800,7 +796,11 @@ model may do about it. The first lever is the budget notice.
   a reset, `new_context` answers that nothing more can be dropped and asks
   nothing; a tool call other than it, or a message, ends the fresh state.
 
-— see [decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions), [§5.61](../explanation/decisions.md#561-retrieval-over-summary), [§5.62](../explanation/decisions.md#562-memory-is-one-store-with-scopes), [§5.63](../explanation/decisions.md#563-a-reset-is-a-checkpoint-with-nothing-to-say)
+— see [decisions
+§5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions),
+[§5.61](../explanation/decisions.md#561-retrieval-over-summary),
+[§5.62](../explanation/decisions.md#562-memory-is-one-store-with-scopes),
+[§5.63](../explanation/decisions.md#563-a-reset-is-a-checkpoint-with-nothing-to-say)
 
 ### 2.6 Guardrails
 
@@ -877,6 +877,8 @@ An empty result with no error is a **success with no output**, not a failure.
   into model-readable text fed back to the model. This is the default.
 - `FailureErrorFunction == nil` makes tool errors abort the run.
 - A tool panic follows the same path, with the stack attached.
+- **A panic outside the tool body aborts the run** — the per-call goroutine's
+  own recover is a net, not the tool's failure.
 - Malformed argument JSON gets dedicated wording that prompts the model to resend
   valid JSON.
 - Consecutive all-failed turns abort the run — see
@@ -890,7 +892,8 @@ An empty result with no error is a **success with no output**, not a failure.
   a tool that asks for one.
 - **A decision recorded on the `RunState` settles a call**, one recorded for
   this call outranking one for all calls to its tool, and nothing else is
-  consulted — see [decisions §5.74](../explanation/decisions.md#574-an-exact-approval-decision-outranks-a-standing-one).
+  consulted — see [decisions
+  §5.74](../explanation/decisions.md#574-an-exact-approval-decision-outranks-a-standing-one).
 - **With no recorded decision the tool answers** (`NeedsApprovalFunc`, then
   `NeedsApproval`), and after it the agent's listing.
 - If **any** call in a turn needs approval, the whole turn pauses
@@ -920,7 +923,8 @@ A tool returns a `ToolResult`, not a bare value; a plain value (string, struct,
   model.** A tool error handled by `FailureErrorFunction` sets it automatically.
 - **A text part past `ExecOptions.ToolOutputLimit` reaches the model elided**:
   its head and tail around an `[omitted N bytes]` marker, after the output
-  guardrails; image and file parts are untouched, and a negative limit disables the cap.
+  guardrails; image and file parts are untouched, and a negative limit disables
+  the cap.
 - **A multimodal output displays as the wire content list.** `Display().Output`
   of a `ToolOutputContent` / `[]ToolOutputContent` result is the JSON of the
   Responses `function_call_output` content list (`input_text` / `input_image` /
@@ -949,16 +953,17 @@ is a **field** on it: `OnInvoke`, `Description`, `ParamsJSONSchema`, `Strict`,
 - **"Errors abort the run" is `FailureErrorFunction = nil`** — an absence a
   field can express.
 
-— see [decisions §5.4](../explanation/decisions.md#54-a-tool-is-a-struct-not-an-interface)
+— see [decisions
+§5.4](../explanation/decisions.md#54-a-tool-is-a-struct-not-an-interface)
 
 ### 2.7d Tool-loop safety valves
 
 The loop's own failure modes, where an agent keeps going and gets nowhere:
 
 - **Consecutive all-failed turns abort the run.**
-  `ToolLoop.MaxConsecutiveErrorTurns` (default 3) counts TURNS in which *every*
-  tool call failed; any success clears it, and a turn with no tool calls is
-  neither counted nor cleared. A negative value disables it.
+  `ToolLoop.MaxConsecutiveErrorTurns` ([§4](#4-reference-behavior-you-can-rely-on))
+  counts TURNS in which *every* tool call failed; any success clears it, and a
+  turn with no tool calls is neither counted nor cleared. A negative value disables it.
 - **A call naming no tool is a failed call under this valve**
   ([§2.2](#22-ordering-within-a-turn) step 7): its not-found output is an
   error output, so a turn of only such calls counts.
@@ -1007,8 +1012,8 @@ truncated response:
   stream's last word. Post-commit errors pass through, recorded as
   `DiagStreamError` by every decorator that saw them.
 - **A nil event neither commits nor buffers**; a consumer that stops mid-flush
-  ends everything — no further events, no diagnostics.
-  — see [decisions §5.16](../explanation/decisions.md#516-a-severed-stream-retries-only-before-output-with-the-preamble-held-back).
+  ends everything — no further events, no diagnostics. — see [decisions
+  §5.16](../explanation/decisions.md#516-a-severed-stream-retries-only-before-output-with-the-preamble-held-back).
 
 ### 2.7f Usage attribution
 
@@ -1055,6 +1060,11 @@ Tool arguments, handoff input and structured outputs are validated against the
   the schema declares root-level `required` keys. Both survive an uncompilable
   schema; a nil schema skips validation entirely. A rejected handoff input
   fails the run rather than being fed back.
+- **A schema derived from a Go type that strict mode cannot express panics at
+  construction** (`NewTool`, `AgentAsTool`, `OutputType`); `NewToolNonStrict` /
+  `OutputTypeNonStrict` build it relaxed.
+- **A schema given as data returns an error** (`NewRawTool`,
+  `NewDynamicOutputSchema`), one that says to turn strict off where the schema was built.
 - `EnsureStrictJSONSchema` is the OpenAI strict-mode *transformer*, a
   different job from validation.
 - **Conversion is linear in the schema.** A node is made strict once however
@@ -1075,7 +1085,8 @@ A tool marked `Deferred: true` is withheld from the model until some
 - **A withheld tool is absent from `ModelRequest.Tools`**; no adapter renders a
   provider-side deferral.
 
-— see [decisions §5.88](../explanation/decisions.md#588-deferred-tools-reach-the-wire-as-a-shorter-list)
+— see [decisions
+§5.88](../explanation/decisions.md#588-deferred-tools-reach-the-wire-as-a-shorter-list)
 
 ### 2.7g Tool progress
 
@@ -1192,7 +1203,8 @@ an activated environment survive between calls.
   exist.** An empty map and an absent one are the same container, and an
   existing container's fingerprint is frozen.
 
-— see [decisions §5.19](../explanation/decisions.md#519-a-named-container-is-adopted-only-against-a-configuration-fingerprint)
+— see [decisions
+§5.19](../explanation/decisions.md#519-a-named-container-is-adopted-only-against-a-configuration-fingerprint)
 
 ### 2.7o A docker sandbox runs as the image's user and joins no network
 
@@ -1245,12 +1257,12 @@ an activated environment survive between calls.
   trimmed anchor is taken.
 - **`*** Move to:` naming the section's own path is a plain update**, not a
   duplicate-section conflict.
-- **A Delete of a file too large to snapshot (`ErrReadLimitExceeded`) is
-  parked, not refused**: renamed beside itself (`.apply-patch.<name>.<random>`)
-  for the commit, renamed back on rollback, removed last once every operation
-  has landed. A parked copy that will not go is reported in the tool's result.
-  Update and Move still need the content and fail on such a file
-  ([decisions §5.48](../explanation/decisions.md#548-apply_patch-parks-a-large-file-instead-of-snapshotting-it)).
+- **A Delete of a file too large to snapshot (`ErrReadLimitExceeded`) is parked,
+  not refused**: renamed beside itself (`.apply-patch.<name>.<random>`) for the
+  commit, renamed back on rollback, removed last once every operation has
+  landed. A parked copy that will not go is reported in the tool's result.
+  Update and Move still need the content and fail on such a file ([decisions
+  §5.48](../explanation/decisions.md#548-apply_patch-parks-a-large-file-instead-of-snapshotting-it)).
 - **One section per path.** Two `Update` sections for one file are refused,
   and so is a rename onto a path another section touches: the plan phase reads
   every original before any write, so the second would compute from pre-patch
@@ -1292,7 +1304,8 @@ does.
   name; anything else fails with `sandbox.ErrOutsideWorkDir`, never a silent
   re-rooting.
 
-— see [decisions §5.14](../explanation/decisions.md#514-sandbox-file-tools-share-execs-path-view)
+— see [decisions
+§5.14](../explanation/decisions.md#514-sandbox-file-tools-share-execs-path-view)
 
 ### 2.7u An E2B-compatible service is addressed by its responses
 
@@ -1304,9 +1317,13 @@ what a row configures and what a response carries are kept apart.
   `X-API-Key`, `X-Access-Token`, `Content-Type` or `Connect-Protocol-Version`.
 - **A `domain` the service returns is adopted over the configured one**; the
   configured one is the fallback for a service that returns none.
-- **The lease is extended through `connect` alone**: it resumes a paused
-  sandbox and only extends a running one's TTL, and its 404 is the one sign the
-  sandbox is gone — see decisions §5.34.
+- **The lease is extended through `connect` alone, never by a keepalive**: a
+  control call sends `max(configured TTL, its own bound)`, which resumes a
+  paused sandbox or extends a running one; its 404 is the one sign the sandbox
+  is gone — see decisions §5.34.
+- **`Stop` pauses and keeps the filesystem; the service's kill is the storage's
+  end** — the sandbox IS the storage. Every create asks for a per-sandbox token
+  (`secure: true`).
 - **`Address` is a read**: it never provisions or resumes and changes nothing
   on the client; `ErrNoSandbox` before a sandbox exists and once the service no
   longer has it.
@@ -1446,11 +1463,12 @@ nothing more: a host renders progress from the stream's own events. Beyond
   write that persisted PAST it, or a persist that succeeded at an interruption.
 - **`RunState.PendingInput` seeds a resumed control once, before `ResumeRun`
   returns it** — never lazily when ranging begins.
-- **A resume can keep the control it paused under.** `ResumeRunWith(ctx,
-  state, opts, ctrl)` continues on the control `Run` returned and carries its
-  live queue as is, never reseeded; `ResumeRun` mints a fresh control and
-  seeds it
+- **A resume can keep the control it paused under.** `ResumeRunWith(ctx, state,
+  opts, ctrl)` continues on the control `Run` returned and carries its live
+  queue as is, never reseeded; `ResumeRun` mints a fresh control and seeds it
   ([§5.45](../explanation/decisions.md#545-a-middleware-resumes-under-the-callers-control)).
+- **`ResumeRunWith` panics on a control this package did not mint**; a host
+  holds a `RunControl`, never implements one.
 - **A follow-up continues the same run**: one trace, one usage total, one
   session.
 - **Injected input becomes a run item** with `Source{Type: SourceUser}` after
@@ -1476,6 +1494,8 @@ nothing more: a host renders progress from the stream's own events. Beyond
 
 - **Typed spans cover**: agent, generation, function, handoff, guardrail,
   compaction, model retry, MCP, sandbox.
+- **Ids are OTel-width and each agent's tenure is a root span**: a trace id is
+  32 hex characters, a span id 16, and an N-handoff run has N+1 root spans.
 - **A retry span is a zero-duration marker**, not a wrapper: it records THAT
   an attempt failed, after the fact.
 - **The current parent span travels on the `context.Context`** — the only
@@ -1561,8 +1581,7 @@ loop's structure), `ExecOptions.ErrorHandlers` (needs the run's in-flight items
 and the loop's completion path), `ModelOptions.InputFilter` (per turn, not per
 run).
 
-- **A middleware must not swallow the stream** — three clauses, stated on
-  `RunMiddleware`'s godoc:
+- **A middleware must not swallow the stream** — three clauses:
   1. Every event other than `RunCompletedEvent` flows through as it happens.
   2. `RunCompletedEvent` appears exactly once, last, on a run that ends without
      error and never on one that errors; a re-entering middleware holds back
@@ -1657,8 +1676,7 @@ A task is a sub-agent that outlives the turn that started it
   `ReleaseRetryClaim`, `MarkInputRequired` and `ReclaimWorking` carry a run id
   and lose when it is not the current one. A stale approval's write is a
   silent no-op, its resolve is refused as stale and discarded, and the expiry
-  reaper finalizes against the approval's OWN run id. A stop chases **one**
-  retry.
+  reaper finalizes against the approval's OWN run id.
 - **Every compare-and-set answers an unknown id with `ErrNotFound`, never
   `won=false`**: a lost transition and a missing task are different answers,
   in every store alike.
@@ -1667,12 +1685,11 @@ A task is a sub-agent that outlives the turn that started it
   transition out of a terminal state, a compare-and-set that lands the new run
   id, the incremented attempt and the cleared summary and result together,
   only while failed and under the ceiling. **The ceiling is a store
-  predicate**, so two processes cannot both claim the last attempt.
-- **A launch that failed never counts as an attempt.** `ReleaseRetryClaim`,
-  bound to the claimed run id, puts the task back to failed, rolls the attempt
-  down (floored at 1) and records the launch failure as the result. Only the
-  launch path releases; a run that registered and then failed is a real
-  attempt.
+  predicate.**
+- **A launch that failed never counts as an attempt.** `ReleaseRetryClaim`
+  puts the task back to failed, rolls the attempt down (floored at 1) and
+  records the launch failure as the result. Only the launch path releases; a
+  run that registered and then failed is a real attempt.
 - **A retry takes a concurrency slot** like a spawn.
 - **Retryability is derived from state in hand.** `MaxAttempts` hands over the
   ceiling, and every consumer derives the offer from the status and attempt it
@@ -1688,20 +1705,18 @@ A task is a sub-agent that outlives the turn that started it
 - **`Config.Continue` is asked when a run of the current attempt completes or
   fails** — only for an outcome that NAMES the run, and only while the row is
   still working on it (a row paused for an approval is not moved on). Never
-  for a cancellation nor a superseded attempt's outcome; an error from it, or a
-  next run that fails to launch, ends the task failed.
+  for a cancellation; an error from it, or a next run that fails to launch,
+  ends the task failed.
 - **A `Continuation` moves the task through `Store.Advance`**: run id and the
-  host's `State` replaced in ONE compare-and-set, only while the task is
-  working on the run the hook was asked about (nil `State` keeps the recorded
-  one). `Advance` with the same run id on both sides rewrites `State` under
-  the CAS.
+  host's `State` replaced in ONE compare-and-set (nil `State` keeps the
+  recorded one); the same run id on both sides rewrites `State` under the CAS.
 - **A `Continuation` without an `Input` ends the task**, its final `State` in
   the same `Finalize` as the ending.
 - **A transition the claim does not win is finalized on the run that ended,
   failed** — `Finalize`'s own predicate then decides.
-- **The chain is bounded.** `Config.MaxContinuations` (default 50) further
-  runs since the spawn or the last retry; a hook still asking at the bound
-  ends the task failed.
+- **The chain is bounded.** `Config.MaxContinuations` further runs since the
+  spawn or the last retry ([§4](#4-reference-behavior-you-can-rely-on)); a hook
+  still asking at the bound ends the task failed.
 - **`Task.Kind` and `Task.State` are the host's vocabulary and record, opaque
   to the SDK**; `Config.DescribeState` is how a host says where a job stands.
 - **One cap governs every kind** (`MaxConcurrentPerParent`), **and one
@@ -1735,7 +1750,7 @@ A task is a sub-agent that outlives the turn that started it
 - **A stop reports what it DID**, and the four answers are not
   interchangeable. **`StopAfterTurn` is the only answer that ends the call.**
   `StopAlreadyFinished` claims nothing, writes no cancellation, and sends the
-  stop round again.
+  stop round again; a stop chases **one** retry.
 - **An outcome that is late is waited for; one that is lost is replaced.** The
   stop waits, briefly and boundedly, for the ending before its last pass, and
   records a cancellation only if none arrives. A host answers
@@ -1749,13 +1764,12 @@ A task is a sub-agent that outlives the turn that started it
   their run as its live attempt, they cancel the run they started and report
   what the task actually is.
 - **A result counts as delivered on the MODEL's path only, and only for the
-  result the model is actually handed.** A task that ends before the call
-  that started it returns is delivered (`OnResultDelivered`); one still
-  reported as running is NOT, however the row reads by then; the attempt is
-  checked.
+  result the model is actually handed** — a host API never reports delivery. A
+  task that ends before the call that started it returns is delivered
+  (`OnResultDelivered`); one still reported as running is NOT, however the row
+  reads by then; the attempt is checked.
 - **`task_retry` answers every call that has task state with that state**, so
-  a launch failure it reports counts as delivered. **A host API never reports
-  delivery.**
+  a launch failure it reports counts as delivered.
 - **The restart sweep runs BEFORE the host accepts requests**, as a separate
   call from whatever delivers; `FailOrphans` RETURNS the rows it failed. Two
   processes sharing one store keep the race.
@@ -1783,9 +1797,8 @@ A task is a sub-agent that outlives the turn that started it
   untrusted text**: formatting escapes the line delimiter AND the field
   delimiter, and the retry hint is its own line. Formatting and parsing ship
   together.
-- Defaults: depth 1 (a task cannot spawn tasks), 6 concurrent tasks per
-  parent, 300-rune summaries, a 120s bound on `task_status`'s wait, 3 attempts
-  per task.
+- The depth, concurrency, summary, wait and attempt defaults are in
+  [§4](#4-reference-behavior-you-can-rely-on).
 
 — see [decisions §5.54](../explanation/decisions.md)
 
@@ -1804,10 +1817,11 @@ Everything the SDK acts on is passed in: `RunOptions`, the `Agent`, its
   `SSH_AUTH_SOCK` for an `ssh://` daemon); the local sandbox passes `PATH`,
   `HOME` and `TMPDIR` through to the child. Each is documented on the backend
   and overridable by an explicit option.
-- **`Observe.IncludeSensitiveData` nil means include** ([§4](#4-reference-behavior-you-can-rely-on));
-  no variable decides it.
+- **`Observe.IncludeSensitiveData` nil means include**
+  ([§4](#4-reference-behavior-you-can-rely-on)); no variable decides it.
 
-— see [decisions §5.39](../explanation/decisions.md#539-the-sdk-reads-no-environment-variable-of-its-own)
+— see [decisions
+§5.39](../explanation/decisions.md#539-the-sdk-reads-no-environment-variable-of-its-own)
 
 ### 2.15 The model adapter contract
 
@@ -1855,12 +1869,18 @@ it.
   drop is a `thinking_dropped` diagnostic naming the block's path and reason.
 - **Such an adapter also drops, oldest first, what it can no longer replay**:
   each block's `encrypted_content` carries a fingerprint of the system text and
-  tool set it was produced under, and the newest block bound to another prefix ends the replay of every block before it.
-- **A backend that reports overflow in a success-shaped response surfaces it
-  as an error carrying the overflow marker**
-  ([§2.5g](#25g-context-overflow)).
+  tool set it was produced under, and the newest block bound to another prefix
+  ends the replay of every block before it.
+- **A backend that reports overflow in a success-shaped response surfaces it as
+  an error carrying the overflow marker** ([§2.5g](#25g-context-overflow)).
+- **A streaming-only backend is served by `NewStreamOnlyModel`**: `Respond` runs
+  an internal `StreamResponse` and assembles the response from the terminal
+  event with the runner's own `responseAssembler`; the Anthropic adapter's
+  `Respond` is always served this way.
 
-— see [decisions §5.10](../explanation/decisions.md#510-non-responses-backends-adapt-at-the-model-boundary),
+— see [decisions
+§5.10](../explanation/decisions.md#510-non-responses-backends-adapt-at-the-model-boundary),
+[§5.15](../explanation/decisions.md#515-streaming-only-backends-adapt-with-a-model-decorator),
 [§5.84](../explanation/decisions.md#584-a-thinking-block-remembers-the-prefix-it-was-bound-to);
 the Anthropic mappings are in [howto/models.md](../howto/models.md)
 
@@ -1906,6 +1926,12 @@ Model-side retry, the counterpart rule:
   default and overrides it.
 - **A `Retry-After` longer than `MaxDelay` ends the retries**, returning that
   attempt's wrapped error rather than clamping to the cap and trying again.
+- **`modelkit.RetryableError` is the classifier the adapters share**:
+  `context.Canceled` never retries, `DeadlineExceeded` does; an exact
+  `X-Should-Retry` outranks the status, else 408, 409, 429 and 5xx retry; an
+  unrecognized error retries only as a `net.Error` or `io.ErrUnexpectedEOF`.
+- **`agents.DefaultRetryIf` retries everything but cancellation and deadline
+  expiry** — the coarser SDK-level default.
 - **A run's deadline is the caller's `ctx`; an attempt's is
   `RetryPolicy.AttemptTimeout`** — a blocking call wholly, a stream until its
   first output event — and `IdleTimeout` bounds the silence between a stream's events.
@@ -1936,6 +1962,9 @@ Defaults that callers may depend on:
 | Handoff input schemas | strict | `Handoff.NonStrictSchema: true` opts out; the zero value is the strict default |
 | Tool errors | fed back to the model | `DefaultToolErrorFunction`; set the field to `nil` to make them fatal |
 | Tool concurrency | unlimited | Bound with `MaxToolConcurrency` |
+| `ToolLoop.MaxConsecutiveErrorTurns` | 3 | Turns in which every tool call failed; a negative value disables it ([§2.7d](#27d-tool-loop-safety-valves)) |
+| `Overflow.MaxRetries` | 0 | An overflow is reported, never retried, unless set ([§2.5g](#25g-context-overflow)) |
+| Background tasks | depth 1, 6 concurrent per parent, 300-rune summaries, 120s `task_status` wait, 3 attempts, 50 continuations | `tasks.DefaultMaxDepth`, `DefaultMaxConcurrentPerParent`, `DefaultSummaryLimit`, `DefaultMaxStatusWait`, `DefaultMaxAttemptsPerTask`, `DefaultMaxContinuations` ([§2.13](#213-background-tasks)) |
 | `ToolOutputLimit` | 64 KiB per text part | `DefaultToolOutputLimit`; `-1` disables; applies to every tool, a sandbox tool's own cap included ([§2.7b](#27b-tool-results)) |
 | Input guardrails | concurrent with the model call | `Blocking: true` makes one a gate; injected input always blocking |
 | Session persistence | after each turn | Final turn is written after output guardrails pass |
