@@ -12,8 +12,7 @@ import (
 type Evaluation struct {
 	// Done ends the loop and reports the run as it stands.
 	Done bool
-	// Feedback is appended as a user message before the next attempt: the agent
-	// is told what was wrong with the answer it just gave.
+	// Feedback is appended as a user message before the next attempt.
 	Feedback string
 }
 
@@ -26,15 +25,12 @@ func Stop() Evaluation { return Evaluation{Done: true} }
 // Evaluator judges a finished run and says whether to accept it.
 type Evaluator func(ctx context.Context, res *agents.RunResult) (Evaluation, error)
 
-// Loop re-runs an agent until an evaluator accepts its answer: "finished" and
-// "good enough" are different questions, and the second belongs to the caller.
-// Each attempt streams through, so a watcher sees the rejected answers.
+// Loop re-runs an agent until an evaluator accepts its answer; each attempt
+// streams through, so a watcher sees the rejected ones.
 type Loop struct {
-	// Evaluate judges each attempt. A nil evaluator accepts the first
-	// attempt, which makes the middleware a pass-through.
+	// Evaluate judges each attempt; nil accepts the first, a pass-through.
 	Evaluate Evaluator
-	// MaxAttempts bounds the loop. Zero means 3 — an evaluator that never
-	// accepts would otherwise run forever on the caller's budget.
+	// MaxAttempts bounds the loop; zero means 3.
 	MaxAttempts int
 }
 
@@ -64,13 +60,12 @@ func (l Loop) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 			}
 			last = res
 
-			// A stop the caller asked for ends the LOOP, not just the attempt: the
-			// flag on the control is never cleared, so every attempt would restart (spec §2.12).
+			// A stop the caller asked for ends the loop, not just the attempt
+			// (spec §2.12).
 			if res.StoppedEarly {
 				break
 			}
-			// A paused run is the caller's or an inner middleware's to resolve,
-			// so it goes back unevaluated (spec §2.12).
+			// A paused run goes back unevaluated (spec §2.12).
 			if len(res.Interruptions) > 0 {
 				break
 			}
@@ -85,8 +80,8 @@ func (l Loop) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 			if ev.Done || attempt >= attempts {
 				break
 			}
-			// Carry the attempt forward, or the next run simply says it again. With
-			// a session the attempt is already history, so only the feedback goes (spec §2.12).
+			// With a session the attempt is already history, so only the
+			// feedback goes (spec §2.12).
 			feedback := agents.InputItemsFromText(ev.Feedback)
 			if in.Opts.Conversation.Session != nil {
 				input = feedback

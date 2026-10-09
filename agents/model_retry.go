@@ -15,9 +15,8 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// ErrAttemptTimeout and ErrIdleTimeout are the errors of an attempt the retry
-// layer's own clocks ended (RetryPolicy.AttemptTimeout / IdleTimeout), wrapped
-// in what the attempt returns — so a caller tells them from its own deadline.
+// ErrAttemptTimeout and ErrIdleTimeout are wrapped into the error of an
+// attempt the retry layer's own clocks ended — see spec §2.16.
 var (
 	ErrAttemptTimeout = errors.New("agents: model attempt timed out")
 	ErrIdleTimeout    = errors.New("agents: model stream idle timed out")
@@ -30,9 +29,8 @@ type RetryPolicy struct {
 	// <= 0 default to 3. Set to 1 to disable retrying.
 	MaxAttempts int
 
-	// BaseDelay is the backoff before the second attempt. Zero defaults to
-	// 500ms. Subsequent delays grow geometrically by Multiplier, capped at
-	// MaxDelay, with equal jitter applied.
+	// BaseDelay is the backoff before the second attempt (zero: 500ms); later
+	// delays grow by Multiplier, capped at MaxDelay, with equal jitter.
 	BaseDelay time.Duration
 	// MaxDelay caps the backoff. Zero defaults to 30s.
 	MaxDelay time.Duration
@@ -40,36 +38,28 @@ type RetryPolicy struct {
 	// default to 2.
 	Multiplier float64
 
-	// RetryIf reports whether an error is worth retrying. When nil,
-	// DefaultRetryIf is used (retry everything except context cancellation).
-	// For OpenAI-aware classification (retry 429/5xx, not 4xx), pass
-	// openai.RetryableError.
+	// RetryIf reports whether an error is worth retrying; nil means
+	// DefaultRetryIf (openai.RetryableError retries 429/5xx only).
 	RetryIf func(error) bool
 
-	// RetryAfter, when non-nil, extracts a server-suggested delay from an error
-	// (e.g. an HTTP Retry-After header); when it reports ok, that delay replaces
-	// the computed backoff. A hint longer than MaxDelay ends the retries with
-	// that error rather than being clamped — see wait. Pair with
+	// RetryAfter extracts a server-suggested delay that replaces the computed
+	// backoff; a hint longer than MaxDelay ends the retries. Pair with
 	// openai.RetryAfter.
 	RetryAfter func(error) (time.Duration, bool)
 
-	// AttemptTimeout bounds one attempt apart from the caller's ctx: a
-	// blocking call wholly, a streaming call until its first output event.
-	// Zero is no bound. An attempt it ends is retried; the error wraps
-	// ErrAttemptTimeout — see spec §2.16.
+	// AttemptTimeout bounds one attempt (a stream until its first output
+	// event); zero is no bound — see spec §2.16.
 	AttemptTimeout time.Duration
 	// IdleTimeout bounds the silence between two events of a streaming
-	// attempt, the first included. Zero is no bound. Before output the
-	// attempt is retried; after it the stream ends with ErrIdleTimeout.
+	// attempt; zero is no bound — see spec §2.16.
 	IdleTimeout time.Duration
 
-	// sleep waits for d or until ctx is done, returning ctx.Err() if cancelled.
-	// When nil, a real timer is used. Tests inject a fake to avoid real waits.
+	// sleep waits for d or until ctx is done; nil uses a real timer, tests
+	// inject a fake.
 	sleep func(ctx context.Context, d time.Duration) error
 }
 
-// retryPolicyJSON is the JSON-friendly representation of RetryPolicy, using
-// millisecond integer fields instead of time.Duration.
+// retryPolicyJSON is RetryPolicy with millisecond integer fields.
 type retryPolicyJSON struct {
 	MaxAttempts      int     `json:"max_attempts"`
 	BaseDelayMs      int     `json:"base_delay_ms"`
@@ -79,10 +69,7 @@ type retryPolicyJSON struct {
 	IdleTimeoutMs    int     `json:"idle_timeout_ms,omitempty"`
 }
 
-// UnmarshalJSON implements json.Unmarshaler. It accepts a JSON object with
-// millisecond delay fields (base_delay_ms, max_delay_ms) and converts them to
-// time.Duration, making RetryPolicy directly usable with json.Unmarshal from
-// configuration stores.
+// UnmarshalJSON implements json.Unmarshaler, reading millisecond delay fields.
 func (p *RetryPolicy) UnmarshalJSON(data []byte) error {
 	var raw retryPolicyJSON
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -97,8 +84,7 @@ func (p *RetryPolicy) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON implements json.Marshaler, producing the millisecond-based JSON
-// format that UnmarshalJSON consumes.
+// MarshalJSON implements json.Marshaler in the millisecond format UnmarshalJSON reads.
 func (p RetryPolicy) MarshalJSON() ([]byte, error) {
 	return json.Marshal(retryPolicyJSON{
 		MaxAttempts:      p.MaxAttempts,
@@ -110,8 +96,7 @@ func (p RetryPolicy) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// DefaultRetryIf retries every error except context cancellation or deadline
-// expiry (retrying those is pointless once the caller's context is done).
+// DefaultRetryIf retries every error except context cancellation or deadline expiry.
 func DefaultRetryIf(err error) bool {
 	if err == nil {
 		return false
@@ -266,8 +251,7 @@ func (req ModelRequest) stateful() bool {
 }
 
 // replaySafe reports a failure known not to have applied the request: the
-// server answered it (any error that is not transport-shaped), or the dial
-// itself failed. A deadline or a connection severed after the send is ambiguous.
+// server answered, or the dial itself failed — see spec §2.16.
 func replaySafe(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
 		return false
@@ -279,9 +263,8 @@ func replaySafe(err error) bool {
 	return !isNet
 }
 
-// retryable decides whether a failed attempt may be replaced: one the policy's
-// clock ended is, unless the request is stateful; otherwise RetryIf decides,
-// and a stateful request also needs the failure to be replay-safe.
+// retryable decides whether a failed attempt may be replaced; a stateful
+// request also needs a replay-safe failure — see spec §2.16.
 func (p RetryPolicy) retryable(req ModelRequest, err error, timedOut bool) bool {
 	if req.stateful() && (timedOut || !replaySafe(err)) {
 		return false
@@ -295,10 +278,8 @@ type retryModel struct {
 	policy RetryPolicy
 }
 
-// NewRetryModel wraps inner so that failing Respond calls (and
-// StreamResponse calls that fail before any output event) are retried per
-// policy. It is a provider-agnostic Model decorator; compose it with
-// NewFallbackModel.
+// NewRetryModel wraps inner so failing Respond calls, and StreamResponse
+// calls that fail before any output event, are retried per policy.
 func NewRetryModel(inner Model, policy RetryPolicy) Model {
 	return &retryModel{inner: inner, policy: policy}
 }
@@ -332,11 +313,8 @@ func (m *retryModel) Respond(ctx context.Context, req ModelRequest) (*ModelRespo
 	return nil, lastErr
 }
 
-// StreamResponse retries only while the inner stream has yielded no output:
-// pre-commit events are held back until the first output event commits the
-// attempt (deliverStreamAttempt), so a stream that dies early is retried like a
-// failed connection. Once output is emitted the attempt is committed and a
-// later error passes straight through. See decisions §5.16.
+// StreamResponse retries only while the inner stream has yielded no output;
+// pre-commit events are held back until the first output event — see decisions §5.16.
 func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
 	return func(yield func(*ResponseStreamEvent, error) bool) {
 		maxAttempts := m.policy.maxAttempts()
@@ -348,9 +326,7 @@ func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.
 				return
 			}
 			if a.err == nil {
-				// Clean finish: deliver held-back events (an all-pending stream
-				// still delivers rather than vanishing). Nothing follows, so the
-				// flush bool needs no check here.
+				// Clean finish: deliver the held-back events; nothing follows.
 				flushStreamEvents(a.pending, yield)
 				return
 			}
@@ -363,7 +339,8 @@ func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.
 					// truncated answer is explainable.
 					RecordDiagnostic(ctx, DiagStreamError, a.err, map[string]any{"attempt": attempt})
 				} else if !flushStreamEvents(a.pending, yield) {
-					// No further attempt: flush the held-back events ahead of the error.
+					// No further attempt: flush the held-back events ahead of
+					// the error.
 					return
 				}
 				yield(nil, a.err)
@@ -391,10 +368,8 @@ type retryProvider struct {
 	policy RetryPolicy
 }
 
-// NewRetryProvider wraps inner so that every Model it produces automatically
-// retries per policy. It is the provider-level counterpart of NewRetryModel —
-// use it when you know the retry policy at configuration time but not the model
-// name.
+// NewRetryProvider is the provider-level NewRetryModel: every Model it
+// produces retries per policy.
 func NewRetryProvider(inner ModelProvider, policy RetryPolicy) ModelProvider {
 	return &retryProvider{inner: inner, policy: policy}
 }

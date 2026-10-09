@@ -5,50 +5,40 @@ import (
 	"fmt"
 )
 
-// AgentToolConfig configures Agent.AsTool and AgentAsTool: the TOOL surface —
-// name, visibility, approval, error rendering, argument rendering. The nested
-// RUN is ModifyRunOptions's job (decisions §5.13).
+// AgentToolConfig configures Agent.AsTool and AgentAsTool: the tool surface;
+// the nested run is ModifyRunOptions's job — see decisions §5.13.
 type AgentToolConfig struct {
-	// Name is the tool name exposed to the calling agent. Defaults to the
-	// agent's name (sanitized) when empty.
+	// Name is the tool name exposed to the calling agent; defaults to the
+	// agent's name, sanitized.
 	Name string
 	// Description tells the calling model what the tool does and when to use it.
 	Description string
-	// CustomOutputExtractor, when set, derives the tool's string result from the
-	// nested run. By default the final output is used.
+	// CustomOutputExtractor derives the tool's string result from the nested
+	// run; the default is the final output.
 	CustomOutputExtractor func(*RunResult) (string, error)
 
-	// IsEnabled, when non-nil, is consulted before exposing the tool to the
-	// calling model; returning false hides it for that run.
+	// IsEnabled, when non-nil, hides the tool from the calling model on false.
 	IsEnabled func(ctx context.Context, rc *RunContext, agent *Agent) (bool, error)
 
-	// NeedsApproval pauses the parent run before the nested agent executes,
-	// surfacing a ToolApprovalItem — the agent tool is the approval gate.
+	// NeedsApproval pauses the parent run before the nested agent executes;
 	// NeedsApprovalFunc decides per call and takes precedence.
 	NeedsApproval     bool
 	NeedsApprovalFunc func(ctx context.Context, rc *RunContext, argsJSON, callID string) (bool, error)
 
-	// FailureErrorFunction overrides how a failed nested run is rendered back to
-	// the calling model. nil keeps DefaultToolErrorFunction. To make failures
-	// fatal instead, clear the field on the returned *Tool.
+	// FailureErrorFunction renders a failed nested run back to the calling
+	// model; nil keeps DefaultToolErrorFunction. Clear it on the *Tool for fatal.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
 
-	// ModifyRunOptions edits the nested run's RunOptions before it starts —
-	// the one channel for run-level configuration (a Session of its own,
-	// Exec.MaxTurns, a conversation, models, guardrails), applied over what is
-	// inherited (see nestedRunOptions). The nested run has no Session unless
-	// set here; a ConversationID set here is cleared when a paused run resumes.
+	// ModifyRunOptions edits the nested run's RunOptions, applied over what it
+	// inherits (nestedRunOptions). No Session unless set here.
 	ModifyRunOptions func(*RunOptions)
 
-	// OnStream, when non-nil, streams the nested run and delivers every event
-	// to the callback from one background goroutine, so a slow callback does
-	// not stall the run. Normal completion drains the callback; cancellation
-	// does not. A panic inside the callback is recovered and dropped.
+	// OnStream streams the nested run to the callback from one background
+	// goroutine; completion drains it, cancellation does not, a panic is dropped.
 	OnStream func(AgentToolStreamEvent)
 
-	// InputBuilder, when non-nil, renders the tool's JSON arguments into the
-	// nested run's input text in place of DefaultAgentToolInputBuilder; set
-	// AgentToolInputWithSchema to attach the full parameters schema.
+	// InputBuilder renders the tool's JSON arguments into the nested run's
+	// input text in place of DefaultAgentToolInputBuilder.
 	InputBuilder AgentToolInputBuilder
 }
 
@@ -57,8 +47,8 @@ type AgentToolConfig struct {
 type AgentToolStreamEvent struct {
 	// Event is the nested run's stream event.
 	Event StreamEvent
-	// Agent is the nested agent currently emitting events; it follows handoffs
-	// inside the nested run (tracked via AgentUpdatedStreamEvent).
+	// Agent is the nested agent currently emitting; it follows handoffs inside
+	// the nested run.
 	Agent *Agent
 	// ToolCallID, ToolName and Arguments identify the originating tool call in
 	// the parent run.
@@ -68,31 +58,26 @@ type AgentToolStreamEvent struct {
 }
 
 // AgentToolInvocation identifies the parent tool call that produced a nested
-// agent-as-tool run. It is exposed on the nested RunResult so a
-// CustomOutputExtractor can tell which call it is extracting for.
+// agent-as-tool run, exposed on the nested RunResult.
 type AgentToolInvocation struct {
 	ToolName   string
 	ToolCallID string
 	Arguments  string
 }
 
-// agentToolInput is the default argument schema for an agent tool: a single
-// input string forwarded to the nested agent.
+// agentToolInput is the default argument schema: one input string forwarded to
+// the agent.
 type agentToolInput struct {
 	Input string `json:"input" jsonschema:"The input to pass to the agent"`
 }
 
-// AsTool turns the agent into a Tool callable by other agents. Unlike a
-// handoff, the nested agent receives only the provided input and returns
-// control to the caller when done. The tool takes a single `input` string,
-// which becomes the nested run's input verbatim; AgentAsTool takes a custom
-// schema. The nested run inherits the parent's model provider, override,
-// settings, run-level guardrails and tracer.
+// AsTool turns the agent into a Tool callable by other agents: the nested run
+// takes the single `input` string verbatim and returns control when done
+// (AgentAsTool takes a custom schema) — see spec §2.8.
 func (a *Agent) AsTool(cfg AgentToolConfig) *Tool {
 	name := agentToolName(a, cfg)
 	schema, err := SchemaFor[agentToolInput](true)
 	if err != nil {
-		// agentToolInput is a fixed struct; its schema cannot fail to reflect.
 		panic(fmt.Sprintf("agents: AsTool(%q): schema generation failed: %v", a.Name, err))
 	}
 	validator := newSchemaValidator(schema)
@@ -103,10 +88,9 @@ func (a *Agent) AsTool(cfg AgentToolConfig) *Tool {
 	return agentTool(a, cfg, schema, agentToolSchemaInfo{}, validate)
 }
 
-// AgentAsTool is AsTool with a custom argument schema reflected from Params
-// (like NewTool); the arguments are rendered into the nested run's input by
-// DefaultAgentToolInputBuilder or cfg.InputBuilder. A free function because Go
-// methods cannot take type parameters.
+// AgentAsTool is AsTool with an argument schema reflected from Params; the
+// arguments are rendered into the nested run's input by cfg.InputBuilder or
+// DefaultAgentToolInputBuilder.
 func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *Tool {
 	name := agentToolName(a, cfg)
 	schema, err := SchemaFor[Params](true)
@@ -121,8 +105,8 @@ func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *Tool {
 	return agentTool(a, cfg, schema, buildStructuredSchemaInfo(schema), validate)
 }
 
-// agentToolName resolves an agent tool's name: the configured one, or the
-// agent's own name sanitized into a tool name.
+// agentToolName resolves an agent tool's name: cfg.Name, else the agent's name
+// sanitized.
 func agentToolName(a *Agent, cfg AgentToolConfig) string {
 	if cfg.Name != "" {
 		return cfg.Name
@@ -130,8 +114,8 @@ func agentToolName(a *Agent, cfg AgentToolConfig) string {
 	return transformToolName(a.Name)
 }
 
-// agentTool builds the Tool shared by AsTool and AgentAsTool. validate checks
-// the raw arguments against the schema the tool advertises.
+// agentTool builds the Tool shared by AsTool and AgentAsTool; validate checks
+// the raw arguments against the advertised schema.
 func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo, validate func(string) error) *Tool {
 	name := agentToolName(a, cfg)
 	failureFn := cfg.FailureErrorFunction
@@ -152,15 +136,14 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 			if cfg.ModifyRunOptions != nil {
 				cfg.ModifyRunOptions(&nestedOpts)
 			}
-			// Parent the nested run's agent spans under this tool call's
-			// function span so the trace tree shows which call owns the run.
+			// Parent the nested run's agent spans under this call's function span.
 			nestedOpts.parentSpanID = tc.functionSpanID
 
 			var res *RunResult
 			var err error
 			resumed := false
 			// On resume, continue the nested run this call paused, mirroring the
-			// parent's approve/reject decisions into it first.
+			// parent's approvals into it first.
 			if tc.RunContext != nil {
 				if paused := tc.takeNestedToolState(tc.ToolCallID); paused != nil {
 					resumed = true
@@ -174,8 +157,8 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 				}
 			}
 			if !resumed {
-				// Arguments face the whole-schema check first (spec §2.7h): a
-				// violation is a *ModelBehaviorError, not the nested run's prompt.
+				// Whole-schema check first; a violation is a
+				// *ModelBehaviorError — see spec §2.7h.
 				if verr := validate(argsJSON); verr != nil {
 					return ToolResult{}, verr
 				}
@@ -188,8 +171,8 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 			if err != nil {
 				return ToolResult{}, fmt.Errorf("agent tool %q run failed: %w", name, err)
 			}
-			// A paused nested run surfaces its interruptions to the parent via the
-			// sentinel; usage folds in when the resumed run completes.
+			// A paused nested run surfaces its interruptions to the parent via
+			// the sentinel.
 			if len(res.Interruptions) > 0 {
 				return ToolResult{}, &nestedRunInterrupt{
 					callID:        tc.ToolCallID,
@@ -197,8 +180,7 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 					interruptions: res.Interruptions,
 				}
 			}
-			// Fold the completed nested run's usage into the parent run's usage. Add is
-			// goroutine-safe, so concurrent agent-tool calls are fine.
+			// Fold the nested run's usage into the parent's; Add is goroutine-safe.
 			if tc.RunContext != nil && res.Usage != nil {
 				tc.Usage.Add(res.Usage)
 			}
@@ -215,8 +197,7 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 				}
 				out = custom
 			}
-			// Report the nested run's usage on the result so it is attributable
-			// to THIS tool call, not just folded into the run total.
+			// The result carries the nested usage too, attributed to this call.
 			result := resultFromValue(out)
 			result.Usage = res.Usage
 			return result, nil

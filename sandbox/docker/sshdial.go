@@ -24,10 +24,9 @@ const defaultSSHSocket = "/var/run/docker.sock"
 // defaultSSHConnectTimeout bounds the SSH handshake to a remote daemon.
 const defaultSSHConnectTimeout = 15 * time.Second
 
-// SSHAuth configures the SSH connection behind an ssh:// Host: how to
-// authenticate (methods are tried in order: agent, key, password; at least
-// one must be set) and how to verify the remote host key (the zero value
-// verifies against ~/.ssh/known_hosts).
+// SSHAuth configures the SSH connection behind an ssh:// Host: authentication
+// (tried in order: agent, key, password; at least one must be set) and host-key
+// verification (the zero value checks ~/.ssh/known_hosts).
 type SSHAuth struct {
 	// UseAgent authenticates using the local SSH agent (SSH_AUTH_SOCK).
 	UseAgent bool
@@ -117,9 +116,7 @@ func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 }
 
 // DialContext opens one channel to the remote daemon socket, (re)connecting
-// the SSH transport as needed: a transport failure drops the cached client
-// and retries once on a fresh connection, so a severed transport heals
-// without surfacing every queued request's error.
+// the SSH transport as needed; a transport failure retries once on a fresh one.
 func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
 	return d.dialThrough(ctx, "unix", d.socket)
 }

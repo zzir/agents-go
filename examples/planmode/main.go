@@ -1,18 +1,7 @@
-// Command planmode demonstrates plan mode, with a checklist tool beside it.
-//
-// middleware.Plan puts the run into plan mode: the agent explores with
-// read-only tools, submits a plan through submit_plan, and that call pauses
-// for approval like any approval-gated tool. Approving it unlocks the rest of
-// the toolset and the SAME run continues into execution; rejecting it (with a
-// message) sends the model back to planning.
-//
-// update_checklist is an ordinary tool of this program's own: the agent sends
-// its whole list of steps, and the function is where a UI would render it. It
-// is not read-only, so plan mode refuses it until the plan is approved.
-//
-// The review loop below is the whole integration: an interruption whose tool
-// is middleware.PlanToolName IS the plan review, and the plan text is in the
-// call's arguments.
+// Command planmode demonstrates plan mode: middleware.Plan confines the agent to
+// read-only tools until a plan submitted through submit_plan is approved, then
+// the SAME run continues into execution. A checklist tool of the program's own
+// sits beside it — see spec §2.12 and docs/howto/running_agents.md.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/planmode
 package main
@@ -61,9 +50,8 @@ func main() {
 	ctx := context.Background()
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 
-	// read_file is on middleware.DefaultReadOnlyTools, so it stays usable
-	// while planning; write_file is not, so calling it before the plan is
-	// approved answers with a refusal instead of writing.
+	// read_file is in DefaultReadOnlyTools, so it stays usable while planning;
+	// write_file is refused until the plan is approved.
 	readFile := agents.NewTool("read_file", "Read the project notes.",
 		func(context.Context, *agents.ToolContext, readArgs) (string, error) {
 			return "NOTES: the greeting in hello.txt is outdated.", nil
@@ -91,8 +79,8 @@ func main() {
 		Middlewares: []agents.RunMiddleware{plan},
 	}
 
-	// The same predicate the gate uses, so a host can say up front which
-	// tools stay usable while planning (and, in its own UI, which it asks about).
+	// The gate's own predicate, so a host can list up front what stays usable
+	// while planning.
 	readOnly := plan.ReadOnlySet()
 	fmt.Print("usable while planning:")
 	for _, t := range agent.Tools {
@@ -107,8 +95,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// The plan review loop. A real host would show the plan to a human here;
-	// this example approves whatever arrives.
+	// The plan review: an interruption on PlanToolName carries the plan in its
+	// arguments. A real host shows it to a human; this approves whatever arrives.
 	for len(res.Interruptions) > 0 {
 		for _, item := range res.Interruptions {
 			if item.ToolName == middleware.PlanToolName {

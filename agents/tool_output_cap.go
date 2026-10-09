@@ -5,9 +5,8 @@ import (
 	"unicode/utf8"
 )
 
-// capToolOutput bounds the text a tool result sends to the model — spec §2.7b.
-// Text parts are elided, other parts kept; a value that is neither is capped
-// as the text it would be sent as.
+// capToolOutput bounds the text a tool result sends to the model; text parts
+// are elided, other parts kept — see spec §2.7b.
 func capToolOutput(out any, limit int) any {
 	if limit < 0 {
 		return out

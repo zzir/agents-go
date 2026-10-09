@@ -97,9 +97,8 @@ func StopManaged(ctx context.Context, opts Options, name string) error {
 	})
 }
 
-// RemoveManaged force-removes the named container — the "rebuild" act: the
-// next run recreates it from the current configuration. Refuses a container
-// this package did not create.
+// RemoveManaged force-removes the named container, so the next run recreates
+// it from the current configuration; refuses one this package did not create.
 func RemoveManaged(ctx context.Context, opts Options, name string) error {
 	return withManaged(ctx, opts, name, func(cli *client.Client, id string) error {
 		_, err := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: false})
@@ -107,21 +106,16 @@ func RemoveManaged(ctx context.Context, opts Options, name string) error {
 	})
 }
 
-// ManagedNamePrefix is the guard prefix for a volume reclaim: this package does
-// not mint names (the caller supplies ContainerName/VolumeName), so a volume —
-// which carries no ownership label a container's fingerprint would — is only
-// removed when its name begins with this. Callers derive names with it.
+// ManagedNamePrefix guards a volume reclaim: a volume carries no ownership
+// label, so RemoveManagedVolume refuses a name outside it. Callers derive names
+// with it.
 const ManagedNamePrefix = "agents-"
 
 // ErrVolumeNotFound reports a volume call naming a volume that is not there.
-// A caller reclaiming storage has already got what it asked for and continues.
 var ErrVolumeNotFound = errors.New("volume not found")
 
-// RemoveManagedVolume removes the named volume from the daemon opts describes
-// — the storage reclaim. Unlike the container calls there is no ownership
-// label to verify (the daemon creates a named volume implicitly on first
-// mount), so this refuses any name outside ManagedNamePrefix; callers derive
-// the name from an id they own and never take it from a request.
+// RemoveManagedVolume removes the named volume from the daemon opts describes,
+// refusing a name outside ManagedNamePrefix.
 func RemoveManagedVolume(ctx context.Context, opts Options, name string) error {
 	if !strings.HasPrefix(name, ManagedNamePrefix) {
 		return fmt.Errorf("docker sandbox: %q is not a managed volume name", name)
@@ -141,8 +135,7 @@ func RemoveManagedVolume(ctx context.Context, opts Options, name string) error {
 }
 
 // ErrContainerNotFound reports a managed-container call naming a container
-// that is not there. A caller removing one to replace it has already got what
-// it asked for and continues; a caller acting on a listing reports it.
+// that is not there.
 var ErrContainerNotFound = errors.New("container not found")
 
 // withManaged verifies ownership (the fingerprint label) before act runs, and

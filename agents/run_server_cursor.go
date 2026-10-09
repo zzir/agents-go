@@ -2,8 +2,6 @@ package agents
 
 // serverCursor tracks what a server-managed conversation already holds, so
 // each turn sends only the delta; the zero value resends the full input.
-// responseID chains previous_response_id calls; conversationActive marks a
-// conversation the server already holds; itemCount is the delta's start.
 type serverCursor struct {
 	responseID         string
 	itemCount          int

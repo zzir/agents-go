@@ -6,19 +6,16 @@ import (
 	"slices"
 )
 
-// ContextBudget tells the model how much of its context window is in use.
-// InputFilter appends the figure as the last input item of every model call
-// and leaves the instructions alone, so a cached prefix stays cached (spec §2.5i).
+// ContextBudget tells the model how much of its context window is in use;
+// InputFilter appends the figure as the last input item of every call — see spec §2.5i.
 type ContextBudget struct {
 	// Window is the model's context window in tokens. Zero sends nothing.
 	Window int
-	// WindowFor, when set, answers the active agent's window, so a handoff
-	// to an agent on another model reports that one; a zero answer falls
-	// back to Window.
+	// WindowFor answers the active agent's window (a handoff may change the
+	// model); a zero answer falls back to Window.
 	WindowFor func(agent *Agent) int
 	// Occupied is what the last model call before this run measured, input
-	// and output together. Zero means unknown: the run's first call then
-	// carries no figure, and every later call uses the run's own usage.
+	// and output together; zero means unknown, and later calls use the run's own usage.
 	Occupied int64
 }
 
@@ -40,9 +37,8 @@ func (b ContextBudget) InputFilter() CallModelInputFilter {
 	}
 }
 
-// serverManaged reports a run whose history lives with the provider: only
-// new items go on the wire and the provider keeps them, so a notice per call
-// would pile up in the thread rather than replace the last one.
+// serverManaged reports a run whose history lives with the provider, where a
+// notice per call would pile up rather than replace the last one.
 func serverManaged(rc *RunContext) bool {
 	if rc == nil || rc.inheritedOpts == nil {
 		return false
@@ -62,7 +58,7 @@ func (b ContextBudget) used(rc *RunContext) int64 {
 	return b.Occupied
 }
 
-// notice renders the one line the model reads (format: spec §4).
+// notice renders the one line the model reads — see spec §4.
 func notice(used int64, window int) string {
 	left := max(100-used*100/int64(window), 0)
 	return fmt.Sprintf("Context budget: about %d of %d tokens in use (%d%% left).", used, window, left)

@@ -13,34 +13,28 @@ import (
 )
 
 // Run starts an agent run and returns it as a stream plus a control handle.
-// Nothing executes until the stream is ranged: the run happens on the
-// consumer's goroutine, and abandoning the stream stops the run (spec §2.0).
-// input is a string or a []InputItem.
+// Ranging the stream executes the run on the consumer's goroutine; abandoning
+// it stops the run — see spec §2.0. input is a string or a []InputItem.
 //
 //	stream, ctrl := agents.Run(ctx, agent, "hi", agents.RunOptions{})
 //	for ev, err := range stream {
 //	    if err != nil { return err }
 //	    ...
 //	}
-//
-// To stop cleanly at a turn boundary, call ctrl.StopAfterTurn and keep
-// ranging. A ToolProgressEvent is yielded from the tool's own goroutine
-// (spec §2.7g; docs/howto/streaming.md).
 func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (RunStream, RunControl) {
 	ctrl := newRunControl()
 	return withMiddleware(ctx, agent, input, opts, ctrl, true), ctrl
 }
 
-// RunSync executes a run to completion and returns its result: Run without
-// the stream, so the model is called without streaming and no raw events are
-// produced.
+// RunSync executes a run to completion and returns its result; the model is
+// called without streaming.
 func RunSync(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunResult, error) {
 	ctrl := newRunControl()
 	return withMiddleware(ctx, agent, input, opts, ctrl, false).Collect()
 }
 
-// singleUse guards a RunStream against being ranged twice: a second range
-// would silently re-execute the run, so it yields an error instead.
+// singleUse makes a second range of a RunStream yield an error instead of
+// re-executing the run.
 func singleUse(stream RunStream) RunStream {
 	var consumed atomic.Bool
 	return func(yield func(StreamEvent, error) bool) {
@@ -52,8 +46,7 @@ func singleUse(stream RunStream) RunStream {
 	}
 }
 
-// withMiddleware builds the run's stream through the middleware chain; input
-// is normalized once, up front, so a middleware edits the list the loop uses.
+// withMiddleware builds the run's stream through the middleware chain.
 func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *runControl, rawEvents bool) RunStream {
 	base := func(ctx context.Context, in RunInput) RunStream {
 		return func(yield func(StreamEvent, error) bool) {
@@ -63,8 +56,8 @@ func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOption
 	return runViaMiddleware(ctx, agent, input, opts, ctrl, base)
 }
 
-// runViaMiddleware is the pipeline fresh runs and resumes share: normalize the
-// input once, wrap base in the middleware chain, hand out a single-use stream.
+// runViaMiddleware is the pipeline fresh runs and resumes share: normalize
+// the input once, wrap base in the middleware chain, hand out a single-use stream.
 func runViaMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *runControl, base RunFunc) RunStream {
 	return singleUse(func(yield func(StreamEvent, error) bool) {
 		items, err := normalizeInput(input)
@@ -81,8 +74,8 @@ func runViaMiddleware(ctx context.Context, agent *Agent, input any, opts RunOpti
 	})
 }
 
-// runStream is the body shared by Run and RunSync: prepare, loop, and report
-// the outcome as the stream's terminal event or error. Input is normalized.
+// runStream is the body shared by Run and RunSync: prepare, loop, report the
+// outcome as the stream's terminal event or error.
 func runStream(ctx context.Context, agent *Agent, input []InputItem, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) {
 	r, modelInput, finishTrace, err := prepareRun(ctx, agent, input, opts)
 	if err != nil {
@@ -95,8 +88,8 @@ func runStream(ctx context.Context, agent *Agent, input []InputItem, opts RunOpt
 	r.finishStream(res, err)
 }
 
-// execute runs the loop under the run's own diagnostics sink and cancellation
-// root, which emit cancels (cause errConsumerStopped) when the consumer leaves.
+// execute runs the loop under the run's diagnostics sink and cancellation
+// root (emit cancels it when the consumer leaves).
 func (r *runner) execute(ctx context.Context, agent *Agent, input []InputItem) (*RunResult, error) {
 	ctx = WithDiagnostics(ctx, r.diagnostics)
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -105,18 +98,18 @@ func (r *runner) execute(ctx context.Context, agent *Agent, input []InputItem) (
 	return r.loop(ctx, agent, input)
 }
 
-// finishStream reports a completed loop to the consumer and closes the stream
-// behind it. A consumer that already stopped is told nothing further.
+// finishStream reports a completed loop to the consumer and closes the
+// stream; a consumer that already stopped is told nothing further.
 func (r *runner) finishStream(res *RunResult, err error) {
-	// A completed attempt delivered its injection take; a failed or abandoned
-	// one returns it so a retrying middleware's next attempt delivers it.
+	// A failed or abandoned attempt returns its injection take for the next
+	// attempt — see spec §2.11b.
 	if err != nil || r.closed.Load() {
 		r.ctrl.rollbackInjected()
 	} else {
 		r.ctrl.commitInjected()
 	}
-	// Closed under emitMu, before it is released: a tool goroutine that
-	// outlived its call finds the stream closed, not a returned yield.
+	// Closed under emitMu so a tool goroutine that outlived its call finds the
+	// stream closed.
 	r.emitMu.Lock()
 	defer r.emitMu.Unlock()
 	defer r.closed.Store(true)
@@ -130,21 +123,20 @@ func (r *runner) finishStream(res *RunResult, err error) {
 	r.yield(&RunCompletedEvent{Result: res}, nil)
 }
 
-// turnState is what the loop carries from turn to turn. The item log itself is
-// runner.sessionItems; the model's view of it is the tail from generatedFrom.
+// turnState is what the loop carries from turn to turn.
 type turnState struct {
 	originalInput []InputItem
 	rawResponses  []*ModelResponse
 	agent         *Agent
 
 	// startTurn is the first turn this loop runs (past 1 on a resume);
-	// pendingResponse is a resume's interrupted response, re-processed on that
-	// turn instead of calling the model.
+	// pendingResponse is a resume's interrupted response, re-processed instead
+	// of a model call.
 	startTurn       int
 	pendingResponse *ModelResponse
 
-	// cursor is what a server-managed conversation already holds, so each turn
-	// sends only the delta. A resume restores the pause-time cursor.
+	// cursor is what a server-managed conversation already holds; each turn
+	// sends the delta.
 	cursor serverCursor
 
 	// pending is PrepareNextTurn's snapshot for the next turn; runStartHooks
@@ -164,40 +156,38 @@ type runner struct {
 	trace     *tracing.TraceHandle // non-nil when tracing is enabled
 	agentSpan *tracing.SpanHandle  // current agent span, parent of generation/tool spans
 
-	// state is the loop's carried turn state (see turnState), on the runner so
-	// fail, baseResult, finishRun and buildPauseState can report the run.
+	// state is the loop's carried turn state, on the runner so the report
+	// paths (fail, baseResult, finishRun, buildPauseState) can read it.
 	state *turnState
 
-	// yield delivers events to the consumer. Always set (RunSync discards);
-	// once it returns false emit records closed and the loop unwinds.
+	// yield delivers events to the consumer; once it returns false emit
+	// records closed and the loop unwinds.
 	yield func(StreamEvent, error) bool
 
-	// ctrl is the handle the caller got back from Run: the graceful-stop flag
-	// and the injection queue.
+	// ctrl is the caller's handle: the graceful-stop flag and the injection queue.
 	ctrl *runControl
 
-	// rawEvents streams the model call so raw events reach the consumer — the
-	// one difference between Run and RunSync.
+	// rawEvents streams the model call — the one difference between Run and RunSync.
 	rawEvents bool
 
 	// closed marks the stream ended; emit yields nothing after it. Atomic: a
-	// tool goroutine may set it while the loop reads it lock-free.
+	// tool goroutine may set it.
 	closed atomic.Bool
 
-	// cancelRun cancels the run's context (cause errConsumerStopped) when the
-	// consumer stops ranging — spec §2.0.
+	// cancelRun cancels the run's context when the consumer stops ranging — see
+	// spec §2.0.
 	cancelRun context.CancelCauseFunc
 
-	// sessionItems is the run's item log: everything the run produced, in
-	// order, for RunResult.NewItems and session persistence. Append-only.
+	// sessionItems is the run's append-only item log, for RunResult.NewItems
+	// and session persistence.
 	sessionItems []*RunItem
 
-	// generatedFrom is where the model's view of the log begins (see
-	// generatedItems); a handoff filter or recompaction moves it — spec §2.1.
+	// generatedFrom is where the model's view of the log begins; a handoff
+	// filter or recompaction moves it — see spec §2.1.
 	generatedFrom int
 
-	// persistedSessionItems counts how many leading sessionItems the session
-	// already holds; carried across interrupt/resume in RunState.
+	// persistedSessionItems counts the leading sessionItems the session
+	// already holds; carried in RunState.
 	persistedSessionItems int
 
 	// userInputSaved guards the one-time persistence of userInput.
@@ -208,58 +198,51 @@ type runner struct {
 
 	// diagnostics collects trouble the run survived. Never nil.
 	diagnostics *DiagnosticSink
-	// diagnosticsSaved is how many diagnostics are already attached to
-	// entries, so each lands on the turn it happened in.
+	// diagnosticsSaved is how many diagnostics are already attached to entries.
 	diagnosticsSaved int
 
-	// log is the run's logger, already tagged with the run's identity. Never
-	// nil — a disabled logger is a no-op rather than a check at every site.
+	// log is the run's logger, tagged with the run's identity. Never nil.
 	log *runLogger
 
-	// lastUsage is the most recent model response's usage, held so the entries
-	// that response produced can carry it.
+	// lastUsage is the most recent model response's usage, for the entries it produced.
 	lastUsage *Usage
 
-	// usagePending marks a model response whose usage has not yet landed on an
-	// entry; cleared on attribution — spec §2.7f.
+	// usagePending marks a model response whose usage has not yet landed on
+	// an entry — see spec §2.7f.
 	usagePending bool
 
-	// inputGuardrailsRan keeps an overflow retry of the first turn from running
-	// the input guardrails a second time.
+	// inputGuardrailsRan keeps an overflow retry of the first turn from
+	// running the input guardrails again.
 	inputGuardrailsRan bool
 
-	// inputRace holds the first turn's non-blocking input guardrails while they
-	// race the model call; the loop's deferred stop cancels them on any exit.
+	// inputRace holds the first turn's racing input guardrails; the loop's
+	// deferred stop cancels them on any exit.
 	inputRace *inputGuardRace
 
-	// overflowRetries counts compact-and-retry attempts across the whole run,
-	// not per turn.
+	// overflowRetries counts compact-and-retry attempts across the whole run.
 	overflowRetries int
 
 	// injectedUpTo is the sessionItems length just past the latest injected
-	// input; a session write commits the in-flight injections only once it has
-	// persisted past it.
+	// input; a session write past it commits the in-flight injections.
 	injectedUpTo int
 
-	// disclosed names the deferred tools a ToolResult has opened up; carried on
-	// RunState so a resume does not re-hide them.
+	// disclosed names the deferred tools a ToolResult has opened up; carried in
+	// RunState.
 	disclosed map[string]bool
 
 	// consecutiveErrorTurns counts turns in a row where every tool call failed
-	// (spec §2.7d).
+	// — see spec §2.7d.
 	consecutiveErrorTurns int
 
-	// toolsUsedBy tracks which agents have called tools (tool_choice reset).
-	// Keyed by name so RunState carries it across a pause for every agent.
+	// toolsUsedBy tracks which agents have called tools (tool_choice reset), by name.
 	toolsUsedBy map[string]bool
 
-	// lastResponseID / lastStore record the final model call's response id and
-	// store setting, used to drive session compaction after persistence.
+	// lastResponseID / lastStore record the final model call's response id
+	// and store setting, for session compaction after persistence.
 	lastResponseID string
 	lastStore      *bool
 
-	// guardrailMu guards guardrailResults: tool stages record from per-call
-	// goroutines while input/output stages record from the main loop.
+	// guardrailMu guards guardrailResults: tool stages record from per-call goroutines.
 	guardrailMu      sync.Mutex
 	guardrailResults []GuardrailResult
 }
@@ -273,10 +256,8 @@ func (r *runner) agentParentID() string {
 }
 
 func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []InputItem) (*RunResult, error) {
-	// Finish the active agent span when the loop ends (nil-safe when untraced).
+	// Both nil-safe; the deferred stop cancels a racing guardrail on every exit.
 	defer func() { r.agentSpan.Finish() }()
-	// The deferred stop covers every early exit, so a racing LLM-based
-	// guardrail is cancelled instead of running on after the run returned.
 	defer func() { r.inputRace.stop() }()
 
 	seed := r.seedLoop(startAgent, originalInput)
@@ -296,18 +277,16 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		slog.Int("tools", len(st.agent.Tools)),
 		slog.Bool("session", r.opts.Conversation.Session != nil))
 
-	// Announce the starting agent before the first turn, for both fresh and
-	// resumed runs.
+	// Announce the starting agent before the first turn, fresh or resumed.
 	if !r.emit(&AgentUpdatedStreamEvent{NewAgent: st.agent}) {
 		return nil, errConsumerStopped
 	}
 
 	for turn := st.startTurn; ; turn++ {
-		// A graceful stop lands at the turn boundary: the finished turn's
-		// tools and session save are in, so the run ends cleanly.
+		// A graceful stop lands at the turn boundary — see spec §2.11b.
 		if turn > st.startTurn && r.ctrl.stopRequested() {
-			// Input the save point drained before the stop arrived is written
-			// here, which commits its take — see spec §2.11b.
+			// Input drained before the stop arrived is written here, committing
+			// its take.
 			if err := r.persistSessionItems(ctx); err != nil {
 				return nil, r.fail(err)
 			}
@@ -317,8 +296,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 			return res, nil
 		}
 		if r.maxTurns > 0 && turn > r.maxTurns {
-			// FinalTurnWithoutTools grants THIS turn, tool-free and once; the
-			// next overrun is the real end (spec §2.7d).
+			// FinalTurnWithoutTools grants this turn, tool-free and once — see
+			// spec §2.7d.
 			if r.opts.Exec.ToolLoop.FinalTurnWithoutTools && !st.finalTurn {
 				r.log.Info(ctx, "turn budget exhausted; one final turn without tools",
 					slog.Int("max_turns", r.maxTurns))
@@ -336,8 +315,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 				return nil, r.fail(maxErr)
 			}
 		}
-		// A cancellation at the turn boundary fails the run like any mid-loop
-		// error, so completed turns reach the caller via RunError.Result.
+		// A cancellation at the turn boundary fails the run like any mid-loop error.
 		if err := ctx.Err(); err != nil {
 			return nil, r.fail(err)
 		}
@@ -347,8 +325,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 			return nil, err
 		}
 		if retry {
-			// The context overflowed and compaction shortened it: run THIS
-			// turn again — the budget counts calls the model got.
+			// Overflow compacted away: run this turn again — see spec §2.5g.
 			turn--
 			continue
 		}
@@ -362,8 +339,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		if err != nil {
 			return nil, r.fail(err)
 		}
-		// On a fresh turn NewStepItems begins with the model's own items, which
-		// runTurn already emitted; a resumed turn holds side-effect items only.
+		// A fresh turn's NewStepItems begins with the model's items, already
+		// emitted by runTurn; a resumed turn holds side-effect items only.
 		emitFrom := len(call.processed.NewItems)
 		if call.resumed {
 			emitFrom = 0
@@ -375,8 +352,8 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		if len(call.processed.ToolsUsed) > 0 {
 			r.markToolsUsed(st.agent)
 		}
-		// The server now holds what was sent plus the model's output; synthesized
-		// items stay pending. A resumed turn's cursor was restored from RunState.
+		// The server now holds what was sent plus the model's output; a
+		// resumed turn's cursor was restored from RunState.
 		if !call.resumed {
 			st.cursor.advance(r.opts.Conversation, call.resp, len(preStep), len(call.processed.NewItems))
 		}
@@ -404,7 +381,7 @@ type turnCall struct {
 	resp      *ModelResponse
 	processed *processedResponse
 	// resumed marks a resume's first turn: the interrupted response is
-	// re-processed, its items emitted and its usage counted before the pause.
+	// re-processed; its items and usage were already handled before the pause.
 	resumed bool
 }
 
@@ -428,8 +405,7 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 		r.agentSpan = r.trace.StartAgentSpan(st.agent.Name, r.opts.parentSpanID)
 	}
 
-	// Server-managed history gets only the items the server lacks, otherwise
-	// the full history. A Blocking input guardrail's Replace rebuilds it below.
+	// Server-managed history gets only the delta, otherwise the full history.
 	turnInput, prevID, usedOriginalInput, err := r.buildTurnInput(st.cursor, st.originalInput, r.generatedItems())
 	if err != nil {
 		return nil, false, r.fail(err)
@@ -438,8 +414,7 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 	if err != nil {
 		return nil, false, r.fail(err)
 	}
-	// A snapshot a turn hook prepared replaces the resolved one — all but its
-	// Input, which is the runner's (see TurnSnapshot).
+	// A prepared snapshot replaces the resolved one, all but Input — see spec §2.3b.
 	if st.pending != nil {
 		st.pending.Input = turnInput
 		snapshot = st.pending
@@ -448,16 +423,12 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 	tools, handoffs := snapshot.Tools, snapshot.Handoffs
 	modelInput := snapshot.Input
 	if st.finalTurn {
-		// Offered a tool the model would call one, and the budget would be
-		// exhausted again with nothing said.
 		tools, handoffs = nil, nil
 	}
-	// Input guardrails, hooks and tools all see exactly what the model is
-	// sent; InputFilter may still edit it, in which case this is refreshed.
+	// What the model is sent; refreshed if InputFilter edits it — see spec §2.2.
 	r.rc.setTurnInput(modelInput)
 
-	// First turn only: Blocking input guardrails gate the call, the rest race
-	// it (run_input_guardrails.go). A resume or overflow retry already ran them.
+	// First turn only: Blocking input guardrails gate the call, the rest race it.
 	if turn == st.startTurn && r.resume == nil && !r.inputGuardrailsRan {
 		r.inputGuardrailsRan = true
 		gate, gerr := r.firstTurnInputGuardrails(ctx, st.agent, st.originalInput, usedOriginalInput, snapshot,
@@ -506,8 +477,8 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 		slog.Int64("input_tokens", usageOr(resp.Usage).InputTokens),
 		slog.Int64("output_tokens", usageOr(resp.Usage).OutputTokens))
 	r.lastResponseID = resp.ResponseID
-	// The settings the REQUEST carried, not the agent's: a turn hook may have
-	// replaced the snapshot, and compaction reads Store off this.
+	// The settings the request carried, not the agent's; compaction reads Store
+	// off this.
 	if snapshot.Settings != nil {
 		r.lastStore = snapshot.Settings.Store
 	} else {
@@ -517,8 +488,7 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 		r.lastUsage = resp.Usage
 		r.usagePending = true
 	} else if r.resume != nil && r.resume.usagePending {
-		// The pause withheld this response's items, so its usage debt transfers
-		// to the resumed batch once — spec §2.7f.
+		// The pause withheld this response's usage; it transfers once — see spec §2.7f.
 		r.lastUsage = resp.Usage
 		r.usagePending = true
 	}
@@ -548,17 +518,15 @@ func loopReturn(res *RunResult, err error) stepAction {
 }
 
 // handleFinalOutput ends the run, unless a late steer or queued follow-up
-// continues it in the same trace/usage/session.
+// continues it — see spec §2.11b.
 func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *singleStepResult) stepAction {
-	// A caller's stop outranks a late steer or follow-up, which stays queued —
-	// see spec §2.11b.
+	// A caller's stop outranks a late steer or follow-up, which stays queued.
 	var extra []InputItem
 	if !r.ctrl.stopRequested() {
 		var err error
 		if extra, err = r.takeScreened(ctx, st.agent, r.ctrl.takeContinuation); err != nil {
-			// The answer was reached before the refused input: a trip saves it,
-			// then fails the run on the verdict. Any other error leaves the
-			// take in flight, to be rolled back with the attempt.
+			// A trip saves the answer reached before the refused input, then
+			// fails on the verdict.
 			if _, tripped := errors.AsType[*GuardrailTripwireError](err); tripped {
 				if perr := r.persistSessionItems(ctx); perr != nil {
 					err = perr
@@ -568,7 +536,7 @@ func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *sin
 		}
 	}
 	if len(extra) > 0 {
-		// Appended before the closing write, so that write commits the take.
+		// Appended before the closing write, which commits the take.
 		injected := injectedInput(st.agent, extra)
 		r.appendInjected(injected)
 		if err := r.persistSessionItems(ctx); err != nil {
@@ -589,13 +557,11 @@ func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *sin
 // handleHandoff persists the turn, offers the stop hook, applies any input
 // filter, then switches to the new agent.
 func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleStepResult, snapshot *TurnSnapshot, resp *ModelResponse, turn int) stepAction {
-	// Persist before the input filter restarts the model's view: what is
-	// stored is the whole log.
+	// Persist before the input filter restarts the model's view.
 	if err := r.persistSessionItems(ctx); err != nil {
 		return loopReturn(nil, r.fail(err))
 	}
-	// A handoff is a turn boundary; ask to stop before the filter runs so the
-	// hook sees the turn as it happened.
+	// A handoff is a turn boundary; the stop hook sees the turn as it happened.
 	stop, out, serr := r.stopAfterTurn(ctx, st.agent, &TurnResult{
 		Turn: turn, Response: resp, NewItems: step.NewStepItems, Snapshot: snapshot,
 	})
@@ -611,7 +577,7 @@ func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleS
 	}
 	if step.Handoff != nil {
 		if filter := r.handoffInputFilter(step.Handoff); filter != nil {
-			// The server holds the unfiltered history; a filtered view desyncs.
+			// The server holds the unfiltered history; a filtered view would desync.
 			if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
 				err := NewUserError("handoff input filters (including NestHandoffHistory) are not supported with server-managed conversation state (UsePreviousResponseID / ConversationID)")
 				return loopReturn(nil, r.fail(err))
@@ -636,13 +602,13 @@ func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleS
 }
 
 // handleInterruption persists the completed part of the turn and returns the
-// pause state; the injections it consumed ride in the persisted item log.
+// pause state.
 func (r *runner) handleInterruption(ctx context.Context, step *singleStepResult, resp *ModelResponse, turn int) stepAction {
 	if err := r.persistSessionItems(ctx); err != nil {
 		return loopReturn(nil, r.fail(err))
 	}
-	// Commit only after the persist succeeds: a failed attempt leaves the take
-	// for finishStream to roll back and redeliver.
+	// Commit only after the persist succeeds; a failed one is rolled back by
+	// finishStream.
 	r.ctrl.commitInjected()
 	r.agentSpan.Set("ended_by", "interruption")
 	r.agentSpan.Set("pending_tools", pendingToolNames(step.Interruptions))
@@ -673,8 +639,7 @@ func (r *runner) handleRunAgain(ctx context.Context, st *turnState, step *single
 		return loopReturn(res, nil)
 	}
 	if sp.Recompacted {
-		// The rebuilt context already holds this run's items, so the model's
-		// view starts over.
+		// The rebuilt context already holds this run's items.
 		st.originalInput = sp.Input
 		r.restartGenerated()
 	}
@@ -688,8 +653,8 @@ func (r *runner) handleRunAgain(ctx context.Context, st *turnState, step *single
 	return loopAgain()
 }
 
-// emitItems delivers each item to the stream, returning false when the consumer
-// abandoned the run (the caller then returns errConsumerStopped).
+// emitItems delivers each item to the stream; false means the consumer
+// abandoned the run.
 func (r *runner) emitItems(items []*RunItem) bool {
 	for _, it := range items {
 		if !r.emitItem(it) {
@@ -699,25 +664,23 @@ func (r *runner) emitItems(items []*RunItem) bool {
 	return true
 }
 
-// appendInjected records injected input on the log and advances the
-// persist-boundary high-water; the caller emits and persists afterward.
+// appendInjected records injected input on the log and advances injectedUpTo.
 func (r *runner) appendInjected(injected []*RunItem) {
 	r.sessionItems = append(r.sessionItems, injected...)
 	r.injectedUpTo = len(r.sessionItems)
 }
 
-// generatedItems is the model's view of the log, after originalInput. Clipped,
-// so an appending caller reallocates instead of writing into the log.
+// generatedItems is the model's view of the log, clipped so an appender cannot
+// write into it.
 func (r *runner) generatedItems() []*RunItem {
 	return slices.Clip(r.sessionItems[r.generatedFrom:])
 }
 
-// restartGenerated empties the model's view of the log; the caller has folded
-// the log so far into originalInput.
+// restartGenerated empties the model's view of the log (now folded into originalInput).
 func (r *runner) restartGenerated() { r.generatedFrom = len(r.sessionItems) }
 
-// modelCallOutcome is how one turn's model call ended: resp, retry (an
-// overflow was compacted away), or err (fail-wrapped or errConsumerStopped).
+// modelCallOutcome is how one turn's model call ended: resp, retry (overflow
+// compacted away), or err.
 type modelCallOutcome struct {
 	resp  *ModelResponse
 	retry bool
@@ -728,8 +691,8 @@ type modelCallOutcome struct {
 // user-input save, InputFilter, the span, the raced call, overflow recovery.
 func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot, req ModelRequest) modelCallOutcome {
 	st := r.state
-	// The one-time user-input save lands here, not at loop start, so a failure
-	// ahead of the first model call leaves no orphan user message (spec §2.5).
+	// The one-time user-input save lands just ahead of the first model call —
+	// see spec §2.5.
 	if err := r.persistUserInput(ctx); err != nil {
 		return modelCallOutcome{err: r.fail(err)}
 	}
@@ -740,7 +703,7 @@ func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot
 			return modelCallOutcome{err: r.fail(ferr)}
 		}
 		req.SystemInstructions, req.Input = edited.Instructions, edited.Input
-		// A snapshot is what the model was sent, so the edit lands on it too.
+		// The snapshot is what the model was sent; the edit lands on it too.
 		snap.Instructions, snap.Input = edited.Instructions, edited.Input
 		r.rc.setTurnInput(req.Input)
 	}
@@ -750,8 +713,7 @@ func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot
 		slog.Int("tools", len(req.Tools)),
 		Sensitive("instructions", req.SystemInstructions))
 	span := r.startGenerationSpan(st.agent, req)
-	// Retries happen inside the model call, where the runner cannot reach; the
-	// span rides on the context so they nest under it.
+	// The span rides on the context so retries inside the model call nest under it.
 	call := func(ctx context.Context) (*ModelResponse, error) {
 		ctx = tracing.WithSpan(ctx, span)
 		if r.rawEvents {
@@ -762,10 +724,9 @@ func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot
 	var resp *ModelResponse
 	var err error
 	if race := r.inputRace; race != nil {
-		// First-turn racing input guardrails watch the call from the side.
 		out := r.raceModelCall(span, call, race, st.originalInput)
-		// Release the race's contexts now, not at loop exit, or a long-lived
-		// parent ctx keeps the registrations alive. Idempotent with stop.
+		// Release the race's contexts now, not at loop exit. Idempotent with
+		// the deferred stop.
 		race.stop()
 		r.inputRace = nil
 		st.originalInput = out.original
@@ -794,15 +755,15 @@ func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot
 		return modelCallOutcome{err: r.fail(err)}
 	}
 	r.finishGenerationSpan(span, resp)
-	// The model call completed and any first-turn input guardrails passed, so
-	// bill usage and surface the response to OnLLMEnd.
+	// Billed only once the call completed and the first-turn guardrails passed
+	// — see spec §2.6.
 	r.rc.Usage.Add(resp.Usage)
 	st.rawResponses = append(st.rawResponses, resp)
 	return modelCallOutcome{resp: resp}
 }
 
-// buildPauseState captures everything ResumeRun needs to continue this run,
-// here or in another process.
+// buildPauseState captures everything ResumeRun needs to continue this run, in
+// any process.
 func (r *runner) buildPauseState(turn int, resp *ModelResponse, step *singleStepResult) *RunState {
 	// Under nestedMu: a timed-out tool's orphan goroutine may still be taking
 	// nested states.
@@ -831,8 +792,7 @@ func (r *runner) buildPauseState(turn int, resp *ModelResponse, step *singleStep
 		ContextFresh:          r.rc.contextFresh.Load(),
 		ReasoningItemIDPolicy: r.opts.Exec.ReasoningItemIDPolicy,
 		cursor:                st.cursor,
-		// First-turn input guardrails are not re-run on resume: this is the
-		// only source of their results.
+		// First-turn input guardrails are not re-run on resume.
 		GuardrailResults: r.snapshotGuardrailResults(),
 		nestedToolStates: mergeNestedStates(carriedNested, step.NestedStates),
 		usagePending:     r.usagePending,

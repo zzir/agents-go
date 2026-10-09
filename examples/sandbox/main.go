@@ -1,16 +1,6 @@
 // Command sandbox shows an agent that writes, reads and runs code in a sandbox.
-//
-// This example uses sandbox.NewLocalWithOptions with a temporary WorkDir, which
-// runs code on the host WITHOUT isolation — fine for a trusted local demo, but
-// never for untrusted code in production. To isolate execution, swap in the
-// Docker backend (a separate module so this example stays dependency-light):
-//
-//	import "github.com/zzir/agents-go/sandbox/docker"
-//	sb, _ := docker.New(docker.Options{
-//		Image:      "python:3.12-slim",
-//		Persistent: true,
-//		Limits:     sandbox.Limits{MemoryBytes: 256 << 20, CPUs: 0.5},
-//	})
+// The local backend runs on the host with NO isolation; swap in sandbox/docker
+// (its own module) for untrusted code — see docs/howto/sandbox.md.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/sandbox   (host needs python3)
 package main
@@ -40,16 +30,12 @@ func run() error {
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
-	// Dev-only, unisolated backend. See the package doc above for Docker.
-	// MaxReadFileBytes caps what a single read_file can pull into memory
-	// (0 = the 8 MiB default); every backend has the same option.
+	// Host-local, unisolated. MaxReadFileBytes caps one read_file (0 = the 8
+	// MiB default).
 	sb := sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workDir, MaxReadFileBytes: 1 << 20})
 	defer sb.Close()
 
-	// exec_command runs shell commands; read_file / write_file / list_files
-	// give the agent native file I/O; apply_patch applies Codex-style multi-file
-	// patches. All of them edit through the same Sandbox, so they share the
-	// filesystem exec_command runs in.
+	// exec_command, the file tools and apply_patch all share the sandbox filesystem.
 	tools := []*agents.Tool{
 		sandbox.CodeTool(sb, sandbox.CodeToolConfig{
 			Name:        "exec_command",

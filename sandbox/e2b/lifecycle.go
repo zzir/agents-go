@@ -9,10 +9,8 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// Start provisions the sandbox — creating it, or resuming a paused one — on
-// a fresh full lease (a runway of the whole TTL forces the one connect). It is
-// what ensure already does on the first command, exposed so a person can wait
-// for the provisioning where they can see it.
+// Start provisions the sandbox — creating it, or resuming a paused one — on a
+// fresh full lease; it is what ensure does on the first command, on request.
 func (s *Sandbox) Start(ctx context.Context) error {
 	if _, err := s.ensureFor(ctx, time.Duration(s.timeout())*time.Second); err != nil {
 		return err
@@ -20,12 +18,8 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	return s.ensureWorkDir(ctx)
 }
 
-// Stop pauses the sandbox, keeping its filesystem. On a service that
-// snapshots memory the processes come back too — which is MORE than
-// sandbox.Lifecycle promises, and nothing here may rely on it (spec §2.7p).
-//
-// A sandbox that was never provisioned stops nothing: there is no compute to
-// release, and creating one in order to pause it would be absurd.
+// Stop pauses the sandbox, keeping its filesystem (spec §2.7p); a sandbox never
+// provisioned stops nothing.
 func (s *Sandbox) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	id := s.id
@@ -48,8 +42,7 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 	return err
 }
 
-// Status reports the sandbox's state without provisioning one: an id we have
-// never had, or one the service no longer knows, is absent. A record that
+// Status reports the sandbox's state without provisioning one; a record that
 // says running is confirmed through the daemon — see decisions §5.71.
 func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 	id := s.currentID()
@@ -71,9 +64,8 @@ func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 	return s.health(ctx, id)
 }
 
-// Destroy kills the sandbox AND the stored state behind it. It is not part of
-// any sandbox interface: destroying data is a decision the workbench makes on
-// a project delete, never something a Close could do by accident.
+// Destroy kills the sandbox AND the stored state behind it; it is part of no
+// sandbox interface, so no Close reaches it by accident.
 func (s *Sandbox) Destroy(ctx context.Context) error {
 	s.mu.Lock()
 	id := s.id
@@ -94,9 +86,8 @@ func (s *Sandbox) Destroy(ctx context.Context) error {
 // sandbox provisioned yet, or the service no longer has the one this client held.
 var ErrNoSandbox = errors.New("e2b: no sandbox to address")
 
-// Address is where the sandbox's ports are public — "<port>-<id>.<domain>",
-// the service's own scheme. It is a read: it neither provisions nor resumes,
-// and changes nothing on the client (spec §2.7u).
+// Address is where the sandbox's ports are public — "<port>-<id>.<domain>". It
+// is a read: it neither provisions nor resumes (spec §2.7u).
 func (s *Sandbox) Address(ctx context.Context) (id, domain string, err error) {
 	id = s.currentID()
 	if id == "" {

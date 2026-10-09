@@ -12,8 +12,8 @@ import (
 type Decision int
 
 const (
-	// Ask leaves the interruption for a human. It is the zero value, so a
-	// policy that does not recognize a call defers rather than deciding.
+	// Ask leaves the interruption for a human; the zero value, so an
+	// unrecognized call defers.
 	Ask Decision = iota
 	// Allow approves the call.
 	Allow
@@ -21,9 +21,8 @@ const (
 	Deny
 )
 
-// ApprovalPolicy decides a pending tool call without a human. Returning Ask
-// for anything it does not recognize is the point: a policy is a shortcut for
-// calls a human has already ruled on, not a replacement for asking.
+// ApprovalPolicy decides a pending tool call without a human, returning Ask
+// for anything it does not recognize.
 type ApprovalPolicy func(ctx context.Context, item *agents.ToolApprovalItem) (Decision, string)
 
 // AllowTools approves any call to the named tools and defers the rest.
@@ -40,18 +39,13 @@ func AllowTools(names ...string) ApprovalPolicy {
 	}
 }
 
-// Approval answers approval interruptions from a policy and resumes the run,
-// so a caller only sees the pauses the policy declined to decide. A run pauses
-// again, unresumed, as soon as the policy returns Ask for any call in the
-// batch: an interruption is per-turn, and approving half of one would run
-// tools the human has not seen yet.
+// Approval answers approval interruptions from a policy and resumes the run, so
+// a caller only sees the pauses the policy declined to decide; one Ask in a
+// batch leaves the whole interruption unresumed.
 type Approval struct {
-	// Policy decides. A nil policy settles nothing, so every interruption
-	// reaches the caller as if the middleware were not there.
+	// Policy decides; nil settles nothing, so every interruption reaches the caller.
 	Policy ApprovalPolicy
-	// MaxResumes bounds how many times the middleware resumes one run. Zero
-	// means 25 — a policy that keeps approving a tool that keeps being called
-	// would otherwise loop on the caller's budget.
+	// MaxResumes bounds how many times the middleware resumes one run; zero means 25.
 	MaxResumes int
 }
 
@@ -96,8 +90,7 @@ func (a Approval) Run(ctx context.Context, next agents.RunFunc, in agents.RunInp
 	}
 }
 
-// decide applies the policy to every pending call, reporting whether all of
-// them were settled.
+// decide applies the policy to every pending call, reporting whether all were settled.
 func (a Approval) decide(ctx context.Context, res *agents.RunResult) bool {
 	settled := true
 	for _, item := range res.Interruptions {

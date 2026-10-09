@@ -1,9 +1,7 @@
 // Package sessions provides SQL-backed session.Storage implementations (SQLite
-// and PostgreSQL) on uptrace/bun, as a separate module so the drivers never
-// reach the core SDK's dependency graph. Entries are stored one row per entry,
-// the whole entry serialized as JSON in one column: entry kinds and payloads
-// are an open set, so a column per field would make every new kind a schema
-// migration, and a build meeting an unknown kind must still read the row back.
+// and PostgreSQL) on uptrace/bun, a separate module so the drivers stay out of
+// the core (decisions §5.7). An entry is one row, the whole entry serialized as
+// JSON in one column: entry kinds are an open set, so no column per field.
 package sessions
 
 import (
@@ -31,13 +29,11 @@ type entry struct {
 
 	ID        int64  `bun:"id,pk,autoincrement"`
 	SessionID string `bun:"session_id,notnull"`
-	// Gen is the session generation these entries belong to; see
-	// session.Ref. Empty is the direct scope, which is a scope like any
-	// other and not a wildcard.
+	// Gen is the session generation these entries belong to (session.Ref);
+	// empty is the direct scope, a scope like any other, not a wildcard.
 	Gen string `bun:"gen,notnull"`
-	// Seq is the entry's cursor position, allocated by session.PrepareAppend —
-	// session-local, unlike the table-wide autoincrement id, so it survives a
-	// fork or an export between stores.
+	// Seq is the entry's cursor position (session.PrepareAppend), session-local
+	// so it survives a fork or an export between stores.
 	Seq      int64  `bun:"seq,notnull"`
 	EntryID  string `bun:"entry_id,notnull"`
 	ParentID string `bun:"parent_id"`
@@ -75,9 +71,8 @@ func New(db *bun.DB, sessionID string) *Session {
 	return &Session{db: db, ref: session.Direct(sessionID)}
 }
 
-// capSQLitePool caps a SQLite pool at one connection, so a transaction owns it
-// (spec §2.5e2): a second writer would fail at once with SQLITE_BUSY, which a
-// CAS UPDATE cannot tell from "lost". Any other dialect keeps the caller's pool.
+// capSQLitePool caps a SQLite pool at one connection so a transaction owns it
+// (spec §2.5e2): a second writer's SQLITE_BUSY is indistinguishable from a lost CAS.
 func capSQLitePool(db *bun.DB) {
 	if db.Dialect().Name() == dialect.SQLite {
 		db.SetMaxOpenConns(1)
@@ -90,8 +85,8 @@ func forRef(db *bun.DB, ref session.Ref) *Session {
 	return &Session{db: db, ref: ref}
 }
 
-// scoped narrows a query to this session; reads and writes both go through it,
-// making the generation part of the address rather than a forgettable field.
+// scoped narrows a query to this session's (id, gen); reads and writes both go
+// through it.
 func (s *Session) scoped(q *bun.SelectQuery) *bun.SelectQuery {
 	return q.Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen)
 }
@@ -125,11 +120,9 @@ func NewPostgres(sqldb *sql.DB, sessionID string) (*Session, *bun.DB) {
 	return New(db, sessionID), db
 }
 
-// CreateSchema creates the agent_entries table and its lookup indexes if they
-// do not already exist. It is safe to call repeatedly. The entry indexes are
-// UNIQUE, and that is load-bearing: sequence numbers and entry ids are never
-// handed out twice (spec §2.5e2), so a duplicate becomes a failed write. This
-// project ships no migrations — rebuild the database on a schema change.
+// CreateSchema creates the tables and indexes if absent; safe to call repeatedly.
+// The entry indexes are UNIQUE: a sequence number or entry id handed out twice
+// is a failed write (spec §2.5e2). No migrations ship (decisions §5.59).
 func CreateSchema(ctx context.Context, db *bun.DB) error {
 	// The task table comes with it (and CreateTaskSchema creates the session
 	// table), so either entry point leaves a consistent schema.
@@ -148,8 +141,7 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 		Exec(ctx); err != nil {
 		return err
 	}
-	// Point lookups by entry id: without this, resolving one entry means
-	// reading the whole session.
+	// Point lookups by entry id (Entry).
 	if _, err := db.NewCreateIndex().
 		Model((*entry)(nil)).
 		Index("idx_agent_entries_entry_id").
@@ -224,7 +216,8 @@ func (s *Session) lockForWrite(ctx context.Context, tx bun.Tx) error {
 }
 
 // touchIn records that the session changed and, for a repo-created session,
-// proves it still EXISTS: zero rows means deleted, and the write rolls back (spec §2.5e2).
+// proves it still EXISTS: zero rows means deleted, and the write rolls back
+// (spec §2.5e2).
 func (s *Session) touchIn(ctx context.Context, tx bun.Tx) error {
 	res, err := tx.NewUpdate().Model((*sessionRow)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).
@@ -267,9 +260,8 @@ func (s *Session) Append(ctx context.Context, entries ...session.Entry) error {
 	})
 }
 
-// Clear implements session.Storage, removing every entry for this session ID
-// under the same write lock every other entry write holds — an unlocked clear
-// could land between an append's tip-read and its insert.
+// Clear implements session.Storage, removing every entry for this session under
+// the same write lock every other entry write holds (spec §2.5e2).
 func (s *Session) Clear(ctx context.Context) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := s.lockForWrite(ctx, tx); err != nil {
@@ -283,11 +275,9 @@ func (s *Session) Clear(ctx context.Context) error {
 	})
 }
 
-// ReplaceEntries implements session.AtomicReplacer: the delete of the old
-// history and the insert of the new one run in a single transaction, so a
-// failure mid-rewrite rolls back to the previous history instead of leaving the
-// session empty. Only this session ID's rows are touched. The high-water mark
-// is read inside the same transaction — see lockForWrite.
+// ReplaceEntries implements session.AtomicReplacer: delete and insert run in
+// one transaction, so a failed rewrite rolls back to the previous history. The
+// high-water mark is read inside it — see lockForWrite.
 func (s *Session) ReplaceEntries(ctx context.Context, entries ...session.Entry) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		return s.replaceIn(ctx, tx, entries)

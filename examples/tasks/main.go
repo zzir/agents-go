@@ -1,16 +1,7 @@
 // Command tasks demonstrates background sub-agents: a tool call spawns a child
-// run with its own session, the parent does not wait, and the parent is woken
-// with the result when the child finishes.
-//
-// The interesting part is what the Manager does that a plain "go run an agent"
-// does not: the wake-up is owed durably, so a parent that is busy when the task
-// finishes is woken at its next boundary rather than never; a cancellation does
-// not wake at all; and a task cannot spawn tasks.
-//
-// Everything environment-specific arrives through three injection points, and
-// this program supplies the simplest possible versions of them: agents are a
-// map, launching is a goroutine, and waking is allowed whenever the parent is
-// not already running.
+// run with its own session, the parent does not wait, and it is woken with the
+// result at its next boundary. The host supplies agents, launching and waking
+// through three injection points — see spec §2.13 and docs/howto/tasks.md.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/tasks
 package main
@@ -30,8 +21,7 @@ import (
 	"github.com/zzir/agents-go/models/openai"
 )
 
-// inherit is this program's opaque configuration payload: which agent a run
-// should use. The SDK carries it without looking inside.
+// inherit is the host's opaque configuration payload: which agent a run uses.
 type inherit struct {
 	Agent string `json:"agent"`
 }
@@ -62,8 +52,8 @@ func main() {
 		Store:    store,
 		Sessions: repo,
 
-		// "What is this agent called?" name is "" when the coordinator spawns
-		// itself; this program has only the researcher to run tasks as.
+		// name is "" when the coordinator spawns itself; only the researcher
+		// runs tasks here.
 		Resolver: tasks.AgentResolver(func(_ context.Context, _, name string) (tasks.Spec, error) {
 			name = cmp.Or(name, "researcher")
 			if _, ok := catalog[name]; !ok {
@@ -73,14 +63,13 @@ func main() {
 			return tasks.Spec{DisplayName: name, Inherit: raw}, nil
 		}),
 
-		// "Start a run." It returns immediately; the run happens on its own
-		// goroutine and reports back through OnRunFinished.
+		// Starts a run on its own goroutine; it reports back through OnRunFinished.
 		Launcher: tasks.Launcher(func(_ context.Context, req tasks.LaunchRequest) error {
 			mu.Lock()
 			if running[req.SessionID] {
 				mu.Unlock()
-				// Losing this race is normal and not an error: the debt stays
-				// pending and the winner's boundary re-drains it.
+				// Losing this race is not an error: the debt stays pending for
+				// the winner's boundary.
 				return fmt.Errorf("session %s is busy", req.SessionID)
 			}
 			running[req.SessionID] = true
@@ -105,9 +94,8 @@ func main() {
 					log.Println("open session:", err)
 					return
 				}
-				// RunID names the attempt: a task retried while this run was
-				// in flight must not have its new attempt overwritten by this
-				// one's outcome.
+				// RunID names the attempt, so a retry's new attempt is not
+				// overwritten — see docs/howto/tasks.md.
 				out := tasks.RunOutcome{RunID: req.RunID, Status: tasks.StatusCompleted}
 				res, err := agents.RunSync(context.Background(), agent, req.Input, agents.RunOptions{
 					Model:        agents.ModelOptions{Provider: provider},
@@ -118,16 +106,15 @@ func main() {
 				} else {
 					out.Text = res.FinalOutputString()
 				}
-				// The single entry point that advances task state — for task
-				// sessions AND parent sessions.
+				// The single entry point that advances task state, for task and
+				// parent sessions.
 				mgr.OnRunFinished(context.Background(), req.SessionID, out)
 			})
 			return nil
 		}),
 
-		// A task reached a terminal state and its parent has not heard. The
-		// HOST decides what that means: a real server records a durable debt
-		// and pays it when the parent session is free. Here, one line.
+		// A task ended and its parent has not heard; a real host records a
+		// durable debt here.
 		OnFinished: func(_ context.Context, t *tasks.Task) {
 			fmt.Printf("  • %q finished (%s) — its parent owes itself a turn\n", t.Label, t.Status)
 		},
@@ -166,8 +153,8 @@ func main() {
 	}
 	fmt.Printf("parent said: %s\n", res.FinalOutputString())
 
-	// Spawn one directly as well, so the lifecycle below runs whatever the
-	// model decided to do. This is the same call spawn_task makes.
+	// Spawn one directly too (the same call spawn_task makes), whatever the
+	// model decided.
 	fmt.Println("\nspawning one directly…")
 	if _, err := mgr.Spawn(ctx, tasks.SpawnRequest{
 		ParentSessionID: "parent",
@@ -178,8 +165,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Let the task finish and the wake-up land. A server would not wait like
-	// this — its own run boundaries drive everything.
+	// Let the task finish and the wake-up land; a server's own run boundaries
+	// drive this.
 	wg.Wait()
 	time.Sleep(100 * time.Millisecond)
 	wg.Wait()

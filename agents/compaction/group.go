@@ -1,6 +1,6 @@
 // Package compaction shrinks a session's history so a long conversation keeps
 // fitting in a model's context window. The unit of work is a group, not an
-// entry: a strategy only ever includes or excludes whole groups.
+// entry: a strategy only ever includes or excludes whole groups (decisions §5.56).
 package compaction
 
 import (
@@ -17,8 +17,7 @@ const (
 	GroupUser
 	// GroupAssistantText is assistant prose with no tool calls.
 	GroupAssistantText
-	// GroupToolCall is a tool call, its output, and any reasoning that led to
-	// it — the pairing that must never be split.
+	// GroupToolCall is a tool call, its output, and any reasoning that led to it.
 	GroupToolCall
 	// GroupSummary is a compaction checkpoint.
 	GroupSummary
@@ -49,24 +48,21 @@ func (k GroupKind) String() string {
 type Group struct {
 	Kind    GroupKind
 	Entries []session.Entry
-	// TurnIndex is the conversation turn this group belongs to, counted from
-	// user messages. Nil for system content and for entries outside the
-	// conversation, which belong to no turn.
+	// TurnIndex is the conversation turn this group belongs to, counted from user
+	// messages; nil for system content and entries outside the conversation.
 	TurnIndex *int
 	// Tokens is the group's estimated size.
 	Tokens int
 
-	// Excluded marks a group a strategy removed from the context. The group is
-	// NOT deleted: exclusion is a view (spec §2.5f).
+	// Excluded marks a group a strategy removed from the context; nothing is
+	// deleted (spec §2.5f).
 	Excluded bool
-	// settled marks an exclusion a later model call has already priced in: its
-	// usage measured the view WITHOUT this group, so ContextTokens stops subtracting it.
+	// settled marks an exclusion a later model call has priced in, so ContextTokens
+	// stops subtracting it — see spec §2.5f.
 	settled bool
-	// ExcludeReason names the strategy that excluded it, for tracing and for
-	// telling a user why their history shrank.
+	// ExcludeReason names the strategy that excluded it.
 	ExcludeReason string
-	// Replacement, when set, is what the group projects to instead of its
-	// entries — a folded tool-result summary, for example.
+	// Replacement, when set, is what the group projects to instead of its entries.
 	Replacement []session.Entry
 }
 
@@ -97,8 +93,8 @@ func classify(e session.Entry) (kind GroupKind, isCall, isOutput, isReasoning bo
 	case "assistant":
 		return GroupAssistantText, false, false, false
 	}
-	// A message with no role and no known type is an item kind this build does
-	// not model; treat it as assistant content so it stays in context.
+	// A message with no role is an item kind this build does not model; keep it
+	// in context.
 	if p.Type == "message" {
 		return GroupAssistantText, false, false, false
 	}

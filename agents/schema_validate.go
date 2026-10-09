@@ -62,10 +62,8 @@ func (v *schemaValidator) Validate(raw []byte) error {
 	return nil
 }
 
-// ApplyDefaults fills in the schema's default values for keys the instance
-// omits, returning the completed JSON. It never errors: anything that goes
-// wrong (uncompilable schema, unfittable default, re-marshal failure) degrades
-// to the input unchanged.
+// ApplyDefaults fills in the schema's defaults for keys the instance omits;
+// anything that goes wrong degrades to the input unchanged.
 func (v *schemaValidator) ApplyDefaults(raw []byte) []byte {
 	res, ok := v.resolve()
 	if !ok {

@@ -9,11 +9,9 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
-// The session layer speaks the runner's wire aliases: these ARE the
-// agents-package types, redeclared so this package needs nothing from the runner.
+// The wire types, aliased here so this package needs nothing from the runner.
 type (
-	// InputItem is a single item in the model input list, in OpenAI Responses
-	// format.
+	// InputItem is a single item in the model input list, in Responses format.
 	InputItem = responses.ResponseInputItemUnionParam
 	// OutputItem is a single item produced by the model.
 	OutputItem = responses.ResponseOutputItemUnion
@@ -25,19 +23,15 @@ func rawInputOverride(raw string) InputItem {
 	return param.Override[InputItem](json.RawMessage(raw))
 }
 
-// MarshalInputItem serializes an input item to JSON. It is the inverse of
-// UnmarshalInputItem and is the encoding Session implementations should use.
+// MarshalInputItem serializes an input item to JSON; UnmarshalInputItem is its inverse.
 func MarshalInputItem(item InputItem) ([]byte, error) {
 	return json.Marshal(item)
 }
 
-// UnmarshalInputItem decodes an input item previously produced by
-// MarshalInputItem. It works around two openai-go quirks: assistant messages
-// with output content must decode into ResponseOutputMessageParam (the union
-// decoder would match EasyInputMessageParam first and silently drop their
-// content), and "easy" role messages serialize without a "type" discriminator,
-// so the union decoder cannot auto-detect them. Session implementations should
-// use it when reading stored items.
+// UnmarshalInputItem decodes an item MarshalInputItem produced, around two
+// openai-go quirks: an assistant message with output content decodes as
+// ResponseOutputMessageParam (the union would drop its content), and an "easy"
+// role message has no "type" discriminator for the union to detect it by.
 func UnmarshalInputItem(data []byte) (InputItem, error) {
 	var item InputItem
 	var probe struct {
@@ -54,23 +48,22 @@ func UnmarshalInputItem(data []byte) (InputItem, error) {
 	if err := json.Unmarshal(data, &item); err == nil {
 		return item, nil
 	}
-	// An easy input message ({"role","content"}) has no "type" discriminator:
-	// decode it directly, requiring a role so arbitrary JSON is rejected.
+	// No "type" discriminator: decode directly, requiring a role so arbitrary
+	// JSON is rejected.
 	var easy responses.EasyInputMessageParam
 	if err := json.Unmarshal(data, &easy); err == nil && easy.Role != "" {
 		return InputItem{OfMessage: &easy}, nil
 	}
-	// A typed item the union does not know keeps its bytes: stored history can
-	// outlive this SDK's type coverage. "type" is required so malformed JSON errors.
+	// An unknown typed item keeps its bytes (history outlives this build's types);
+	// "type" is required so malformed JSON errors.
 	if typ := probe.Type; typ != "" {
 		return rawInputOverride(string(data)), nil
 	}
 	return item, fmt.Errorf("decoding input item: unrecognized item shape: %s", data)
 }
 
-// ItemText returns an input item's readable text, or "" for an item that has
-// none (a tool call, a reasoning block). Content may be a bare string or an
-// array of parts; both shapes are read.
+// ItemText returns an input item's readable text, "" for one with none (a tool
+// call, a reasoning block); content may be a bare string or parts.
 func ItemText(item InputItem) string {
 	raw, err := MarshalInputItem(item)
 	if err != nil {
@@ -80,7 +73,7 @@ func ItemText(item InputItem) string {
 }
 
 // UserText returns the text of every role=="user" message in items, trimmed
-// and joined by newlines — the string a user bubble shows; "" when there is none.
+// and joined by newlines; "" when there is none.
 func UserText(items []InputItem) string {
 	var parts []string
 	for _, item := range items {
@@ -135,8 +128,8 @@ func RenderItem(raw json.RawMessage) string {
 	return textFromRaw(raw)
 }
 
-// JSONText unwraps a JSON string, and falls back to the raw JSON for a
-// structured payload; "" for nothing.
+// JSONText unwraps a JSON string, the raw JSON for a structured payload; "" for
+// nothing.
 func JSONText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -148,8 +141,8 @@ func JSONText(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// textFromRaw extracts a serialized item's "content" as either a bare string
-// or an array of text parts, the two shapes the Responses API accepts.
+// textFromRaw extracts a serialized item's "content", a bare string or an array
+// of text parts.
 func textFromRaw(raw []byte) string {
 	var probe struct {
 		Content json.RawMessage `json:"content"`

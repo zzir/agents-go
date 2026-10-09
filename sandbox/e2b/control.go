@@ -92,8 +92,8 @@ func (s *Sandbox) ensureFor(ctx context.Context, runway time.Duration) (string, 
 	s.freshWorkDir = true
 	s.mu.Unlock()
 	s.adopt(info)
-	// A sandbox nobody can hand back is billed compute nobody will stop: a failed
-	// record kills it, bounded so a hung control plane cannot wedge provMu.
+	// A failed record kills the sandbox (decisions §5.34), bounded so a hung
+	// control plane cannot wedge provMu.
 	if s.opts.OnSandboxID != nil {
 		if rerr := s.opts.OnSandboxID(ctx, id); rerr != nil {
 			kctx, kcancel := context.WithTimeout(context.WithoutCancel(ctx), controlCallTimeout)
@@ -142,15 +142,13 @@ func (s *Sandbox) create(ctx context.Context, runway time.Duration) (sandboxInfo
 	body := map[string]any{
 		"templateID": s.opts.TemplateID,
 		"timeout":    s.leaseSeconds(runway),
-		// ALWAYS secure: without it envd takes no credential at all, and the sandbox
-		// id is in every public hostname (decisions §5.34).
+		// Always secure — see decisions §5.34.
 		"secure": true,
 	}
 	if s.opts.AutoPause {
 		body["autoPause"] = true
 	}
-	// Internet is OFF by default, sent explicitly either way — the service's own
-	// default is ON (decisions §5.37).
+	// Sent explicitly either way — see decisions §5.37.
 	body["allow_internet_access"] = s.opts.AllowInternet
 	if len(s.opts.Metadata) > 0 {
 		body["metadata"] = s.opts.Metadata
@@ -170,9 +168,8 @@ func (s *Sandbox) get(ctx context.Context, id string) (sandboxInfo, error) {
 	return out, err
 }
 
-// resume connects to the sandbox via `connect`, the endpoint every service
-// documents (not the deprecated `resume`): a paused sandbox is resumed, a
-// running one's lease is extended — spec §2.7u.
+// resume connects to the sandbox via `connect` (not the deprecated `resume`):
+// a paused sandbox is resumed, a running one's lease extended — spec §2.7u.
 func (s *Sandbox) resume(ctx context.Context, id string, runway time.Duration) (sandboxInfo, error) {
 	var out sandboxInfo
 	err := s.control(ctx, http.MethodPost, "/sandboxes/"+id+"/connect", map[string]any{"timeout": s.leaseSeconds(runway)}, &out)

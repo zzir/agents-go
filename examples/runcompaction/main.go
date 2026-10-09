@@ -1,16 +1,6 @@
-// Command runcompaction demonstrates run-level compaction: the run is given a
-// compaction.Strategy and consults it at three points — before the first model
-// call, at each turn boundary, and after the run.
-//
-// The turn-boundary pass is the one that matters here. A single run that keeps
-// calling tools can overrun its context window long before the run ends, and
-// this example forces that: the tool returns a large blob, the thresholds are
-// tiny, and ToolResultStrategy folds the older results away mid-run while the
-// conversation itself stays intact.
-//
-// Nothing is deleted. The strategy marks groups excluded and leaves a one-line
-// summary behind; the session's log still holds every original entry, which is
-// what the counts printed at the end show.
+// Command runcompaction demonstrates run-level compaction: a bulky tool result
+// and tiny thresholds make ToolResultStrategy fold older results mid-run, while
+// the session's log keeps every entry — see spec §2.5f.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/runcompaction
 package main
@@ -35,8 +25,7 @@ func main() {
 	ctx := context.Background()
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 
-	// A tool with a deliberately bulky result — the shape compaction exists
-	// for: it mattered for one turn and never again.
+	// A deliberately bulky result: it matters for one turn and never again.
 	readFile := agents.NewTool("read_file", "Read a file.",
 		func(_ context.Context, _ *agents.ToolContext, a readArgs) (string, error) {
 			return strings.Repeat("<file contents> ", 200), nil
@@ -49,14 +38,11 @@ func main() {
 		Tools:        []*agents.Tool{readFile},
 	}
 
-	// Cheap and lossless first, lossy only if that was not enough. A pipeline
-	// that reaches for truncation before folding tool results pays more for a
-	// worse context.
+	// Lossless first, lossy only if that was not enough — see docs/howto/sessions.md.
 	strategy := &compaction.PipelineStrategy{Strategies: []compaction.Strategy{
 		&compaction.ToolResultStrategy{
-			// Size is the trigger you would tune in production. The group count
-			// is here so the example still demonstrates something against a
-			// stub endpoint that reports a two-token response.
+			// Size is the trigger to tune in production; the group count keeps
+			// the demo folding against a stub endpoint that reports two tokens.
 			Trigger: compaction.Any(
 				compaction.TokensExceed(1_500),
 				compaction.GroupsExceed(3),
@@ -91,10 +77,8 @@ func main() {
 		fmt.Printf("\n> %s\n%s\n", prompt, res.FinalOutputString())
 	}
 
-	// The log kept everything; only the context shrank. Ask the compactor what
-	// a fourth run would be given — the passes above ran before this run's last
-	// two entries existed, so re-running it is what makes the two numbers
-	// comparable.
+	// The log kept everything; only the context shrank. Re-run the compactor so
+	// the two counts cover the same entries, this run's last two included.
 	entries, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		log.Fatal(err)

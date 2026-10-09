@@ -1,18 +1,6 @@
-// Command middleware demonstrates run middleware: policy layered over the run
-// loop instead of built into it.
-//
-// Two of them stack here, outermost first:
-//
-//	Loop     — re-runs the agent until an evaluator accepts the answer
-//	Approval — answers approval pauses from a standing rule and resumes
-//
-// The Loop is the interesting one. The run loop knows when a model has finished
-// talking and nothing more; whether the answer is good enough is the caller's
-// question, and here it is answered by a rule the agent keeps forgetting.
-//
-// The ORDER matters, and this one is the reason: Approval must sit inside Loop.
-// Outside it, Loop's first attempt would come back paused with no answer at
-// all, and the evaluator would be judging an empty string.
+// Command middleware stacks two run middlewares, outermost first: Loop re-runs
+// the agent until an evaluator accepts the answer; Approval answers approval
+// pauses from a standing rule. Approval sits inside Loop — see spec §2.12.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/middleware
 package main
@@ -36,8 +24,7 @@ func main() {
 	ctx := context.Background()
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 
-	// A tool that needs approval. The policy below answers for it, so this
-	// program never has to write a resume loop.
+	// Needs approval; the policy below answers for it, so no resume loop here.
 	lookup := agents.NewTool("lookup", "Look a topic up in the archive.",
 		func(_ context.Context, _ *agents.ToolContext, a lookupArgs) (string, error) {
 			return "The archive says: " + a.Topic + " was first described in 1957.", nil
@@ -68,8 +55,7 @@ func main() {
 					return middleware.Continue("You must quote the year from the archive verbatim."), nil
 				},
 			},
-			// Innermost: each attempt's approval pause is answered here,
-			// before the evaluator above ever sees the attempt.
+			// Innermost: each attempt's pause is answered before the evaluator sees it.
 			middleware.Approval{Policy: func(_ context.Context, item *agents.ToolApprovalItem) (middleware.Decision, string) {
 				if item.ToolName == "lookup" {
 					fmt.Printf("  [policy] approving %s(%s)\n", item.ToolName, item.Arguments)

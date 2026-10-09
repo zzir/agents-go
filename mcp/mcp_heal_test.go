@@ -50,13 +50,9 @@ func mcpHandlerWith(toolName string) http.Handler {
 		&mcpsdk.StreamableHTTPOptions{JSONResponse: true})
 }
 
-// TestConnectionHealsAfterTheServerRestarts locks the recovery half.
-//
-// Nothing in the go-sdk reconnects, so before Redial the FIRST connection
-// failure was permanent: every agent configured with that server answered
-// "client is closing" until a person noticed and reconnected it by hand. What
-// killed it varied — a server restart, a dropped idle socket, somebody else's
-// cancelled request — but the outcome never did.
+// TestConnectionHealsAfterTheServerRestarts locks the recovery half: nothing
+// in the go-sdk reconnects, so without Redial the first connection failure
+// would be permanent (decisions §5.21).
 func TestConnectionHealsAfterTheServerRestarts(t *testing.T) {
 	swap := &swapHandler{h: mcpHandlerWith("ping")}
 	endpoint := httptest.NewServer(swap)
@@ -106,9 +102,8 @@ func TestConnectionHealsAfterTheServerRestarts(t *testing.T) {
 }
 
 // TestConnectionStaysDeadWithoutRedial is the other side of the same contract:
-// healing is opt-in, because only the caller that owns the configuration knows
-// how to rebuild the transport. Without a Redial the old behavior stands, and
-// says so.
+// healing is opt-in, since only the caller that owns the configuration knows
+// how to rebuild the transport; without a Redial the dead connection says so.
 func TestConnectionStaysDeadWithoutRedial(t *testing.T) {
 	swap := &swapHandler{h: mcpHandlerWith("ping")}
 	endpoint := httptest.NewServer(swap)
@@ -150,14 +145,9 @@ func toolNames(tools []*agents.Tool) []string {
 	return names
 }
 
-// TestSessionOutlivesItsConnectContext guards the startup path. Auto-connect
-// bounds each handshake with a timeout context and cancels it the moment
-// Connect returns — and with Redial wired everywhere, a watcher now sits on
-// every one of those sessions. If the go-sdk ever ties a session's lifetime
-// (or Wait) to the context it was CONNECTED under, that cancel would read as
-// the connection dying, and every server would heal-loop from the moment the
-// process comes up. This is also what makes bounding redial's own handshake
-// safe: redial cancels its connect context the same way.
+// TestSessionOutlivesItsConnectContext guards the startup path: a session must
+// outlive the context it was CONNECTED under, or the watcher would read the
+// handshake's cancel as the connection dying and heal-loop from startup.
 func TestSessionOutlivesItsConnectContext(t *testing.T) {
 	endpoint := httptest.NewServer(mcpHandlerWith("ping"))
 	t.Cleanup(endpoint.Close)
@@ -190,11 +180,8 @@ func TestSessionOutlivesItsConnectContext(t *testing.T) {
 }
 
 // TestRedialContextOutlivesTheCall locks what Options.Redial promises: the
-// context it receives is the CONNECTION's, so anything bound to it — the
-// subprocess of a stdio server, above all — lives as long as the connection
-// does. A context cancelled when redial returns would let a stdio server
-// reconnect and be killed in the same breath, and the symptom (healed, then
-// immediately dead again) points nowhere near the cause.
+// context it receives is the CONNECTION's, so a stdio server's subprocess
+// bound to it lives as long as the connection does.
 func TestRedialContextOutlivesTheCall(t *testing.T) {
 	endpoint := httptest.NewServer(mcpHandlerWith("ping"))
 	t.Cleanup(endpoint.Close)

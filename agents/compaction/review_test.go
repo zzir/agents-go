@@ -23,12 +23,9 @@ func (dropOldest) Compact(_ context.Context, idx *Index) (bool, error) {
 	return false, nil
 }
 
-// A shared Compactor raced by another session must LOSE its checkpoint, never
-// write the other session's. Compact and Checkpoint are two lock
-// acquisitions; between one run's pass and its checkpoint, another run's pass
-// can re-aim the shared index at a different conversation — and recording that
-// state would durably write session B's exclusions and fold content into
-// session A's log.
+// A shared Compactor re-aimed at another session between Compact and Checkpoint
+// (two lock acquisitions) must lose its checkpoint, never write the other's
+// (spec §2.5f).
 func TestCheckpointRefusesAnotherSessionsPass(t *testing.T) {
 	ctx := context.Background()
 	c := New(dropOldest{}, nil)

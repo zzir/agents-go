@@ -16,28 +16,22 @@ const localWaitDelay = 2 * time.Second
 
 // LocalOptions configures LocalSandbox.
 type LocalOptions struct {
-	// InheritHostEnv passes the entire host environment to the command. By
-	// default the command sees only PATH, HOME and TMPDIR from the host plus
-	// ExecRequest.Env, so host secrets (API keys, tokens) cannot leak into
-	// model-generated code.
+	// InheritHostEnv passes the entire host environment to the command; by
+	// default only PATH, HOME and TMPDIR reach it, plus ExecRequest.Env.
 	InheritHostEnv bool
 
-	// WorkDir, when non-empty, is used as the working directory for every
-	// execution instead of a fresh temp directory. Request files are still
-	// written into it, but the directory is NOT removed afterwards. This
-	// allows the sandbox to operate on an existing project tree.
+	// WorkDir, when non-empty, is the working directory of every execution
+	// instead of a fresh temp directory; request files land in it, and it is kept.
 	WorkDir string
 
-	// MaxReadFileBytes caps how many bytes ReadFile returns; larger files fail
-	// with ErrReadLimitExceeded instead of being loaded into memory. Zero (or
-	// negative) means DefaultMaxReadFileBytes.
+	// MaxReadFileBytes caps ReadFile; a larger file fails with
+	// ErrReadLimitExceeded. Zero (or negative) means DefaultMaxReadFileBytes.
 	MaxReadFileBytes int64
 }
 
 // LocalSandbox runs commands directly on the host with NO isolation beyond a
-// minimal default environment (PATH, HOME and TMPDIR plus ExecRequest.Env,
-// unless LocalOptions.InheritHostEnv). Development and trusted code only —
-// never agent-generated code in production; docker or e2b isolate for real.
+// minimal default environment (see LocalOptions). Development and trusted code
+// only; docker or e2b isolate for real.
 type LocalSandbox struct {
 	opts LocalOptions
 }
@@ -177,8 +171,8 @@ func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) er
 	return os.WriteFile(full, content, 0o644)
 }
 
-// CreateExclusive implements sandbox.Sandbox with O_EXCL: the create is atomic,
-// so a concurrent apply_patch racing the same new path can't both succeed.
+// CreateExclusive implements Sandbox with O_EXCL, so two creates of one path
+// cannot both succeed.
 func (s *LocalSandbox) CreateExclusive(_ context.Context, p string, content []byte) error {
 	if s.opts.WorkDir == "" {
 		return ErrNoWorkDir

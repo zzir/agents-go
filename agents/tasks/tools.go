@@ -10,30 +10,25 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// SessionIDFrom is how the tools learn which session they run in. It comes
-// from the run context, never the model, which could otherwise spawn onto another.
+// SessionIDFrom reads the tools' session from the run context, never from the model.
 type SessionIDFrom func(rc *agents.RunContext) string
 
-// parentRunKey carries the host's identifier for the currently executing run
-// (see WithParentRunID).
+// parentRunKey is the context key WithParentRunID writes.
 type parentRunKey struct{}
 
-// WithParentRunID tags ctx with the host's identifier for the executing run;
-// spawn_task stamps it onto Task.ParentRunID so a host UI can tie the task to
-// the spawning run's trace. Display-only.
+// WithParentRunID tags ctx with the host's id for the executing run, which
+// spawn_task stamps onto Task.ParentRunID. Display-only.
 func WithParentRunID(ctx context.Context, runID string) context.Context {
 	return context.WithValue(ctx, parentRunKey{}, runID)
 }
 
-// ParentRunID reads back what WithParentRunID put on ctx: the run a tool call
-// is executing inside, empty when the host did not record one.
+// ParentRunID reads back WithParentRunID's run id, empty when none was recorded.
 func ParentRunID(ctx context.Context) string {
 	id, _ := ctx.Value(parentRunKey{}).(string)
 	return id
 }
 
-// DefaultSessionID reads a plain string context value, which is what a host
-// that has nothing else to carry will use.
+// DefaultSessionID reads the session id as a plain string RunContext.Context.
 func DefaultSessionID(rc *agents.RunContext) string {
 	if rc == nil {
 		return ""
@@ -62,12 +57,9 @@ type retryArgs struct {
 	TaskID string `json:"task_id" jsonschema:"The id of the failed task to resume"`
 }
 
-// Tools returns spawn_task, task_status, task_retry and task_stop — SpawnTool
-// followed by TaskTools. A host with other kinds of background work, or a
-// wider choice of agents, provides its own spawn tool from the public parts
-// (Spawn, SpawnTarget, ModelHasResult, ToolResult) and attaches TaskTools
-// beside it, so the model sees ONE vocabulary (spec §2.13). A task's own run
-// must NOT be given these (ask MetaFor first). sessionID nil uses DefaultSessionID.
+// Tools returns spawn_task, task_status, task_retry and task_stop: SpawnTool
+// followed by TaskTools. A task's own run must not be given these (MetaFor);
+// nil sessionID uses DefaultSessionID — see spec §2.13.
 func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
 	return append([]*agents.Tool{m.SpawnTool(sessionID)}, m.TaskTools(sessionID)...)
 }
@@ -97,29 +89,22 @@ func (m *Manager) SpawnTool(sessionID SessionIDFrom) *agents.Tool {
 				AgentName:       target,
 				Input:           args.Input,
 				Label:           args.Label,
-				// The spawning call id lets the task's later state changes
-				// reach the card this call produced, long after the turn ended.
-				ToolCallID: tc.ToolCallID,
-				// The host's id for the executing run (WithParentRunID), so
-				// the task ties back to the spawning run's trace.
-				ParentRunID: ParentRunID(ctx),
+				ToolCallID:      tc.ToolCallID,
+				ParentRunID:     ParentRunID(ctx),
 			})
 			if err != nil {
 				return agents.ToolResult{}, err
 			}
-			// A task that finished before this call returned carries its result in
-			// the output below, so nothing is owed; a no-op while still running.
+			// A task that finished before this call returned is delivered by
+			// its output.
 			m.ModelHasResult(ctx, info)
 			return m.toolResult(info), nil
 		})
 }
 
 // SpawnTarget resolves spawn_task's agent_name against the spawning agent's
-// handoff targets, which is where the model learned the names: "" and the
-// agent's own name are the agent itself (""), a target's name (as written, or
-// as its transfer_to_* tool spells it) is that target's Handoff.AgentName, and
-// any other name is refused with the targets listed — spec §2.13. Exported
-// for a host's own spawn tool.
+// handoff targets: "" or the agent's own name is "" (the agent itself), a
+// target's name is its Handoff.AgentName, any other name is refused — see spec §2.13.
 func SpawnTarget(agent *agents.Agent, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -203,17 +188,14 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 			info, err := m.Retry(ctx, args.TaskID)
 			if err != nil {
 				if info == nil {
-					// A store failure: the host's problem, with no task state
-					// to report on.
+					// A store failure: no task state to report.
 					return agents.ToolResult{}, err
 				}
-				// A refusal, a lost race or a launch that never started: the task's
-				// state travels with the error. Reporting it settles the wake-up debt.
+				// A refusal or a failed launch carries task state; reporting it is
+				// delivery — see spec §2.13.
 				m.ModelHasResult(ctx, info)
 				return m.refusalResult(info, err), nil
 			}
-			// As with spawn_task: an attempt that finished this fast reports
-			// its result here, so nothing is owed.
 			m.ModelHasResult(ctx, info)
 			return m.toolResult(info), nil
 		})
@@ -226,8 +208,8 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 			}
 			info, err := m.Stop(ctx, args.TaskID, args.Graceful)
 			if err != nil {
-				// A stop of something already finished is news, not a failure: the
-				// model should hear the terminal state, not an error it might retry.
+				// Already finished is news, not a failure: the model hears the
+				// terminal state.
 				if _, ok := errors.AsType[ErrAlreadyFinal](err); info != nil && ok {
 					r := m.toolResult(info)
 					r.IsError = true
@@ -242,16 +224,14 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 }
 
 // ToolResult renders a task for a tool output: Content for the model, Details
-// for a UI card. progress is the host's line on where the job stands
-// (Progress), or "". Exported for a host's own spawn tool.
+// for a UI card; progress is Progress's line, or "".
 func ToolResult(info *Info, progress string) agents.ToolResult {
 	return agents.TextResult(describe(info, progress)).
 		WithDisplay("task").
 		WithDetails(taskDetails(info))
 }
 
-// Progress is the host's line on where a job stands (Config.DescribeState),
-// or "" — what ToolResult takes beside the Info.
+// Progress is Config.DescribeState's line on where a job stands, or "".
 func (m *Manager) Progress(info *Info) string {
 	if m.cfg.DescribeState == nil || info == nil || info.Kind == "" {
 		return ""
@@ -264,8 +244,7 @@ func (m *Manager) toolResult(info *Info) agents.ToolResult {
 	return ToolResult(info, m.Progress(info))
 }
 
-// refusalResult is a ToolResult whose text leads with why the call was
-// refused — the state alone does not explain a refusal.
+// refusalResult is a ToolResult whose text leads with the refusal.
 func (m *Manager) refusalResult(info *Info, err error) agents.ToolResult {
 	r := agents.TextResult(err.Error() + "\n" + describe(info, m.Progress(info))).
 		WithDisplay("task").
@@ -285,8 +264,7 @@ func taskDetails(info *Info) map[string]any {
 	}
 }
 
-// describeList is the listing: one line per task, summaries only. Reading it
-// settles no wake-up debt, and a live task says not to redo its work.
+// describeList lists tasks one line each, summaries only; it settles no wake-up debt.
 func (m *Manager) describeList(infos []*Info) string {
 	if len(infos) == 0 {
 		return "no tasks in this conversation"
@@ -319,8 +297,7 @@ func (m *Manager) describeList(infos []*Info) string {
 
 func describe(info *Info, progress string) string {
 	out := fmt.Sprintf("task_id: %s\nstatus: %s", info.TaskID, info.Status)
-	// Only past the first attempt — on every task the line is noise the model
-	// learns to ignore.
+	// Only past the first attempt; on every task the line is noise.
 	if info.Attempt > 1 {
 		out += fmt.Sprintf("\nattempt: %d", info.Attempt)
 	}
@@ -336,8 +313,7 @@ func describe(info *Info, progress string) string {
 	if progress != "" {
 		out += "\nprogress: " + progress
 	}
-	// The full result on a finished task, not the summary: this is the call
-	// that fetches it.
+	// The full result, not the summary: this call is what fetches it.
 	if info.Result != "" {
 		out += "\nresult: " + info.Result
 	} else if info.Summary != "" {

@@ -7,8 +7,7 @@ import (
 )
 
 // Index is a session's entries organized into groups, plus the accounting a
-// strategy needs. It is rebuilt incrementally: Update groups only what arrived
-// since, so a long conversation does not regroup its history every turn.
+// strategy needs; Update groups only what arrived since the last pass.
 type Index struct {
 	Groups    []*Group
 	Estimator TokenEstimator
@@ -26,9 +25,8 @@ func NewIndex(entries []session.Entry, est TokenEstimator) *Index {
 	return idx
 }
 
-// Update folds newly-arrived entries into the index. When the grouped entries
-// are no longer a prefix of what it is given (a branch switch, a fork, another
-// session) it rebuilds from scratch.
+// Update folds newly-arrived entries into the index, rebuilding from scratch
+// when the grouped entries are no longer a prefix of what it is given.
 func (idx *Index) Update(entries []session.Entry) {
 	start, ok := idx.prefixMatches(entries)
 	if !ok {
@@ -39,8 +37,8 @@ func (idx *Index) Update(entries []session.Entry) {
 	if start >= len(entries) {
 		return
 	}
-	// New entries mean a model call happened since the last pass, measuring the
-	// context without the groups already excluded: mark those settled.
+	// New entries mean a model call priced in the exclusions so far: settle
+	// them (spec §2.5f).
 	for _, g := range idx.Groups {
 		if g.Excluded {
 			g.settled = true
@@ -70,8 +68,7 @@ func (idx *Index) group(entries []session.Entry) {
 		e := entries[i]
 		kind, isCall, _, isReasoning := classify(e)
 
-		// Reasoning looks ahead: a reasoning block followed by a tool call led
-		// to that call, and separating them makes the replayed history incoherent.
+		// Reasoning followed by a tool call belongs to that call (decisions §5.56).
 		if isReasoning {
 			if j := nextConversational(entries, i+1); j >= 0 {
 				if _, nextIsCall, _, _ := classify(entries[j]); nextIsCall {
@@ -97,7 +94,8 @@ func (idx *Index) group(entries []session.Entry) {
 }
 
 // appendToolCallGroup consumes a tool call and everything that belongs with it
-// — outputs, sibling calls, leading reasoning — as one group, and reports how many entries it took.
+// — outputs, sibling calls, leading reasoning — as one group, and reports how
+// many entries it took.
 func (idx *Index) appendToolCallGroup(entries []session.Entry, start int) int {
 	end := idx.toolCallGroupEnd(entries, start)
 	idx.add(GroupToolCall, entries[start:start+end])
@@ -126,10 +124,9 @@ func (idx *Index) toolCallGroupEnd(entries []session.Entry, start int) int {
 			}
 		case kind == GroupOther:
 			// A non-conversation entry between a call and its output does not
-			// break the pairing; keep going.
+			// break the pairing.
 		default:
-			// Anything else ends the group — once every call it opened has its
-			// output, or the group would straddle the pairing it protects.
+			// Anything else ends the group, once every call it opened has its output.
 			if sawCall && len(open) == 0 {
 				return i - start
 			}
@@ -139,8 +136,8 @@ func (idx *Index) toolCallGroupEnd(entries []session.Entry, start int) int {
 	return i - start
 }
 
-// nextConversational returns the index of the next entry that is part of the
-// conversation, skipping annotations and other non-context records.
+// nextConversational returns the index of the next conversation entry, skipping
+// GroupOther.
 func nextConversational(entries []session.Entry, from int) int {
 	for i := from; i < len(entries); i++ {
 		if kind, _, _, _ := classify(entries[i]); kind != GroupOther {
@@ -179,8 +176,7 @@ func (idx *Index) IncludedEntries() []session.Entry {
 	var out []session.Entry
 	for _, g := range idx.Groups {
 		if g.Excluded {
-			// An excluded group may still contribute a stand-in — a folded
-			// summary of the tool results it held.
+			// An excluded group may still contribute a stand-in.
 			out = append(out, g.Replacement...)
 			continue
 		}
@@ -217,10 +213,8 @@ func (idx *Index) Counts() Counts {
 	return c
 }
 
-// ContextTokens estimates the included context's size: the newest measured
-// usage as fact, minus this pass's unsettled exclusions (their replacements
-// added back), plus an estimate of everything after it. With no usable usage
-// anywhere it estimates everything. The rule and its reason: spec §2.5f.
+// ContextTokens estimates the included context's size: the newest measured usage,
+// minus unsettled exclusions, plus an estimate of what follows — see spec §2.5f.
 func (idx *Index) ContextTokens() int {
 	// Locate the newest included entry carrying usage, and where it sits.
 	usageGroup, usageEntry := -1, -1

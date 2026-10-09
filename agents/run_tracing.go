@@ -6,9 +6,8 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// setGenerationUsage records one model call's token counts on its generation span;
-// rc.Usage holds the run-wide accumulation separately. A detail count is
-// recorded only when the provider reported one.
+// setGenerationUsage records one model call's token counts on its generation
+// span; a detail count only when the provider reported one.
 func setGenerationUsage(span *tracing.SpanHandle, u *Usage) {
 	if u == nil {
 		return
@@ -123,9 +122,8 @@ func (r *runner) startGenerationSpan(agent *Agent, req ModelRequest) *tracing.Sp
 	return span
 }
 
-// finishGenerationSpan records the call's ids, the model that answered, the
-// provider's status, usage and (unless sensitive-data tracing is off) output
-// items, then ends the span.
+// finishGenerationSpan records the call's ids, model, status, usage and
+// (sensitive-data permitting) output items, then ends the span.
 func (r *runner) finishGenerationSpan(span *tracing.SpanHandle, resp *ModelResponse) {
 	span.Set("response_id", resp.ResponseID)
 	if resp.RequestID != "" {

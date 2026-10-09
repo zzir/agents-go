@@ -8,15 +8,14 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// DiagnosticSink collects diagnostics. The runner installs one on the context
-// for the duration of a run.
+// DiagnosticSink collects diagnostics; the runner installs one on the context
+// for a run.
 type DiagnosticSink struct {
 	mu sync.Mutex
 	ds []Diagnostic
 }
 
-// Record appends a diagnostic. Safe for concurrent use: tools run in parallel
-// and each may report.
+// Record appends a diagnostic. Safe for concurrent use.
 func (s *DiagnosticSink) Record(d Diagnostic) {
 	if s == nil {
 		return
@@ -36,9 +35,7 @@ func (s *DiagnosticSink) All() []Diagnostic {
 	return append([]Diagnostic(nil), s.ds...)
 }
 
-// TakeSince returns the diagnostics recorded after n, and the new count. It is
-// how the runner attaches a turn's troubles to that turn's entries rather than
-// to every entry in the run.
+// TakeSince returns the diagnostics recorded after n, and the new count.
 func (s *DiagnosticSink) TakeSince(n int) ([]Diagnostic, int) {
 	if s == nil {
 		return nil, n
@@ -53,12 +50,8 @@ func (s *DiagnosticSink) TakeSince(n int) ([]Diagnostic, int) {
 
 type diagnosticKey struct{}
 
-// WithDiagnostics returns a context carrying sink, so code far from the runner
-// — a model decorator, a custom tool — can report trouble it recovered from.
-//
-// The context is the channel because a Model receives one and nothing else that
-// belongs to the run. A sink passed by field would need every decorator in the
-// chain to forward it, and the one that forgot would silently swallow.
+// WithDiagnostics returns a context carrying sink, the channel through which a
+// model decorator or a custom tool reports trouble it recovered from.
 func WithDiagnostics(ctx context.Context, sink *DiagnosticSink) context.Context {
 	return context.WithValue(ctx, diagnosticKey{}, sink)
 }
@@ -69,14 +62,13 @@ func DiagnosticsFrom(ctx context.Context) *DiagnosticSink {
 	return s
 }
 
-// RecordDiagnostic reports trouble on whatever sink ctx carries. It is a no-op
-// without one, so a call site never has to check.
+// RecordDiagnostic reports trouble on whatever sink ctx carries; a no-op without one.
 func RecordDiagnostic(ctx context.Context, t DiagnosticType, err error, details map[string]any) {
 	DiagnosticsFrom(ctx).Record(NewDiagnostic(t, err, details))
 }
 
-// attributeDiagnostics attaches the trouble seen since the last save to the batch's
-// final entry, so diagnostics sit with the turn they describe, not ahead of it.
+// attributeDiagnostics attaches the trouble seen since the last save to the
+// batch's final entry.
 func (r *runner) attributeDiagnostics(entries []session.Entry) {
 	if len(entries) == 0 {
 		return
@@ -89,10 +81,7 @@ func (r *runner) attributeDiagnostics(entries []session.Entry) {
 	entries[len(entries)-1].Diagnostics = ds
 }
 
-// NewDiagnostic builds a diagnostic from an error, classifying it.
-//
-// The timestamp is taken here rather than by the caller, so a diagnostic can
-// never claim a time other than when the trouble happened.
+// NewDiagnostic builds a diagnostic from an error, classifying it and stamping it now.
 func NewDiagnostic(t DiagnosticType, err error, details map[string]any) Diagnostic {
 	d := Diagnostic{Type: t, Timestamp: time.Now().UTC(), Details: details}
 	if err != nil {

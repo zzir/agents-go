@@ -19,9 +19,8 @@ import (
 
 var cardNumber = regexp.MustCompile(`\b(?:\d[ -]?){13,19}\b`)
 
-// scan renders whatever a stage handed us as JSON and looks for card numbers.
-// A real scanner would be smarter; the point here is that one guardrail covers
-// every stage rather than three near-copies.
+// scan renders a stage's payload as JSON and looks for card numbers; one
+// guardrail covers every stage.
 func scan(v any) bool {
 	b, err := json.Marshal(v)
 	return err == nil && cardNumber.Match(b)
@@ -46,14 +45,14 @@ func main() {
 			if !scan(subject) {
 				return agents.Allow(nil), nil
 			}
-			// Replace, not Trip: the run continues with the offending content
-			// swapped out. What gets replaced depends on the stage.
+			// Replace, not Trip: the run continues with the stage's content
+			// swapped out.
 			return agents.Replace("[redacted: card number]", p.Stage), nil
 		},
 	}
 
-	// Blocking makes this one a gate: it runs to completion before the first
-	// model call, so a tripwire costs nothing. The default is concurrent.
+	// Blocking makes this a gate that finishes before the first model call;
+	// the default is concurrent — see docs/howto/guardrails.md.
 	refuseHomework := agents.Guardrail{
 		Name:     "no-homework",
 		Stages:   []agents.GuardrailStage{agents.StageInput},

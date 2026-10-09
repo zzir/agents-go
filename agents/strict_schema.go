@@ -29,14 +29,10 @@ func emptyStrictSchema() map[string]any {
 	}
 }
 
-// EnsureStrictJSONSchema rewrites a JSON Schema (as a map) in place so it
-// conforms to the strict subset the OpenAI API expects: every object gets
-// additionalProperties:false, every property becomes required, oneOf is folded
-// into anyOf, single-element allOf is inlined, null defaults are stripped, and
-// $refs carrying sibling keys are unraveled.
-//
-// It is the compatibility-critical path: getting it wrong yields 400s from the
-// API, on requests that look fine locally.
+// EnsureStrictJSONSchema rewrites a JSON Schema map in place into the strict
+// subset the OpenAI API expects: additionalProperties:false, every property
+// required, oneOf folded into anyOf, single allOf inlined, null defaults
+// stripped, $refs with siblings unraveled.
 func EnsureStrictJSONSchema(schema map[string]any) (map[string]any, error) {
 	if len(schema) == 0 {
 		return emptyStrictSchema(), nil

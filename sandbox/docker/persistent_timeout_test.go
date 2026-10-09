@@ -121,11 +121,8 @@ func TestPersistentExecStreamTimeout(t *testing.T) {
 }
 
 // A persistent exec that floods BOTH output streams past the cap and then
-// keeps running must not be mistaken for a finished one. Exec and ExecStream
-// share one core that reads the attach stream to its end; the exec-only path
-// used to stop as soon as both capped sinks were full and then read the exit
-// code of a still-running exec — reporting "exit 0" while the command kept
-// running in the container, unkilled.
+// keeps running must not be mistaken for a finished one: the attach stream is
+// read to its end, never cut short when the capped sinks fill.
 func TestPersistentExecFloodedStreamsKeepRunning(t *testing.T) {
 	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
 
@@ -203,10 +200,8 @@ func TestPersistentReadFileDirAndSymlink(t *testing.T) {
 	}
 }
 
-// F1 regression: persistent-mode file tools go through exec, so they see the
-// /tmp tmpfs the backend mounts. The archive API (the old read/write path)
-// cannot reach a tmpfs mount, so a file exec wrote under /tmp once read back
-// "not found" and a WriteFile there silently vanished. decisions §5.14.
+// Persistent-mode file tools go through exec, so they see the /tmp tmpfs the
+// backend mounts, which the archive API cannot reach (decisions §5.14).
 func TestPersistentFileToolsSeeTmpfs(t *testing.T) {
 	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
 	ctx := t.Context()
@@ -254,8 +249,8 @@ func TestPersistentWriteFileKeepsParentDirMetadata(t *testing.T) {
 		return strings.TrimSpace(res.Stdout)
 	}
 
-	// chown is unavailable (CapDrop ALL), so the mode — 750, which the old dir
-	// headers reset to 777 — and the epoch mtime carry the assertion.
+	// chown is unavailable (CapDrop ALL), so the mode (750, which a 777 dir
+	// header would reset) and the epoch mtime carry the assertion.
 	mustExec("mkdir -p /workspace/keep && chmod 750 /workspace/keep")
 	workspaceBefore := mustExec("stat -c '%a %u %g' /workspace")
 	rootBefore := mustExec("stat -c '%a %u %g' /root")

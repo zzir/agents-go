@@ -153,8 +153,8 @@ func applyBudgetThinking(params *ant.MessageNewParams, s *agents.ModelSettings, 
 		}
 		return 0, agents.NewUserError("anthropic: unknown reasoning effort %q", effort)
 	}
-	// Manual thinking's incompatibilities: a preflightable 400 should be a
-	// UserError naming the conflict, not a remote error naming a field.
+	// Manual thinking's incompatibilities, preflighted as UserErrors naming the
+	// conflict.
 	if s.Temperature != nil || s.TopP != nil {
 		return 0, agents.NewUserError(
 			"anthropic: temperature/top_p cannot be combined with a thinking budget (reasoning.effort) — unset the sampling overrides or the effort")

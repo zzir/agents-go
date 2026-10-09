@@ -17,11 +17,10 @@ type Provider struct {
 	defaultModel string
 }
 
-// NewProvider builds a Provider. Pass openai-go request options such as
-// option.WithAPIKey or option.WithBaseURL to configure the client. With no
-// options, the API key is read from the OPENAI_API_KEY environment variable.
-// The client's own transport-level retries are DISABLED (decisions §5.22);
-// pass option.WithMaxRetries explicitly to re-enable them.
+// NewProvider builds a Provider from openai-go request options
+// (option.WithAPIKey, option.WithBaseURL, …); with none, OPENAI_API_KEY is
+// read. The client's own retries are DISABLED (decisions §5.22);
+// option.WithMaxRetries re-enables them.
 func NewProvider(opts ...option.RequestOption) *Provider {
 	all := append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)
 	return &Provider{client: oai.NewClient(all...)}
@@ -34,9 +33,8 @@ func (p *Provider) WithDefaultModel(name string) *Provider {
 	return p
 }
 
-// Capabilities declares this adapter's unsupported request features — none,
-// the Responses API being the SDK's native format — so hosting layers treat
-// every provider through one declaration.
+// Capabilities declares this adapter's unsupported request features: none, the
+// Responses API being the SDK's native format.
 func Capabilities() modelkit.Capabilities {
 	return modelkit.Capabilities{}
 }

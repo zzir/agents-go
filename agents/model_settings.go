@@ -1,8 +1,7 @@
 package agents
 
-// ToolChoice constrains which tool (if any) the model must call: "auto",
-// "required", "none" or a specific tool name; the zero value leaves it unset.
-// It is an open set.
+// ToolChoice constrains which tool the model must call: "auto", "required",
+// "none" or a specific tool name (an open set); empty leaves it unset.
 type ToolChoice string
 
 // The predefined tool-choice modes.
@@ -65,19 +64,16 @@ const (
 	PromptCacheModeExplicit PromptCacheMode = "explicit"
 )
 
-// PromptCacheOptions configures prompt caching for OpenAI Responses API
-// requests. Combine Mode "explicit" with content-part cache breakpoints on the
-// input to control which prompt prefixes are eligible for caching.
+// PromptCacheOptions configures prompt caching for OpenAI Responses API requests.
 type PromptCacheOptions struct {
 	// Mode is "implicit" (default) or "explicit". Empty leaves it unset.
 	Mode PromptCacheMode `json:"mode,omitempty"`
-	// TTL is the minimum cache-entry lifetime, e.g. "30m" (currently the only
-	// supported value). Empty leaves it unset.
+	// TTL is the minimum cache-entry lifetime, e.g. "30m". Empty leaves it unset.
 	TTL string `json:"ttl,omitempty"`
 }
 
-// ReasoningEffort constrains reasoning effort. Which values a model accepts is
-// the backend's to say: an adapter rejects one it cannot express.
+// ReasoningEffort constrains reasoning effort; an adapter rejects a value its
+// backend cannot express.
 type ReasoningEffort string
 
 // Reasoning effort levels.
@@ -111,18 +107,18 @@ const (
 	ContextManagementCompaction ContextManagementType = "compaction"
 )
 
-// ContextManagement is a single server-side context-management entry forwarded
-// to the OpenAI Responses API (e.g. compaction).
+// ContextManagement is one server-side context-management entry forwarded to
+// the OpenAI Responses API.
 type ContextManagement struct {
 	// Type is the entry type. Currently only "compaction" is supported.
 	Type ContextManagementType `json:"type"`
-	// CompactThreshold is the token threshold at which compaction triggers for
-	// this entry. nil leaves it unset.
+	// CompactThreshold is the token threshold at which compaction triggers. nil
+	// leaves it unset.
 	CompactThreshold *int64 `json:"compact_threshold,omitempty"`
 }
 
-// Reasoning configures reasoning models. It mirrors the subset of the OpenAI
-// shared Reasoning object that the runner forwards to the provider.
+// Reasoning configures reasoning models (the forwarded subset of the OpenAI
+// Reasoning object).
 type Reasoning struct {
 	// Effort is "minimal", "low", "medium" or "high".
 	Effort ReasoningEffort `json:"effort,omitempty"`
@@ -130,9 +126,8 @@ type Reasoning struct {
 	Summary ReasoningSummary `json:"summary,omitempty"`
 }
 
-// ModelSettings holds optional model configuration (temperature, top_p,
-// truncation, …). Not every provider supports every field; a nil pointer or
-// empty value means "leave unset" so the provider default applies.
+// ModelSettings holds optional model configuration; a nil pointer or empty
+// value leaves the field unset for the provider default.
 type ModelSettings struct {
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`
@@ -140,8 +135,8 @@ type ModelSettings struct {
 	// ToolChoice controls tool selection. Empty means unset.
 	ToolChoice ToolChoice `json:"tool_choice,omitempty"`
 
-	// ParallelToolCalls controls whether the model may emit multiple tool calls
-	// in a single turn. nil defers to the provider default.
+	// ParallelToolCalls controls whether the model may emit several tool calls
+	// in one turn.
 	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
 
 	// Truncation is "auto" or "disabled". Empty means unset.
@@ -168,18 +163,15 @@ type ModelSettings struct {
 	// PromptCacheRetention is "in_memory" or "24h".
 	PromptCacheRetention PromptCacheRetention `json:"prompt_cache_retention,omitempty"`
 
-	// PromptCacheKey is forwarded as the Responses API prompt_cache_key to
-	// improve prompt-cache hit rates. Empty means unset. The runner never
-	// generates a key — callers set this (or ExtraBody) themselves.
+	// PromptCacheKey is forwarded as the Responses API prompt_cache_key; the
+	// runner never generates one.
 	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 
-	// PromptCacheOptions configures prompt caching (mode and breakpoint TTL)
-	// for OpenAI Responses API requests. nil leaves it unset.
+	// PromptCacheOptions configures prompt caching for OpenAI Responses API requests.
 	PromptCacheOptions *PromptCacheOptions `json:"prompt_cache_options,omitempty"`
 
-	// ContextManagement configures server-side context management (e.g.
-	// compaction) for OpenAI Responses API requests. A nil/empty slice leaves it
-	// unset.
+	// ContextManagement configures server-side context management for OpenAI
+	// Responses API requests.
 	ContextManagement []ContextManagement `json:"context_management,omitempty"`
 
 	// ResponseInclude lists additional output data to include in the response.
@@ -189,15 +181,14 @@ type ModelSettings struct {
 	TopLogprobs *int64 `json:"top_logprobs,omitempty"`
 
 	// ExtraHeaders, ExtraQuery and ExtraBody are forwarded verbatim to the
-	// underlying provider request.
+	// provider request.
 	ExtraHeaders map[string]string `json:"-"`
 	ExtraQuery   map[string]string `json:"-"`
 	ExtraBody    map[string]any    `json:"-"`
 }
 
-// Resolve returns a new ModelSettings produced by overlaying every set
-// (non-nil / non-empty) field of override on top of the receiver. The receiver
-// and override are not mutated.
+// Resolve returns a new ModelSettings overlaying every set field of override
+// on the receiver; neither is mutated.
 func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 	if m == nil {
 		m = &ModelSettings{}
@@ -258,8 +249,7 @@ func (m *ModelSettings) Resolve(override *ModelSettings) *ModelSettings {
 	if override.TopLogprobs != nil {
 		out.TopLogprobs = override.TopLogprobs
 	}
-	// ExtraHeaders/ExtraQuery/ExtraBody are replaced wholesale when the override
-	// sets them, not merged per-key.
+	// The Extra maps are replaced wholesale, not merged per key.
 	if override.ExtraHeaders != nil {
 		out.ExtraHeaders = override.ExtraHeaders
 	}

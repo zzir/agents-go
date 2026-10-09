@@ -1,9 +1,7 @@
 // Package sandboxtest is the conformance suite every sandbox.Sandbox
-// implementation must pass — the shared definition of what a backend means,
-// exercised against the real thing. It is exported because the backends live
-// in their own packages and modules (as models/modelkit/conformancetest). A
-// backend's test calls Run with a factory; optional capabilities are detected
-// by type assertion, so a backend implementing none still passes the core.
+// implementation must pass, exported because the backends live in their own
+// packages and modules. A backend's test calls Run with a factory; optional
+// capabilities are detected by type assertion, so a core-only backend passes.
 package sandboxtest
 
 import (

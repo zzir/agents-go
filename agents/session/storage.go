@@ -27,14 +27,13 @@ type Storage interface {
 	Clear(ctx context.Context) error
 }
 
-// Cursor paginates a read. It pages on sequence numbers, not offsets, so a
-// concurrent append cannot make a page silently skip or repeat.
+// Cursor paginates a read on sequence numbers, not offsets — spec §2.5c.
 type Cursor struct {
-	// AfterSeq returns entries with a higher sequence number. Zero starts at
+	// AfterSeq returns entries with a higher sequence number; zero starts at
 	// the beginning.
 	AfterSeq int64
-	// Limit caps how many entries come back. Zero means no limit; a negative
-	// limit takes the most recent -Limit entries instead of the oldest.
+	// Limit caps how many entries come back: zero is no limit, negative takes
+	// the most recent -Limit instead of the oldest.
 	Limit int
 }
 
@@ -43,18 +42,16 @@ type Metadata struct {
 	ID string `json:"id"`
 	// Title is a human-facing name, when the application sets one.
 	Title string `json:"title,omitzero"`
-	// Hidden marks a session that exists to serve another one — a background
-	// task's private history — so listings can leave it out by default.
+	// Hidden marks a session that serves another one (a background task's history).
 	Hidden    bool      `json:"hidden,omitzero"`
 	CreatedAt time.Time `json:"created_at,omitzero"`
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
-	// EntryCount is how many entries the session holds, when the store can say
-	// cheaply; zero otherwise.
+	// EntryCount is how many entries the session holds, when cheap to say; zero
+	// otherwise.
 	EntryCount int `json:"entry_count,omitzero"`
 }
 
-// InMemoryStorage is a goroutine-safe Storage for tests and short-lived
-// conversations. History is lost when the process exits.
+// InMemoryStorage is a goroutine-safe Storage that lives as long as the process.
 type InMemoryStorage struct {
 	id string
 
@@ -65,13 +62,12 @@ type InMemoryStorage struct {
 	updatedAt time.Time
 	hidden    bool
 	title     string
-	// retired marks storage whose session was deleted; a write through a handle
-	// that outlives the delete would otherwise orphan entries.
+	// retired marks storage whose session was deleted; every later write
+	// refuses — spec §2.5e2.
 	retired bool
 }
 
-// retire marks the storage as belonging to a deleted session; every later
-// write refuses with ErrNotFound.
+// retire marks the storage as belonging to a deleted session.
 func (s *InMemoryStorage) retire() {
 	s.mu.Lock()
 	s.retired = true
@@ -86,8 +82,8 @@ func (s *InMemoryStorage) checkLive() error {
 	return nil
 }
 
-// NewInMemoryStorage returns empty storage. The id is cosmetic — nothing
-// resolves storage by it — but it shows up in metadata and errors.
+// NewInMemoryStorage returns empty storage; the id only names it in metadata
+// and errors.
 func NewInMemoryStorage(id string) *InMemoryStorage {
 	now := time.Now().UTC()
 	return &InMemoryStorage{id: id, createdAt: now, updatedAt: now}
@@ -196,8 +192,8 @@ var (
 	_ AtomicReplacer = (*InMemoryStorage)(nil)
 )
 
-// PageEntries applies a cursor to entries already in append order. Backends
-// call it so every implementation pages identically.
+// PageEntries applies a cursor to entries already in append order; every
+// backend pages through it.
 func PageEntries(entries []Entry, cur Cursor) []Entry {
 	out := entries
 	if cur.AfterSeq > 0 {
@@ -216,9 +212,8 @@ func PageEntries(entries []Entry, cur Cursor) []Entry {
 	return append([]Entry(nil), out...)
 }
 
-// ReplaceEntries swaps a store's whole history. It is Clear followed by Append
-// unless the store can do better; a store that can swap atomically implements
-// AtomicReplacer so a failure mid-rewrite cannot leave the session empty.
+// ReplaceEntries swaps a store's whole history: through AtomicReplacer when the
+// store has it, else Clear then Append — spec §2.5c.
 func ReplaceEntries(ctx context.Context, s Storage, entries ...Entry) error {
 	if r, ok := s.(AtomicReplacer); ok {
 		return r.ReplaceEntries(ctx, entries...)
@@ -229,10 +224,9 @@ func ReplaceEntries(ctx context.Context, s Storage, entries ...Entry) error {
 	return s.Append(ctx, entries...)
 }
 
-// AtomicReplacer is an optional Storage capability: replace the entire
-// history in one step. Backends that can (a file rename, a DB transaction)
-// should implement it, so a rewrite cannot leave the session empty when a
-// failure lands between clearing and re-adding.
+// AtomicReplacer is an optional Storage capability: replace the whole history
+// in one step (a file rename, a transaction), so a failed rewrite cannot leave
+// it empty.
 type AtomicReplacer interface {
 	ReplaceEntries(ctx context.Context, entries ...Entry) error
 }

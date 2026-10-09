@@ -115,20 +115,10 @@ func toolNamed(t *testing.T, server *Server, name string) *agents.Tool {
 	return nil
 }
 
-// TestSharedSession_ACallersCancellationDoesNotReachTheRequest locks the
-// invariant an afternoon of failed tasks came from.
-//
-// The session is shared by every agent configured with this server — several
-// runs, their background tasks, other conversations — and the streamable HTTP
-// transport issues each request on the context it is handed. Let a caller's
-// cancellation reach one and the go-sdk fails the whole CONNECTION: the
-// response body read returns context.Canceled, handleJSON calls fail(), and
-// that is a sync.Once. Every later call by anyone answers "client is closing"
-// until something reconnects it, which nothing does. One person stopping one
-// run took out five tasks across two conversations that way.
-//
-// Both halves are the contract: the request survives its caller, and the caller
-// still returns at once, so stopping a run stays instant.
+// TestSharedSession_ACallersCancellationDoesNotReachTheRequest locks spec
+// §2.16: a caller's cancellation reaching a request would make the go-sdk fail
+// the whole shared CONNECTION (its fail() is a sync.Once). Both halves are the
+// contract: the request survives its caller, and the caller still returns at once.
 func TestSharedSession_ACallersCancellationDoesNotReachTheRequest(t *testing.T) {
 	server, parking := startSharedServer(t)
 	ping := toolNamed(t, server, "ping")

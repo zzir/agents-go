@@ -42,9 +42,8 @@ func schemaForType(t reflect.Type, strict bool) (map[string]any, error) {
 	return m, nil
 }
 
-// SchemaFor returns the JSON Schema map for type T, applying strict-mode
-// normalization. It is exported for callers who want to inspect or reuse the
-// schema the SDK would generate for a tool or output type.
+// SchemaFor returns the JSON Schema map the SDK would generate for type T,
+// strict-normalized when strict is set.
 func SchemaFor[T any](strict bool) (map[string]any, error) {
 	return schemaForType(reflect.TypeFor[T](), strict)
 }

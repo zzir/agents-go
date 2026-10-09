@@ -18,8 +18,7 @@ type OverflowPolicy struct {
 }
 
 // DetectContextOverflow reports whether a failed model call was the context
-// not fitting. It matches the provider's message — all an overflow arrives as
-// — and a response that ARRIVED is never an overflow (spec §2.5g, §2.7e).
+// not fitting, by the provider's message — see spec §2.5g.
 func DetectContextOverflow(err error) bool {
 	if err == nil {
 		return false
@@ -56,13 +55,14 @@ func (r *runner) recoverOverflow(ctx context.Context, err error) ([]InputItem, b
 	sess := r.opts.Conversation.Session
 	if sess != nil {
 		if cs, ok := sess.Storage().(session.CompactionAware); ok {
-			// A self-compacting storage gets a FORCED pass: the provider already decided.
+			// A self-compacting storage gets a FORCED pass: the provider
+			// already decided.
 			return r.recoverOverflowViaStorage(ctx, sess, cs)
 		}
 	}
 	if sess == nil || !r.opts.Compaction.active(CompactAtSavePoint) {
-		// Nothing here can shrink the context, so there is no recovery to
-		// prepare for; writing the turn anyway would mark a steer delivered.
+		// Nothing here can shrink the context; writing the turn anyway would
+		// mark a steer delivered.
 		return nil, false
 	}
 
@@ -106,8 +106,7 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 		},
 	})
 	if cerr != nil && cspan == nil {
-		// Failed before the storage opened the span; open one so the error is
-		// still visible on the trace (mirrors compactAfterRun).
+		// Failed before the storage opened the span; open one for the error.
 		cspan = r.trace.StartCompactionSpan(r.agentParentID())
 	}
 	if cspan != nil {

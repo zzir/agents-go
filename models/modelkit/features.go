@@ -5,9 +5,7 @@ import (
 )
 
 // Feature identifies one optional capability of a ModelRequest — a
-// ModelSettings field or a request-level field — that not every backend has an
-// equivalent for. The names are the wire/JSON names users know from
-// configuration.
+// ModelSettings field or a request-level field — by its wire/JSON name.
 type Feature string
 
 // The request features an adapter can declare unsupported.
@@ -64,12 +62,8 @@ var featureSet = map[Feature]func(agents.ModelRequest) bool{
 }
 
 // Reject returns a *agents.UserError naming the first of the given unsupported
-// features the request actually uses, or nil when it uses none.
-//
-// This is the fail-loud half of the adapter contract: a setting the backend
-// has no equivalent for must fail the call, not be dropped. A dropped setting
-// is invisible — the user configured a behavior, nothing enforces it, and the
-// first sign is production output that quietly ignores their config.
+// features the request actually uses, or nil: a setting the backend has no
+// equivalent for fails the call, never drops silently (spec §2.15).
 func Reject(provider string, req agents.ModelRequest, unsupported ...Feature) error {
 	for _, f := range unsupported {
 		isSet, ok := featureSet[f]
@@ -84,8 +78,8 @@ func Reject(provider string, req agents.ModelRequest, unsupported ...Feature) er
 }
 
 // Capabilities is a provider's static declaration of the request features it
-// cannot serve. It exists so a hosting layer (e.g. a config UI) can surface
-// limits before a run fails; the enforced truth remains Reject at call time.
+// cannot serve, for a hosting layer to surface before a run; Reject at call
+// time is the enforced truth.
 type Capabilities struct {
 	// Unsupported lists the features Reject is called with.
 	Unsupported []Feature

@@ -30,9 +30,8 @@ func main() {
 		Tools:        []*agents.Tool{getWeather},
 	}
 
-	// A tool result longer than 64 KiB reaches the model elided (head and
-	// tail around an "[omitted N bytes]" marker); raise the cap when a tool's
-	// whole output matters, or set -1 to send it untouched.
+	// A result past ToolOutputLimit (64 KiB) reaches the model elided; raise
+	// the cap or set -1 to send it untouched — see spec §2.7b.
 	res, err := agents.RunSync(context.Background(), agent, "上海今天天气怎么样？", agents.RunOptions{
 		Model: agents.ModelOptions{Provider: openai.NewProvider()},
 		Exec:  agents.ExecOptions{ToolOutputLimit: 256 << 10},

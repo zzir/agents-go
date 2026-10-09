@@ -175,9 +175,8 @@ func (s *Sandbox) signal(ctx context.Context, pid uint32, sig string) {
 	}, nil)
 }
 
-// ExportTar streams the working tree as a tar archive, produced by the
-// sandbox itself: there is no host-side filesystem to read, and the tool is
-// already in every image these run.
+// ExportTar streams the working tree as a tar archive produced by the sandbox's
+// own tar: there is no host-side filesystem to read.
 func (s *Sandbox) ExportTar(ctx context.Context) (io.ReadCloser, error) {
 	dir := s.workDir()
 	pr, pw := io.Pipe()

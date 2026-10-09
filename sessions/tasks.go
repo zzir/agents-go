@@ -24,17 +24,15 @@ type taskRow struct {
 
 	ParentSessionID string `bun:"parent_session_id,notnull"`
 	// ParentSessionGen and ChildSessionGen are the GENERATIONS of the sessions this
-	// row names (session.Ref): filled from agent_sessions at insert and compared on
-	// every read against the generation the id answers to NOW (liveParent /
-	// liveChild), so a row of a deleted-and-recreated session is inert (spec §2.13).
+	// row names (session.Ref), filled at insert and compared on every read
+	// (liveParent / liveChild) — spec §2.13.
 	ParentSessionGen string `bun:"parent_session_gen"`
 	ParentRunID      string `bun:"parent_run_id"`
 	ToolCallID       string `bun:"tool_call_id"`
 	ChildSessionID   string `bun:"child_session_id,notnull"`
 	ChildSessionGen  string `bun:"child_session_gen"`
 	Depth            int    `bun:"depth,notnull"`
-	// Attempt counts this task's runs. Zero reads as the first attempt, which
-	// is what a row written before retries existed had.
+	// Attempt counts this task's runs; zero reads as the first attempt.
 	Attempt int `bun:"attempt"`
 
 	Inherit string `bun:"inherit"`
@@ -98,13 +96,8 @@ func rowFrom(t *tasks.Task) *taskRow {
 	}
 }
 
-// TaskStore is a SQL-backed tasks.Store.
-//
-// The SQL is what makes it usable: Finalize is one conditional UPDATE, so the
-// database arbitrates between racing finalizers rather than the process. That
-// is why tasks require a transactional store and why there is no file-backed
-// one — a read-modify-write over JSON cannot offer the same guarantee across
-// processes.
+// TaskStore is a SQL-backed tasks.Store: Finalize is one conditional UPDATE,
+// so the database arbitrates between racing finalizers (decisions §5.54).
 type TaskStore struct {
 	db *bun.DB
 }
@@ -113,14 +106,9 @@ type TaskStore struct {
 // before first use.
 func NewTaskStore(db *bun.DB) *TaskStore { return &TaskStore{db: db} }
 
-// CreateTaskSchema creates the task table and its indexes.
-//
-// It also ensures the session table exists, because a task row names sessions
-// by (id, generation) and every read resolves the generation against it — a
-// task store built without it would fail at the first query rather than at
-// setup, depending on the order the two schema calls happened to be made in.
-// Both creations are IfNotExists, so calling this and CreateSchema in either
-// order (or both) is the same.
+// CreateTaskSchema creates the task table and its indexes, and the session
+// table a task row resolves its generations against; every creation is
+// IfNotExists, so this and CreateSchema compose in either order.
 func CreateTaskSchema(ctx context.Context, db *bun.DB) error {
 	if _, err := db.NewCreateTable().Model((*sessionRow)(nil)).IfNotExists().Exec(ctx); err != nil {
 		return err
@@ -128,8 +116,7 @@ func CreateTaskSchema(ctx context.Context, db *bun.DB) error {
 	if _, err := db.NewCreateTable().Model((*taskRow)(nil)).IfNotExists().Exec(ctx); err != nil {
 		return err
 	}
-	// Listing a parent's tasks and finding a task by its child session are the
-	// two lookups on every run boundary; without these they are table scans.
+	// The two lookups on every run boundary: ListByParent and ByChildSession.
 	for name, cols := range map[string][]string{
 		"idx_agent_tasks_parent": {"parent_session_id", "parent_session_gen"},
 		"idx_agent_tasks_child":  {"child_session_id", "child_session_gen"},
@@ -233,9 +220,8 @@ func (s *TaskStore) query(ctx context.Context, apply func(*bun.SelectQuery) *bun
 }
 
 // Finalize implements tasks.Store as one conditional UPDATE: status and result
-// land together, only while the row is still non-terminal, so no reader sees a
-// terminal task without its result. The run_id predicate says WHICH attempt was
-// finalized, since RetryClaim lets a task leave a terminal state.
+// land together, only while the row is non-terminal and runID is the current
+// attempt (spec §2.13).
 func (s *TaskStore) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string, state json.RawMessage) (bool, error) {
 	q := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(st)).
@@ -276,12 +262,8 @@ func (s *TaskStore) casMiss(ctx context.Context, id string) error {
 }
 
 // RetryClaim implements tasks.Store as one conditional UPDATE, so the attempt
-// ceiling holds across processes rather than only within the Manager that
-// checked it.
-//
-// The generation predicate is the same one every by-session read carries: a row
-// whose sessions were deleted must not come back to life and launch a run onto
-// an id that now answers to a different session.
+// ceiling holds across processes; the generation predicates keep a row whose
+// sessions were deleted from launching a run (spec §2.13).
 func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (bool, error) {
 	q := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(tasks.StatusWorking)).
@@ -309,8 +291,7 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 
 // Advance implements tasks.Store as one conditional UPDATE: the run moves and
 // the state lands together, only while runID is the current attempt and the
-// row is working. The generation predicates are RetryClaim's, for the same
-// reason — a row whose sessions are gone must not start a run.
+// row is working; the generation predicates are RetryClaim's.
 func (s *TaskStore) Advance(ctx context.Context, id, runID, nextRunID string, state json.RawMessage) (bool, error) {
 	q := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("run_id = ?", nextRunID).
@@ -333,9 +314,8 @@ func (s *TaskStore) Advance(ctx context.Context, id, runID, nextRunID string, st
 }
 
 // ReleaseRetryClaim implements tasks.Store as one conditional UPDATE bound to
-// the claimed run id, like Finalize: only the claim's owner can release it.
-// The attempt rolls back because the claimed run never launched — attempt
-// counts runs the task has HAD — with the same floor AttemptNo() applies.
+// the claimed run id, like Finalize. The attempt rolls back: the claimed run
+// never launched, and attempt counts runs the task has HAD (floor as AttemptNo).
 func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (bool, error) {
 	res, err := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(tasks.StatusFailed)).
@@ -357,9 +337,8 @@ func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, r
 }
 
 // MarkInputRequired implements tasks.Store, bound to the current attempt like
-// Finalize — an approval can outlive the attempt that opened it, and it must
-// not pause the one that replaced it. Best-effort CAS: a concurrent terminal
-// transition (or newer attempt) wins.
+// Finalize: an approval that outlived its attempt must not pause the newer
+// one. Best-effort CAS: a concurrent terminal transition wins.
 func (s *TaskStore) MarkInputRequired(ctx context.Context, id, runID string) error {
 	_, err := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(tasks.StatusInputRequired)).
@@ -394,14 +373,9 @@ func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool,
 	return false, s.casMiss(ctx, id)
 }
 
-// FailOrphans implements tasks.Store, as ONE statement so the rows reported
-// are exactly the rows failed — a select-then-update pair could fail a row the
-// select never saw, or report one that finalized in between. Scoped by
-// liveParent: a row bound to a dead generation matches nothing (§2.13 — it
-// lists nowhere and owes nothing), so the sweep neither fails nor reports it.
-//
-// input_required rows are kept: their pending approval persists and resumes
-// the run, so they are not orphans.
+// FailOrphans implements tasks.Store as ONE statement, so the rows reported are
+// exactly the rows failed, scoped by liveParent (spec §2.13). input_required
+// rows are kept: their pending approval resumes the run.
 func (s *TaskStore) FailOrphans(ctx context.Context) ([]tasks.Task, error) {
 	const summary = "the process restarted while the task was running"
 	var rows []taskRow

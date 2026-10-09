@@ -65,7 +65,8 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 	res := r.baseResult()
 	res.FinalOutput = finalOutput
 	// The flag answers "did the caller stop this", not "where did it stop": a
-	// run can reach its final output on the very turn the stop was asked for (spec §2.12).
+	// run can reach its final output on the very turn the stop was asked for
+	// (spec §2.12).
 	res.StoppedEarly = r.ctrl.stopRequested()
 	r.agentSpan.Set("ended_by", "final_output")
 	if res.StoppedEarly {
@@ -75,7 +76,8 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 }
 
 // refuseFinalTurn records that the refused turn's tools ran and returns cause,
-// first in any join so errors.As still finds a tripwire. A cancelled run writes nothing.
+// first in any join so errors.As still finds a tripwire. A cancelled run writes
+// nothing.
 func (r *runner) refuseFinalTurn(ctx context.Context, cause error) error {
 	if ctx.Err() != nil {
 		return cause
@@ -119,8 +121,7 @@ func (r *runner) fail(err error) error {
 		// Not a failure: the consumer left, and nobody is told anything.
 		return err
 	}
-	// Mark the current agent span failed so the error is visible in traces;
-	// child spans (generation, function) set their own errors at the source.
+	// Child spans set their own errors at the source.
 	r.agentSpan.SetError(err.Error(), nil)
 	return &RunError{Result: r.baseResult(), err: err}
 }

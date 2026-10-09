@@ -10,19 +10,15 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// PlanToolName is the tool a Plan-mode agent submits its plan through. Hosts
-// use it to recognize the pause: an approval interruption for this tool IS
-// the plan review, and the plan text is in the call's arguments.
+// PlanToolName is the tool a Plan-mode agent submits its plan through; an
+// approval interruption for it IS the plan review, the plan in its arguments.
 const PlanToolName = "submit_plan"
 
-// DefaultReadOnlyTools are extra tool names Plan leaves usable while planning,
-// on top of every tool that declares Tool.ReadOnly — for tools a caller does
-// not own.
+// DefaultReadOnlyTools are the tool names Plan admits while planning when
+// ReadOnlyTools is nil, beside every tool that declares Tool.ReadOnly.
 var DefaultReadOnlyTools = []string{"read_file", "list_files", "task_status"}
 
-// DefaultPlanInstructions is the planning preamble. It tells the model what
-// phase it is in, what it can touch, and how to leave the phase — the three
-// things a toolset cannot say for itself.
+// DefaultPlanInstructions is the planning preamble.
 const DefaultPlanInstructions = `You are in PLAN MODE. Before making any changes:
 1. Understand the task, exploring with the read-only tools in your toolset.
    Work from the tools you can see — this session may have no filesystem or
@@ -33,20 +29,17 @@ Do not attempt any modification while planning — those tools are listed but
 disabled, and answer with a refusal until your plan is approved. If your plan
 is rejected, revise it using the feedback and submit again.`
 
-// ReadOnlySet is the tool names plan mode admits while planning, beside every
-// first-party tool that declares Tool.ReadOnly. Admits is the ONE predicate
-// the plan gate and a host's "ask before changes" approval share — spec §2.12.
+// ReadOnlySet is the tool names plan mode admits while planning; Admits is the
+// one predicate the plan gate and a host's approval share — see spec §2.12.
 type ReadOnlySet map[string]bool
 
-// Admits reports whether t is usable while planning: a first-party tool by
-// its own ReadOnly flag or a listed name, an MCP tool (fromMCP) by a listed
-// name only — its flag is the server's readOnlyHint, an outside claim.
+// Admits reports whether t is usable while planning: by its ReadOnly flag or a
+// listed name, by a listed name only when fromMCP — see decisions §5.53.
 func (s ReadOnlySet) Admits(t *agents.Tool, fromMCP bool) bool {
 	return (!fromMCP && t.ReadOnly) || s[t.Name]
 }
 
-// ReadOnlySet is the set p plans with: ReadOnlyTools, or DefaultReadOnlyTools
-// when nil.
+// ReadOnlySet is the set p plans with: ReadOnlyTools, or DefaultReadOnlyTools when nil.
 func (p Plan) ReadOnlySet() ReadOnlySet {
 	names := p.ReadOnlyTools
 	if names == nil {
@@ -59,12 +52,9 @@ func (p Plan) ReadOnlySet() ReadOnlySet {
 	return set
 }
 
-// Plan puts a run into plan mode: the agent explores with read-only tools,
-// submits a plan through submit_plan (an approval pause, like any gated tool),
-// and only an approved plan unlocks the rest of the toolset — in the SAME run,
-// which continues into execution. A rejection feeds its message back and the
-// model revises. Apply is safe to call unconditionally: whether THIS run plans
-// is the returned PlanPhase's answer, not a build-time one — spec §2.12.
+// Plan puts a run into plan mode: the agent explores with read-only tools and
+// submits a plan through submit_plan, whose approval unlocks the rest of the
+// toolset in the same run — see spec §2.12.
 type Plan struct {
 	// ReadOnlyTools are the tool names usable while planning.
 	// Nil means DefaultReadOnlyTools; an explicit empty slice means none.
@@ -79,26 +69,23 @@ type planArgs struct {
 }
 
 // PlanPhase is one run's plan/execute switch, shared by every gate Apply
-// installed. The approved submit_plan flips it; a host rebuilding the agent to
-// resume past its plan phase calls Unlock — spec §2.12.
+// installed; the approved submit_plan or a host's Unlock flips it — see spec §2.12.
 type PlanPhase struct {
 	executing atomic.Bool
 	mu        sync.Mutex
 	onUnlock  func(plan string) error
 }
 
-// OnUnlock registers fn to run at the FIRST unlock — where a host persists its
-// durable mark — with the approved plan's text, empty when the host unlocks.
-// Its error fails the unlock and the phase stays planning (spec §2.12).
+// OnUnlock registers fn to run once, at the first unlock, with the approved
+// plan's text (empty from Unlock); its error keeps the phase planning (spec §2.12).
 func (p *PlanPhase) OnUnlock(fn func(plan string) error) {
 	p.mu.Lock()
 	p.onUnlock = fn
 	p.mu.Unlock()
 }
 
-// Unlock moves the run into the executing phase: gated tools run and
-// submit_plan disappears. The first transition runs OnUnlock first and stays
-// locked if it fails.
+// Unlock moves the run into the executing phase; the first transition runs
+// OnUnlock first and stays locked if it fails.
 func (p *PlanPhase) Unlock() error { return p.unlock("") }
 
 // unlock is Unlock carrying the plan an approved submit_plan was called with;
@@ -130,19 +117,15 @@ func (p Plan) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) 
 	return next(ctx, in)
 }
 
-// Apply returns a clone of agent rewritten for plan mode, plus the phase
-// switch the gates share. Run uses it per run; a host that rebuilds an agent
-// for a durable resume calls it at build time (spec §2.12).
+// Apply returns a clone of agent rewritten for plan mode, plus the phase switch
+// the gates share; a durable-resume host calls it at build time (spec §2.12).
 func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	readOnly := p.ReadOnlySet()
-
-	// The phase flag every gate shares. Atomic because tools may run
-	// concurrently within a turn.
 	phase := &PlanPhase{}
 
 	out := agent.Clone()
-	// The runner consults ApproveTools ahead of the gate, so the list is
-	// translated into each tool's own predicate — suppressible while planning — and cleared.
+	// ApproveTools is translated into per-tool predicates the phase can
+	// suppress (spec §2.12).
 	listed := approvalListMatcher(out.ApproveTools)
 	out.ApproveTools = nil
 	tools := make([]*agents.Tool, 0, len(out.Tools)+1)
@@ -156,15 +139,13 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	submit := agents.NewTool(PlanToolName,
 		"Submit your plan for approval. Execution tools unlock only after the plan is approved.",
 		func(_ context.Context, _ *agents.ToolContext, args planArgs) (string, error) {
-			// A failed unlock keeps the phase locked; the error goes back to the
-			// model, which resubmits, and the human re-approves.
+			// A failed unlock keeps the phase locked; the model resubmits.
 			if err := phase.unlock(args.Plan); err != nil {
 				return "", err
 			}
 			return "Plan approved. Proceed with the implementation; the full toolset is now available.", nil
 		})
-	// Approval-gated always: the pause IS the review. Hidden again once
-	// executing — a second submission would be noise, not a phase change.
+	// Always approval-gated (the pause IS the review); hidden once executing.
 	submit.NeedsApproval = true
 	submit.IsEnabled = func(context.Context, *agents.RunContext, *agents.Agent) (bool, error) {
 		return !phase.Executing(), nil
@@ -172,8 +153,8 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 	tools = append(tools, submit)
 	out.Tools = tools
 
-	// Handoffs are gated too — a target's full toolset would be a side door out
-	// of plan mode. IsEnabled is filtered per turn, so approval flips them on mid-run.
+	// Handoffs are hidden while planning; IsEnabled is filtered per turn — see
+	// decisions §5.53.
 	if len(out.Handoffs) > 0 {
 		hs := make([]agents.Handoff, len(out.Handoffs))
 		copy(hs, out.Handoffs)
@@ -192,8 +173,7 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 		out.Handoffs = hs
 	}
 
-	// MCP tools are listed fresh each turn, so a wrapper gates them per
-	// listing and carries the translated ApproveTools listing.
+	// MCP tools are listed fresh each turn, so a wrapper gates them per listing.
 	if len(out.MCPServers) > 0 {
 		wrapped := make([]agents.MCPServer, 0, len(out.MCPServers))
 		for _, s := range out.MCPServers {
@@ -202,8 +182,7 @@ func (p Plan) Apply(agent *agents.Agent) (*agents.Agent, *PlanPhase) {
 		out.MCPServers = wrapped
 	}
 
-	// The preamble is emitted only while the phase is LOCKED, so an agent
-	// that starts (or is rebuilt) already unlocked carries none of it.
+	// The preamble is emitted only while the phase is locked.
 	preamble := strings.TrimSpace(firstNonEmpty(p.Instructions, DefaultPlanInstructions))
 	inner := out.Instructions
 	out.Instructions = func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) (string, error) {
@@ -254,7 +233,7 @@ func gateTool(t *agents.Tool, phase *PlanPhase, listed bool) *agents.Tool {
 }
 
 // keepListedApproval returns t, or when ApproveTools named it a copy whose own
-// predicate enforces the listing Apply cleared. Read-only tools keep approval in BOTH phases.
+// predicate enforces the listing in both phases.
 func keepListedApproval(t *agents.Tool, listed bool) *agents.Tool {
 	if !listed {
 		return t
@@ -263,8 +242,8 @@ func keepListedApproval(t *agents.Tool, listed bool) *agents.Tool {
 	innerFunc := t.NeedsApprovalFunc
 	kept.NeedsApprovalFunc = func(ctx context.Context, rc *agents.RunContext, argsJSON, callID string) (bool, error) {
 		if innerFunc != nil {
-			// Invoked for its error (and any per-call effects), exactly as the
-			// runner would have; a non-error answer is superseded by the listing.
+			// Invoked for its error and per-call effects; its answer is
+			// superseded by the listing.
 			if _, err := innerFunc(ctx, rc, argsJSON, callID); err != nil {
 				return false, err
 			}
@@ -274,8 +253,8 @@ func keepListedApproval(t *agents.Tool, listed bool) *agents.Tool {
 	return &kept
 }
 
-// approvalListMatcher is agentApprovesToolName's semantics as a predicate:
-// exact name, or "*" for every tool.
+// approvalListMatcher is the ApproveTools listing as a predicate: exact name,
+// or "*" for every tool.
 func approvalListMatcher(names []string) func(string) bool {
 	all := false
 	set := make(map[string]bool, len(names))
@@ -290,7 +269,7 @@ func approvalListMatcher(names []string) func(string) bool {
 }
 
 // planMCP gates an MCP server's per-turn listing while planning and carries
-// the translated ApproveTools listing in both phases (Apply cleared the agent-level list).
+// the translated ApproveTools listing in both phases.
 type planMCP struct {
 	inner    agents.MCPServer
 	phase    *PlanPhase
@@ -306,8 +285,7 @@ func (m planMCP) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 	if err != nil {
 		return tools, err
 	}
-	// A fresh slice, never tools[:0]: the inner server may hand out a cached
-	// slice. Gates check the phase per CALL, so one wrapping serves both phases.
+	// A fresh slice, never tools[:0]: the inner server may hand out a cached one.
 	out := make([]*agents.Tool, 0, len(tools))
 	for _, t := range tools {
 		if m.readOnly.Admits(t, true) {

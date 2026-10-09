@@ -66,9 +66,7 @@ func fileToolError(op, reqPath string, err error) string {
 	return fmt.Sprintf("error: %s %s: %s", op, reqPath, kind)
 }
 
-// FileTools returns read_file, write_file and list_files tools backed by the
-// given sandbox. These complement CodeTool by giving the model structured file
-// I/O instead of piping everything through shell commands.
+// FileTools returns read_file, write_file and list_files tools backed by sb.
 func FileTools(sb Sandbox, cfg FileToolConfig) []*agents.Tool {
 	cfg = cfg.withDefaults()
 	return []*agents.Tool{

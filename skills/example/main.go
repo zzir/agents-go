@@ -1,9 +1,7 @@
-// Command example wires Agent Skills into an agent: it reads SKILL.md
-// documents from disk, validates them with skills.Parse, injects the skill
-// index into the agent's instructions (discovery), and gives the model a
-// read_skill tool to open a skill's full document on demand
-// (activation/execution). Storage is the caller's: here a map from skill name
-// to document content.
+// Command example wires Agent Skills into an agent: it reads SKILL.md documents
+// from disk, validates them with skills.Parse, puts the skill index into the
+// agent's instructions and gives the model a read_skill tool to open a skill's
+// full document on demand. Storage is the caller's: here a map by skill name.
 //
 // Run from the skills module directory:
 //

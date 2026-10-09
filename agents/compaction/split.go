@@ -7,8 +7,7 @@ import (
 )
 
 // SafeSplit snaps a count-based split index to the nearest group boundary at or
-// before it, so neither side holds half of what must stay together. It returns
-// 0 when no non-empty prefix is safe.
+// before it; 0 when no non-empty prefix is safe.
 func SafeSplit(entries []session.Entry, split int) int {
 	if split <= 0 || len(entries) == 0 {
 		return 0
@@ -22,8 +21,7 @@ func SafeSplit(entries []session.Entry, split int) int {
 	for _, g := range idx.Groups {
 		next := at + len(g.Entries)
 		if next > split {
-			// This group straddles the requested split, so the last safe
-			// boundary is the one before it.
+			// This group straddles the split; the last safe boundary is before it.
 			return at
 		}
 		at = next
@@ -32,8 +30,7 @@ func SafeSplit(entries []session.Entry, split int) int {
 }
 
 // IsSummaryOnly reports whether entries amount to nothing but an existing
-// compaction summary. Summarizing that yields a summary of a summary; callers
-// check before spending a model call.
+// compaction summary, which is not worth a model call to summarize again.
 func IsSummaryOnly(entries []session.Entry) bool {
 	if len(entries) == 0 {
 		return false

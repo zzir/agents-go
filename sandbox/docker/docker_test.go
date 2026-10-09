@@ -262,12 +262,9 @@ type refusingReader struct{ err error }
 
 func (r refusingReader) Read([]byte) (int, error) { return 0, r.err }
 
-// A copy that ended for a real reason is reported, because on a live attach the
-// stream IS the process-lifetime signal: ExecInspect would answer for a process
-// that may still be running. Both Exec and ExecStream share this core, so a
-// refused write fails the call rather than being dropped. (The ephemeral log
-// copy deliberately differs — ContainerWait tells it the exit status
-// independently, so there the same failure costs only output bytes.)
+// A copy that ended for a real reason is reported: on a live attach the stream
+// IS the process-lifetime signal, so a refused write fails the call rather than
+// being dropped (the ephemeral log copy differs: ContainerWait tells it the exit).
 func TestCopyAttached_ReportsARefusedWrite(t *testing.T) {
 	var mux bytes.Buffer
 	muxWrite(&mux, stdcopy.Stdout, []byte("hello"))

@@ -17,13 +17,9 @@ import (
 )
 
 // ConversationsSession is a session.Storage backed by the OpenAI Conversations
-// API: history lives server-side under a conversation ID rather than in a
-// local store. The conversation is created lazily on first use unless an
-// existing ID is supplied via SetConversationID.
-//
-// Item conversion reuses session.UnmarshalInputItem, so the common item kinds
-// (messages, function calls and their outputs) round-trip; exotic server-only
-// item types may not.
+// API: history lives server-side under a conversation ID, created lazily unless
+// SetConversationID supplies one. Items convert through session.UnmarshalInputItem,
+// so exotic server-only item types may not round-trip.
 type ConversationsSession struct {
 	svc conversations.ConversationService
 
@@ -73,11 +69,9 @@ func (s *ConversationsSession) ensureID(ctx context.Context) (string, error) {
 	return s.id, nil
 }
 
-// Entries implements session.Storage, oldest-first. A negative cursor
-// limit fetches the most recent -Limit entries.
-//
-// Every entry is an item entry: the server holds Responses items and nothing
-// else, so nothing a run recorded outside the conversation itself comes back.
+// Entries implements session.Storage, oldest-first; a negative cursor limit
+// fetches the most recent -Limit entries. Every entry is an item entry: the
+// server holds Responses items and nothing else.
 func (s *ConversationsSession) Entries(ctx context.Context, cur session.Cursor) ([]session.Entry, error) {
 	fetch := 0
 	if cur.Limit < 0 {
@@ -173,10 +167,9 @@ func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]se
 // POST /conversations/{id}/items ("You may add up to 20 items at a time").
 const conversationItemsBatchLimit = 20
 
-// Append implements session.Storage. Only item entries are stored: a
-// server-managed conversation holds Responses items and has nowhere for an
-// annotation, a terminal record or a custom entry, so those are dropped rather
-// than failing the write. Use a local Session when everything must survive.
+// Append implements session.Storage. Only item entries are stored: the
+// server-managed conversation has nowhere for an annotation, a terminal record
+// or a custom entry, so those are dropped, not failed.
 func (s *ConversationsSession) Append(ctx context.Context, entries ...session.Entry) error {
 	items := make([]agents.InputItem, 0, len(entries))
 	for _, e := range entries {

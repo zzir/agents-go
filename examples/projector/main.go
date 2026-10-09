@@ -1,14 +1,6 @@
-// Command projector demonstrates EntryProjector: the single place that answers
-// "what does the model get to read".
-//
-// A session records more than a conversation — an error banner, terminal
-// output, a compaction checkpoint. That question used to be answered
-// implicitly, by whatever a session happened to store, so anything worth
-// keeping but not worth sending had nowhere to live.
-//
-// By default items and compaction checkpoints reach the model and nothing else:
-// putting a terminal transcript in the model's mouth would be claiming somebody
-// said it. This example opts one kind in.
+// Command projector demonstrates session.Projector: the single place that
+// answers "what does the model get to read". Items and checkpoints project by
+// default, nothing else; this example opts one more kind in — see spec §2.5b.
 //
 // Run with: go run ./examples/projector   (no API key needed)
 package main
@@ -33,8 +25,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Terminal output the user ran by hand. Recorded, but not the model's to
-	// read unless we say so.
+	// Terminal output the user ran by hand: recorded, not the model's to read.
 	payload, err := json.Marshal(map[string]string{
 		"command": "make release",
 		"output":  "ld: symbol(s) not found for architecture arm64",
@@ -53,16 +44,15 @@ func main() {
 	// Default projection: the terminal entry is recorded and not sent.
 	report(ctx, sess, "default", nil)
 
-	// Opt it in. A projector maps one entry kind to the items it contributes;
-	// mapping a kind to nil suppresses it instead.
+	// A projector maps one kind to the items it contributes; nil suppresses the kind.
 	report(ctx, sess, "with terminal output projected", map[session.EntryKind]session.Projector{
 		session.EntryKindTerminal: func(e session.Entry) ([]agents.InputItem, error) {
 			var t struct{ Command, Output string }
 			if err := json.Unmarshal(e.Payload, &t); err != nil {
 				return nil, err
 			}
-			// A system message: the runtime is reporting what happened, and
-			// attributing it to the user would put words in their mouth.
+			// A system message: the runtime reports what happened; the user did
+			// not say it.
 			return agents.InputItemsFromSystemText(
 				"The user ran `" + t.Command + "` in a terminal. Output:\n" + t.Output), nil
 		},

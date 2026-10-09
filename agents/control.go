@@ -5,34 +5,25 @@ import (
 	"sync/atomic"
 )
 
-// RunControl influences a run while it is in flight. Run returns one alongside
-// the stream; it is safe to use from another goroutine, including before
-// ranging has begun.
+// RunControl influences a run in flight: stop, injection, pending. Safe from
+// another goroutine, including before ranging begins — see spec §2.11b.
 type RunControl interface {
-	// StopAfterTurn asks the run to stop once the in-flight turn finishes —
-	// tools and session save included — ending cleanly with no error. Unlike
-	// abandoning the stream or cancelling the context, which stop the run
-	// mid-turn, it leaves the session consistent (spec §2.3c).
+	// StopAfterTurn ends the run cleanly once the in-flight turn, tools and
+	// session save included, finishes — see spec §2.3c.
 	StopAfterTurn()
 
-	// Steer injects input into the running run and forces another turn even if
-	// the agent was about to produce its final output — "change course".
-	// Input is a string or []InputItem.
+	// Steer injects input (a string or []InputItem) and forces another turn
+	// even if the agent was about to finish.
 	Steer(input any) error
 
-	// NextTurn injects input at the next turn boundary, if the run takes one —
-	// "while you are at it". Unlike Steer it never extends the run; whatever
-	// it did not consume is reported by Pending.
+	// NextTurn injects input at the next turn boundary, if the run takes one;
+	// it never extends the run.
 	NextTurn(input any) error
 
-	// FollowUp queues input for after the run's final output, continuing the
-	// same run with it — "and then" — so the trace, the usage total and the
-	// session stay one thing.
+	// FollowUp queues input for after the final output, continuing the same run.
 	FollowUp(input any) error
 
-	// Pending reports queued input the run has not consumed. It is how a
-	// caller learns that a NextTurn arrived too late to be delivered, instead
-	// of the input vanishing.
+	// Pending reports queued input the run has not consumed.
 	Pending() PendingInput
 }
 
@@ -48,8 +39,7 @@ func (p PendingInput) Empty() bool {
 	return len(p.Steer) == 0 && len(p.NextTurn) == 0 && len(p.FollowUp) == 0
 }
 
-// injectKind tags a queued injection with the method that queued it, which
-// decides where it may be consumed (spec §2.11b).
+// injectKind tags a queued injection with the method that queued it — see spec §2.11b.
 type injectKind uint8
 
 const (

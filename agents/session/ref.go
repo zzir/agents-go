@@ -7,14 +7,12 @@ import (
 	"time"
 )
 
-// Ref addresses one session: one generation of one id, so a handle to a
-// deleted-then-recreated id cannot reach its replacement. A ref with no
-// generation is the direct scope, where the id names the storage — spec §2.5e2.
+// Ref addresses one generation of one session id; a ref with no generation is
+// the direct scope, where the id names the storage — spec §2.5e2.
 type Ref struct {
 	// ID is the session's name, as a caller knows it.
 	ID string
-	// Gen distinguishes this generation of that name from the ones before.
-	// Empty is the direct scope; see above.
+	// Gen distinguishes this generation of that name; empty is the direct scope.
 	Gen string
 }
 
@@ -38,9 +36,8 @@ func NewGeneration() (string, error) {
 	return hex.EncodeToString(buf[:]), nil
 }
 
-// NewSessionID mints an id for a Repo.Create call that did not supply one. The
-// random suffix beside the timestamp keeps two id-less Creates in one clock
-// tick from colliding.
+// NewSessionID mints an id for a Repo.Create that supplied none; the random
+// suffix keeps two id-less Creates in one clock tick apart.
 func NewSessionID() string {
 	var buf [4]byte
 	_, _ = rand.Read(buf[:])

@@ -2,8 +2,7 @@ package session
 
 import "cmp"
 
-// SourceType says who produced an item. The zero value is the model, which is
-// where most items come from.
+// SourceType says who produced an item; the zero value is the model.
 type SourceType string
 
 const (
@@ -21,16 +20,16 @@ const (
 	SourceCompaction SourceType = "compaction"
 	// SourceGuardrail is content substituted by a guardrail's Replace decision.
 	SourceGuardrail SourceType = "guardrail"
-	// SourceHost is a note the embedding application wrote onto the session
-	// for people — an annotation, never model input. ID names the note.
+	// SourceHost is a note the host wrote for people, never model input; ID
+	// names the note.
 	SourceHost SourceType = "host"
 )
 
 // Source records an item's provenance.
 type Source struct {
 	Type SourceType `json:"type,omitzero"`
-	// ID names the specific producer when there can be several of a kind — a
-	// guardrail's name, an error handler's kind. Empty when the type is enough.
+	// ID names the producer when there can be several of a kind (a guardrail's
+	// name, an error handler's kind); empty when the type is enough.
 	ID string `json:"id,omitzero"`
 }
 

@@ -5,29 +5,24 @@ import (
 	"fmt"
 )
 
-// OutputSchema describes the structured output a model is asked to produce.
-// The OpenAI model adapter uses it to build the response_format payload and to
-// validate/parse the model's final output.
-//
-// It is defined here because the Model interface depends on it.
+// OutputSchema describes the structured output a model is asked to produce;
+// the adapter builds the response format from it and the runner validates with it.
 type OutputSchema interface {
 	// IsPlainText reports whether the output is unstructured text (no schema).
 	IsPlainText() bool
 	// Name is the schema name sent to the provider (e.g. "final_output").
 	Name() string
-	// JSONSchema returns the JSON Schema for the output object. It is only
-	// called when IsPlainText reports false.
+	// JSONSchema returns the JSON Schema for the output object (non-plain-text only).
 	JSONSchema() map[string]any
 	// IsStrictJSONSchema reports whether strict-mode validation is requested.
 	IsStrictJSONSchema() bool
-	// ValidateJSON parses and validates a raw JSON string produced by the model,
-	// returning the decoded Go value.
+	// ValidateJSON parses and validates the model's raw JSON output, returning
+	// the decoded value.
 	ValidateJSON(jsonStr string) (any, error)
 }
 
-// dynamicOutputSchema implements OutputSchema from a raw JSON Schema map,
-// for use cases where the schema is loaded at runtime (e.g. from a database)
-// rather than derived from a Go type at compile time.
+// dynamicOutputSchema implements OutputSchema from a raw JSON Schema map loaded
+// at runtime.
 type dynamicOutputSchema struct {
 	name      string
 	schema    map[string]any
@@ -35,13 +30,9 @@ type dynamicOutputSchema struct {
 	validator *schemaValidator
 }
 
-// NewDynamicOutputSchema returns an OutputSchema backed by the given JSON Schema
-// map. name is the schema identifier sent to the provider (e.g. "final_output").
-//
-// When strict is true, the schema is normalized to the strict subset via
-// EnsureStrictJSONSchema on a deep copy (the caller's map is not mutated),
-// matching what the SDK does for reflected schemas. The schema is data, so one
-// strict mode cannot express is an error, as from NewRawTool.
+// NewDynamicOutputSchema returns an OutputSchema backed by a JSON Schema map;
+// name is sent to the provider. strict normalizes a deep copy to the strict
+// subset, and a schema strict mode cannot express is an error.
 func NewDynamicOutputSchema(name string, schema map[string]any, strict bool) (OutputSchema, error) {
 	s := &dynamicOutputSchema{name: name, schema: schema, strict: strict}
 	if strict {
@@ -60,8 +51,7 @@ func (s *dynamicOutputSchema) Name() string               { return s.name }
 func (s *dynamicOutputSchema) JSONSchema() map[string]any { return s.schema }
 func (s *dynamicOutputSchema) IsStrictJSONSchema() bool   { return s.strict }
 func (s *dynamicOutputSchema) ValidateJSON(raw string) (any, error) {
-	// Validated locally too: the provider was sent the schema, but the output
-	// is what the caller decodes.
+	// Validated locally too; the output is what the caller decodes.
 	if err := s.validator.Validate([]byte(raw)); err != nil {
 		return nil, fmt.Errorf("dynamic output schema %q: %w", s.name, err)
 	}

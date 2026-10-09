@@ -16,8 +16,7 @@ const (
 )
 
 // ErrTerminalUnsupported is returned (wrapped) by TerminalOpener.OpenTerminal
-// when the backend cannot provide an interactive terminal in its current
-// configuration (e.g. the docker backend outside Persistent mode).
+// when the backend's current configuration has no interactive terminal.
 var ErrTerminalUnsupported = errors.New("sandbox: interactive terminal not supported")
 
 // TerminalOptions configures an interactive terminal session.
@@ -74,8 +73,8 @@ type Terminal interface {
 }
 
 // TerminalOpener is optionally implemented by Sandbox backends that support
-// interactive terminals, mirroring how ExecStreamer extends Exec. The context
-// bounds session establishment only; the returned Terminal lives until Close.
+// interactive terminals. The context bounds session establishment only; the
+// returned Terminal lives until Close.
 type TerminalOpener interface {
 	OpenTerminal(ctx context.Context, opts TerminalOptions) (Terminal, error)
 }

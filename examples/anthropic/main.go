@@ -1,11 +1,9 @@
 // Command anthropic streams an agent run on Claude through the Anthropic
-// Messages API provider. The provider translates the Messages SSE stream into
-// the SDK's canonical response.* events at the model boundary, so streaming,
-// tools and sessions work exactly as with the OpenAI provider.
+// Messages API provider, which translates the Messages SSE stream into the
+// SDK's canonical response.* events — see decisions §5.10.
 //
 // Run with: ANTHROPIC_API_KEY=... go run .
-// An older model takes its reasoning effort as a token budget:
-// go run . -model claude-haiku-4-5
+// An older model takes the effort as a token budget: go run . -model claude-haiku-4-5
 package main
 
 import (
@@ -41,7 +39,8 @@ func main() {
 		ModelSettings: &agents.ModelSettings{Reasoning: &agents.Reasoning{Effort: agents.ReasoningEffortHigh}},
 	}
 
-	// Models before adaptive thinking take the effort as a thinking budget.
+	// Models before adaptive thinking take the effort as a thinking budget —
+	// see decisions §5.76.
 	provider := anthropic.NewProvider()
 	if strings.HasPrefix(*model, "claude-haiku-") {
 		provider.WithBudgetThinking(true)

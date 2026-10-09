@@ -104,8 +104,8 @@ func TestMCP_RunWithRetries_RetriesServerSideFailure(t *testing.T) {
 	}
 }
 
-// TestMCP_RunWithRetries_StopsOnClosedServer: a Close mid-loop is terminal, and
-// an infinite policy used to spin on it until the caller's context died.
+// TestMCP_RunWithRetries_StopsOnClosedServer: a Close mid-loop is terminal even
+// for an infinite retry policy.
 func TestMCP_RunWithRetries_StopsOnClosedServer(t *testing.T) {
 	s := newServer("t", Options{MaxRetryAttempts: -1, RetryBackoffBase: time.Microsecond})
 	calls := 0

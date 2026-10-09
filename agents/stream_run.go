@@ -26,12 +26,8 @@ func (r *runner) streamOneModelCall(ctx context.Context, span *tracing.SpanHandl
 	asm := &responseAssembler{}
 	start := time.Now()
 	first := false
-	// The stamp waits for the first DELTA — the first actual token. Earlier
-	// events carry none: response.created arrives immediately (it would
-	// measure connection setup) and response.output_item.added only announces
-	// an item whose content is still to come. Terminal events stamp as a
-	// fallback so a stream that carries only its final payload still records
-	// something.
+	// The stamp waits for the first delta (earlier events carry no token);
+	// terminal events stamp as a fallback.
 	stamp := func() {
 		if !first {
 			first = true
@@ -77,9 +73,7 @@ func (r *runner) recordPartialOutput(span *tracing.SpanHandle, asm *responseAsse
 }
 
 // responseAssembler assembles the final ModelResponse from a raw Responses
-// event stream. It is the one place stream events become a ModelResponse —
-// the runner's streaming path and the stream-only adapter (NewStreamOnlyModel)
-// both feed it, so the two paths cannot drift.
+// event stream, for the runner and NewStreamOnlyModel alike — see decisions §5.15.
 type responseAssembler struct {
 	final *ModelResponse
 	items []OutputItem
@@ -107,10 +101,7 @@ func (a *responseAssembler) observe(event *ResponseStreamEvent) {
 			Status:     string(completed.Response.Status),
 		}
 	case EventResponseIncomplete:
-		// A response cut off at the output-token limit still arrived. It is
-		// assembled like any other so the runner can see it is truncated
-		// and refuse to run its tool calls; treating it as "no response"
-		// would throw the turn away over a length limit.
+		// A cut-off response still arrived; assembled like any other — see spec §2.7e.
 		inc := event.AsResponseIncomplete()
 		a.final = &ModelResponse{
 			Output:           inc.Response.Output,
@@ -125,14 +116,12 @@ func (a *responseAssembler) observe(event *ResponseStreamEvent) {
 
 func (a *responseAssembler) result() (*ModelResponse, error) {
 	if a.final == nil {
-		// No response.completed event arrived: the stream ended early or with a
-		// terminal failure event. Surfacing this is essential — fabricating an
-		// empty response would make a failed run "succeed" with empty output.
+		// The stream ended early or with a terminal failure event; never
+		// fabricate an empty response.
 		return nil, NewModelBehaviorError("model stream ended without a completed response")
 	}
-	// Some backends (e.g. ChatGPT with store=false) return an empty Output
-	// array in the completed event. Fall back to output assembled from
-	// streaming deltas so the run produces a usable final result.
+	// Some backends (ChatGPT with store=false) send an empty Output in the
+	// completed event; fall back to the items assembled from the stream.
 	if len(a.final.Output) == 0 {
 		a.final.Output = a.items
 	}

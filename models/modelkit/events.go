@@ -207,10 +207,9 @@ func CompletedEvent(fr FinalResponse) (agents.ResponseStreamEvent, error) {
 	return terminalEvent(agents.EventResponseCompleted, "completed", fr, "")
 }
 
-// IncompleteEvent synthesizes the response.incomplete terminal event. Use
-// reason "max_output_tokens" for a response cut off at the output-token limit:
-// that is the one incomplete reason the runner treats as recoverable
-// truncation (agents.ModelResponse.Truncated) rather than a failure.
+// IncompleteEvent synthesizes the response.incomplete terminal event; reason
+// "max_output_tokens" is the one the runner treats as recoverable truncation
+// rather than a failure (spec §2.7e).
 func IncompleteEvent(fr FinalResponse, reason string) (agents.ResponseStreamEvent, error) {
 	if reason == "" {
 		return agents.ResponseStreamEvent{}, fmt.Errorf("modelkit: IncompleteEvent requires a reason")

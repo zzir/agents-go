@@ -13,10 +13,8 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// OpenTerminal starts a shell on a PTY inside the sandbox. The stream that
-// carries its output is envd's Start, opened with a pty size; input goes back
-// as SendInput calls, and a resize as Update — the same three the JS and
-// Python SDKs make.
+// OpenTerminal starts a shell on a PTY inside the sandbox: output rides envd's
+// Start stream, input goes back as SendInput calls and a resize as Update.
 func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions) (sandbox.Terminal, error) {
 	// The session is open-ended and there is no keepalive: the best available
 	// is to open it on a freshly refreshed full lease.

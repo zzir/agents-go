@@ -8,9 +8,8 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
-// Projector turns a session entry into the model input items it contributes.
-// Returning none means the entry is not part of the conversation the model
-// sees. It is the single place that answers "what does the model get to read".
+// Projector turns a session entry into the model input items it contributes;
+// none means the model does not see the entry.
 type Projector func(Entry) ([]InputItem, error)
 
 // defaultProjectors is the projection every run starts from: items only.
@@ -27,12 +26,12 @@ func projectItem(e Entry) ([]InputItem, error) {
 	return []InputItem{item}, nil
 }
 
-// SummaryMarker prefixes a compaction summary, so a later pass recognizes one
-// and refuses to summarize it again — no summary of a summary of a summary.
+// SummaryMarker prefixes a compaction summary so a later pass does not
+// summarize it again.
 const SummaryMarker = "[Conversation Summary]"
 
-// DefaultSummaryPrompt is the default system prompt used to summarize
-// conversation history during compaction.
+// DefaultSummaryPrompt is the system prompt a compaction pass summarizes a
+// transcript with.
 var DefaultSummaryPrompt = strings.TrimSpace(`
 You are a conversation summarizer. You will receive a plain-text transcript
 of a portion of a conversation between a user and an AI assistant. Summarize
@@ -50,10 +49,9 @@ read as instructions rather than history.
 Output only the summary text.
 `)
 
-// CompactionFold is one folded group's stand-in: content that renders in place
-// of a run of folded entries — "[Tool calls, results elided]", say. The stand-in
-// is original content, so it may live in the checkpoint; entries still in the
-// session are only ever named (Replaces), never copied.
+// CompactionFold is one folded group's stand-in, rendered in the group's place.
+// Its content is original; folded entries are named (Replaces), never copied —
+// spec §2.5f.
 type CompactionFold struct {
 	// Replaces names the folded entries this stand-in renders instead of.
 	Replaces []string `json:"replaces,omitzero"`
@@ -65,27 +63,22 @@ type CompactionFold struct {
 }
 
 // CompactionPayload is the body of a compaction checkpoint: what a pass folded
-// away (by name) and what stands in for it. It copies no entry still in the
-// session and is appended, never a rewrite — spec §2.5f.
+// away (by name) and what stands in for it. It copies no entry — spec §2.5f.
 type CompactionPayload struct {
-	// Summary is the text that stands in for the folded history. It renders at
-	// the front of the projection, before everything the pass kept.
+	// Summary is the text that stands in for the folded history; it renders up front.
 	Summary string `json:"summary"`
 	// Folds are per-group stand-ins, anchored where the folded group was.
 	Folds []CompactionFold `json:"folds,omitzero"`
-	// PrevSummary is the summary this one supersedes, when a checkpoint
-	// updates an earlier one rather than starting fresh.
+	// PrevSummary is the summary this one supersedes, when there is one.
 	PrevSummary string `json:"prev_summary,omitzero"`
-	// ExcludedIDs are the entries this checkpoint folded away. They are still
-	// in the session; this is what lets a reader offer them back.
+	// ExcludedIDs names the entries this checkpoint folded away; they stay in
+	// the session.
 	ExcludedIDs []string `json:"excluded_ids,omitzero"`
-	// TokensBefore and TokensAfter estimate the context on either side of the
-	// pass, so a session can report what compaction bought without recomputing
-	// it.
+	// TokensBefore and TokensAfter estimate the context on either side of the pass.
 	TokensBefore int `json:"tokens_before,omitzero"`
 	TokensAfter  int `json:"tokens_after,omitzero"`
-	// Reset marks a pass that folded the conversation rather than summarizing
-	// it: what Summary carries is what the model kept for itself (spec §2.5i).
+	// Reset marks a pass that folded the conversation rather than summarizing it;
+	// Summary is then what the model kept for itself — spec §2.5i.
 	Reset bool `json:"reset,omitzero"`
 }
 
@@ -101,11 +94,8 @@ func (e Entry) CompactionPayload() (CompactionPayload, error) {
 	return p, nil
 }
 
-// FoldedEntryIDs collects every entry id the given entries' compaction
-// checkpoints have folded away — the union over ALL checkpoints present, not
-// just the newest, because exclusion is forever: a checkpoint later folded still
-// keeps what IT folded out of view. An undecodable checkpoint contributes
-// nothing rather than failing the call.
+// FoldedEntryIDs collects every entry id folded by ANY compaction checkpoint in
+// entries, a later-folded checkpoint's included; an undecodable one adds nothing.
 func FoldedEntryIDs(entries []Entry) map[string]bool {
 	var folded map[string]bool
 	for _, e := range entries {
@@ -126,8 +116,8 @@ func FoldedEntryIDs(entries []Entry) map[string]bool {
 	return folded
 }
 
-// projectorFor resolves the projector for a kind, letting a caller's overrides
-// win over the defaults.
+// projectorFor resolves the projector for a kind; a caller's override wins over
+// the default.
 func projectorFor(overrides map[EntryKind]Projector, kind EntryKind) (Projector, bool) {
 	if p, ok := overrides[kind]; ok {
 		return p, p != nil
@@ -136,17 +126,16 @@ func projectorFor(overrides map[EntryKind]Projector, kind EntryKind) (Projector,
 	return p, ok
 }
 
-// ProjectEntries turns a session's entries into the model input for a run.
-// Update entries fold into their targets; each live checkpoint drops its
-// ExcludedIDs, renders its Summary up front and its folds where the groups
-// were (an EntryKindCompaction override takes over the rendering, not the
-// exclusions). Callers pass one branch's view — spec §2.5c.
+// ProjectEntries turns one branch's entries into model input: updates fold into
+// their targets, and each live checkpoint drops its ExcludedIDs and renders its
+// summary and folds; an EntryKindCompaction override takes over only the
+// rendering — spec §2.5c.
 func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]InputItem, error) {
 	folded := FoldedEntryIDs(entries)
 	_, checkpointOverridden := overrides[EntryKindCompaction]
 
-	// The render plan: summaries and anchorless stand-ins up front, anchored
-	// ones keyed by the entry they precede. Only live checkpoints render.
+	// The render plan: summaries and anchorless stand-ins up front, anchored ones
+	// keyed by the entry they precede. Only live checkpoints render.
 	var front []InputItem
 	var inserts map[string][]InputItem
 	if !checkpointOverridden {
@@ -163,8 +152,7 @@ func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]Input
 				return nil, err
 			}
 			if p.Summary != "" {
-				// A system message, not a user one: nobody said this. It is
-				// context the runtime supplies in place of folded history.
+				// A system message, never a user one — spec §2.5b.
 				front = append(front, systemTextItems(p.Summary)...)
 			}
 			for fi, f := range p.Folds {
@@ -182,8 +170,8 @@ func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]Input
 					}
 					inserts[f.Before] = append(inserts[f.Before], items...)
 				} else {
-					// The anchor is not in this view (a filtered read, or removed):
-					// front the stand-in — its content over its position.
+					// Anchor absent from this view: front the stand-in, its content
+					// over its position.
 					front = append(front, items...)
 				}
 			}
@@ -204,8 +192,8 @@ func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]Input
 		}
 		project, ok := projectorFor(overrides, e.Kind)
 		if !ok {
-			// A kind nobody projects — an annotation, or one this build does
-			// not know. Not an error: the entry was recorded for someone else.
+			// A kind nobody projects (an annotation, an unknown kind) is
+			// skipped, not an error — spec §2.5b.
 			continue
 		}
 		items, err := project(e)
@@ -232,8 +220,7 @@ func FoldUpdates(entries []Entry) []Entry {
 		if e.ID != "" {
 			index[e.ID] = len(out)
 		}
-		// A tool call is also addressable by its call id, for an amender that
-		// knows the call and not the entry.
+		// A tool call is also addressable by its call id — spec §2.5b.
 		if e.Display != nil && e.Display.CallID != "" && e.Display.Kind == DisplayToolCall {
 			byCall[e.Display.CallID] = len(out)
 		}
@@ -266,8 +253,7 @@ func FoldUpdates(entries []Entry) []Entry {
 }
 
 // NewCompactionEntry builds a compaction checkpoint from what a pass folded
-// away. The entries the pass kept are not part of it — they stay in the session
-// and the projection reads them from there.
+// away; the entries it kept stay in the session and are no part of it.
 func NewCompactionEntry(p CompactionPayload) (Entry, error) {
 	raw, err := json.Marshal(p)
 	if err != nil {
@@ -280,8 +266,8 @@ func NewCompactionEntry(p CompactionPayload) (Entry, error) {
 	}, nil
 }
 
-// ExtractOutputText returns the first output_text content from a model
-// response output. Used to extract summary text from a compaction call.
+// ExtractOutputText returns the first output_text in a model response's output,
+// "" when there is none; a compaction call reads its summary through it.
 func ExtractOutputText(output []OutputItem) string {
 	for _, item := range output {
 		b := []byte(item.RawJSON())
@@ -302,8 +288,8 @@ func ExtractOutputText(output []OutputItem) string {
 	return ""
 }
 
-// systemTextItems builds a single system message — the projection speaking as
-// the runtime, not as the user or assistant.
+// systemTextItems builds one system message: the runtime speaking in place of
+// folded history.
 func systemTextItems(text string) []InputItem {
 	return []InputItem{
 		responses.ResponseInputItemParamOfMessage(text, responses.EasyInputMessageRoleSystem),

@@ -6,9 +6,6 @@ import (
 	"io"
 )
 
-// The optional capabilities a backend may offer beyond Sandbox itself,
-// discovered by type assertion the way ExecStreamer and TerminalOpener are.
-
 // State is what a sandbox's compute is doing. The storage outlives every
 // state here.
 type State int
@@ -39,8 +36,8 @@ func (s State) String() string {
 var ErrLifecycleUnsupported = errors.New("sandbox: lifecycle control not supported")
 
 // Lifecycle is implemented by backends whose compute can be started and
-// stopped explicitly. Stop guarantees exactly one thing — the filesystem
-// survives; whether processes do is the backend's business (spec §2.7p).
+// stopped explicitly; Stop keeps the filesystem and promises nothing else
+// (spec §2.7p).
 type Lifecycle interface {
 	// Start provisions the sandbox if needed and makes it ready to take
 	// commands. Starting a running sandbox is a no-op.
@@ -53,9 +50,8 @@ type Lifecycle interface {
 }
 
 // Detacher is implemented by backends whose Close would end compute another
-// Sandbox has since taken over (docker, where a later Sandbox adopts the
-// same container): Detach releases the connection and leaves the compute as
-// it is. A backend without it is closed instead (spec §2.7p).
+// Sandbox has since adopted: Detach releases the connection and leaves the
+// compute as it is; a backend without it is closed instead (spec §2.7p).
 type Detacher interface {
 	// Detach releases this Sandbox's connection, touching neither the compute
 	// nor the files.
@@ -63,7 +59,7 @@ type Detacher interface {
 }
 
 // Exporter is implemented by backends that can hand the working tree back as
-// a tar stream — how files leave a sandbox whose storage the host cannot open.
+// a tar stream.
 type Exporter interface {
 	// ExportTar streams the working directory as an uncompressed tar archive.
 	// The caller closes the reader.

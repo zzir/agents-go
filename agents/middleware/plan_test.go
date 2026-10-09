@@ -300,12 +300,9 @@ func (f fakeMCP) ListTools(context.Context, *agents.RunContext, *agents.Agent) (
 	return slices.Clone(f.tools), nil
 }
 
-// MCP tools are listed fresh each turn, so the gate is applied per listing:
-// every tool stays listed, and while planning only the ones the CALLER named in
-// ReadOnlyTools are usable. A server's own readOnlyHint does NOT admit a tool —
-// it is the external server's claim about itself, and plan mode's guarantee
-// cannot rest on it: a write tool marked "read-only" by a hostile server is
-// still gated.
+// MCP tools are gated per listing: every tool stays listed, and while planning
+// only names the caller put in ReadOnlyTools are usable, never readOnlyHint
+// (spec §2.12).
 func TestPlan_MCPListingIsPhaseGated(t *testing.T) {
 	var hintedWrites atomic.Int32
 	hinted := noopTool("mcp__search", &hintedWrites)

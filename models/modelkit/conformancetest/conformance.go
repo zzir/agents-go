@@ -1,10 +1,7 @@
 // Package conformancetest is the golden test matrix every agents.Model adapter
-// in this repository must pass: it checks the adapter against the runner's
-// consumption contract (decisions §5.10) — output item types, stream event
-// vocabulary and order, usage accounting, round-tripping of every synthesized
-// item, and acceptance of the histories a run replays. Each adapter supplies a
-// NewModel hook backed by a fake speaking its own wire protocol, primed to
-// answer the scenario; translating a TurnSpec into wire bytes is the adapter's half.
+// must pass: output item types, stream event vocabulary and order, usage
+// accounting, round-tripping and the histories a run replays (decisions §5.10).
+// An adapter supplies a NewModel hook backed by a fake primed to answer each scenario.
 package conformancetest
 
 import (
@@ -41,23 +38,17 @@ type ToolCallSpec struct {
 }
 
 // ReasoningSpec is the reasoning item the turn must produce. Encrypted seeds
-// the fixture's continuity blob (a thinking signature, encrypted reasoning,
-// …). The blob's canonical form is the ADAPTER's to choose — it may wrap or
-// prefix the wire value — so the suite asserts presence and byte-identical
-// survival into next-turn input, not equality with this seed.
+// the fixture's continuity blob; its canonical form is the ADAPTER's to choose,
+// so the suite asserts presence and survival into next-turn input, not equality.
 type ReasoningSpec struct {
 	Text      string
 	Encrypted string
 }
 
-// TurnSpec is what the model must answer for a scenario, in canonical terms.
-// The adapter's fixture encodes this meaning in its own wire format.
-//
-// Refusal makes the turn a refused response: the output must be exactly one
-// message whose single part is a refusal carrying this text, and nothing
-// else. ToolCalls on such a turn describe what the WIRE may carry (a backend
-// reporting refusal out-of-band can ship partially generated calls); none
-// may surface as an item.
+// TurnSpec is what the model must answer for a scenario, in canonical terms;
+// the adapter's fixture encodes it in its own wire format. Refusal makes the
+// output exactly one message whose single part is that refusal; ToolCalls on
+// such a turn describe what the WIRE may carry, and none may surface as an item.
 type TurnSpec struct {
 	ResponseID string
 	Text       string

@@ -100,15 +100,15 @@ func synthesizeStream(ctx context.Context, stream *ssestream.Stream[ant.MessageS
 				// Folded into the accumulated block; nothing incremental to show.
 			}
 		case "content_block_stop":
-			// The finished item is emitted at message_stop, with the stop
-			// reason known — see the doc comment.
+			// The finished item is emitted at message_stop (decisions §5.49).
 			if idx := int(event.Index); idx < 0 || idx >= len(acc.Content) {
 				yield(nil, agents.NewModelBehaviorError("anthropic: content_block_stop for unknown block index %d", idx))
 				return
 			}
 		case "message_delta":
-			// Accumulate copies OutputTokens but not OutputTokensDetails, and message_start
-			// carries it as 0; without this a streamed call reports zero reasoning tokens.
+			// Accumulate copies OutputTokens but not OutputTokensDetails, and
+			// message_start carries it as 0; without this a streamed call
+			// reports zero reasoning tokens.
 			if event.Usage.JSON.OutputTokensDetails.Valid() {
 				acc.Usage.OutputTokensDetails = event.Usage.OutputTokensDetails
 			}
@@ -150,8 +150,7 @@ func synthesizeStream(ctx context.Context, stream *ssestream.Stream[ant.MessageS
 		yield(nil, fmt.Errorf("anthropic messages stream: %w", err))
 		return
 	}
-	// A clean SSE end without message_stop is a severed connection, surfaced
-	// retryably rather than as a vague, unretryable early end.
+	// A clean SSE end without message_stop is a severed connection (decisions §5.16).
 	yield(nil, modelkit.TruncatedStreamError("anthropic messages stream"))
 }
 

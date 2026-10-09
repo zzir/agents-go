@@ -256,12 +256,9 @@ func TestShellSession_StripsTheSentinelEcho(t *testing.T) {
 	}
 }
 
-// A command that never finishes must not block forever: Terminal has no read
-// deadline, so without a background reader no timer could interrupt it.
-//
-// A timed-out session is also no longer at a known state — the command may
-// still be running and its output would arrive in the middle of the next one —
-// so it closes rather than silently interleaving two commands' output.
+// A command that never finishes must not block forever (Terminal has no read
+// deadline), and the timed-out session closes rather than interleave two
+// commands' output (spec §2.7k).
 func TestShellSession_TimeoutClosesTheSession(t *testing.T) {
 	// A terminal that never emits the sentinel: the command never finishes.
 	term := newFakeTerminal(nil)

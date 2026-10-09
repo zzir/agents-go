@@ -1,10 +1,7 @@
-// Package docker implements sandbox.Sandbox on Docker containers, in two modes:
-// ephemeral (default), where each Exec creates, runs and removes a container,
-// and persistent (Options.Persistent), where one long-lived container serves
-// every Exec through docker exec and is removed on Close. This file holds the
-// sandbox type and the Exec family; files.go the file operations and their two
-// backends (files_host.go, files_container.go); tar.go the packing both share.
-// It is its own module so the Docker client stays out of the core (decisions §5.7).
+// Package docker implements sandbox.Sandbox on Docker containers: ephemeral
+// (default), one container per Exec, or persistent (Options.Persistent), one
+// long-lived container served through docker exec and removed on Close. Its
+// own module keeps the Docker client out of the core (decisions §5.7).
 package docker
 
 import (
@@ -41,8 +38,9 @@ const (
 	// logMaxSize caps the json-file container log on the daemon's disk; output
 	// returned to the caller is capped separately, well below this.
 	logMaxSize = "10m"
-	// fingerprintLabel marks a persistent container as this package's, carrying a
-	// hash of its security-relevant options; adoptNamed needs an exact match (decisions §5.19).
+	// fingerprintLabel marks a persistent container as this package's, carrying
+	// a hash of its security-relevant options; adoptNamed needs an exact match
+	// (decisions §5.19).
 	fingerprintLabel = "dev.agents-go.sandbox.fingerprint"
 )
 
@@ -70,10 +68,9 @@ func (s *Sandbox) configFingerprint() string {
 type Options struct {
 	// Image is the container image to run. Required.
 	Image string
-	// Host is the Docker daemon address. Empty uses the standard DOCKER_HOST
-	// environment variable (or the platform default socket); "tcp://host:port"
-	// reaches a TCP daemon; "ssh://user@host[:port][/socket]" reaches a remote
-	// daemon's unix socket through SSH (pure Go — see SSHAuth).
+	// Host is the Docker daemon address: empty uses DOCKER_HOST (or the platform
+	// socket), "tcp://host:port" a TCP daemon, "ssh://user@host[:port][/socket]"
+	// a remote daemon's unix socket through SSH (see SSHAuth).
 	Host string
 	// SSH configures authentication and host-key verification for an ssh://
 	// Host; ignored otherwise.
@@ -84,45 +81,37 @@ type Options struct {
 	// Limits caps the container's resources. Zero fields use the defaults below.
 	Limits sandbox.Limits
 	// User runs the process as the given user[:group]. Empty keeps the image's
-	// own user, which for most images is root — the user a container needs to
-	// be able to install packages into itself.
+	// own user (root for most images).
 	User string
-	// Network names the docker network the container joins. Empty means "none"
-	// — no network at all, the default. "default" or "bridge" gives the
-	// daemon's ordinary networking; a user-defined network name puts the
-	// container where other containers (and the host process that created it)
-	// can reach it by name.
+	// Network names the docker network the container joins: empty means "none"
+	// (no network, the default), "default" or "bridge" the daemon's ordinary
+	// networking, a user-defined network one other containers reach by name.
 	Network string
-	// Env sets environment variables on the CONTAINER, so every command,
-	// shell and terminal in it sees them. An ExecRequest.Env entry of the
-	// same name wins for that one call. Part of the fingerprint: changing it
-	// replaces a persistent container rather than adopting the old one.
+	// Env sets environment variables on the CONTAINER; an ExecRequest.Env entry
+	// of the same name wins for that call. Part of the fingerprint: a change
+	// replaces a persistent container (decisions §5.19).
 	Env map[string]string
 	// Persistent, when true, keeps a single container alive across Exec calls
 	// instead of creating and destroying one per call.
 	Persistent bool
-	// ContainerName sets the Docker container name in persistent mode. Ignored
-	// in ephemeral mode (containers are unnamed). When empty a random name is
-	// assigned by the daemon.
+	// ContainerName sets the container name in persistent mode; empty takes the
+	// daemon's random name. Ignored in ephemeral mode.
 	ContainerName string
-	// WorkDir is a host directory to bind-mount into the container's /workspace.
-	// When set, it replaces the anonymous volume so the container sees (and can
-	// modify) the host files directly. Typically used with Persistent mode.
+	// WorkDir is a host directory bind-mounted at /workspace in place of the
+	// anonymous volume, so the container works on the host files directly.
 	WorkDir string
-	// VolumeName mounts the named Docker volume at /workspace instead of a
-	// host directory or an anonymous volume — durable storage on a REMOTE
-	// daemon, where a host path means nothing. Ignored when WorkDir is set.
+	// VolumeName mounts the named Docker volume at /workspace — durable storage
+	// on a remote daemon. Ignored when WorkDir is set.
 	VolumeName string
 	// TmpfsSize is the /tmp tmpfs size (e.g. "1g"); empty = "64m". RAM-backed.
 	TmpfsSize string
-	// KeepOnClose leaves the persistent container (stopped, not removed) on
-	// Close, so a later Sandbox with the same ContainerName and configuration
-	// adopts it — packages and files in the container survive process
-	// restarts and idle teardowns. Ignored in ephemeral mode.
+	// KeepOnClose stops the persistent container on Close instead of removing
+	// it, so a later Sandbox with the same ContainerName and configuration
+	// adopts it. Ignored in ephemeral mode.
 	KeepOnClose bool
-	// MaxReadFileBytes caps how many bytes ReadFile returns; larger files fail
-	// with sandbox.ErrReadLimitExceeded instead of being loaded into host
-	// memory. Zero (or negative) means sandbox.DefaultMaxReadFileBytes.
+	// MaxReadFileBytes caps ReadFile; a larger file fails with
+	// sandbox.ErrReadLimitExceeded. Zero (or negative) means
+	// sandbox.DefaultMaxReadFileBytes.
 	MaxReadFileBytes int64
 }
 

@@ -113,8 +113,6 @@ func (f *fakeService) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-/* ---------- control plane ---------- */
-
 func (f *fakeService) control(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-API-Key") == "" {
 		http.Error(w, `{"message":"no api key"}`, http.StatusUnauthorized)
@@ -221,8 +219,6 @@ func (f *fakeService) only() *fakeBox {
 	return nil
 }
 
-/* ---------- envd: /health ---------- */
-
 // health answers the way both services' gateways do: ok while the sandbox
 // runs, a 5xx while it is paused.
 func (f *fakeService) health(w http.ResponseWriter) {
@@ -236,8 +232,6 @@ func (f *fakeService) health(w http.ResponseWriter) {
 	}
 	writeJSON(w, map[string]any{"status": "ok"})
 }
-
-/* ---------- envd: /files ---------- */
 
 func (f *fakeService) files(w http.ResponseWriter, r *http.Request) {
 	box := f.only()
@@ -304,8 +298,6 @@ func (f *fakeService) hostPath(p string) (string, bool) {
 	}
 	return full, true
 }
-
-/* ---------- envd: Connect RPC ---------- */
 
 func (f *fakeService) rpc(w http.ResponseWriter, r *http.Request) {
 	box := f.only()
@@ -587,8 +579,6 @@ func (f *fakeService) sendInput(w http.ResponseWriter, req map[string]any) {
 	}
 	writeJSON(w, map[string]any{})
 }
-
-/* ---------- wire helpers ---------- */
 
 const endStreamFlagTest = 0x02
 

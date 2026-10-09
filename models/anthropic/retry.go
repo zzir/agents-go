@@ -20,11 +20,8 @@ var unwrapAPIError = modelkit.UnwrapAs(func(e *ant.Error) (int, http.Header) {
 })
 
 // RetryableError reports whether err from a Messages API call is transient and
-// worth retrying: HTTP 408/409/429 and any 5xx — including Anthropic's 529
-// overloaded_error — with an explicit X-Should-Retry header outranking the
-// status, plus network-level transport errors; never context cancellation. See
-// modelkit.RetryableError for the full rules. An error event inside a 200
-// stream is classified by its error type.
+// worth retrying, by modelkit.RetryableError's rules (529 overloaded is a 5xx);
+// an error event inside a 200 stream is classified by its error type.
 //
 // Use it as agents.RetryPolicy.RetryIf:
 //

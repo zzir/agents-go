@@ -9,14 +9,10 @@ import (
 	"strings"
 )
 
-// NewTool builds a Tool from a typed Go function. The argument type A (a
-// struct, or pointer to one) is reflected into a strict JSON Schema shown to
-// the model: every field required, unknown properties forbidden. Arguments
-// are validated against it (spec §2.7h), decoded into A, and fn is invoked;
-// R goes back to the model (JSON unless already a string). Chain NonStrict to
-// let fields tagged ",omitempty" be omitted. NewTool panics when A cannot be
-// reflected into a strict schema (decisions §5.11); an any field or open map
-// needs NewToolNonStrict, and a runtime schema NewRawTool, which errors instead.
+// NewTool builds a Tool from a typed Go function: A (a struct or pointer to
+// one) is reflected into a strict JSON Schema the arguments are validated
+// against (spec §2.7h), and R goes back to the model as JSON unless already a
+// string. It panics when A cannot be made strict — see decisions §5.11.
 func NewTool[A any, R any](
 	name, description string,
 	fn func(ctx context.Context, tc *ToolContext, args A) (R, error),
@@ -25,8 +21,7 @@ func NewTool[A any, R any](
 }
 
 // NewToolNonStrict is NewTool without the strict-mode rewrite: ",omitempty"
-// fields stay optional, and a shape strict mode cannot express gets a schema
-// instead of a panic. Arguments are still validated against the schema.
+// fields stay optional and no shape panics; arguments are still validated.
 func NewToolNonStrict[A any, R any](
 	name, description string,
 	fn func(ctx context.Context, tc *ToolContext, args A) (R, error),
@@ -132,12 +127,10 @@ func decodeToolArgs(toolName string, v *schemaValidator, argsJSON string, dst an
 	return nil
 }
 
-// NewRawTool builds a Tool from a pre-built JSON Schema map and a function
-// taking raw JSON arguments — for a schema that is runtime data, which is why
-// it returns an error where NewTool panics (decisions §5.11). Strict mode is
-// on: the schema is normalized via EnsureStrictJSONSchema on a deep copy. To
-// advertise a schema verbatim, set ParamsJSONSchema and clear Strict on the
-// result; a schema strict mode cannot express at all needs a hand-built Tool.
+// NewRawTool builds a Tool from a runtime JSON Schema map and a function
+// taking raw JSON arguments; it errors where NewTool panics (decisions §5.11).
+// The schema is normalized to strict on a deep copy; clear Strict and set
+// ParamsJSONSchema on the result to advertise one verbatim.
 func NewRawTool(
 	name, description string,
 	paramsSchema map[string]any,

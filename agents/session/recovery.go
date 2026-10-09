@@ -11,38 +11,33 @@ import (
 	"github.com/zzir/agents-go/internal/oaiitems"
 )
 
-// RecoveryAction is what to do about a tool call a crashed run left without
-// its output.
+// RecoveryAction is what to do about a tool call a crashed run left without its output.
 type RecoveryAction int
 
 const (
-	// RecoverSynthesizeError appends an error output for the call, so the
-	// stored history loads again. The default — spec §2.5h.
+	// RecoverSynthesizeError appends an error output for the call. The default
+	// — spec §2.5h.
 	RecoverSynthesizeError RecoveryAction = iota
 
-	// RecoverRetry leaves the call dangling for the next run to execute again;
-	// only right for a tool that is safe to repeat.
+	// RecoverRetry leaves the call dangling for the next run to execute again.
 	RecoverRetry
 
 	// RecoverLeave does nothing, for a caller repairing the session itself.
 	RecoverLeave
 )
 
-// RecoveryPolicy decides how a session damaged by a crash is repaired. It is
-// the counterpart of RunState (a paused run), not a replacement: this handles
-// a process that died mid-turn and left only what was written — spec §2.5h.
+// RecoveryPolicy decides how a session a crash damaged is repaired — spec §2.5h.
 type RecoveryPolicy struct {
 	// UnfinishedToolCall is the default action for a call with no output.
 	UnfinishedToolCall RecoveryAction
 
-	// RetrySafe reports whether a tool is safe to run again, overriding the
-	// default with RecoverRetry when true. Nil treats every tool as unsafe. The
-	// caller supplies it: the stored history holds a tool NAME, not the tool.
+	// RetrySafe reports whether a tool is safe to run again (RecoverRetry when
+	// true); nil treats every tool as unsafe. History holds a tool NAME, so the
+	// caller supplies it.
 	RetrySafe func(toolName string) bool
 
-	// Message renders the synthesized error output. Nil uses a default that
-	// tells the model plainly what happened, so it can decide whether to try
-	// again rather than treating the absence as a result.
+	// Message renders the synthesized error output; nil uses a default that
+	// says what happened.
 	Message func(toolName, callID string) string
 }
 
@@ -59,9 +54,8 @@ type RecoveryReport struct {
 // NeedsRecovery reports whether anything was found.
 func (r RecoveryReport) NeedsRecovery() bool { return len(r.UnfinishedCalls) > 0 }
 
-// Recover repairs a session left inconsistent by a crash: a function_call
-// with no output, which the runner would drop unseen. The repair is an append
-// of synthesized outputs; nothing is rewritten — spec §2.5h.
+// Recover repairs a session a crash left inconsistent: each function_call
+// without an output gets a synthesized one appended, nothing rewritten — spec §2.5h.
 func Recover(ctx context.Context, sess *Session, policy RecoveryPolicy) (RecoveryReport, error) {
 	var report RecoveryReport
 	if sess == nil {
@@ -116,8 +110,7 @@ func Recover(ctx context.Context, sess *Session, policy RecoveryPolicy) (Recover
 	return report, nil
 }
 
-// defaultRecoveryMessage tells the model what happened rather than leaving a
-// blank result, which it would otherwise read as "the tool returned nothing".
+// defaultRecoveryMessage is the synthesized output when RecoveryPolicy.Message is nil.
 func defaultRecoveryMessage(toolName, _ string) string {
 	name := toolName
 	name = cmp.Or(name, "the tool")
@@ -126,8 +119,7 @@ func defaultRecoveryMessage(toolName, _ string) string {
 		"if the outcome matters.", name)
 }
 
-// toolNamesByCallID maps each recorded call id to the tool it named, so a
-// synthesized output can say which tool was interrupted.
+// toolNamesByCallID maps each recorded call id to the tool it named.
 func toolNamesByCallID(entries []Entry) map[string]string {
 	out := map[string]string{}
 	for _, e := range entries {

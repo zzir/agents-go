@@ -5,9 +5,8 @@ import (
 	"fmt"
 )
 
-// LeafOf folds a session's entries down to the id of its active branch tip. It
-// is derived, not stored, so nothing can disagree with the log. A leaf entry
-// moves the tip to its target; anything else becomes the tip.
+// LeafOf folds entries down to the id of the active branch tip: a leaf entry
+// moves the tip to its target, anything else becomes the tip — spec §2.5d.
 func LeafOf(entries []Entry) string {
 	leaf := ""
 	for _, e := range entries {
@@ -22,9 +21,8 @@ func LeafOf(entries []Entry) string {
 	return leaf
 }
 
-// PathToLeaf returns the entries from the root to the given leaf, oldest-first
-// — the single branch that leaf belongs to, abandoned siblings left out. A
-// compaction checkpoint does not end the walk (spec §2.5d).
+// PathToLeaf returns the entries from the root to leafID, oldest first: one
+// branch, abandoned siblings left out; a checkpoint does not end the walk — spec §2.5d.
 func PathToLeaf(entries []Entry, leafID string) []Entry {
 	byID := make(map[string]Entry, len(entries))
 	for _, e := range entries {
@@ -39,8 +37,7 @@ func PathToLeaf(entries []Entry, leafID string) []Entry {
 	for id := leafID; id != ""; {
 		e, ok := byID[id]
 		if !ok || seen[id] {
-			// A missing parent (folded away) ends the walk; a repeat is a cycle
-			// nothing should produce — stop so a corrupt session reads short.
+			// A missing parent or a repeated id ends the walk — spec §2.5d.
 			break
 		}
 		seen[id] = true
@@ -96,9 +93,8 @@ func (s *Session) Leaf(ctx context.Context) (string, error) {
 	return LeafOf(entries), nil
 }
 
-// Branch moves the session's active branch to entryID, so the next append
-// continues from there. Everything after the old tip stays recorded — "try that
-// again differently" without deleting anything.
+// Branch moves the active branch to entryID, so the next append continues from
+// there; everything after the old tip stays recorded — spec §2.5d.
 func (s *Session) Branch(ctx context.Context, entryID string) error {
 	target, err := s.storage.Entry(ctx, entryID)
 	if err != nil {
@@ -108,8 +104,8 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 		return fmt.Errorf("session: branch: no entry %q in this session", entryID)
 	}
 	if target.Kind == EntryKindLeaf {
-		// A leaf move is a pointer, not a node: the walk excludes it, so branching
-		// to one would leave the session with no active branch.
+		// The walk excludes leaf moves, so branching to one would leave no
+		// active branch.
 		return fmt.Errorf("session: branch: entry %q is a branch move, not an entry to branch to", entryID)
 	}
 	leaf, err := NewLeafEntry(entryID)
@@ -119,8 +115,8 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 	return s.storage.Append(ctx, leaf)
 }
 
-// PathEntries returns the entries on the active branch, oldest-first. A flat,
-// linkless history is one branch and reads whole (see ActiveBranchOf).
+// PathEntries returns the entries on the active branch, oldest first (see
+// ActiveBranchOf).
 func (s *Session) PathEntries(ctx context.Context) ([]Entry, error) {
 	entries, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {

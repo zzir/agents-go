@@ -52,13 +52,9 @@ func TestRetryableErrorHonorsShouldRetryHeader(t *testing.T) {
 	}
 }
 
-// An SSE stream severed mid-event by a gateway or proxy surfaces as
-// io.ErrUnexpectedEOF wrapped by the adapter's "openai responses stream"
-// prefix — a transport failure, retryable. A bare io.EOF is deliberately NOT
-// classified: a clean EOF is not an error signal by itself, and the adapter
-// owns turning "clean end without a terminal event" into a retryable
-// truncation (modelkit.TruncatedStreamError, which wraps io.ErrUnexpectedEOF
-// and lands in the first case).
+// A stream severed mid-event surfaces as a wrapped io.ErrUnexpectedEOF, a
+// retryable transport failure; a bare io.EOF is NOT classified, since the
+// adapter turns a clean end without a terminal event into TruncatedStreamError.
 func TestRetryableErrorUnexpectedEOF(t *testing.T) {
 	severed := fmt.Errorf("openai responses stream: %w", io.ErrUnexpectedEOF)
 	if !RetryableError(severed) {

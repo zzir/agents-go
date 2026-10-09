@@ -1,10 +1,7 @@
 // Package skills implements the SKILL.md document format of the open Agent
-// Skills spec (https://github.com/agentskills/agentskills): a skill is one
-// Markdown document with YAML frontmatter carrying its name and description.
-// Parse validates a SKILL.md and returns its metadata; RenderIndex builds a
-// discovery section (name + description per skill) for an agent's instructions
-// that tells the model to fetch a skill's full document through a caller-provided
-// read_skill tool. It is a separate module so the YAML dependency stays out of the core.
+// Skills spec (https://github.com/agentskills/agentskills): Parse validates a
+// document and returns its frontmatter metadata, RenderIndex builds the
+// discovery section an agent's instructions carry. Own module for the YAML dependency.
 package skills
 
 import (
@@ -25,12 +22,9 @@ var nameRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 var closeRe = regexp.MustCompile(`(?m)^---$`)
 
 // Skill is a parsed SKILL.md's frontmatter metadata: what the index shows and
-// what a read_skill tool is keyed by. The body stays with the caller — the
-// model reads it on demand during activation (progressive disclosure).
-//
-// Only the fields something consumes are parsed. Other frontmatter keys
-// (license, compatibility, metadata, allowed-tools) are ignored — parsing them
-// into fields nothing reads would imply an enforcement that does not exist.
+// what a read_skill tool is keyed by; the body stays with the caller. Only the
+// fields something consumes are parsed (license, compatibility, metadata and
+// allowed-tools are ignored).
 type Skill struct {
 	Name        string
 	Description string
@@ -91,11 +85,9 @@ func validate(fm frontmatter) error {
 }
 
 // RenderIndex builds the discovery section to append to an agent's
-// instructions: each skill's name and description, plus guidance on loading a
-// skill's full document on demand. The wording names a read_skill tool — the
-// caller must give the agent a function tool with that name that takes a
-// skill name and returns its SKILL.md content. Returns "" when there are no
-// skills.
+// instructions: each skill's name and description, plus how to load one on
+// demand through a read_skill tool the caller must provide (taking a skill
+// name, returning its SKILL.md). Returns "" with no skills.
 func RenderIndex(skills []Skill) string {
 	if len(skills) == 0 {
 		return ""

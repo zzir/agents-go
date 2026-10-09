@@ -1,12 +1,6 @@
-// Command toolstream demonstrates streaming partial results from a tool.
-//
-// A tool that runs for a while leaves a consumer with nothing to show but a
-// spinner. ToolContext.Emit pushes progress as the work happens, delivered as
-// *agents.ToolProgressEvent on the run's stream.
-//
-// The rule the example makes visible: progress is NOT the answer. The model
-// only ever sees what the tool RETURNS — the partials are for whoever is
-// watching.
+// Command toolstream demonstrates a tool streaming partial results through
+// ToolContext.Emit, delivered as *agents.ToolProgressEvent. Progress is not
+// the answer: the model only sees what the tool RETURNS — see spec §2.7g.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/toolstream
 package main
@@ -33,8 +27,8 @@ func main() {
 		func(_ context.Context, tc *agents.ToolContext, a buildArgs) (string, error) {
 			steps := []string{"resolving dependencies", "compiling", "linking"}
 			for _, step := range steps {
-				// Safe from any goroutine, and a no-op on a blocking run — a
-				// tool never has to ask which kind of run it is in.
+				// Safe from any goroutine and a no-op on a blocking run — see
+				// spec §2.7g.
 				tc.Emit(agents.TextResult(step + "…\n").WithDisplay("terminal"))
 				time.Sleep(150 * time.Millisecond)
 			}
@@ -60,8 +54,7 @@ func main() {
 		}
 		switch e := event.(type) {
 		case *agents.ToolProgressEvent:
-			// Keyed by call id: several tools stream at once, and keying on the
-			// tool name would interleave two calls to the same tool.
+			// Key on call id: two calls to the same tool would interleave by name.
 			fmt.Printf("  [%s %s] %s", e.ToolName, e.CallID[:6], e.Result.Text())
 		case *agents.RunCompletedEvent:
 			final = e.Result

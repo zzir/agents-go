@@ -25,8 +25,7 @@ type HistoryQuery struct {
 const DefaultHistoryLimit = 20
 
 // HistorySearcher is an optional Storage capability: answer a HistoryQuery
-// without loading every entry body. A storage that excludes folded entries
-// from Entries must implement it, or the folded history is unsearchable.
+// itself. A storage whose Entries leaves folded entries out must — spec §2.5i.
 type HistorySearcher interface {
 	SearchHistory(ctx context.Context, q HistoryQuery) (hits []Entry, more bool, err error)
 }
@@ -79,8 +78,7 @@ func SearchHistory(entries []Entry, q HistoryQuery) (hits []Entry, more bool) {
 	return hits, false
 }
 
-// CallToolNames maps each function call's call id to its tool name, which is
-// how an output learns which tool produced it.
+// CallToolNames maps each function call's call id to its tool name.
 func CallToolNames(entries []Entry) map[string]string {
 	var names map[string]string
 	for _, e := range entries {
@@ -100,7 +98,7 @@ func CallToolNames(entries []Entry) map[string]string {
 }
 
 // MatchesHistory reports whether e satisfies q's filters, the one predicate
-// every search path applies; calls is CallToolNames of the entries in view.
+// every search path applies (spec §2.5i); calls is CallToolNames of the view.
 func MatchesHistory(e Entry, q HistoryQuery, calls map[string]string) bool {
 	if e.Kind != EntryKindItem {
 		return false

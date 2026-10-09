@@ -6,26 +6,22 @@ import (
 	"sync"
 )
 
-// Seq pairs a broadcast value with its position in the stream: monotonic per
-// Fanout, assigned at publish, so replay and gap detection are both possible.
+// Seq pairs a broadcast value with its position in the stream, monotonic per Fanout.
 type Seq[T any] struct {
 	Seq   int
 	Value T
 }
 
-// GapError reports that a subscriber fell behind and items were dropped for
-// it, delivered in-band on that subscriber's stream before the next item that
-// got through (spec §2.11). A consumer that receives one must recover: re-
-// subscribe from LastGood, or re-read the producer's durable record.
+// GapError reports that a subscriber fell behind and items were dropped,
+// delivered in-band before the next item that got through; resubscribe from
+// LastGood — see spec §2.11.
 type GapError struct {
 	// Dropped is how many items were discarded.
 	Dropped int
-	// LastGood is the sequence number of the last item that was delivered
-	// before the gap; Resume from it.
+	// LastGood is the sequence number of the last item delivered before the gap.
 	LastGood int
-	// Next is the sequence number of the item delivered right after the gap,
-	// or 0 when the gap runs to the end of the stream — the item yielded
-	// alongside such a gap is the zero value and carries nothing.
+	// Next is the sequence number of the item after the gap, or 0 when the
+	// gap runs to the end of the stream (the item beside it is the zero value).
 	Next int
 }
 
@@ -38,40 +34,33 @@ func (e *GapError) Error() string {
 		e.Dropped, e.LastGood, e.Next)
 }
 
-// AtEnd reports whether the gap runs to the end of the stream, meaning nothing
-// further will arrive to close it. A consumer that resyncs on a gap has no
-// "next" item to anchor on here and must resume from LastGood.
+// AtEnd reports whether the gap runs to the end of the stream.
 func (e *GapError) AtEnd() bool { return e.Next == 0 }
 
 // FanoutOptions configures a Fanout. The zero value is usable.
 type FanoutOptions struct {
-	// Subscriber is the per-subscriber buffer, in items. A subscriber that
-	// falls this far behind starts dropping — on its own stream only.
-	// Defaults to DefaultSubscriberBuffer.
+	// Subscriber is the per-subscriber buffer, in items, past which that
+	// subscriber drops. Defaults to DefaultSubscriberBuffer.
 	Subscriber int
 
-	// Replay is how many recent items to retain for subscribers that attach
-	// late or reattach after a disconnect. Zero disables replay: such a
-	// subscriber sees only what is published from then on.
+	// Replay is how many recent items to retain for late or reattaching
+	// subscribers; zero disables replay.
 	Replay int
 }
 
-// Buffer sizes are generous rather than tuned: a drop costs a subscriber a
-// resync, so only a genuinely stuck consumer should overflow.
 const (
 	// DefaultSubscriberBuffer is the per-subscriber buffer when unset.
 	DefaultSubscriberBuffer = 256
 )
 
-// Fanout broadcasts one producer's items to many independent subscribers:
-// Publish never blocks, and a subscriber whose buffer is full loses items
-// LOUDLY — a *GapError names the range it lost (spec §2.11). Safe for
-// concurrent use; subscribers may come and go at any time.
+// Fanout broadcasts one producer's items to many independent subscribers;
+// Publish never blocks and a full subscriber loses items with a *GapError —
+// see spec §2.11. Safe for concurrent use.
 type Fanout[T any] struct {
 	opts FanoutOptions
 
-	// pubMu serializes a publish end to end, so no subscriber sees seq 2
-	// before seq 1. Lock order: pubMu before mu; mu is never held in delivery.
+	// pubMu serializes a publish end to end. Lock order: pubMu before mu; mu
+	// is never held in delivery.
 	pubMu sync.Mutex
 
 	mu     sync.Mutex
@@ -85,27 +74,24 @@ type Fanout[T any] struct {
 type subscriber[T any] struct {
 	id int
 	ch chan delivery[T]
-	// done closes when this subscriber detaches; finished when the producer
-	// is done. Closing ch itself would race a concurrent Publish.
+	// done closes when this subscriber detaches, finished when the producer
+	// is done; ch itself is never closed (a concurrent Publish may send).
 	done     chan struct{}
 	finished chan struct{}
 
-	// mu guards the drop bookkeeping, which the publisher writes and the
-	// delivery path reads.
+	// mu guards the drop bookkeeping.
 	mu       sync.Mutex
 	dropped  int
 	lastGood int
 }
 
-// delivery carries an item plus the gap (if any) that immediately precedes it:
-// a full buffer has no room for a separate gap notice.
+// delivery carries an item plus the gap (if any) that immediately precedes it.
 type delivery[T any] struct {
 	item Seq[T]
 	gap  *GapError
 }
 
-// NewFanout creates a Fanout. Call Close when the producer is done so
-// subscribers' iterators terminate.
+// NewFanout creates a Fanout; Close it when the producer is done.
 func NewFanout[T any](opts FanoutOptions) *Fanout[T] {
 	if opts.Subscriber <= 0 {
 		opts.Subscriber = DefaultSubscriberBuffer
@@ -113,9 +99,8 @@ func NewFanout[T any](opts FanoutOptions) *Fanout[T] {
 	return &Fanout[T]{opts: opts, subs: make(map[int]*subscriber[T])}
 }
 
-// Publish assigns the next sequence number and delivers to every subscriber.
-// It never blocks: a subscriber that cannot keep up loses items instead.
-// Publishing after Close is a no-op.
+// Publish assigns the next sequence number and delivers to every subscriber
+// without blocking; a no-op after Close.
 func (f *Fanout[T]) Publish(v T) {
 	f.pubMu.Lock()
 	defer f.pubMu.Unlock()
@@ -139,17 +124,15 @@ func (f *Fanout[T]) Publish(v T) {
 	}
 	f.mu.Unlock()
 
-	// Delivery happens outside mu (but still under pubMu) so Subscribe and
-	// Close stay responsive while events flow.
+	// Delivery happens outside mu, still under pubMu.
 	for _, s := range subs {
 		s.deliver(item)
 	}
 }
 
-// deliver enqueues item, folding in any gap accumulated since this subscriber's
-// last successful delivery.
+// deliver enqueues item, folding in any gap accumulated since the last delivery.
 func (s *subscriber[T]) deliver(item Seq[T]) {
-	// Detached between Publish's snapshot and now: nothing more to deliver.
+	// Detached between Publish's snapshot and now.
 	select {
 	case <-s.done:
 		return
@@ -176,14 +159,10 @@ func (s *subscriber[T]) deliver(item Seq[T]) {
 	}
 }
 
-// Subscribe attaches a subscriber and returns its stream plus a function that
-// detaches it. Items arrive in sequence order; a non-nil error is always a
-// *GapError, beside the first item after the gap — except a gap running to
-// the end of the stream (GapError.AtEnd), whose item is the zero value.
-// fromSeq replays retained items with a higher sequence number first (0 for
-// everything retained); replay respects the subscriber buffer. The cancel
-// function is idempotent and must be called, or the subscriber's buffer is
-// retained until the Fanout is collected; ranging to completion does not detach.
+// Subscribe attaches a subscriber and returns its stream plus an idempotent
+// detach function that must be called (ranging to completion does not detach).
+// fromSeq replays retained items above it first; a non-nil error is always a
+// *GapError — see spec §2.11.
 func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	s := &subscriber[T]{
 		ch:       make(chan delivery[T], f.opts.Subscriber),
@@ -192,8 +171,7 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 		lastGood: fromSeq,
 	}
 
-	// Registration and backlog delivery are one step under pubMu, or a
-	// concurrent Publish reaches the subscriber ahead of its own backlog.
+	// Registration and backlog delivery are one step under pubMu — see spec §2.11.
 	f.pubMu.Lock()
 	defer f.pubMu.Unlock()
 
@@ -210,8 +188,7 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 			backlog = append(backlog, item)
 		}
 	}
-	// A cursor behind the reachable range is a gap like any drop: what it
-	// missed can never be delivered, so the gap runs forward (spec §2.11).
+	// A cursor below the replay window is a gap running forward — see spec §2.11.
 	if fromSeq >= 0 && fromSeq < f.seq {
 		first := f.seq + 1
 		if len(f.replay) > 0 {
@@ -221,8 +198,7 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	}
 	reset, resumeAt := false, 0
 	if fromSeq > f.seq {
-		// Ahead of the head: a cursor from a previous life of the stream is a
-		// timeline reset (spec §2.11) — LastGood 0, replay from resumeAt.
+		// Ahead of the head: a timeline reset — see spec §2.11.
 		s.lastGood = 0
 		s.dropped = fromSeq
 		resumeAt = f.seq + 1
@@ -242,8 +218,7 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 		close(s.done)
 	})
 
-	// emitFinalGap reports drops that never got a later delivery to ride out on,
-	// so a consumer can tell a timeline missing its tail from one that ended there.
+	// emitFinalGap reports drops that never got a later delivery to ride out on.
 	emitFinalGap := func(yield func(Seq[T], error) bool) {
 		s.mu.Lock()
 		n, last := s.dropped, s.lastGood
@@ -262,15 +237,12 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	}
 
 	stream := func(yield func(Seq[T], error) bool) {
-		// A timeline reset is reported immediately: the stream a stale cursor
-		// lands on has often already ended, with no next delivery to carry it.
+		// A timeline reset is reported immediately, with Next set (not AtEnd).
 		if reset {
 			s.mu.Lock()
 			n, last := s.dropped, s.lastGood
 			s.dropped = 0
 			s.mu.Unlock()
-			// Next is where the stream resumes, not zero (AtEnd), or a consumer
-			// would stop reading a live run.
 			if n > 0 && !yield(Seq[T]{}, &GapError{Dropped: n, LastGood: last, Next: resumeAt}) {
 				return
 			}
@@ -284,8 +256,7 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 					return
 				}
 			case <-s.finished:
-				// Close means "no more will be published", not "discard what
-				// you have": drain the buffer, report any final gap, end.
+				// Close: drain the buffer, report any final gap, end.
 				for {
 					select {
 					case d := <-s.ch:
@@ -303,12 +274,10 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	return stream, cancel
 }
 
-// Close ends every subscriber's stream. Items already buffered for a subscriber
-// are still delivered — closing means "no more will be published", not "discard
-// what you have". Close is idempotent.
+// Close ends every subscriber's stream once its buffered items are delivered.
+// Idempotent.
 func (f *Fanout[T]) Close() {
-	// pubMu first, so an accepted publish lands before the streams end (spec
-	// §2.11); same lock order as Publish and Subscribe.
+	// pubMu first: an accepted publish lands before the streams end.
 	f.pubMu.Lock()
 	defer f.pubMu.Unlock()
 
@@ -324,8 +293,8 @@ func (f *Fanout[T]) Close() {
 	}
 }
 
-// LastSeq reports the sequence number of the most recently published item, or
-// zero if nothing has been published. A consumer stores it to resume later.
+// LastSeq reports the sequence number of the most recently published item (zero
+// if none).
 func (f *Fanout[T]) LastSeq() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

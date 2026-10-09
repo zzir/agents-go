@@ -7,23 +7,19 @@ import (
 	"slices"
 )
 
-// RunErrorData is a snapshot of the run's progress passed to a
-// RunErrorHandler.
+// RunErrorData is a snapshot of the run's progress passed to a RunErrorHandler.
 type RunErrorData struct {
-	// Input is the run's original input (after session history was prepended
-	// and any handoff input filter was applied).
+	// Input is the run's original input, session history and handoff filter applied.
 	Input []InputItem
-	// NewItems are the items generated so far. It is nil when the run failed
-	// before generating anything.
+	// NewItems are the items generated so far; nil when nothing was.
 	NewItems []*RunItem
-	// History is Input followed by Output: the full conversation as the next
-	// model call would have seen it.
+	// History is Input followed by Output: the conversation as the next model
+	// call would see it.
 	History []InputItem
 	// Output is NewItems converted to model-input form.
 	Output []InputItem
-	// RawResponses are the raw model responses backing the error: every
-	// response so far for a max-turns overrun, the current turn's response for
-	// a refusal or invalid final output.
+	// RawResponses back the error: every response so far for a max-turns
+	// overrun, the current turn's for a refusal or invalid final output.
 	RawResponses []*ModelResponse
 	// LastAgent is the agent that was active when the error occurred.
 	LastAgent *Agent
@@ -31,8 +27,7 @@ type RunErrorData struct {
 
 // RunErrorHandlerInput is the argument passed to a RunErrorHandler.
 type RunErrorHandlerInput struct {
-	// Error is the failure being handled: a *MaxTurnsError, *ModelRefusalError
-	// or *ModelBehaviorError depending on which handler is invoked.
+	// Error is the failure being handled, typed by which handler is invoked.
 	Error error
 	// RunContext is the run's context wrapper (user data and usage).
 	RunContext *RunContext
@@ -42,42 +37,32 @@ type RunErrorHandlerInput struct {
 
 // RunErrorHandlerResult is what a RunErrorHandler returns to recover the run.
 type RunErrorHandlerResult struct {
-	// FinalOutput becomes the run's final output. For an agent with a
-	// structured output type it must marshal to JSON that validates against
-	// the output schema; otherwise the run fails with a *UserError.
+	// FinalOutput becomes the run's final output; for a structured output
+	// type it must validate against the schema or the run fails with a *UserError.
 	FinalOutput any
-	// ExcludeFromHistory, when true, skips synthesizing an assistant message
-	// carrying FinalOutput into the run's items (and session). The zero value
-	// records the message.
+	// ExcludeFromHistory skips synthesizing an assistant message carrying
+	// FinalOutput into the run's items and session.
 	ExcludeFromHistory bool
 }
 
-// RunErrorHandler recovers a failing run by supplying a fallback final output.
-// Return (nil, nil) to decline recovery — the original error is returned
-// unchanged. Returning a non-nil error aborts the run with that error instead.
+// RunErrorHandler recovers a failing run with a fallback final output; (nil,
+// nil) declines and a non-nil error aborts the run with it — see spec §2.10.
 type RunErrorHandler func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error)
 
-// RunErrorHandlers holds per-error-kind recovery handlers. Each handler turns
-// its error into a normal run completion with a fallback final output; nil
-// handlers leave that error fatal.
+// RunErrorHandlers holds per-error-kind recovery handlers; a nil handler leaves
+// that error fatal.
 type RunErrorHandlers struct {
-	// MaxTurns is consulted when the run exceeds its turn budget
-	// (*MaxTurnsError).
+	// MaxTurns is consulted on a *MaxTurnsError.
 	MaxTurns RunErrorHandler
-	// ModelRefusal is consulted when the model refuses to respond
-	// (*ModelRefusalError).
+	// ModelRefusal is consulted on a *ModelRefusalError.
 	ModelRefusal RunErrorHandler
-	// InvalidFinalOutput is consulted when an agent with a structured output
-	// type produces a final message that fails schema validation, or no final
-	// text at all (*ModelBehaviorError). Other model-behavior errors (e.g.
-	// calling an unknown tool) are not routed here. When the model produced no
-	// text and this handler is nil (or declines), the runner calls the model
-	// again instead of failing.
+	// InvalidFinalOutput is consulted when a structured final output fails
+	// validation or no final text arrived; nil on no text means call the model again.
 	InvalidFinalOutput RunErrorHandler
 }
 
 // buildRunErrorData snapshots the run for a handler; items that cannot convert
-// are skipped, never raised — this path is already failing.
+// are skipped.
 func buildRunErrorData(input []InputItem, newItems []*RunItem, raw []*ModelResponse, lastAgent *Agent) RunErrorData {
 	output := make([]InputItem, 0, len(newItems))
 	for _, it := range newItems {
@@ -100,8 +85,8 @@ func buildRunErrorData(input []InputItem, newItems []*RunItem, raw []*ModelRespo
 	}
 }
 
-// errorRecovery is a successful handler outcome: the validated fallback output
-// and, unless the handler opted out, the synthesized assistant message.
+// errorRecovery is a successful handler outcome: the validated fallback and
+// the synthesized message unless the handler opted out.
 type errorRecovery struct {
 	finalOutput any
 	message     *RunItem // nil when ExcludeFromHistory was set
@@ -180,7 +165,7 @@ func marshalFinalOutputPayload(schema OutputSchema, v any) (string, error) {
 }
 
 // validateHandlerFinalOutput validates a handler's fallback against the output
-// schema; a bad fallback is a *UserError — the handler produced it.
+// schema; a bad fallback is a *UserError.
 func validateHandlerFinalOutput(agent *Agent, v any) (any, error) {
 	schema := agentOutputSchema(agent)
 	if schema.IsPlainText() {
@@ -210,7 +195,7 @@ func formatFinalOutputText(agent *Agent, v any) string {
 }
 
 // synthesizeMessageOutputItem builds a completed assistant message carrying a
-// handler's fallback text, via JSON so it matches a model-produced one; no id.
+// handler's fallback text, via JSON so it matches a model-produced one.
 func synthesizeMessageOutputItem(agent *Agent, text, handlerKind string) (*RunItem, error) {
 	payload := map[string]any{
 		"type":   "message",

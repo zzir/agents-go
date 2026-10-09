@@ -22,10 +22,8 @@ type AgentToolInputBuilderOptions struct {
 	// Summary is a human-readable summary of the parameters schema; empty when
 	// the schema is too complex to summarize.
 	Summary string
-	// JSONSchema is the full parameters schema when the tool has structured
-	// parameters (AgentAsTool); nil otherwise. Whether it appears in the
-	// rendered input is the builder's call: DefaultAgentToolInputBuilder
-	// renders the Summary, AgentToolInputWithSchema renders this.
+	// JSONSchema is the full parameters schema of an AgentAsTool tool, nil
+	// otherwise; AgentToolInputWithSchema renders it, the default renders Summary.
 	JSONSchema map[string]any
 }
 
@@ -74,19 +72,14 @@ func resolveAgentToolInput(argsJSON string, info agentToolSchemaInfo, builder Ag
 	return args.Input, nil
 }
 
-// DefaultAgentToolInputBuilder is the default rendering for structured agent
-// tool input: a preamble, the arguments as a fenced JSON block, and the compact
-// schema summary when one exists.
-// To attach the full JSON Schema instead, set AgentToolInputWithSchema as the
-// InputBuilder.
+// DefaultAgentToolInputBuilder renders structured agent tool input: a
+// preamble, the arguments as a fenced JSON block, the compact schema summary.
 func DefaultAgentToolInputBuilder(opts AgentToolInputBuilderOptions) (string, error) {
 	return renderAgentToolInput(opts, false)
 }
 
-// AgentToolInputWithSchema renders like DefaultAgentToolInputBuilder but
-// attaches the full parameters JSON Schema in place of the summary. Set it as
-// AgentToolConfig.InputBuilder when the nested agent needs the exact shape of
-// its input:
+// AgentToolInputWithSchema renders like DefaultAgentToolInputBuilder with the
+// full parameters JSON Schema in place of the summary:
 //
 //	AgentAsTool[searchParams](sub, agents.AgentToolConfig{
 //		InputBuilder: agents.AgentToolInputWithSchema,

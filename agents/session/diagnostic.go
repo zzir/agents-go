@@ -17,22 +17,20 @@ const (
 	DiagToolPanic DiagnosticType = "tool_panic"
 	// DiagToolTimeout is a tool that hit its deadline.
 	DiagToolTimeout DiagnosticType = "tool_timeout"
-	// DiagCompactionFailed is a compaction pass that failed; the run continued
-	// with the context it had.
+	// DiagCompactionFailed is a compaction pass that failed; the run continued.
 	DiagCompactionFailed DiagnosticType = "compaction_failed"
-	// DiagResponseTruncated is a model response cut off at the output-token
-	// limit, whose tool calls were refused.
+	// DiagResponseTruncated is a response cut at the output-token limit, its
+	// tool calls refused.
 	DiagResponseTruncated DiagnosticType = "response_truncated"
-	// DiagContextOverflow is a model call that failed because the context did
-	// not fit, after which the run compacted and tried again.
+	// DiagContextOverflow is a model call the context did not fit; the run
+	// compacted and retried.
 	DiagContextOverflow DiagnosticType = "context_overflow"
-	// DiagContextResetIgnored records a model-requested context reset the run
-	// could not perform: no session, or one that cannot reset.
+	// DiagContextResetIgnored is a model-requested context reset the run could
+	// not perform.
 	DiagContextResetIgnored DiagnosticType = "context_reset_ignored"
 )
 
-// Diagnostic records trouble a run went through and survived — retries, a
-// fallback model, a compaction that gave up: what never reaches an error return.
+// Diagnostic records trouble a run survived: what never reaches an error return.
 type Diagnostic struct {
 	Type      DiagnosticType `json:"type"`
 	Timestamp time.Time      `json:"timestamp"`

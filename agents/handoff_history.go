@@ -22,23 +22,19 @@ const (
 )
 
 // HandoffHistoryMapper folds a flattened transcript into the input items the
-// target agent receives after a handoff. The default emits one assistant
-// message summarizing the transcript; supply your own to call an LLM instead.
+// target agent receives after a handoff; the default emits one assistant message.
 type HandoffHistoryMapper func(transcript []InputItem) []InputItem
 
 // NestHistoryOptions configures NestHandoffHistory.
 type NestHistoryOptions struct {
-	// Mapper folds the transcript into the target agent's input; the default
-	// emits one assistant message in the fixed markers. Only that shape is
-	// flattened by later handoffs; a custom Mapper's summaries stay opaque.
+	// Mapper folds the transcript into the target agent's input. Only the
+	// default's marker shape is flattened by later handoffs.
 	Mapper HandoffHistoryMapper
 }
 
 // NestHandoffHistory returns a Handoff InputFilter that summarizes the prior
-// conversation for the next agent. A summary from an earlier handoff is
-// flattened back into its transcript first, so a chain yields one flat
-// summary; items are serialized one JSON line each via session.MarshalInputItem.
-// Like every InputFilter it changes only what the target sees, not the session.
+// conversation for the next agent; an earlier handoff's summary is flattened
+// back first, so a chain yields one flat summary.
 func NestHandoffHistory(opts NestHistoryOptions) func(HandoffInputData) HandoffInputData {
 	mapper := opts.Mapper
 	if mapper == nil {

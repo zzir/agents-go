@@ -8,51 +8,38 @@ import (
 
 // RunResult is the outcome of a completed (non-streaming) run.
 type RunResult struct {
-	// Input is the input list of the run's first model call: the session
-	// history (when a Session is configured) followed by the new user input.
-	// A handoff input filter may have rewritten it; the items passed to Run
-	// itself are not retained separately.
+	// Input is the first model call's input: session history followed by the
+	// new user input, as a handoff input filter may have rewritten it.
 	Input []InputItem
-	// NewItems are all items generated during the run (messages, tool calls,
-	// tool outputs, handoffs, reasoning).
+	// NewItems are all items generated during the run.
 	NewItems []*RunItem
 	// RawResponses are the raw model responses, in order.
 	RawResponses []*ModelResponse
-	// FinalOutput is the final output value. For plain-text agents it is a
-	// string; for agents with an OutputType it is the decoded value.
+	// FinalOutput is a string for plain-text agents, the decoded value for an
+	// OutputType.
 	FinalOutput any
 	// LastAgent is the agent that produced the final output (after any handoffs).
 	LastAgent *Agent
-	// Usage is the aggregated token usage across the run — a detached copy
-	// taken when the result was built, never the run's live accumulator, so
-	// reading its fields needs no synchronization and a later resume cannot
-	// change a result already returned.
+	// Usage is the run's aggregated token usage, a snapshot taken when the
+	// result was built; a later resume cannot change it.
 	Usage *Usage
-	// GuardrailResults holds every guardrail result produced during the run,
-	// across all stages and including allowing decisions, so callers can read
-	// each guardrail's OutputInfo. Filter with GuardrailResult.Stage.
+	// GuardrailResults holds every guardrail result of the run, allowing
+	// decisions included; filter with GuardrailResult.Stage.
 	GuardrailResults []GuardrailResult
 	// Interruptions holds pending tool approvals when a run pauses for HITL.
-	// It is empty for runs that complete normally.
 	Interruptions []*ToolApprovalItem
-	// State is the serializable run state captured when the run pauses for
-	// approvals. Approve/reject items on it and resume with ResumeRun. It is nil
-	// for runs that complete normally.
+	// State is the serializable run state of a paused run: approve or reject
+	// on it and resume with ResumeRun. Nil when the run completed.
 	State *RunState
-	// Diagnostics records trouble the run went through and survived: retries, a
-	// fallback model, a compaction pass that gave up. A run that succeeded can
-	// still have had a bad time, and this is where that shows.
+	// Diagnostics records trouble the run survived — see spec §2.11d.
 	Diagnostics []Diagnostic
 
-	// AgentToolInvocation identifies the parent tool call when this result was
-	// produced by a nested agent-as-tool run (visible to a
-	// CustomOutputExtractor); nil for top-level runs.
+	// AgentToolInvocation identifies the parent tool call of a nested
+	// agent-as-tool run; nil for top-level runs.
 	AgentToolInvocation *AgentToolInvocation
 
-	// StoppedEarly reports that the run ended at a turn boundary because
-	// RunControl.StopAfterTurn was requested, rather than because the agent was
-	// finished. It is how a middleware that re-runs (Loop) can tell "this answer
-	// is the agent's" from "the human stopped it".
+	// StoppedEarly reports that RunControl.StopAfterTurn ended the run rather
+	// than the agent finishing — see spec §2.12.
 	StoppedEarly bool
 }
 
@@ -75,36 +62,25 @@ func FinalOutputAs[T any](r *RunResult) (T, bool) {
 	return v, ok
 }
 
-// ToolApprovalItem represents a tool call awaiting human approval (HITL). When a
-// run pauses, these appear in RunResult.Interruptions; approve or reject them on
-// a RunState and resume with ResumeRun.
+// ToolApprovalItem is a tool call awaiting human approval, listed in
+// RunResult.Interruptions; approve or reject it on a RunState and ResumeRun.
 type ToolApprovalItem struct {
 	Agent    *Agent
 	ToolName string
 	CallID   string
 	// Arguments is the raw JSON arguments string the model emitted.
 	Arguments string
-	// Raw is the underlying model tool-call output item, retained so the run can
-	// re-process it on resume.
+	// Raw is the model's tool-call output item, re-processed on resume.
 	Raw OutputItem
 }
 
-// ToInputList returns the run's whole conversation as model input: the input it
-// started from followed by everything it produced.
-//
-// It is what you feed the next run to continue a conversation without a
-// Session — and what a middleware that re-runs an agent hands to the second
-// attempt, so the agent sees what it already said rather than repeating it.
+// ToInputList returns the run's whole conversation as model input: the input
+// it started from followed by everything it produced.
 func (r *RunResult) ToInputList() ([]InputItem, error) {
 	return buildModelInput(r.Input, r.NewItems)
 }
 
-// UsageByResponse breaks the run's usage down per model call, keyed by response
-// id.
-//
-// Where RunResult.Usage answers "what did this cost", this answers "where did it
-// go" — which response was the expensive one — without the caller re-deriving it
-// from RawResponses and getting the nil-usage cases wrong.
+// UsageByResponse breaks the run's usage down per model call, keyed by response id.
 func (r *RunResult) UsageByResponse() map[string]RequestUsage {
 	out := make(map[string]RequestUsage, len(r.RawResponses))
 	for _, resp := range r.RawResponses {
@@ -112,9 +88,8 @@ func (r *RunResult) UsageByResponse() map[string]RequestUsage {
 			continue
 		}
 		u := resp.Usage.Request()
-		// A retried or resumed run can see the same response id twice; sum
-		// rather than overwrite, so a repeat is visible in the total instead of
-		// silently replacing what came before.
+		// A retried or resumed run can see the same response id twice: sum,
+		// never overwrite.
 		if prev, ok := out[resp.ResponseID]; ok {
 			session.AddRequestUsage(&u, &prev)
 		}
@@ -123,12 +98,8 @@ func (r *RunResult) UsageByResponse() map[string]RequestUsage {
 	return out
 }
 
-// NestedUsage totals what the run's tools spent on model calls of their own —
-// agent-as-tool sub-runs, summarization steps.
-//
-// It is already part of RunResult.Usage; this says how much was spent somewhere
-// other than the run's own conversation, the number that explains a bill the
-// turn count cannot.
+// NestedUsage totals what the run's tools spent on model calls of their own
+// (agent-as-tool sub-runs, summarization); already part of Usage — see spec §2.7f.
 func (r *RunResult) NestedUsage() RequestUsage {
 	var total RequestUsage
 	for _, it := range r.NewItems {

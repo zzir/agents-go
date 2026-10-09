@@ -1,10 +1,7 @@
 // Package sandbox runs untrusted, agent-generated code in an isolated
 // environment and exposes it to an agent as a tool. The Sandbox interface is
-// backend-agnostic: LocalSandbox lives here, the Docker backend in the
-// sandbox/docker module and the E2B backend in sandbox/e2b. A sandbox executes
-// a command in a working directory after writing the request files into it;
-// backends enforce isolation and a per-command time limit by default, and
-// memory and CPU limits when the caller sets Options.Limits.
+// backend-agnostic: LocalSandbox lives here, Docker in sandbox/docker, E2B in
+// sandbox/e2b; each writes the request files, runs the command and bounds its time.
 package sandbox
 
 import (
@@ -26,8 +23,7 @@ const DefaultTimeout = 30 * time.Second
 const DefaultMaxOutputBytes int64 = 1 << 20 // 1 MiB
 
 // DefaultMaxReadFileBytes caps ReadFile when a backend's MaxReadFileBytes
-// option is zero, so one read_file call cannot load an arbitrarily large file
-// into host memory.
+// option is zero.
 const DefaultMaxReadFileBytes int64 = 8 << 20 // 8 MiB
 
 // ErrReadLimitExceeded is returned (wrapped) by ReadFile when the file is
@@ -56,9 +52,8 @@ func ReadAllLimited(r io.Reader, limit int64) ([]byte, error) {
 //
 //	don't  ->  'don'\''t'
 //
-// A backend that assembles an "sh -c" command line must pass every interpolated
-// value — path, argument, environment entry — through it, so nothing in the
-// value can be read as shell syntax.
+// A backend that assembles an "sh -c" command line passes every interpolated
+// value through it.
 func ShellQuote(s string) string {
 	if s == "" {
 		return "''"
@@ -88,8 +83,7 @@ type Sandbox interface {
 	// WriteFile writes a file in the sandbox, creating parent directories.
 	WriteFile(ctx context.Context, path string, content []byte) error
 	// CreateExclusive atomically creates path with content (creating parent
-	// directories) and fails with fs.ErrExist if it already exists; it leaves
-	// no partial file behind on failure. apply_patch's Add/Move rely on it.
+	// directories), fails with fs.ErrExist when it exists, and leaves no partial file.
 	CreateExclusive(ctx context.Context, path string, content []byte) error
 	// ListDir lists entries in a sandbox directory (empty path = working dir),
 	// in no particular order.
@@ -97,8 +91,7 @@ type Sandbox interface {
 	// RemoveFile removes a file in the sandbox's persistent working directory.
 	RemoveFile(ctx context.Context, path string) error
 	// Rename moves a file within the sandbox's persistent working directory,
-	// creating the destination's parent directories. apply_patch parks a file
-	// too large to snapshot with it (spec §2.7s).
+	// creating the destination's parent directories.
 	Rename(ctx context.Context, oldPath, newPath string) error
 	// Close releases any resources held by the sandbox.
 	Close() error
@@ -116,9 +109,8 @@ type ExecRequest struct {
 	Env map[string]string
 	// Timeout bounds the execution; zero means DefaultTimeout.
 	Timeout time.Duration
-	// MaxOutputBytes caps how many bytes of each output stream are kept;
-	// excess output is discarded, not buffered. Zero means
-	// DefaultMaxOutputBytes.
+	// MaxOutputBytes caps how many bytes of each output stream are kept; excess
+	// is discarded, not buffered. Zero means DefaultMaxOutputBytes.
 	MaxOutputBytes int64
 }
 
@@ -130,9 +122,8 @@ func (r ExecRequest) EffectiveTimeout() time.Duration {
 	return r.Timeout
 }
 
-// MergeEnv returns base overlaid by override — the environment a command runs
-// with: the sandbox's own variables, each overridden by the request's. A fresh
-// map, so neither input is mutated.
+// MergeEnv returns a fresh map of base overlaid by override: the sandbox's own
+// variables, each overridden by the request's.
 func MergeEnv(base, override map[string]string) map[string]string {
 	merged := make(map[string]string, len(base)+len(override))
 	for k, v := range base {
@@ -209,8 +200,8 @@ type DirEntry struct {
 var ErrNoWorkDir = errors.New("sandbox: no persistent working directory configured")
 
 // ErrOutsideWorkDir is returned (wrapped) by file operations that refuse a
-// path outside the working directory. Only docker's bind-mount mode raises it:
-// its file operations run on the host side of the mount (decisions §5.14).
+// path outside the working directory; only docker's bind-mount mode raises it
+// — see decisions §5.14.
 var ErrOutsideWorkDir = errors.New("sandbox: path outside the working directory")
 
 // ExecStreamer is optionally implemented by Sandbox backends that support

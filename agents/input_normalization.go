@@ -7,10 +7,8 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// toolCallToOutputType maps tool-call input item types to the output item type
-// that completes them. This SDK produces only function_call items, but stored
-// history may have been written by another Responses client (or by hand) using
-// the hosted-tool item types, so the full table keeps such sessions replayable.
+// toolCallToOutputType maps every tool-call input item type to the output
+// type that completes it, so history another client wrote stays replayable.
 var toolCallToOutputType = map[string]string{
 	"function_call":    "function_call_output",
 	"custom_tool_call": "custom_tool_call_output",
@@ -174,9 +172,8 @@ func dropOrphanToolCalls(items []InputItem, itemMaps []map[string]any) ([]InputI
 		return items, itemMaps
 	}
 
-	// A reasoning item is tied to the next non-reasoning item; if that item was
-	// just dropped, the reasoning item dangles too. Scan backward so chained
-	// reasoning items collapse together.
+	// A reasoning item is tied to the next non-reasoning item; scan backward
+	// so chained reasoning items collapse together — see spec §2.1b.
 	dropReasoning := make([]bool, len(items))
 	for i := len(items) - 1; i >= 0; i-- {
 		m := itemMaps[i]

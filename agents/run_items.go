@@ -12,9 +12,8 @@ import (
 	"github.com/zzir/agents-go/internal/oaiitems"
 )
 
-// ItemKind classifies what a RunItem holds. The set is closed: the runner
-// produces these kinds and nothing else. The strings are wire names (they
-// travel in a serialized RunState), so they are not renamed.
+// ItemKind classifies what a RunItem holds; a closed set whose strings are
+// wire names (serialized in RunState).
 type ItemKind string
 
 const (
@@ -30,70 +29,48 @@ const (
 	ItemHandoffOutput ItemKind = "handoff_output"
 	// ItemReasoning is a reasoning trace emitted by a reasoning model.
 	ItemReasoning ItemKind = "reasoning"
-	// ItemInjectedInput is caller input injected mid-run through RunControl,
-	// carried as an item so every downstream path treats it as input (§2.11b).
+	// ItemInjectedInput is caller input injected mid-run through RunControl —
+	// see spec §2.11b.
 	ItemInjectedInput ItemKind = "injected_input"
 	// ItemUnknown carries a model output item this SDK does not model; the raw
-	// bytes go back on the wire unchanged, and Display reports the type name.
+	// bytes go back on the wire unchanged.
 	ItemUnknown ItemKind = "unknown"
 )
 
 // RunItem is one thing that happened during a run: a model message, a tool
-// call, a tool result, a handoff, a reasoning trace. Which fields carry
-// meaning depends on Kind:
-//
-//	ItemMessage         Raw
-//	ItemToolCall        Raw, IsHandoff
-//	ItemHandoffCall     Raw
-//	ItemReasoning       Raw
-//	ItemUnknown         Raw
-//	ItemToolCallOutput  RawInput, Output, Renderer, Title, Summary, IsError, Extra, NestedUsage
-//	ItemHandoffOutput   RawInput, HandoffFrom, HandoffTo
-//	ItemInjectedInput   RawInput
-//
-// An item rebuilt from a serialized RunState carries RawInput and a stored
-// display instead of Raw, whatever its Kind.
+// call, a tool result, a handoff, a reasoning trace. Model-produced kinds
+// carry Raw; runner-synthesized and rebuilt items carry RawInput — see spec §2.1b.
 type RunItem struct {
-	// Kind says what this item is. A consumer that meets a kind it does not
-	// know should render it as opaque rather than fail.
+	// Kind says what this item is; render an unknown kind as opaque.
 	Kind ItemKind
 	// Agent is the agent that produced the item.
 	Agent *Agent
 	// Source records who produced it. The zero value is the model.
 	Source Source
 
-	// Raw is the model's own output item, for the kinds the model produced.
-	// Nil for runner-synthesized kinds and for items rebuilt from a RunState.
+	// Raw is the model's own output item; nil for synthesized and rebuilt items.
 	Raw *OutputItem
-	// RawInput is the item's input form, for the kinds the runner synthesized
-	// (a tool result, a handoff acknowledgement) and for rebuilt items.
+	// RawInput is the item's input form, for synthesized and rebuilt items.
 	RawInput *InputItem
 
-	// Output is a tool's return value as the tool produced it, before it was
-	// rendered for the model (ItemToolCallOutput).
+	// Output is a tool's return value as the tool produced it (ItemToolCallOutput).
 	Output any
 	// Renderer is the tool's requested renderer, from ToolResult.Display.
 	Renderer string
-	// Title and Summary are the tool's display overrides (ToolResult.Title /
-	// Summary): a card heading and a one-line account. Empty falls back;
-	// neither reaches the model.
+	// Title and Summary are the tool's display overrides; neither reaches the model.
 	Title   string
 	Summary string
-	// IsError marks a tool result that reports a failure. The content still
-	// reaches the model, which is how a tool that failed usefully lets the
-	// model recover; the tool-loop circuit breaker counts these.
+	// IsError marks a tool result that reports a failure; the content still
+	// reaches the model, and the tool-loop circuit breaker counts these.
 	IsError bool
-	// Extra is SDK-only data the tool attached via ToolResult.Details. It never
-	// reaches the model and surfaces through Display().Extra.
+	// Extra is ToolResult.Details, surfaced through Display().Extra; never
+	// reaches the model.
 	Extra map[string]any
-	// NestedUsage is what the tool spent on model calls of its own; nil when
-	// it called none. Kept apart from the turn's usage, not added to it
-	// (spec §2.7f).
+	// NestedUsage is what the tool spent on model calls of its own, kept apart
+	// from the turn's usage — see spec §2.7f.
 	NestedUsage *Usage
 
-	// IsHandoff marks the tool_called event that wraps a handoff call: the
-	// same call also arrives as handoff_requested, and the flag lets a consumer
-	// drop or badge the wrapped form without knowing every handoff tool name.
+	// IsHandoff marks the tool-call event that wraps a handoff call — see spec §2.4.
 	IsHandoff bool
 
 	// HandoffFrom and HandoffTo name the agents a handoff moved between
@@ -101,15 +78,12 @@ type RunItem struct {
 	HandoffFrom *Agent
 	HandoffTo   *Agent
 
-	// display, when set, is the item's stored projection. Only a rebuilt item
-	// has one: its Raw is gone, so the display cannot be derived again.
+	// display is a rebuilt item's stored projection; its Raw is gone.
 	display *ItemDisplay
 }
 
-// Display projects the item into the fields a renderer needs: the text, the
-// tool call, the error flag — produced by the SDK, which knows the wire format.
-// It is a hint: a consumer must still be able to render from the item's own
-// fields, which keeps Display free to gain fields.
+// Display projects the item into the fields a renderer needs. It is a hint; a
+// consumer must still be able to render from the item's own fields — see spec §2.1b.
 func (i *RunItem) Display() ItemDisplay {
 	if i.display != nil {
 		return *i.display
@@ -143,8 +117,7 @@ func (i *RunItem) Display() ItemDisplay {
 		}
 		return d
 	default:
-		// The wire type name is all a renderer can honestly say about an item
-		// this build does not model.
+		// The wire type name is all a renderer can say about an unmodeled item.
 		var name string
 		if i.Raw != nil {
 			name = i.Raw.Type
@@ -165,13 +138,10 @@ func (i *RunItem) ToInputItem() (InputItem, error) {
 }
 
 // Text returns the item's readable text: a message's content, a reasoning
-// trace's thinking; "" for kinds that have none. Reasoning reads the summary
-// parts, falling back to the content parts some backends use for raw
-// reasoning text; encrypted-only reasoning yields "".
+// trace's summary parts (else its content parts); "" for other kinds.
 func (i *RunItem) Text() string {
 	if i.Raw == nil {
-		// A rebuilt item has no model item left; its stored display is the only
-		// place its text survives.
+		// A rebuilt item's text survives only in its stored display.
 		if i.display != nil {
 			return i.display.Text
 		}
@@ -198,8 +168,7 @@ func (i *RunItem) Text() string {
 	}
 }
 
-// appendTextPart adds a non-empty part to a reasoning text builder, separated
-// by a blank line from what came before.
+// appendTextPart adds a non-empty part to the builder, blank-line separated.
 func appendTextPart(b *strings.Builder, text string) {
 	if text == "" {
 		return
@@ -210,8 +179,7 @@ func appendTextPart(b *strings.Builder, text string) {
 	b.WriteString(text)
 }
 
-// refusal returns a message item's refusal content, or "" — a rebuilt item
-// included (a refusal fails the run before it is ever persisted).
+// refusal returns a message item's refusal content, or "".
 func (i *RunItem) refusal() string {
 	if i.Kind != ItemMessage || i.Raw == nil {
 		return ""
@@ -219,8 +187,8 @@ func (i *RunItem) refusal() string {
 	return extractMessageRefusal(*i.Raw)
 }
 
-// FunctionCall returns the underlying function tool call view, for
-// ItemToolCall and ItemHandoffCall. It is the zero value for other kinds.
+// FunctionCall returns the function tool call view (ItemToolCall,
+// ItemHandoffCall); the zero value for other kinds.
 func (i *RunItem) FunctionCall() FunctionToolCall {
 	if i.Raw == nil {
 		return FunctionToolCall{}
@@ -228,8 +196,7 @@ func (i *RunItem) FunctionCall() FunctionToolCall {
 	return i.Raw.AsFunctionCall()
 }
 
-// CallID ties a tool call to its output, read from whichever form the item
-// carries.
+// CallID ties a tool call to its output, read from whichever form the item carries.
 func (i *RunItem) CallID() string {
 	if i.RawInput != nil {
 		if fco := i.RawInput.OfFunctionCallOutput; fco != nil {
@@ -243,17 +210,14 @@ func (i *RunItem) CallID() string {
 	return ""
 }
 
-// NewModelItem builds an item for something the model produced. The runner
-// builds these itself; this is for tests and for code that reconstructs a
-// run's items from the outside.
+// NewModelItem builds an item for something the model produced, for tests
+// and code reconstructing a run's items.
 func NewModelItem(kind ItemKind, agent *Agent, raw OutputItem) *RunItem {
 	return &RunItem{Kind: kind, Agent: agent, Raw: &raw}
 }
 
 // ReasoningItemIDPolicy controls whether reasoning-item ids are kept when run
-// items are converted back into model input. The default preserves them;
-// ReasoningItemIDOmit strips them, for replaying reasoning whose server-side
-// ids are no longer valid (store=false runs). Persisted in RunState.
+// items go back to the model; Omit serves store=false runs. Persisted in RunState.
 type ReasoningItemIDPolicy int
 
 const (
@@ -263,8 +227,8 @@ const (
 	ReasoningItemIDOmit
 )
 
-// applyReasoningItemIDPolicy strips reasoning ids under ReasoningItemIDOmit,
-// on a copy of each param. openai-go always serializes "id", so it is sent empty.
+// applyReasoningItemIDPolicy strips reasoning ids under ReasoningItemIDOmit on
+// a copy of each param; openai-go always serializes "id", so it goes out empty.
 func applyReasoningItemIDPolicy(items []InputItem, policy ReasoningItemIDPolicy) []InputItem {
 	if policy != ReasoningItemIDOmit {
 		return items
@@ -292,8 +256,8 @@ func itemsToInputList(items []*RunItem) ([]InputItem, error) {
 	return out, nil
 }
 
-// extractMessageText pulls the concatenated output_text content from a message
-// output item. It returns "" for non-message items.
+// extractMessageText concatenates a message item's output_text parts; "" for
+// other items.
 func extractMessageText(item OutputItem) string {
 	msg := item.AsMessage()
 	var b strings.Builder
@@ -305,8 +269,7 @@ func extractMessageText(item OutputItem) string {
 	return b.String()
 }
 
-// extractMessageRefusal pulls the concatenated refusal content from a message
-// output item, or "" when the message carries none.
+// extractMessageRefusal concatenates a message item's refusal parts, or "".
 func extractMessageRefusal(item OutputItem) string {
 	msg := item.AsMessage()
 	var b strings.Builder
@@ -334,8 +297,7 @@ func newFunctionCallOutputItem(agent *Agent, callID string, output any) *RunItem
 	}
 }
 
-// newHandoffOutputItem builds the synthetic acknowledgement recorded when a
-// handoff is taken.
+// newHandoffOutputItem builds the synthetic acknowledgement of a taken handoff.
 func newHandoffOutputItem(agent, from, to *Agent, raw InputItem) *RunItem {
 	return &RunItem{
 		Kind:        ItemHandoffOutput,
@@ -347,8 +309,8 @@ func newHandoffOutputItem(agent, from, to *Agent, raw InputItem) *RunItem {
 	}
 }
 
-// handoffOutputInput builds the function_call_output acknowledging a handoff:
-// the transfer marker plus an identity line for the target — spec §2.4.
+// handoffOutputInput builds the function_call_output acknowledging a handoff —
+// see spec §2.4.
 func handoffOutputInput(callID, targetAgentName string) InputItem {
 	msg := fmt.Sprintf("{\"assistant\":%q}\n\nYou are now %q, handling this conversation directly.", targetAgentName, targetAgentName)
 	return oaiitems.FunctionCallOutput(callID, responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt(msg)})
@@ -370,14 +332,13 @@ func stringifyToolOutput(output any) string {
 		if b, err := json.Marshal(v); err == nil {
 			return string(b)
 		}
-		// Unmarshalable values (NaN floats, channels, ...) degrade to fmt
-		// rather than silently dropping the output.
+		// An unmarshalable value (NaN, a channel) degrades to fmt.
 		return fmt.Sprintf("%v", v)
 	}
 }
 
-// contentListJSON renders a multimodal output as the Responses content list
-// the model receives, not this package's Go types (spec §2.7b).
+// contentListJSON renders a multimodal output as the Responses content list —
+// see spec §2.7b.
 func contentListJSON(parts []ToolOutputContent) string {
 	wire := make([]responses.ResponseFunctionCallOutputItemUnionParam, 0, len(parts))
 	for _, p := range parts {
@@ -390,9 +351,8 @@ func contentListJSON(parts []ToolOutputContent) string {
 	return string(b)
 }
 
-// EntryFromRunItem builds a session entry from a run item, carrying its
-// provenance, display and owning agent. responseID is the response the item
-// came from; injected input came from the caller and gets none.
+// EntryFromRunItem builds a session entry from a run item with its provenance,
+// display and agent; injected input takes no responseID.
 func EntryFromRunItem(it *RunItem, responseID string) (session.Entry, error) {
 	in, err := it.ToInputItem()
 	if err != nil {

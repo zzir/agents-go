@@ -47,7 +47,8 @@ type inputGateResult struct {
 }
 
 // firstTurnInputGuardrails runs the input stage ahead of the first model call:
-// Blocking guardrails gate it (a Replace rebuilds the input), the rest race it (spec §2.6).
+// Blocking guardrails gate it (a Replace rebuilds the input), the rest race it
+// (spec §2.6).
 func (r *runner) firstTurnInputGuardrails(
 	ctx context.Context,
 	startAgent *Agent,
@@ -132,8 +133,7 @@ func (r *runner) firstTurnInputGuardrails(
 }
 
 // takeScreened takes queued input with take and runs the input guardrails over
-// it before it is recorded, always blocking (spec §2.6): a Replace swaps the
-// items for its message, and a trip consumes them.
+// it, blocking, before it is recorded — see spec §2.6.
 func (r *runner) takeScreened(ctx context.Context, agent *Agent, take func() []InputItem) ([]InputItem, error) {
 	mark := r.ctrl.inFlightMark()
 	items := take()
@@ -192,7 +192,8 @@ func (r *runner) raceModelCall(span *tracing.SpanHandle, call func(context.Conte
 	r.recordGuardrailResults(g.results...)
 	if repl, ok := inputReplacement(g.results); ok {
 		if r.opts.Conversation.UsePreviousResponseID || r.opts.Conversation.ConversationID != "" {
-			// Server-managed turns send only deltas: the replacement would apply to nothing.
+			// Server-managed turns send only deltas: the replacement would
+			// apply to nothing.
 			span.Finish()
 			out.resp = nil
 			out.guardErr = NewUserError(errServerManagedReplace)

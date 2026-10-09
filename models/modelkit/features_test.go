@@ -21,12 +21,9 @@ var passthroughSettings = map[string]bool{
 	"ExtraBody":    true,
 }
 
-// TestFeatureSetCoversEverySetting is the completeness guard for the feature
-// vocabulary. featureSet is hand-written, and a setting missing from it hits
-// exactly the failure fail-loud exists to prevent: a backend with no
-// equivalent can neither send that setting nor Reject it, so it is dropped in
-// silence. The walk is by reflection so the next ModelSettings field added
-// cannot slip past.
+// TestFeatureSetCoversEverySetting is the completeness guard for the
+// hand-written featureSet: a setting missing from it could neither be sent nor
+// Rejected. The walk is by reflection so a new ModelSettings field cannot slip past.
 func TestFeatureSetCoversEverySetting(t *testing.T) {
 	t.Parallel()
 

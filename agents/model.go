@@ -5,9 +5,8 @@ import (
 	"iter"
 )
 
-// ModelRequest bundles the parameters for a single model call as a struct whose
-// zero values are sensible defaults, so a new parameter is not a signature
-// change for every Model implementation.
+// ModelRequest bundles the parameters for a single model call; zero values
+// are the defaults.
 type ModelRequest struct {
 	// SystemInstructions is the system prompt, if any.
 	SystemInstructions string
@@ -27,22 +26,19 @@ type ModelRequest struct {
 	ConversationID string
 }
 
-// Model is the interface for calling an LLM. Implementations live in provider
-// subpackages (e.g. openai).
+// Model is the interface for calling an LLM; implementations live in the
+// models subpackages.
 type Model interface {
 	// Respond performs a single, non-streaming model call.
 	Respond(ctx context.Context, req ModelRequest) (*ModelResponse, error)
 
 	// StreamResponse performs a streaming model call, yielding raw Responses API
-	// stream events. The second iterator value carries any terminal error; once
-	// a non-nil error is yielded, iteration stops.
+	// stream events; a non-nil error is terminal.
 	StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error]
 }
 
-// ModelProvider looks up Models by name. The runner uses it to resolve an
-// agent's model when the agent specifies a name rather than a concrete Model.
+// ModelProvider resolves an agent's model name to a Model.
 type ModelProvider interface {
-	// Model returns the model for the given name. An empty name selects the
-	// provider's default model.
+	// Model returns the model for the given name; empty selects the provider's default.
 	Model(modelName string) (Model, error)
 }

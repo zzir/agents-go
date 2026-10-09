@@ -96,8 +96,6 @@ func (s *Sandbox) health(ctx context.Context, id string) (sandbox.State, error) 
 	return sandbox.StateRunning, nil
 }
 
-/* ---------- files ---------- */
-
 // ReadFile fetches a file's bytes over envd's /files endpoint.
 func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 	req, err := s.envdRequest(ctx, http.MethodGet, s.filesPath(p), nil)
@@ -170,13 +168,9 @@ func (s *Sandbox) filesPath(p string) string {
 	return "/files?" + q.Encode()
 }
 
-// CreateExclusive writes p only when it does not exist. envd has no atomic
-// create, so the check happens INSIDE the sandbox: one shell command creates
-// the file EMPTY under `set -C` — the shell's own noclobber, atomic against a
-// concurrent tool call the way a check-then-upload from here would not be. The
-// content then follows over /files (inlined in the argv it would hit Linux's
-// ~128KB per-argument cap); an upload that fails takes the empty file with it,
-// so a failed create never leaves a partial file behind.
+// CreateExclusive creates p EMPTY under the shell's noclobber (`set -C`), the
+// one atomic create envd offers, then uploads the content over /files; a failed
+// upload removes the empty file, so no partial file is left behind.
 func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte) error {
 	full := s.resolvePath(p)
 	script := "set -C; mkdir -p " + sandbox.ShellQuote(path.Dir(full)) +
@@ -204,8 +198,6 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 	}
 	return nil
 }
-
-/* ---------- directory operations ---------- */
 
 // entryInfo mirrors filesystem.EntryInfo in protojson camelCase; both scalars
 // are loose because the compatible services render the SAME protobuf differently.
@@ -261,13 +253,9 @@ func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, er
 	return entries, nil
 }
 
-// RemoveFile deletes one path.
-//
-// envd's Remove is IDEMPOTENT: it answers OK for a path that was never there,
-// so the absence has to be established first. Every other backend reports
-// fs.ErrNotExist here, and apply_patch's rollback tells "deleted" from "was
-// never there" by exactly that. The extra Stat is the price of the contract
-// (verified against the real service — the suite caught this).
+// RemoveFile deletes one path. envd's Remove is idempotent, so a Stat first
+// establishes absence: every backend reports fs.ErrNotExist here, and
+// apply_patch's rollback relies on it.
 func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
 	full := s.resolvePath(p)
 	if err := s.unary(ctx, procStat, map[string]any{"path": full}, nil); err != nil {

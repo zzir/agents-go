@@ -23,25 +23,22 @@ type CodeToolConfig struct {
 	// Description tells the model what the tool does. A sensible default is
 	// used when empty.
 	Description string
-	// Timeout is the default timeout per execution; zero means
-	// sandbox.DefaultTimeout. The model can override this per call via
-	// the timeout_seconds argument (capped at MaxTimeout).
+	// Timeout is the default per-execution timeout; zero means DefaultTimeout.
+	// The model overrides it per call via timeout_seconds, capped at MaxTimeout.
 	Timeout time.Duration
 	// MaxTimeout caps the per-command timeout the model may request. Zero
 	// means 10 minutes.
 	MaxTimeout time.Duration
-	// MaxOutputBytes truncates each of stdout and stderr sent to the model (so
-	// a tool result carries at most about twice this many output bytes).
-	// Defaults to 8192. The cut never splits a multi-byte UTF-8 sequence.
+	// MaxOutputBytes truncates each of stdout and stderr sent to the model, on
+	// a rune boundary. Defaults to 8192.
 	MaxOutputBytes int
 	// Sessions enables the session_id argument: a named shell held open between
 	// calls, pooled per TOOL (spec §2.7k). Needs a terminal backend and RegisterCloser.
 	Sessions bool
 	// Policy filters commands before the approval gate (spec §2.7j).
 	Policy Policy
-	// NeedsApprovalFunc, when set, is forwarded to the tool as its per-call
-	// approval gate: given the command in argsJSON and the model-assigned callID
-	// it decides whether this execution must be approved first. nil = never gate.
+	// NeedsApprovalFunc, when set, is the tool's per-call approval gate, given
+	// the command's argsJSON and the model-assigned callID; nil never gates.
 	NeedsApprovalFunc func(ctx context.Context, rc *agents.RunContext, argsJSON string, callID string) (bool, error)
 
 	// RegisterCloser, when set, receives the closer that releases every shell the
@@ -51,8 +48,7 @@ type CodeToolConfig struct {
 
 const defaultMaxTimeout = 10 * time.Minute
 
-// DefaultDescription is what an empty Description falls back to, exported so
-// a caller can extend it rather than restate it.
+// DefaultDescription is what an empty Description falls back to.
 func (CodeToolConfig) DefaultDescription() string {
 	return "Execute a shell command in a sandboxed environment and return its stdout, stderr and exit code. " +
 		"The command is run via bash -c. " +
@@ -108,10 +104,9 @@ type codeToolArgs struct {
 	SessionID lenientString `json:"session_id" jsonschema:"reuse a persistent shell by name, so cd, exported variables and an activated environment survive between calls; empty runs in a fresh shell"`
 }
 
-// CodeTool wraps a Sandbox as a function tool. The model supplies a shell
-// command which is executed via bash -c; stdout, stderr and exit code are
-// returned as text. Execution errors (non-zero exit, timeout) are returned
-// to the model as output so it can correct itself.
+// CodeTool wraps a Sandbox as a function tool: the model's shell command runs
+// via bash -c, and stdout, stderr and the exit code come back as text, a
+// non-zero exit or a timeout included.
 func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
 	// The pool exists only when named sessions do.
@@ -166,8 +161,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 		OnInvoke: func(ctx context.Context, tc *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			var args codeToolArgs
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-				// Refused as TEXT, not an error: an error return would abort
-				// the run over a spelling slip (spec §2.7l).
+				// Refused as text, not an error (spec §2.7l).
 				res := agents.TextResult(fmt.Sprintf("invalid arguments: %v", err))
 				res.IsError = true
 				return res, nil

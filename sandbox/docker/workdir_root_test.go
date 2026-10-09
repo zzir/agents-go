@@ -230,12 +230,8 @@ func TestBindMount_AbsolutePathsUnderMountPoint(t *testing.T) {
 }
 
 // TestExclusiveCreateScripts_ExitCodes runs the generated script under the
-// host's /bin/sh — the only daemon-free way to see what it actually reports.
-//
-// The outcome has to travel as an exit code. Reading "exists" out of ln's
-// stderr reads whichever ln the image ships (GNU, BusyBox) in whichever locale
-// it runs, and when that guess misses, apply_patch's "Add over a file that is
-// already there" stops being fs.ErrExist and becomes a generic failure.
+// host's /bin/sh: the outcome must travel as an exit code, since ln's stderr
+// wording depends on the image's ln and locale.
 func TestExclusiveCreateScripts_ExitCodes(t *testing.T) {
 	// The script decodes with base64(1); a host whose build has no -d cannot say
 	// anything about the script's logic either way.

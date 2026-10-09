@@ -1,8 +1,6 @@
-// Command testing shows how to test an agent with no model API key: fake the
-// model, run everything else for real. Your tools actually execute; what is
-// faked is only the decision to call them.
-//
-// The program itself runs against the scripted model, so it needs no key:
+// Command testing tests an agent with no model API key: the model is scripted,
+// everything else runs for real — tools actually execute; only the decision to
+// call them is faked. See docs/howto/testing.md.
 //
 //	go run ./examples/testing     # runs the script
 //	go test ./examples/testing    # asserts on it
@@ -38,8 +36,7 @@ func newAgent() *agents.Agent {
 
 // --- the scripted model ---
 
-// scriptedModel returns one prepared response per turn. Model has two methods
-// and a double only needs the one its callers reach: RunSync calls Respond.
+// scriptedModel returns one prepared response per turn; RunSync reaches only Respond.
 type scriptedModel struct {
 	responses []*agents.ModelResponse
 	calls     int
@@ -58,9 +55,8 @@ func (m *scriptedModel) StreamResponse(ctx context.Context, req agents.ModelRequ
 	panic("this script only serves RunSync")
 }
 
-// An output item is a Responses-API wire item; build one by encoding a value to
-// JSON and decoding it back — encoding/json escapes every field, so no string
-// concatenation hand-quotes the wire shape.
+// outputItem builds a Responses wire item by a JSON round trip, so nothing is
+// hand-quoted.
 func outputItem(v any) agents.OutputItem {
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -87,9 +83,8 @@ func functionCall(name, callID, argsJSON string) agents.OutputItem {
 	})
 }
 
-// "call the tool, then answer" is a two-response script: the first turn's
-// function call makes the run execute the real tool, and its return value is
-// fed to the second turn.
+// callThenAnswer is a two-response script: the first turn's function call runs
+// the real tool, and its return value feeds the second turn.
 func callThenAnswer() *scriptedModel {
 	return &scriptedModel{responses: []*agents.ModelResponse{
 		{Output: []agents.OutputItem{functionCall("get_weather", "call_1", `{"city":"Beijing"}`)}},
@@ -99,8 +94,7 @@ func callThenAnswer() *scriptedModel {
 
 func main() {
 	model := callThenAnswer()
-	// Override replaces the model for every agent in the run, so a handoff
-	// target gets the same script without being wired up separately.
+	// Override replaces the model for every agent in the run, handoff targets included.
 	res, err := agents.RunSync(context.Background(), newAgent(), "weather in Beijing?",
 		agents.RunOptions{Model: agents.ModelOptions{Override: model}})
 	if err != nil {

@@ -2,19 +2,18 @@ package session
 
 import "encoding/json"
 
-// DerivedState is what a session's entries add up to, computed by folding over
-// them rather than stored alongside them, so nothing can disagree with the log.
+// DerivedState is what a session's entries add up to, folded from them and
+// never stored — spec §2.5c.
 type DerivedState struct {
 	// LastAgent is the agent that produced the most recent entry.
 	LastAgent string
-	// LastResponseID is the most recent model call's identifier, which is what
-	// server-managed conversation state chains from.
+	// LastResponseID is the most recent model call's identifier.
 	LastResponseID string
-	// PendingCallIDs are tool calls recorded without their outputs — a run that
-	// paused for approval, or one that died mid-turn.
+	// PendingCallIDs are tool calls recorded without their outputs (a paused or
+	// a crashed run).
 	PendingCallIDs []string
-	// Usage totals the token usage the entries account for. Requests counts the
-	// entries that carried usage, which is one per model call.
+	// Usage totals the token usage the entries carry; Requests counts the
+	// entries that carried it.
 	Usage    RequestUsage
 	Requests int
 }
@@ -34,8 +33,7 @@ type Stats struct {
 	Requests int
 }
 
-// ReduceState folds entries into the state they imply. It is a pure function of
-// the entries — same log, same answer, no cache to invalidate.
+// ReduceState folds entries into the state they imply; a pure function of the entries.
 func ReduceState(entries []Entry) DerivedState {
 	var st DerivedState
 	open := map[string]bool{}
@@ -55,8 +53,7 @@ func ReduceState(entries []Entry) DerivedState {
 		if e.Kind != EntryKindItem {
 			continue
 		}
-		// A call is pending until its output lands — how a reopened session tells
-		// "paused for approval" from "finished".
+		// A call is pending until its output lands.
 		callID, isCall, isOutput := entryCallID(e)
 		switch {
 		case isCall && callID != "":
@@ -97,9 +94,8 @@ func StatsOf(entries []Entry) Stats {
 	return st
 }
 
-// AddRequestUsage accumulates src into dst, field by field. It is the one
-// definition of "sum request usage" shared by state folding and any caller
-// aggregating entries itself.
+// AddRequestUsage accumulates src into dst, field by field: the one definition
+// of summing usage.
 func AddRequestUsage(dst *RequestUsage, src *RequestUsage) {
 	dst.InputTokens += src.InputTokens
 	dst.OutputTokens += src.OutputTokens
@@ -110,8 +106,7 @@ func AddRequestUsage(dst *RequestUsage, src *RequestUsage) {
 }
 
 // ItemProbe is the classifying fields of a stored item, read off its wire JSON
-// without decoding the union — the item may be a type this build does not
-// model. A field the item lacks is zero.
+// without decoding the union; a field the item lacks is zero.
 type ItemProbe struct {
 	Type    string          `json:"type"`
 	Role    string          `json:"role"`

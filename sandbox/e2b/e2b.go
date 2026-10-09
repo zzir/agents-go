@@ -1,8 +1,7 @@
 // Package e2b runs a sandbox on any host that speaks the E2B API — E2B's cloud,
-// a self-hosted E2B, or a compatible service such as Alibaba Cloud's Function
-// Compute sandbox — one backend whose configuration is the API URL, the sandbox
-// domain and the key (decisions §5.34). The client is standard library only,
-// which keeps it in the root module rather than behind a submodule.
+// a self-hosted E2B, or a compatible service such as Alibaba Cloud's — one
+// backend configured by API URL, sandbox domain and key (decisions §5.34). The
+// client is standard library only, so it lives in the root module.
 package e2b
 
 import (
@@ -29,9 +28,8 @@ const (
 	DefaultUser = "user"
 	// DefaultWorkDir matches the workbench's contract everywhere else.
 	DefaultWorkDir = "/workspace"
-	// DefaultTimeout is the sandbox TTL requested at creation, in seconds.
-	// It is a LEASE, refreshed while the sandbox is in use: too short and an
-	// idle chat loses its container, too long and a forgotten one bills.
+	// DefaultTimeout is the sandbox TTL requested at creation, in seconds: a
+	// LEASE, refreshed while the sandbox is in use (decisions §5.34).
 	DefaultTimeout = 300
 )
 
@@ -43,18 +41,16 @@ const exportTimeout = 10 * time.Minute
 // signal, a terminal write, a rollback kill) so a hung endpoint cannot block it.
 const controlCallTimeout = 30 * time.Second
 
-// DataPlaneAuth selects how envd is authenticated. Both services verified so
-// far mint a per-sandbox access token, which AuthAuto sends; the explicit
-// modes are an escape hatch for a compatible service that differs.
+// DataPlaneAuth selects how envd is authenticated; AuthAuto covers both
+// services verified so far, the explicit modes a compatible service that differs.
 type DataPlaneAuth string
 
 const (
 	// AuthAuto sends the sandbox's access token when creation returned one,
-	// and the API key otherwise. It is the default and covers both known
-	// services.
+	// and the API key otherwise. The default.
 	AuthAuto DataPlaneAuth = ""
-	// AuthAccessToken always sends the per-sandbox token; a service that
-	// never mints one then fails loudly instead of silently unauthenticated.
+	// AuthAccessToken always sends the per-sandbox token; a service that never
+	// mints one fails loudly.
 	AuthAccessToken DataPlaneAuth = "access_token"
 	// AuthAPIKey always sends the API key.
 	AuthAPIKey DataPlaneAuth = "api_key"
@@ -77,10 +73,9 @@ type Options struct {
 	// SandboxID is a sandbox this caller already owns — resumed rather than
 	// created. Empty creates one on first use.
 	SandboxID string
-	// OnSandboxID, when set, is called with the id of a sandbox this client
-	// CREATED, so the caller can remember it across restarts. A failure is
-	// fatal to the create: a sandbox nobody recorded is one nobody will ever
-	// stop, and silently leaking billed compute is worse than failing.
+	// OnSandboxID, when set, receives the id of a sandbox this client CREATED,
+	// for the caller to remember across restarts; a failure kills the sandbox
+	// and fails the create (decisions §5.34).
 	OnSandboxID func(ctx context.Context, id string) error
 	// TimeoutSeconds is the TTL a create or resume asks for; zero means
 	// DefaultTimeout.
@@ -88,9 +83,8 @@ type Options struct {
 	// AutoPause makes the TTL PAUSE the sandbox instead of killing it, so the
 	// filesystem survives an idle period.
 	AutoPause bool
-	// AllowInternet gives the sandbox outbound network access. Off by default,
-	// like the docker backend: the create sends the flag explicitly either way
-	// rather than inheriting the service's internet-on default (decisions §5.37).
+	// AllowInternet gives the sandbox outbound network access; off by default
+	// and sent explicitly either way (decisions §5.37).
 	AllowInternet bool
 	// Metadata tags the sandbox on the service side; the workbench uses it to
 	// say which project a sandbox belongs to.
@@ -105,21 +99,18 @@ type Options struct {
 	// DataPlaneAuth selects the envd credential; empty means AuthAuto.
 	DataPlaneAuth DataPlaneAuth
 	// Headers are added to every request on both planes, under the client's
-	// own credential and protocol headers, which a same-named entry cannot
-	// replace — for a compatible service that authenticates with its own header.
+	// own credential and protocol headers, which a same-named entry cannot replace.
 	Headers map[string]string
 	// MaxReadFileBytes caps ReadFile; zero means the SDK default.
 	MaxReadFileBytes int64
 	// HTTPClient overrides the client used for both planes. The default refuses
-	// cross-host redirects because Go forwards the X-API-Key / X-Access-Token
-	// credential and the Headers across them; a replacement without that
-	// CheckRedirect guard can leak them to wherever a redirect points.
+	// cross-host redirects, which would carry the credential headers along; a
+	// replacement needs the same CheckRedirect guard.
 	HTTPClient *http.Client
 }
 
-// Sandbox is one E2B-compatible sandbox. The remote instance is created (or
-// resumed) LAZILY, on the first call that needs it — the same shape the docker
-// backend has, and what lets the constructor stay I/O-free.
+// Sandbox is one E2B-compatible sandbox; the remote instance is created (or
+// resumed) LAZILY, on the first call that needs it.
 type Sandbox struct {
 	opts Options
 

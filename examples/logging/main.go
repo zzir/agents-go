@@ -19,8 +19,7 @@ import (
 func main() {
 	provider := openai.NewProvider()
 
-	// Most of what the SDK says is Debug, so give it a logger whose handler
-	// enables Debug rather than turning Debug on application-wide.
+	// Most SDK records are Debug; enable Debug on this logger, not application-wide.
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
@@ -37,10 +36,8 @@ func main() {
 		},
 	}
 
-	// SensitiveData is off by default and is a separate decision from the
-	// logger itself: "log what the SDK is doing" and "log what the user said"
-	// are not the same switch. Leave it off and prompts, tool arguments, tool
-	// results and model output are withheld from the records.
+	// SensitiveData is a second switch, off by default: prompts, tool arguments,
+	// results and model output stay out of the records — see docs/howto/logging.md.
 	opts := agents.RunOptions{
 		Model: agents.ModelOptions{Provider: provider},
 		Log:   agents.LogConfig{Logger: logger},
@@ -59,8 +56,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// A run that survives trouble records it as a Diagnostic rather than
-	// failing — worth checking even when err is nil.
+	// Trouble a run survived lands in Diagnostics, even when err is nil — see
+	// spec §2.11d.
 	for _, d := range res.Diagnostics {
 		fmt.Printf("diagnostic: %s %s\n", d.Code, d.Message)
 	}

@@ -8,16 +8,14 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// Compactor adapts a Strategy to agents.Compactor, so a run can be given one
-// without the core knowing about groups, triggers or indexes. It keeps its
-// Index between passes, which is why it is a struct: regrouping the whole
-// history every turn is work that grows with the thing it shrinks.
+// Compactor adapts a Strategy to agents.Compactor, keeping its Index between
+// passes so the history is not regrouped every turn.
 type Compactor struct {
 	strategy  Strategy
 	estimator TokenEstimator
 
-	// ResetSummary, when set, is what a Reset carries into the fresh context:
-	// the model's own notes, say (memory.Snapshot). Nil resets bare.
+	// ResetSummary, when set, is what a Reset carries into the fresh context
+	// (memory.Snapshot, say); nil resets bare.
 	ResetSummary func(ctx context.Context) (string, error)
 
 	mu  sync.Mutex
@@ -34,15 +32,13 @@ func New(strategy Strategy, estimator TokenEstimator) *Compactor {
 	return &Compactor{strategy: strategy, estimator: estimator}
 }
 
-// Compact implements agents.Compactor. Without a strategy nothing folds on
-// its own, but an index a Reset built is still kept and served, so the reset
-// reaches the checkpoint after the run.
+// Compact implements agents.Compactor. Without a strategy nothing folds, but an
+// index a Reset built is still served so the reset reaches the checkpoint.
 func (c *Compactor) Compact(ctx context.Context, entries []session.Entry) ([]session.Entry, error) {
 	if len(entries) == 0 {
 		return entries, nil
 	}
-	// A Compactor may be shared across concurrent runs, and the Index is not
-	// safe for that: a torn index is a corrupted context, not a slow one.
+	// A Compactor may be shared across concurrent runs; the Index is not safe for that.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -88,9 +84,8 @@ func (c *Compactor) Reset(ctx context.Context, entries []session.Entry) ([]sessi
 			break
 		}
 	}
-	// Every group but the kept ones folds, the ones an earlier pass or reset
-	// already excluded included: their stand-ins are superseded by this
-	// reset's summary, or the context would carry one per reset.
+	// Every group but the kept ones folds, earlier exclusions included: this
+	// reset's summary supersedes their stand-ins.
 	first := -1
 	for i, g := range c.idx.Groups {
 		if i == keep || g.Kind == GroupSystem {
@@ -114,8 +109,7 @@ func (c *Compactor) Reset(ctx context.Context, entries []session.Entry) ([]sessi
 	return c.idx.IncludedEntries(), nil
 }
 
-// Index exposes the current index, for callers that want to report what was
-// dropped. The returned pointer is live: read it, do not mutate it.
+// Index exposes the current index; the pointer is live, read it, do not mutate it.
 func (c *Compactor) Index() *Index {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -124,19 +118,16 @@ func (c *Compactor) Index() *Index {
 
 var _ agents.Compactor = (*Compactor)(nil)
 
-// Checkpoint builds an append-only compaction checkpoint from the compactor's
-// current index: what the pass folded away and the stand-ins that render in
-// its place. ok=false when nothing was excluded, or when the index no longer
-// describes seen. seen is the preceding Compact call's INPUT — the entries the
-// pass ran over, not what it produced. What a checkpoint holds: spec §2.5f.
+// Checkpoint builds a compaction checkpoint from the current index; seen is the
+// preceding Compact call's INPUT, and ok=false when nothing was excluded or the
+// index no longer describes seen — see spec §2.5f.
 func (c *Compactor) Checkpoint(seen []session.Entry) (session.Entry, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.idx == nil {
 		return session.Entry{}, false, nil
 	}
-	// The index must still describe exactly what the caller's Compact saw; a
-	// shared Compactor re-aimed at another session reports nothing (spec §2.5f).
+	// A shared Compactor re-aimed at another session reports nothing (spec §2.5f).
 	if n, ok := c.idx.prefixMatches(seen); !ok || n != len(seen) {
 		return session.Entry{}, false, nil
 	}
@@ -149,8 +140,8 @@ func (c *Compactor) Checkpoint(seen []session.Entry) (session.Entry, bool, error
 		before += g.Tokens
 		if !g.Excluded {
 			if g.Kind == GroupSummary {
-				// The checkpoint this one continues from: recording it lets an
-				// updating summarizer see what it is revising.
+				// The checkpoint this one continues from, so an updating
+				// summarizer sees what it revises.
 				if p, err := summaryOf(g); err == nil && p != "" {
 					prevSummary = p
 				}

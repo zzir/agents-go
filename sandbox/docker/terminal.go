@@ -21,9 +21,8 @@ const terminalWaitPoll = 2 * time.Second
 // the interface takes no context, so a dead daemon must not park a goroutine.
 const terminalOpTimeout = 10 * time.Second
 
-// OpenTerminal implements sandbox.TerminalOpener. Persistent mode only: an
-// interactive shell needs a long-lived container to attach to; in ephemeral
-// mode there is no container between Exec calls.
+// OpenTerminal implements sandbox.TerminalOpener in Persistent mode only: an
+// interactive shell needs a long-lived container to attach to.
 func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions) (sandbox.Terminal, error) {
 	if !s.opts.Persistent {
 		return nil, fmt.Errorf("docker sandbox: %w: interactive terminals require Persistent mode", sandbox.ErrTerminalUnsupported)
@@ -111,10 +110,8 @@ func (t *terminal) Close() error {
 	return nil
 }
 
-// Wait resolves the exit code after output EOF by polling ExecInspect briefly;
-// -1 when the process is still reported running when the poll window closes.
-// The window bounds the daemon calls as well as the sleeping, so a daemon that
-// stops answering ends the wait unresolved instead of holding it forever.
+// Wait resolves the exit code after output EOF by polling ExecInspect for
+// terminalWaitPoll; -1 when the process (or the daemon) has not answered by then.
 func (t *terminal) Wait() (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), terminalWaitPoll)
 	defer cancel()

@@ -15,18 +15,11 @@ type FallbackModel struct {
 	shouldFallback func(error) bool
 }
 
-// NewFallbackModel returns a Model that tries primary first and, on failure,
-// falls back to each model in fallbacks in order. The first success is returned;
-// if all fail, the joined error is returned. Fallback stops early on context
-// cancellation (see DefaultRetryIf).
-//
-// Wrap each backend in NewRetryModel first so every provider exhausts its own
-// retries before the chain moves on:
+// NewFallbackModel returns a Model that tries primary, then each fallback in
+// order, until one succeeds (DefaultRetryIf decides); all failing returns the
+// joined error. Wrap each backend in NewRetryModel first:
 //
 //	NewFallbackModel(NewRetryModel(primary, p), NewRetryModel(backup, p))
-//
-// For streaming, a model can only be skipped if it failed before emitting any
-// output event; once a token is produced the chain commits to that model.
 func NewFallbackModel(primary Model, fallbacks ...Model) *FallbackModel {
 	models := make([]Model, 0, len(fallbacks)+1)
 	models = append(models, primary)
@@ -34,12 +27,9 @@ func NewFallbackModel(primary Model, fallbacks ...Model) *FallbackModel {
 	return &FallbackModel{models: models, shouldFallback: DefaultRetryIf}
 }
 
-// WithShouldFallback replaces the error classifier that decides whether the
-// chain moves on to the next backend after a failure. The default
-// (DefaultRetryIf) falls back on every error except context cancellation; pass
-// e.g. openai.RetryableError so deterministic client errors (4xx) fail fast
-// instead of being retried against every backend. A nil f keeps the current
-// classifier. It returns m for chaining.
+// WithShouldFallback replaces the classifier deciding whether a failure moves
+// the chain on (default DefaultRetryIf; openai.RetryableError fails 4xx fast).
+// nil keeps the current one; returns m for chaining.
 func (m *FallbackModel) WithShouldFallback(f func(error) bool) *FallbackModel {
 	if f != nil {
 		m.shouldFallback = f
@@ -47,15 +37,15 @@ func (m *FallbackModel) WithShouldFallback(f func(error) bool) *FallbackModel {
 	return m
 }
 
-// Respond implements Model: backends are tried in order until one
-// succeeds or the classifier stops the chain; all errors are joined.
+// Respond implements Model: backends in order until one succeeds or the
+// classifier stops the chain; all errors are joined.
 func (m *FallbackModel) Respond(ctx context.Context, req ModelRequest) (*ModelResponse, error) {
 	var errs []error
 	for i, inner := range m.models {
 		resp, err := inner.Respond(ctx, req)
 		if err == nil {
 			if i > 0 {
-				// Record the fallback, or a primary outage shows only as slower answers.
+				// Record the fallback so a primary outage is visible.
 				RecordDiagnostic(ctx, DiagModelFallback, errors.Join(errs...), map[string]any{
 					"used_index": i, "models": len(m.models), "streaming": false,
 				})
@@ -71,9 +61,8 @@ func (m *FallbackModel) Respond(ctx context.Context, req ModelRequest) (*ModelRe
 	return nil, errors.Join(errs...)
 }
 
-// StreamResponse implements Model: a backend can only be swapped before its
-// first output event; once output commits the backend, a mid-stream error is
-// surfaced as-is and recorded as DiagStreamError. See decisions §5.16.
+// StreamResponse implements Model: a backend can be swapped only before its
+// first output event — see decisions §5.16.
 func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) iter.Seq2[*ResponseStreamEvent, error] {
 	return func(yield func(*ResponseStreamEvent, error) bool) {
 		var errs []error
@@ -83,8 +72,7 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 				return
 			}
 			if a.err == nil {
-				// Clean finish: deliver held-back events (an all-pending stream
-				// still delivers rather than vanishing).
+				// Clean finish: deliver the held-back events.
 				if !flushStreamEvents(a.pending, yield) {
 					return
 				}
@@ -99,13 +87,13 @@ func (m *FallbackModel) StreamResponse(ctx context.Context, req ModelRequest) it
 			errs = append(errs, a.err)
 			if a.committed || i == len(m.models)-1 || !m.shouldFallback(a.err) {
 				if a.committed {
-					// A committed backend cannot be swapped; record which one, so
-					// a truncated answer is explainable (decisions §5.16).
+					// A committed backend cannot be swapped; record which one.
 					RecordDiagnostic(ctx, DiagStreamError, a.err, map[string]any{
 						"used_index": i, "models": len(m.models),
 					})
 				} else if !flushStreamEvents(a.pending, yield) {
-					// No further backend: flush the held-back events ahead of the error.
+					// No further backend: flush the held-back events ahead of
+					// the error.
 					return
 				}
 				yield(nil, errors.Join(errs...))
@@ -126,17 +114,14 @@ type FallbackProvider struct {
 	shouldFallback func(error) bool
 }
 
-// NewFallbackProvider wraps primary so that every Model it produces automatically
-// falls back through the models from each fallback provider. It is the
-// provider-level counterpart of NewFallbackModel.
+// NewFallbackProvider is the provider-level NewFallbackModel: every Model it
+// produces falls back through each fallback provider's model.
 func NewFallbackProvider(primary ModelProvider, fallbacks ...ModelProvider) *FallbackProvider {
 	return &FallbackProvider{primary: primary, fallbacks: fallbacks}
 }
 
-// WithShouldFallback sets the error classifier applied to every FallbackModel
-// this provider produces, with the same semantics as
-// (*FallbackModel).WithShouldFallback. A nil f keeps the default. It returns p
-// for chaining.
+// WithShouldFallback sets the classifier for every FallbackModel this provider
+// produces, as (*FallbackModel).WithShouldFallback; returns p for chaining.
 func (p *FallbackProvider) WithShouldFallback(f func(error) bool) *FallbackProvider {
 	if f != nil {
 		p.shouldFallback = f
@@ -144,15 +129,9 @@ func (p *FallbackProvider) WithShouldFallback(f func(error) bool) *FallbackProvi
 	return p
 }
 
-// Model implements ModelProvider: it resolves name on the primary and each
-// fallback provider, returning a FallbackModel chaining the results (with this
-// provider's classifier applied).
-//
-// If some fallbacks resolve and others do not, the working (shorter) chain is
-// returned. If fallbacks were configured but every one fails to resolve, the
-// aggregated error is returned rather than silently degrading to a bare
-// primary. With no fallbacks configured at all, the primary is returned
-// unchanged.
+// Model implements ModelProvider: a FallbackModel chaining the fallbacks that
+// resolve name; every configured fallback failing to resolve is an error, and
+// no fallbacks configured returns the primary unchanged.
 func (p *FallbackProvider) Model(name string) (Model, error) {
 	m, err := p.primary.Model(name)
 	if err != nil {

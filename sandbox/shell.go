@@ -39,8 +39,7 @@ type ShellSession struct {
 	closeErr  error
 
 	mu sync.Mutex
-	// lastLine is what was written for the command in flight, so its echo can
-	// be stripped from the output exactly rather than guessed at.
+	// lastLine is what was written for the command in flight; trimEcho strips its echo.
 	lastLine string
 	buf      []byte
 	closed   bool
@@ -84,8 +83,8 @@ func newShellSession(term Terminal) *ShellSession {
 	return s
 }
 
-// readLoop feeds chunks until the terminal ends. It exits on Close, because
-// Close closes the terminal and the blocked Read returns.
+// readLoop feeds chunks until the terminal ends; Close ends it by closing the
+// terminal, which returns the blocked Read.
 func (s *ShellSession) readLoop() {
 	defer close(s.chunks)
 	buf := make([]byte, 4096)
@@ -146,8 +145,7 @@ func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duratio
 
 	out, code, err := s.readUntilSentinel(ctx, timeout)
 	if err != nil {
-		// The session is no longer at a known state; close rather than
-		// interleave the next command's output with this one's (spec §2.7k).
+		// The session is at an unknown state: close it (spec §2.7k).
 		_ = s.closeLocked()
 		return out, -1, err
 	}

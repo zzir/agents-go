@@ -6,9 +6,8 @@ import (
 	"reflect"
 )
 
-// wrapperDictKey is the property name used to wrap non-object output types, so
-// the response schema root is always an object (an OpenAI requirement).
-// ValidateJSON unwraps it, so the wrapping never reaches the caller.
+// wrapperDictKey wraps a non-object output type so the schema root is an
+// object (an OpenAI requirement); ValidateJSON unwraps it.
 const wrapperDictKey = "response"
 
 // typedOutputSchema is the OutputSchema implementation backing OutputType[T].
@@ -20,16 +19,9 @@ type typedOutputSchema[T any] struct {
 	validator *schemaValidator
 }
 
-// OutputType returns an OutputSchema requesting structured output of type T.
-//
-// If T is object-like (a struct or map, optionally behind a pointer) the model
-// is asked to produce that object directly. Otherwise (slices, primitives) the
-// value is transparently wrapped in {"response": <value>} because OpenAI
-// structured outputs require an object at the root; ValidateJSON unwraps it.
-//
-// Strict mode is enabled, and a T it cannot express panics, as NewTool does:
-// the schema comes from a Go type, so the failure is a bug a test surfaces.
-// Use OutputTypeNonStrict for a relaxed schema.
+// OutputType returns a strict OutputSchema for type T; a non-object T is
+// transparently wrapped in {"response": <value>}. A T strict mode cannot
+// express panics, as NewTool does (decisions §5.11); OutputTypeNonStrict relaxes it.
 func OutputType[T any]() OutputSchema {
 	return newOutputType[T]("OutputType", true)
 }
@@ -107,9 +99,8 @@ func (s *typedOutputSchema[T]) ValidateJSON(jsonStr string) (any, error) {
 		}
 		return v, nil
 	}
-	// encoding/json leaves a missing key at its zero value, so validate the
-	// whole schema (nested included) to turn a model's schema violation into an
-	// error it can be asked to fix, rather than a silent zero.
+	// Validate the whole schema first: encoding/json would leave a missing key
+	// at its zero value.
 	if err := s.validator.Validate([]byte(jsonStr)); err != nil {
 		return nil, fmt.Errorf("decoding output as %s: %w", s.typeName, err)
 	}

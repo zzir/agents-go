@@ -1,8 +1,6 @@
-// Command tracing demonstrates the tracing pipeline: a tracer wired to a
-// batch processor and console exporter records one trace per run, with spans
-// for the agent turn, each model call and each tool call. TraceGroupID links
-// the traces of related runs (e.g. one chat thread) and TraceMetadata attaches
-// arbitrary context to every span the run records.
+// Command tracing demonstrates the tracing pipeline: tracer → batch processor →
+// console exporter, one trace per run with agent, model-call and tool spans;
+// TraceGroupID links related runs and TraceMetadata stamps every span.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/tracing
 package main
@@ -25,8 +23,8 @@ func main() {
 }
 
 func run() error {
-	// Console exporter for demos; swap in your own exporter (or
-	// Exporter) to ship spans to a collector instead.
+	// Console exporter for demos; swap in your own Exporter to ship spans to a
+	// collector.
 	exporter := tracing.NewConsoleExporter(os.Stderr)
 	processor := tracing.NewBatchProcessor(exporter, tracing.BatchProcessorOptions{})
 	defer processor.Shutdown(context.Background())
@@ -54,7 +52,6 @@ func run() error {
 		return err
 	}
 	fmt.Println(res.FinalOutputString())
-	// The deferred Shutdown flushes the trace and its agent / generation /
-	// function spans to stderr.
+	// The deferred Shutdown flushes the trace and its spans to stderr.
 	return nil
 }

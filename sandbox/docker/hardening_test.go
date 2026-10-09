@@ -192,12 +192,9 @@ func (r *failAfterReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// The fingerprint of an env-less config is FROZEN: it is stamped on every
-// container already running, and a changed hash makes adoptNamed judge them
-// all stale — replacing the entire fleet and discarding whatever each had
-// installed. Adding an option to configFingerprint must leave this value
-// alone; only a deliberate fleet-wide replace may change it. (Last moved when
-// Network became a name and the UserUnset flag went away.)
+// The fingerprint of an env-less config is FROZEN: a changed hash makes
+// adoptNamed judge every running container stale and replaces the fleet. Adding
+// an option to configFingerprint must leave this value alone.
 func TestConfigFingerprintWithoutEnv(t *testing.T) {
 	const golden = "5698357ac43dfd5d15202737a6f8afba"
 	s := &Sandbox{opts: Options{Image: "img", User: "65534:65534", WorkDir: "/srv/data"}}

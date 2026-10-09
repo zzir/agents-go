@@ -11,9 +11,6 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// The docker backend's optional capabilities; both need Persistent mode's
-// long-lived container — an ephemeral sandbox has nothing between commands.
-
 var (
 	_ sandbox.Lifecycle = (*Sandbox)(nil)
 	_ sandbox.Exporter  = (*Sandbox)(nil)
@@ -32,10 +29,8 @@ func (s *Sandbox) Start(ctx context.Context) error {
 	return err
 }
 
-// Stop stops the container, keeping it and its volume: installed packages and
-// the working tree both survive, and the next command starts it again. It does
-// NOT close the sandbox — the daemon connection stays open for Status and the
-// file operations.
+// Stop stops the container, keeping it and its volume; the next command starts
+// it again. The daemon connection stays open for Status and the file operations.
 func (s *Sandbox) Stop(ctx context.Context) error {
 	if err := s.requirePersistent(); err != nil {
 		return err
@@ -64,10 +59,8 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Status inspects the container BY NAME, not by the cached id: a sandbox that
-// has never run a command holds no id, and "never used" must read as absent
-// rather than as an error. A foreign container squatting the name is an error,
-// not a state — Status never reports its running/stopped as this sandbox's.
+// Status inspects the container BY NAME, so a sandbox that never ran a command
+// reads as absent; a foreign holder of the name is an error, never a state.
 func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 	if err := s.requirePersistent(); err != nil {
 		return sandbox.StateAbsent, err
@@ -103,8 +96,7 @@ func (s *Sandbox) inspectOwned(ctx context.Context) (id string, running, ok bool
 }
 
 // ExportTar streams the working directory out of the container as a tar
-// archive, starting the container when it is not running because the daemon's
-// copy needs one. The archive API cannot see a tmpfs, which /workspace never is.
+// archive, starting the container first: the daemon's copy needs a running one.
 func (s *Sandbox) ExportTar(ctx context.Context) (io.ReadCloser, error) {
 	if err := s.requirePersistent(); err != nil {
 		return nil, err
@@ -132,8 +124,7 @@ func (s *Sandbox) requirePersistent() error {
 }
 
 // StartManaged starts the named container on the daemon opts describes,
-// refusing one this package did not create. The stop/remove siblings live in
-// containers.go; this one completes the trio an operator needs.
+// refusing one this package did not create.
 func StartManaged(ctx context.Context, opts Options, name string) error {
 	return withManaged(ctx, opts, name, func(cli *client.Client, id string) error {
 		_, err := cli.ContainerStart(ctx, id, client.ContainerStartOptions{})

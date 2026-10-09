@@ -7,10 +7,8 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// TurnSnapshot is everything a turn was resolved to, captured before the model
-// is called. Naming the turn's configuration as a value lets a hook inspect it,
-// and replace it so the NEXT turn runs differently without mutating the agent
-// underneath a concurrent run.
+// TurnSnapshot is everything a turn was resolved to, captured before the
+// model is called; a hook may replace the next turn's — see spec §2.3b.
 type TurnSnapshot struct {
 	Agent        *Agent
 	Model        Model
@@ -19,17 +17,13 @@ type TurnSnapshot struct {
 	Tools        []*Tool
 	Handoffs     []Handoff
 	OutputSchema OutputSchema
-	// Input is what the model is sent this turn — under server-managed state
-	// the new items only. The RUNNER owns it: a snapshot from PrepareNextTurn
-	// has it replaced with the next turn's real input. To edit what a call
-	// sends, use ModelOptions.InputFilter.
+	// Input is what the model is sent this turn. The runner owns it: a snapshot
+	// from PrepareNextTurn has it replaced; edit with ModelOptions.InputFilter.
 	Input []InputItem
 }
 
-// TurnResult describes one completed turn: the model call and everything that
-// followed. It is what the turn-boundary hooks are handed; each hook sees the
-// turn as it happened, and assigning to a field of its value reaches neither
-// the run nor the next hook (spec §2.3c).
+// TurnResult describes one completed turn, handed by value to the
+// turn-boundary hooks — see spec §2.3c.
 type TurnResult struct {
 	// Turn is the 1-based turn number within the run.
 	Turn int
@@ -171,9 +165,8 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 	}
 	out.Recompacted, out.Input = did, compacted
 
-	// Work since the last reset ends its fresh state, so the model may ask
-	// for another; a reset the model asked for this turn lands here, on the
-	// persisted log, and wins over the pass above (spec §2.5i).
+	// Work since the last reset ends its fresh state; a reset asked for this
+	// turn lands here and wins over the pass above — see spec §2.5i.
 	if turnDidWork(in.NewItems) {
 		r.rc.contextFresh.Store(false)
 	}

@@ -14,7 +14,6 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// Defaults chosen to fail safe rather than to be generous.
 const (
 	// DefaultMaxConcurrentPerParent bounds tasks in flight for one parent.
 	DefaultMaxConcurrentPerParent = 6
@@ -69,7 +68,8 @@ func (e ErrRetryLimit) Error() string {
 }
 
 // ErrRetryConflict reports a retry that lost its claim to another writer
-// between the read and the compare-and-set. Trying again is the remedy; hosts map it to 409.
+// between the read and the compare-and-set. Trying again is the remedy; hosts
+// map it to 409.
 var ErrRetryConflict = errors.New("tasks: another writer claimed this task first; try again")
 
 // Config configures a Manager. Store, Sessions, Resolver and Launcher are
@@ -79,61 +79,48 @@ type Config struct {
 	Sessions session.Repo
 	Resolver AgentResolver
 	Launcher Launcher
-	// Stopper cancels a running task. Without one, Stop still finalizes the
-	// row but cannot interrupt the run.
+	// Stopper cancels a running task; optional (see Stopper).
 	Stopper Stopper
-	// MaxConcurrentPerParent resolves the cap on a parent's live tasks, called at
-	// each spawn and retry so a host can back it with a live setting; nil or a
-	// value <= 0 means DefaultMaxConcurrentPerParent. One Manager enforces it
-	// exactly; several over one Store can each admit up to the cap.
+	// MaxConcurrentPerParent resolves the cap on a parent's live tasks at each
+	// spawn and retry; nil or <= 0 means DefaultMaxConcurrentPerParent. Several
+	// Managers over one Store can each admit up to the cap.
 	MaxConcurrentPerParent func() int
 	SummaryLimit           int
 	MaxStatusWait          time.Duration
 	MaxDepth               int
-	// MaxAttemptsPerTask bounds Retry: how many runs one task may have, the
-	// original included. Zero uses DefaultMaxAttemptsPerTask; 1 disables
-	// retrying.
+	// MaxAttemptsPerTask bounds a task's runs, the original included; zero uses
+	// DefaultMaxAttemptsPerTask, 1 disables retrying.
 	MaxAttemptsPerTask int
-	// MaxContinuations bounds Continue: how many further runs it may chain under
-	// one task since the spawn or the last retry; a hook still asking at the
-	// bound ends the task failed (spec §2.13). Zero uses DefaultMaxContinuations.
+	// MaxContinuations bounds the runs Continue may chain since the spawn or the
+	// last retry; zero uses DefaultMaxContinuations — see spec §2.13.
 	MaxContinuations int
 
 	// NewID mints task, run and session ids. Nil uses a built-in generator.
 	NewID func() string
 	// Logger receives the Manager's own records; nil is silent.
 	Logger *slog.Logger
-	// OnTaskUpdate, when set, is called whenever a task's public state changes,
-	// so a host can update the UI card for the spawn call that started it —
-	// long after the spawning turn ended.
+	// OnTaskUpdate, when set, is called whenever a task's public state changes.
 	OnTaskUpdate func(ctx context.Context, t *Task)
-	// OnFinished, when set, is called once per task that reaches a terminal
-	// state under THIS manager's claim; delivering it to the parent is the
-	// host's business. t is the claimed snapshot, not a re-read — spec §2.13.
+	// OnFinished, when set, is called once per terminal transition this Manager
+	// claimed, with the claimed snapshot — see spec §2.13.
 	OnFinished func(ctx context.Context, t *Task)
-	// OnResultDelivered, when set, is called when the result reached the parent
-	// some other way: the MODEL pulled it in-turn. A host that recorded
-	// something to deliver drops it here.
+	// OnResultDelivered, when set, is called when the MODEL pulled the result
+	// in-turn; a host drops its recorded debt here — see spec §2.13.
 	OnResultDelivered func(ctx context.Context, t *Task)
 
-	// DescribeState, when set, says in one line where a job of the host's kind
-	// stands — "step 2/3 (verify)" — from its Kind and State; the task tools
-	// show it beside the status. Empty means nothing to add.
+	// DescribeState, when set, says in one line where a job of kind stands
+	// ("step 2/3 (verify)"); empty adds nothing.
 	DescribeState func(kind string, state json.RawMessage) string
 
-	// Continue, when set, is asked whether a run's ending ends the task, which
-	// makes a job of several runs expressible. It is asked for a completed or
-	// failed run of the CURRENT attempt, never a cancelled one. A Continuation
-	// with an Input starts the next run (Store.Advance, State replaced); one
-	// without ends the task with that State (Err makes the ending FAILED); nil
-	// ends it with the run's outcome; an error ends it FAILED — spec §2.13.
+	// Continue, when set, is asked whether a completed or failed run of the
+	// current attempt ends the task: Input starts the next run, no Input is the
+	// ending (Err makes it failed), nil keeps the run's outcome, an error fails
+	// it — see spec §2.13.
 	Continue func(ctx context.Context, t *Task, out RunOutcome) (*Continuation, error)
 }
 
-// Continuation is a Continue hook's answer: with Input, the next run — what it
-// starts with, and the State it starts from (replacing the task's); without
-// Input, the ENDING — the State the task ends with, and Err when it ends
-// failed rather than with the run's own outcome.
+// Continuation is a Continue hook's answer: with Input, the next run and the
+// State it starts from; without, the ending, with its State and Err — see spec §2.13.
 type Continuation struct {
 	Input string
 	State json.RawMessage
@@ -145,8 +132,8 @@ type Manager struct {
 	cfg Config
 	log *slog.Logger
 
-	// waiters wakes task_status callers on a finalize here; awaitFinish also polls,
-	// since another process may write. continued: runs Continue chained per live task.
+	// waiters wakes task_status callers on a finalize here (awaitFinish also
+	// polls); continued counts Continue-chained runs per live task.
 	mu        sync.Mutex
 	waiters   map[string][]chan struct{}
 	continued map[string]int
@@ -156,21 +143,20 @@ type Manager struct {
 	launchMu  sync.Mutex
 	launching map[string]bool
 
-	// spawning serializes Spawn per parent: counting live tasks then creating is
-	// a read-then-write. Entries are reference-counted and removed on last release.
+	// spawning serializes Spawn and Retry per parent (count then create is a
+	// read-then-write); entries are refcounted and removed on last release.
 	spawnMu  sync.Mutex
 	spawning map[string]*parentSpawnLock
 }
 
-// parentSpawnLock is one entry in Manager.spawning: the per-parent mutex plus
-// the number of current holders and waiters, managed under spawnMu.
+// parentSpawnLock is one Manager.spawning entry: the mutex and its holder
+// count, managed under spawnMu.
 type parentSpawnLock struct {
 	mu   sync.Mutex
 	refs int
 }
 
-// lockParent blocks until the spawn lock for parentSessionID is held and
-// returns the release func, to be called exactly once.
+// lockParent holds the parent's spawn lock and returns its release, called once.
 func (m *Manager) lockParent(parentSessionID string) (release func()) {
 	m.spawnMu.Lock()
 	if m.spawning == nil {
@@ -203,8 +189,7 @@ func (m *Manager) spawnLockCount() int {
 	return len(m.spawning)
 }
 
-// New returns a Manager. It panics on a configuration that cannot work, since
-// that is a programming error rather than a runtime condition.
+// New returns a Manager; it panics on a Config missing a required field.
 func New(cfg Config) *Manager {
 	switch {
 	case cfg.Store == nil:
@@ -260,10 +245,8 @@ type Meta struct {
 	Depth           int
 }
 
-// MetaFor reports whether a session is a task's own session — how a host
-// decides whether to attach the task tools. A store failure is returned rather
-// than folded into "not a task": a failed lookup must not read as the
-// permissive answer (spec §2.13).
+// MetaFor reports whether a session is a task's own; a store failure is
+// returned, never read as "not a task" — see spec §2.13.
 func (m *Manager) MetaFor(ctx context.Context, sessionID string) (*Meta, bool, error) {
 	t, err := m.cfg.Store.ByChildSession(ctx, sessionID)
 	switch {
@@ -284,8 +267,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		return nil, errors.New("tasks: Spawn requires a parent session")
 	}
 
-	// Depth first: a task at the limit must not even resolve an agent, or a
-	// misconfigured host could be made to do work on the way to refusing.
+	// Depth first: a spawn past the limit resolves nothing on its way to refusing.
 	depth := 1
 	meta, isTask, err := m.MetaFor(ctx, req.ParentSessionID)
 	if err != nil {
@@ -298,12 +280,10 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		}
 	}
 
-	// Hold the parent's spawn lock across the count and the create: they are
-	// one decision.
+	// The count and the create are one decision under the parent's spawn lock.
 	defer m.lockParent(req.ParentSessionID)()
 
-	// Check the cap BEFORE creating anything, so an over-cap spawn fails clean
-	// rather than being rolled back.
+	// The cap is checked before anything is created: no rollback for an over-cap spawn.
 	live, err := m.cfg.Store.ListNonTerminal(ctx, req.ParentSessionID)
 	if err != nil {
 		return nil, fmt.Errorf("tasks: counting live tasks: %w", err)
@@ -322,18 +302,14 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		label = truncateRunes(req.Input, 60)
 	}
 
-	// Cleanup runs on a context detached from the caller's, or a parent
-	// cancellation racing the spawn kills ctx mid-rollback (spec §2.13).
+	// Rollback runs on a detached context — see spec §2.13.
 	cleanupCtx := context.WithoutCancel(ctx)
 
-	// The id is minted here rather than read back, so a failed read cannot
-	// leave a session nothing refers to.
+	// Minted, not read back: a failed read cannot leave a session nothing refers to.
 	childID := m.cfg.NewID()
 	if _, err := m.cfg.Sessions.Create(ctx, session.CreateOptions{
-		ID:    childID,
-		Title: cmp.Or(req.Kind, "task") + ": " + label,
-		// Hidden: a task's transcript is not a conversation the user started;
-		// it serves the parent, and inherits whatever the repo attaches to it.
+		ID:       childID,
+		Title:    cmp.Or(req.Kind, "task") + ": " + label,
 		Hidden:   true,
 		ParentID: req.ParentSessionID,
 	}); err != nil {
@@ -362,7 +338,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 
 	defer m.beginLaunch(task.RunID)()
 	if err := m.cfg.Launcher(ctx, launchFor(task, req.Input)); err != nil {
-		// The run never started, so unwind rather than leaving a failed husk.
+		// The run never started: unwind the row and the session.
 		if delErr := m.cfg.Store.Delete(cleanupCtx, task.ID); delErr != nil {
 			m.log.WarnContext(ctx, "unstarted task row cleanup", slog.String("task_id", task.ID),
 				slog.String("error", delErr.Error()))
@@ -386,8 +362,7 @@ type SpawnRequest struct {
 	AgentName       string
 	Input           string
 	Label           string
-	// ParentRunID and ToolCallID identify the spawning turn, so a UI card can
-	// be updated when the task finishes.
+	// ParentRunID and ToolCallID identify the spawning turn (see Task).
 	ParentRunID string
 	ToolCallID  string
 	// Kind and State are the host's own, copied onto the task (see Task).
@@ -408,25 +383,21 @@ func launchFor(t *Task, input string) LaunchRequest {
 	}
 }
 
-// Retry runs a failed task again, from where it stopped: same id, same
-// session, only the run is new. Resuming is sound because persistence never
-// leaves a call without its output — spec §2.13.
+// Retry runs a failed task again from where it stopped: same id, same session,
+// a new run — see spec §2.13.
 func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	t, err := m.cfg.Store.Get(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
-	// The parent's spawn lock, for the same reason Spawn holds it: counting
-	// then claiming is a read-then-write two retries would both pass.
+	// The parent's spawn lock, as in Spawn: count then claim is a read-then-write.
 	defer m.lockParent(t.ParentSessionID)()
-	// Re-read under the lock — the row could have finished, been stopped or
-	// been retried between the first read and here.
+	// Re-read under the lock: the row may have moved since the first read.
 	if t, err = m.cfg.Store.Get(ctx, taskID); err != nil {
 		return nil, err
 	}
 	if rerr := m.notRetryable(t); rerr != nil {
-		// The task's own state travels with the refusal, so a caller can show
-		// what it is, not only why.
+		// The refusal carries the task's state.
 		return infoFrom(t, ""), rerr
 	}
 
@@ -435,13 +406,11 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 		return nil, fmt.Errorf("tasks: counting live tasks: %w", err)
 	}
 	if limit := m.maxConcurrentPerParent(); len(live) >= limit {
-		// A retry queues behind the same ceiling a spawn does; exempting it
-		// would make retry the way around the cap.
+		// A retry takes a concurrency slot like a spawn — see spec §2.13.
 		return infoFrom(t, ""), ErrTaskLimit{Limit: limit}
 	}
 
-	// Read the failure BEFORE the claim clears it: it is what tells the next
-	// attempt why it is starting over.
+	// Read before the claim clears the failure: it is the next attempt's reason.
 	prompt := retryPrompt(t, m.cfg.SummaryLimit)
 	runID := m.cfg.NewID()
 	won, err := m.cfg.Store.RetryClaim(ctx, taskID, runID, m.cfg.MaxAttemptsPerTask)
@@ -475,8 +444,7 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Say now that it is working again, rather than at the end of a run that
-	// may take minutes.
+	// The card shows working again now, not at the end of the run.
 	m.notifyUpdate(ctx, updated)
 	return infoFrom(updated, ""), nil
 }
@@ -495,11 +463,10 @@ func (m *Manager) notRetryable(t *Task) error {
 	return nil
 }
 
-// retryLaunchFailed puts a claimed task back to failed after its new run never
-// started (ReleaseRetryClaim rolls the attempt back) and reports it with the error.
+// retryLaunchFailed releases a claim whose run never started (the attempt
+// rolls back) and reports the task with the error.
 func (m *Manager) retryLaunchFailed(ctx context.Context, t *Task, runID string, cause error) (*Info, error) {
-	// Detached for the same reason as settleLaunch: a launch usually fails
-	// because the session is being torn down, which has already cancelled ctx.
+	// Detached: a launch usually fails because the teardown already cancelled ctx.
 	ctx = context.WithoutCancel(ctx)
 	full := "retry could not start: " + cause.Error()
 	summary := truncateRunes(full, m.cfg.SummaryLimit)
@@ -512,8 +479,7 @@ func (m *Manager) retryLaunchFailed(ctx context.Context, t *Task, runID string, 
 		m.finished(t.ID)
 	}
 	wrapped := fmt.Errorf("tasks: restarting task run: %w", cause)
-	// The report carries the released values in hand — a re-read can fail or
-	// race a second retry, and the ending must not go unreported.
+	// The report carries the released values in hand, never a re-read — see spec §2.13.
 	rel := *t
 	rel.RunID, rel.Status, rel.Summary, rel.Result = runID, StatusFailed, summary, full
 	rel.UpdatedAt = time.Now().UTC()
@@ -532,8 +498,8 @@ func (m *Manager) retryLaunchFailed(ctx context.Context, t *Task, runID string, 
 	return infoFrom(cur, ""), wrapped
 }
 
-// retryPrompt is what a retried run is asked to do: not the task's prompt
-// again (the session holds the failed attempt), but why the run woke up.
+// retryPrompt tells a retried run why it woke up; the session already holds
+// the task's prompt and the failed attempt.
 func retryPrompt(t *Task, limit int) string {
 	reason := truncateRunes(strings.TrimSpace(cmp.Or(t.Result, t.Summary)), limit)
 	if reason == "" {
@@ -544,11 +510,9 @@ func retryPrompt(t *Task, limit int) string {
 		"completion; avoid repeating work that already succeeded."
 }
 
-// ModelHasResult cancels the wake-up debt of a finished task whose result the
-// MODEL now has in hand — a spawn or retry that finished before its tool call
-// returned, a status read of a finished task. A REST path whose result goes to
-// a person must NOT come through here. Bound to the attempt and terminal
-// status the caller read; a retry or a later result is not the model's.
+// ModelHasResult settles the wake-up debt of a finished task whose result the
+// MODEL has in hand, bound to the attempt and status the caller read; a REST
+// path whose result goes to a person must not call it — see spec §2.13.
 func (m *Manager) ModelHasResult(ctx context.Context, info *Info) {
 	if info == nil || !info.Status.Terminal() {
 		return
@@ -563,24 +527,21 @@ func (m *Manager) ModelHasResult(ctx context.Context, info *Info) {
 	m.resultDelivered(ctx, t)
 }
 
-// resultDelivered tells the host the parent already has this result, so
-// whatever it recorded to deliver can be dropped.
+// resultDelivered tells the host the parent already has this result.
 func (m *Manager) resultDelivered(ctx context.Context, t *Task) {
 	if m.cfg.OnResultDelivered != nil {
 		m.cfg.OnResultDelivered(ctx, t)
 	}
 }
 
-// finishedTask tells the host a terminal state was claimed here, so it can
-// arrange for the parent to hear about it.
+// finishedTask tells the host a terminal state was claimed here.
 func (m *Manager) finishedTask(ctx context.Context, t *Task) {
 	if m.cfg.OnFinished != nil {
 		m.cfg.OnFinished(ctx, t)
 	}
 }
 
-// beginLaunch registers a run about to be launched, and returns the release
-// its caller must defer.
+// beginLaunch registers a run being launched and returns the release to defer.
 func (m *Manager) beginLaunch(runID string) (release func()) {
 	m.launchMu.Lock()
 	if m.launching == nil {
@@ -595,8 +556,8 @@ func (m *Manager) beginLaunch(runID string) (release func()) {
 	}
 }
 
-// noteRunReported records that a run ENDED and the host said so — what tells
-// a launch still settling that a terminal row is its own doing.
+// noteRunReported records that the host reported runID ended, for a launch
+// still settling.
 func (m *Manager) noteRunReported(runID string) {
 	if runID == "" {
 		return
@@ -608,19 +569,17 @@ func (m *Manager) noteRunReported(runID string) {
 	m.launchMu.Unlock()
 }
 
-// runReported reports whether the host has spoken about a run still being
-// launched.
+// runReported reports whether the host has spoken about a run still being launched.
 func (m *Manager) runReported(runID string) bool {
 	m.launchMu.Lock()
 	defer m.launchMu.Unlock()
 	return m.launching[runID]
 }
 
-// settleLaunch stops the run just launched when a terminator landed between the
-// row claim and the launch — one the host never heard of — and returns the row.
+// settleLaunch re-reads the row after a launch and cancels the run when a
+// terminator landed between the claim and the launch — see spec §2.13.
 func (m *Manager) settleLaunch(ctx context.Context, taskID, runID string) (*Task, error) {
-	// Detached, as Spawn's rollback is: the teardown this cleans up after is
-	// what cancelled ctx, and a cancelled read would leave the run executing.
+	// Detached: the teardown this cleans up after is what cancelled ctx.
 	ctx = context.WithoutCancel(ctx)
 	t, err := m.cfg.Store.Get(ctx, taskID)
 	if err != nil {
@@ -629,8 +588,7 @@ func (m *Manager) settleLaunch(ctx context.Context, taskID, runID string) (*Task
 	if t.RunID == runID && !t.Status.Terminal() {
 		return t, nil
 	}
-	// The row is terminal or on a later attempt. If the host reported this run,
-	// that ending is its OWN, and cancelling would rewrite what clients saw.
+	// An ending the host reported is this run's own — see spec §2.13.
 	if m.runReported(runID) {
 		return t, nil
 	}
@@ -653,8 +611,7 @@ func (m *Manager) cleanupSession(ctx context.Context, id string) {
 	}
 }
 
-// List reports a parent session's tasks, newest first. Nothing here settles
-// a wake-up debt: a listing is not the parent hearing a result.
+// List reports a parent session's tasks, newest first; it settles no wake-up debt.
 func (m *Manager) List(ctx context.Context, parentSessionID string) ([]*Info, error) {
 	rows, err := m.cfg.Store.ListByParent(ctx, parentSessionID)
 	if err != nil {
@@ -667,8 +624,8 @@ func (m *Manager) List(ctx context.Context, parentSessionID string) ([]*Info, er
 	return infos, nil
 }
 
-// Status reports a task, optionally waiting for it to finish. Reaching a
-// terminal status here CONSUMES the wake-up debt: the model has the result.
+// Status reports a task, waiting up to wait for it to finish; a terminal
+// status read here is delivered — see spec §2.13.
 func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration) (*Info, error) {
 	if wait > m.cfg.MaxStatusWait {
 		wait = m.cfg.MaxStatusWait
@@ -680,8 +637,7 @@ func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration)
 			return nil, err
 		}
 		if t.Status.Terminal() {
-			// The row is in hand and IS what the model reads, so the bound
-			// write needs no re-read.
+			// The row in hand is what the model reads: no re-read.
 			m.resultDelivered(ctx, t)
 			return infoFrom(t, ""), nil
 		}
@@ -690,7 +646,7 @@ func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration)
 			return infoFrom(t, ""), nil
 		}
 		if !m.awaitFinish(ctx, taskID, remaining) {
-			// Context cancelled, or the wait ran out; report what it is now.
+			// Cancelled or timed out: report the row as it is.
 			t, err := m.cfg.Store.Get(ctx, taskID)
 			if err != nil {
 				return nil, err
@@ -700,9 +656,8 @@ func (m *Manager) Status(ctx context.Context, taskID string, wait time.Duration)
 	}
 }
 
-// Stop cancels a task. A stop names the TASK, so it chases one retry: a task
-// reopened between the read and the claim is stopped on its new attempt — one
-// extra pass, not a loop (spec §2.13).
+// Stop cancels a task, chasing one retry: a task reopened between the read and
+// the claim is stopped on its new attempt — see spec §2.13.
 func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info, error) {
 	for pass := range 2 {
 		t, err := m.cfg.Store.Get(ctx, taskID)
@@ -711,8 +666,7 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 		}
 		if t.Status.Terminal() {
 			if pass > 0 {
-				// The first pass lost the CAS and this one finds the task
-				// finished: whoever won recorded its ending, which stands.
+				// The first pass lost the CAS to an ending, which stands.
 				return infoFrom(t, ""), nil
 			}
 			return infoFrom(t, ""), ErrAlreadyFinal{Status: t.Status}
@@ -733,16 +687,13 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 			m.notifyUpdate(ctx, updated)
 			return infoFrom(updated, ""), nil
 		case stopRunEnded:
-			// The run is over and its outcome is on its way to the row: wait, so
-			// the next pass reports the real ending, or records one if none comes.
+			// The outcome is on its way to the row: wait for it — see spec §2.13.
 			m.awaitSettled(ctx, taskID, t.RunID)
 		case stopRetried:
-			// A retry reopened the task on a new run between the read and the
-			// claim. Go round at once, against that attempt.
+			// A retry moved the task to a new run: go round against that attempt.
 		}
 	}
-	// The last pass lost its claim too: the task is on an attempt this call
-	// never saw, so report it as it stands.
+	// Both passes lost their claim: report the task as it stands.
 	t, err := m.cfg.Store.Get(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -750,29 +701,25 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 	return infoFrom(t, ""), nil
 }
 
-// stopVerdict is what one attempt at stopping a task did; the four answers
-// steer the next pass. They start at one, so the zero value is no verdict.
+// stopVerdict is what one stop attempt did; the zero value is no verdict.
 type stopVerdict int
 
 const (
 	// stopClaimed: this call recorded the ending.
 	stopClaimed stopVerdict = iota + 1
-	// stopDeferred: the run took a graceful stop and will record its own.
+	// stopDeferred: the run took a graceful stop and will record its own ending.
 	stopDeferred
-	// stopRetried: the claim lost, so a retry has moved the task to an attempt
-	// this pass never saw.
+	// stopRetried: the claim lost to a retry that moved the task to a new attempt.
 	stopRetried
-	// stopRunEnded: the run was already over and nothing was claimed — its
-	// outcome may still be on its way to the row.
+	// stopRunEnded: the run was already over; its outcome may still be on its way.
 	stopRunEnded
 )
 
-// stopSettleWait bounds how long a stop waits for a finished run's outcome to
-// reach the row before recording an ending of its own.
+// stopSettleWait bounds a stop's wait for a finished run's outcome to reach the row.
 const stopSettleWait = 2 * time.Second
 
-// awaitSettled waits, briefly, for a finished run's outcome to reach the row
-// (terminal, or moved on from runID); the bound covers an outcome LOST, not late.
+// awaitSettled waits, boundedly, for a finished run's outcome to reach the row
+// (terminal, or moved on from runID) — see spec §2.13.
 func (m *Manager) awaitSettled(ctx context.Context, taskID, runID string) {
 	deadline := time.Now().Add(stopSettleWait)
 	for time.Now().Before(deadline) {
@@ -786,15 +733,15 @@ func (m *Manager) awaitSettled(ctx context.Context, taskID, runID string) {
 	}
 }
 
-// stopAttempt cancels the one attempt t names and reports what it did. last
-// marks the final pass: a run the host says already finished is then ended, not waited for.
+// stopAttempt cancels the one attempt t names and reports what it did; on the
+// last pass a run the host says already finished is ended, not waited for.
 func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful, last bool) (stopVerdict, error) {
-	// A paused task has no running goroutine, so finalizing IS the exclusive
-	// claim and comes first; a working one has its run cancelled first — spec §2.13.
+	// A paused task is claimed first; a working one has its run cancelled first
+	// — see spec §2.13.
 	paused := t.Status == StatusInputRequired
 
-	// stopRun reports what the host did. No Stopper, or a failed one, reads as
-	// StopUnknownRun: nothing was cancelled, so this call records the ending.
+	// No Stopper, or a failed one, reads as StopUnknownRun: this call records
+	// the ending.
 	stopRun := func() StopOutcome {
 		if m.cfg.Stopper == nil {
 			return StopUnknownRun
@@ -808,19 +755,19 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful, last bool)
 		return out
 	}
 	if !paused {
-		// Two answers leave the ending to the run's own report: a graceful
-		// wind-down, or a run already finished (spec §2.13). Everything else falls through.
+		// StopAfterTurn and StopAlreadyFinished leave the ending to the run's own
+		// report — see spec §2.13.
 		switch stopRun() {
 		case StopAfterTurn:
 			return stopDeferred, nil
 		case StopAlreadyFinished:
-			// "That run is over" is also what a stop hears after a retry landed
-			// between its read and this call; going round again finds the real ending.
+			// Also what a stop hears after a retry landed: go round again — see
+			// decisions §5.54.
 			if !last {
 				return stopRunEnded, nil
 			}
-			// On the last pass the wait has happened and the row still names this
-			// attempt: lost, not late. Claiming is safe — the CAS is bound to it.
+			// Last pass: the wait has happened, so the outcome is lost, not
+			// late — see spec §2.13.
 		case StopUnknownRun, StopCancelled:
 		}
 	}
@@ -834,17 +781,16 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful, last bool)
 		return 0, err
 	}
 	if paused {
-		// Told after the claim, so the host discards the approval only once
-		// this call owns the transition.
+		// After the claim: the host discards the approval only once this call owns it.
 		stopRun()
 	} else if won {
-		// Told AGAIN now the ending is ours: the first call may have gone out
-		// mid-launch and reached nothing. A Stopper must tolerate a run already ended.
+		// Told again now the ending is ours: a mid-launch stop reaches nothing
+		// — see spec §2.13.
 		stopRun()
 	}
 	if won {
-		// A cancellation never wakes the parent (spec §2.13). Reported with the
-		// claimed values in hand — the pre-claim row still says working.
+		// A cancellation is delivered, not finished, with the claimed values in
+		// hand — see spec §2.13.
 		done := *t
 		done.Status, done.Summary, done.UpdatedAt = StatusCancelled, reason, time.Now().UTC()
 		m.resultDelivered(ctx, &done)
@@ -856,24 +802,22 @@ func (m *Manager) stopAttempt(ctx context.Context, t *Task, graceful, last bool)
 
 // RunOutcome is what a finished run reports.
 type RunOutcome struct {
-	// RunID names the attempt that finished. A host that can identify its runs
-	// should set it, or an outcome could overwrite the attempt that replaced
-	// this one. Empty means "whichever attempt the row names".
+	// RunID names the attempt that finished; empty means whichever the row
+	// names. A host that can identify its runs sets it — see spec §2.13.
 	RunID string
 	// Status is the run's terminal state as the host sees it.
 	Status Status
 	// Text is the run's final output.
 	Text string
-	// Err is the failure message, when it failed — without it the task would
-	// only ever say "failed" with no why.
+	// Err is the failure message, when it failed.
 	Err string
-	// GracefulStop reports that the run finished because someone asked it to
-	// stop after the current turn.
+	// GracefulStop reports that the run finished because a stop asked it to,
+	// after its turn.
 	GracefulStop bool
 }
 
-// ownedBy verifies taskID belongs to parentSessionID. A leaked task id must
-// read as nonexistent elsewhere, or a foreign call consumes or cancels what it does not own.
+// ownedBy verifies taskID belongs to parentSessionID; a foreign task reads as
+// ErrNotFound.
 func (m *Manager) ownedBy(ctx context.Context, parentSessionID, taskID string) error {
 	if parentSessionID == "" {
 		return fmt.Errorf("task tools: no session in the run context")
@@ -896,15 +840,14 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	case errors.Is(err, ErrNotFound) || (err == nil && task == nil):
 		return // not a task session
 	case err != nil:
-		// A failure to LOOK is not "not a task session": proceeding would leave
-		// the task stuck working until FailOrphans. Refuse loudly (spec §2.13).
+		// A failed lookup is not "not a task session" — see spec §2.13.
 		m.log.ErrorContext(ctx, "resolving finished run's task; terminal state NOT recorded",
 			slog.String("session_id", sessionID), slog.String("error", err.Error()))
 		return
 	}
 
-	// The attempt this outcome belongs to: what the host reported, or — for a
-	// host that does not identify runs — whichever one the row names.
+	// The attempt this outcome names, or the row's for a host that does not
+	// identify runs.
 	runID := cmp.Or(out.RunID, task.RunID)
 
 	status := out.Status
@@ -914,16 +857,15 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	}
 	summary := truncateRunes(full, m.cfg.SummaryLimit)
 
-	// A clean finish under a graceful stop IS a cancellation. Recording it as
-	// a completion would tell the user their stop did nothing.
+	// A clean finish under a graceful stop is a cancellation, not a completion.
 	if status == StatusCompleted && out.GracefulStop {
 		status = StatusCancelled
 		summary = cmp.Or(summary, "stopped after the current turn")
 	}
 
 	if status == StatusInputRequired {
-		// Not terminal: the approval flow surfaces it and the resumed run lands
-		// back here. Bound to this outcome's attempt (spec §2.13).
+		// Not terminal; the resumed run lands back here. Bound to this attempt
+		// — see spec §2.13.
 		if err := m.cfg.Store.MarkInputRequired(ctx, task.ID, runID); err != nil {
 			m.log.WarnContext(ctx, "marking task input_required",
 				slog.String("task_id", task.ID), slog.String("error", err.Error()))
@@ -936,12 +878,11 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	if !status.Terminal() {
 		return
 	}
-	// The run ENDED and the host said so — what a settling launch needs before
-	// reading a terminal row as its own. Recorded whoever wins below.
+	// Recorded before the claim, whoever wins it: a settling launch reads this.
 	m.noteRunReported(runID)
 
-	// Continue is asked only about the CURRENT attempt's run of a task still
-	// WORKING on it, never a cancellation, only for an outcome NAMING its run — spec §2.13.
+	// Continue is asked only for the current attempt's named run, still working
+	// — see spec §2.13.
 	var finalState json.RawMessage
 	consult := m.cfg.Continue != nil && status != StatusCancelled && !out.GracefulStop && task.RunID == runID && task.Status == StatusWorking
 	if consult && out.RunID == "" {
@@ -965,8 +906,7 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 				summary = truncateRunes(full, m.cfg.SummaryLimit)
 			}
 		case cont != nil && m.continuations(task.ID) >= m.cfg.MaxContinuations:
-			// The hook wants another run past the ceiling: a loop no check
-			// ends, or a hook that never says stop. It ends here, failed.
+			// Another run past the ceiling ends the task failed — see spec §2.13.
 			status = StatusFailed
 			full = fmt.Sprintf("stopped after %d runs: the task's continuation ceiling (%d) was reached", m.continuations(task.ID)+1, m.cfg.MaxContinuations)
 			summary = truncateRunes(full, m.cfg.SummaryLimit)
@@ -975,8 +915,8 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 			if aerr == nil {
 				return
 			}
-			// Not written or not won: the run has ended, so it ends failed below,
-			// where Finalize's predicate yields to whoever moved the row (spec §2.13).
+			// Not written or not won: finalized failed on the run that ended —
+			// see spec §2.13.
 			status = StatusFailed
 			full = "could not advance to the next run: " + aerr.Error()
 			summary = truncateRunes(full, m.cfg.SummaryLimit)
@@ -990,13 +930,12 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 		return
 	}
 	if !won {
-		// Another finalizer owned the transition — a stop, a sweep, or a retry
-		// that moved the task past this attempt. Its state stands.
+		// Another finalizer owned the transition; its state stands.
 		return
 	}
 	m.finished(task.ID)
-	// The report carries the claimed values IN HAND, never a re-read (spec
-	// §2.13); the re-read below only freshens the UI card.
+	// The report is the claimed snapshot, never a re-read; the re-read below
+	// only freshens the card — see spec §2.13.
 	done := *task
 	done.RunID, done.Status, done.Summary, done.Result = runID, status, summary, full
 	if finalState != nil {
@@ -1008,8 +947,7 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	} else {
 		m.notifyUpdate(ctx, &done)
 	}
-	// A cancellation is reported as DELIVERED, not finished: the user did it,
-	// the UI already shows it, and a turn restating it would only repeat them.
+	// A cancellation is delivered, not finished — see spec §2.13.
 	if status == StatusCancelled {
 		m.resultDelivered(ctx, &done)
 		return
@@ -1017,15 +955,15 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 	m.finishedTask(ctx, &done)
 }
 
-// errAdvanceLost is a continuation whose claim found the row no longer working
-// on the run that ended.
+// errAdvanceLost is an Advance that found the row no longer working on the run
+// that ended.
 var errAdvanceLost = errors.New("the task was moved before the next run could start")
 
 // continueTask claims the transition to the run Continue asked for, then
-// launches. An error (errAdvanceLost) only for a claim not written or not won; nil once settled here.
+// launches; an error only for a claim not written or not won (errAdvanceLost).
 func (m *Manager) continueTask(ctx context.Context, t *Task, fromRunID string, cont *Continuation) error {
-	// Detached, as every launch is: the ending that got us here may arrive on
-	// a context the finishing run's teardown has already cancelled.
+	// Detached, as every launch is: the finishing run's teardown may have
+	// cancelled ctx.
 	ctx = context.WithoutCancel(ctx)
 	nextRunID := m.cfg.NewID()
 	won, err := m.cfg.Store.Advance(ctx, t.ID, fromRunID, nextRunID, cont.State)
@@ -1055,8 +993,8 @@ func (m *Manager) continueTask(ctx context.Context, t *Task, fromRunID string, c
 	return nil
 }
 
-// launchFailed ends a task whose next run never started. Detached context, as
-// retryLaunchFailed: the launch usually failed because the session is being torn down.
+// launchFailed ends a task whose next run never started, on a detached
+// context as retryLaunchFailed is.
 func (m *Manager) launchFailed(ctx context.Context, t *Task, reason string) {
 	ctx = context.WithoutCancel(ctx)
 	summary := truncateRunes(reason, m.cfg.SummaryLimit)
@@ -1081,9 +1019,8 @@ func (m *Manager) launchFailed(ctx context.Context, t *Task, reason string) {
 	m.finishedTask(ctx, &done)
 }
 
-// FailOrphans reconciles after a restart: every task still recorded as working
-// is failed and reported through OnFinished. It must complete BEFORE the host
-// accepts a retry, or a fresh run gets declared dead (spec §2.13).
+// FailOrphans fails every task still recorded as working and reports each
+// through OnFinished; it runs before the host accepts requests — see spec §2.13.
 func (m *Manager) FailOrphans(ctx context.Context) error {
 	orphans, err := m.cfg.Store.FailOrphans(ctx)
 	if err != nil {
@@ -1092,17 +1029,14 @@ func (m *Manager) FailOrphans(ctx context.Context) error {
 	if len(orphans) > 0 {
 		m.log.InfoContext(ctx, "failed tasks orphaned by a restart", slog.Int("count", len(orphans)))
 	}
-	// Each parent still has to hear about it — the whole point of a durable
-	// debt is that a restart is exactly when one is owed.
 	for i := range orphans {
 		m.finishedTask(ctx, &orphans[i])
 	}
 	return nil
 }
 
-// StopTree cancels every non-terminal task of a session, for a teardown. The
-// caller must already have blocked new runs on the session, or a task
-// finishing mid-teardown starts a run that outlives the cascade.
+// StopTree cancels every non-terminal task of a session, for a teardown; the
+// caller must already have blocked new runs on the session.
 func (m *Manager) StopTree(ctx context.Context, sessionID string) error {
 	live, err := m.cfg.Store.ListNonTerminal(ctx, sessionID)
 	if err != nil {
@@ -1131,7 +1065,7 @@ func (m *Manager) notifyUpdate(ctx context.Context, t *Task) {
 const statusPollInterval = 250 * time.Millisecond
 
 // awaitFinish blocks until the task finishes, the timeout elapses or ctx ends,
-// and reports whether to look again. The signal is prompt; the poll is correct, since another process may write.
+// and reports whether to look again; the poll covers writes by another process.
 func (m *Manager) awaitFinish(ctx context.Context, taskID string, timeout time.Duration) bool {
 	ch := make(chan struct{})
 	m.mu.Lock()
@@ -1182,7 +1116,7 @@ func (m *Manager) noteContinued(taskID string) {
 	m.continued[taskID]++
 }
 
-// resetContinued starts the count over — a retry is a person choosing to go on.
+// resetContinued starts the count over at a retry — see spec §2.13.
 func (m *Manager) resetContinued(taskID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1205,8 +1139,7 @@ func (m *Manager) dropWaiter(taskID string, ch chan struct{}) {
 	m.waiters[taskID] = rest
 }
 
-// truncateRunes caps s at n runes, cutting on a rune boundary so a multi-byte
-// character is never split into invalid UTF-8.
+// truncateRunes caps s at n runes, never splitting a multi-byte character.
 func truncateRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {

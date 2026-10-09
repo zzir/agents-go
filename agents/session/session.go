@@ -7,9 +7,8 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// Session is a conversation's history: a Storage plus the semantics that turn
-// stored entries into what a model reads. It is a concrete type, not an
-// interface — storage varies, but "how history becomes model input" does not.
+// Session is a conversation's history: a Storage plus what turns stored entries
+// into model input. A concrete type, not an interface — spec §2.5c.
 type Session struct {
 	storage Storage
 }
@@ -19,12 +18,10 @@ func NewSession(storage Storage) *Session {
 	return &Session{storage: storage}
 }
 
-// NewInMemorySession returns a session backed by in-memory storage, for tests
-// and short-lived conversations.
+// NewInMemorySession returns a session backed by in-memory storage.
 func NewInMemorySession() *Session { return NewSession(NewInMemoryStorage("mem")) }
 
-// Storage exposes the underlying store, for callers that need a capability the
-// Session does not surface.
+// Storage exposes the underlying store, for a capability the Session does not surface.
 func (s *Session) Storage() Storage { return s.storage }
 
 // Entries returns the session's entries in append order.
@@ -33,9 +30,8 @@ func (s *Session) Entries(ctx context.Context, cur Cursor) ([]Entry, error) {
 }
 
 // ContextEntries returns the model's view: the active branch minus what
-// compaction folded, the checkpoints themselves kept. cur.Limit bounds the
-// projection, not the storage read — the whole branch is loaded so folding
-// stays correct (spec §2.5c).
+// compaction folded, checkpoints kept. cur bounds the answer, not the read;
+// the whole branch is loaded — spec §2.5c.
 func (s *Session) ContextEntries(ctx context.Context, cur Cursor) ([]Entry, error) {
 	all, err := s.storage.Entries(ctx, Cursor{})
 	if err != nil {
@@ -89,9 +85,8 @@ func (s *Session) Entry(ctx context.Context, id string) (*Entry, error) {
 	return s.storage.Entry(ctx, id)
 }
 
-// State folds the session's entries into the state they imply — the last agent,
-// the last response id, tool calls awaiting outputs. It folds the active
-// branch, not append order (spec §2.5c).
+// State folds the active branch into the state it implies: last agent, last
+// response id, tool calls awaiting outputs — spec §2.5c.
 func (s *Session) State(ctx context.Context) (DerivedState, error) {
 	entries, err := s.ContextEntries(ctx, Cursor{})
 	if err != nil {
@@ -117,18 +112,15 @@ func (s *Session) Metadata(ctx context.Context) (Metadata, error) {
 // Clear removes every entry.
 func (s *Session) Clear(ctx context.Context) error { return s.storage.Clear(ctx) }
 
-// ErrNotFound is what a repo reports for an id it does not hold; opening an
-// unknown session must not look like opening an empty one (spec §2.5e).
+// ErrNotFound is what a repo reports for an id it does not hold — spec §2.5e.
 var ErrNotFound = errors.New("agents: session not found")
 
-// Repo owns session lifecycles: creating, opening, listing and deleting
-// them. A backend that holds many sessions implements it once instead of every
-// caller reimplementing "which sessions exist".
+// Repo owns session lifecycles: create, open, list, delete — spec §2.5e.
 type Repo interface {
 	Create(ctx context.Context, opts CreateOptions) (*Session, error)
 	Open(ctx context.Context, id string) (*Session, error)
-	// List returns session metadata newest first, cut to ListOptions.Limit; every
-	// implementation owes the same answer (spec §2.5e2, sessiontest.RepoConformance).
+	// List returns session metadata newest first, cut to ListOptions.Limit —
+	// spec §2.5e2.
 	List(ctx context.Context, opts ListOptions) ([]Metadata, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -139,8 +131,8 @@ type CreateOptions struct {
 	ID string
 	// Title is a human-facing name.
 	Title string
-	// Hidden marks a session that exists to serve another — a background task's
-	// private history. List leaves hidden sessions out by default.
+	// Hidden marks a session that serves another (a background task's history);
+	// List leaves it out by default.
 	Hidden bool
 	// ParentID names the session this one serves, when Hidden.
 	ParentID string
@@ -157,16 +149,14 @@ type ListOptions struct {
 
 // Settings configures how a run reads a Session.
 type Settings struct {
-	// Limit caps how many of the most recent entries a run loads at start.
-	// Anything not positive (the zero value included) means no limit — the
-	// full history is loaded.
+	// Limit caps how many of the most recent entries a run loads at start;
+	// anything not positive means no limit.
 	Limit int
 }
 
-// ResolveLimit resolves how many of the most recent entries a run loads. Zero
-// means no limit. A negative Settings.Limit is clamped to zero: Cursor spells
-// "most recent N" as a negative limit, so passing one through would negate back
-// to positive and load the oldest entries.
+// ResolveLimit resolves how many recent entries a run loads; zero is no limit.
+// A negative Settings.Limit clamps to zero: passed through, Cursor would read
+// it as the oldest N.
 func ResolveLimit(s Settings) int {
 	if s.Limit > 0 {
 		return s.Limit
@@ -174,8 +164,8 @@ func ResolveLimit(s Settings) int {
 	return 0
 }
 
-// CompactionArgs carry the context a CompactionAware storage needs to decide
-// whether (and how) to compact its history after a run.
+// CompactionArgs carry what a CompactionAware storage needs to decide whether
+// and how to compact after a run.
 type CompactionArgs struct {
 	// ResponseID is the last model response's identifier.
 	ResponseID string
@@ -183,19 +173,16 @@ type CompactionArgs struct {
 	Store *bool
 	// Force requests compaction regardless of the session's own decision hook.
 	Force bool
-	// Reset asks for a context reset rather than a summary: fold everything
-	// but the newest user message, carrying what the model kept for itself
-	// (spec §2.5i). A storage that cannot reset compacts as it would.
+	// Reset asks for a context reset rather than a summary (spec §2.5i); a
+	// storage that cannot reset compacts as it would.
 	Reset bool
-	// StartSpan, when non-nil, opens a compaction tracing span. Call it right
-	// before actually compacting (not on the no-op path); the runner finishes
-	// the span and records any RunCompaction error on it.
+	// StartSpan, when non-nil, opens the compaction span; call it right before
+	// compacting, never on the no-op path. The runner finishes it.
 	StartSpan func() *tracing.SpanHandle
 }
 
-// CompactionAware is a Storage that can compact its own history — by
-// summarizing, or through a server-side compaction API. The runner calls
-// RunCompaction after a run is persisted (spec §2.5f).
+// CompactionAware is a Storage that compacts its own history; the runner calls
+// RunCompaction after a run is persisted — spec §2.5f.
 type CompactionAware interface {
 	RunCompaction(ctx context.Context, args CompactionArgs) error
 }

@@ -6,8 +6,7 @@ import (
 	"time"
 )
 
-// BatchProcessorOptions configures a BatchProcessor. Zero values select sensible
-// defaults.
+// BatchProcessorOptions configures a BatchProcessor; zero values select the defaults.
 type BatchProcessorOptions struct {
 	// MaxBatchSize is the number of items exported per flush. Default 128.
 	MaxBatchSize int
@@ -16,16 +15,14 @@ type BatchProcessorOptions struct {
 	// MaxQueueSize bounds the buffer; items beyond it are dropped and counted.
 	// Default 8192.
 	MaxQueueSize int
-	// OnDrop, when set, is called on every dropped item with the running total —
-	// the host's one channel for lost telemetry (spec §2.11e). It runs outside the
-	// lock on the dropping goroutine, so totals may arrive out of order; keep it fast.
+	// OnDrop, when set, is called on every dropped item with the running total
+	// (spec §2.11e). It runs unlocked on the dropping goroutine: totals may
+	// arrive out of order; keep it fast.
 	OnDrop func(dropped int)
 }
 
-// BatchProcessor buffers finished traces and spans and exports them in batches
-// from a background goroutine. Span/trace ends are enqueued; a periodic timer
-// and a size threshold trigger flushes. Shutdown drains the queue and stops
-// the goroutine.
+// BatchProcessor buffers started traces and finished spans and exports them in
+// batches from a background goroutine, on a timer and on a size threshold.
 type BatchProcessor struct {
 	exporter Exporter
 	opts     BatchProcessorOptions
@@ -41,8 +38,8 @@ type BatchProcessor struct {
 	wg       sync.WaitGroup
 }
 
-// NewBatchProcessor starts a BatchProcessor forwarding to exporter. Call
-// Shutdown to stop the background goroutine and flush remaining items.
+// NewBatchProcessor starts a BatchProcessor forwarding to exporter; Shutdown
+// stops it after a final flush.
 func NewBatchProcessor(exporter Exporter, opts BatchProcessorOptions) *BatchProcessor {
 	if opts.MaxBatchSize <= 0 {
 		opts.MaxBatchSize = 128
@@ -85,8 +82,7 @@ func (p *BatchProcessor) enqueue(item Item) {
 	}
 }
 
-// OnTraceStart enqueues the trace row immediately, so that a crash mid-run does
-// not orphan its spans.
+// OnTraceStart enqueues the trace at once, so a crash mid-run cannot orphan its spans.
 func (p *BatchProcessor) OnTraceStart(t *Trace) { p.enqueue(t) }
 
 // OnTraceEnd is a no-op: the trace row was already enqueued on start.
@@ -125,8 +121,7 @@ func (p *BatchProcessor) flush() {
 		n := min(len(p.queue), p.opts.MaxBatchSize)
 		batch := make([]Item, n)
 		copy(batch, p.queue[:n])
-		// clear releases the exported items: reslicing alone keeps them reachable
-		// through the backing array.
+		// clear releases the exported items; reslicing alone keeps them reachable.
 		clear(p.queue[:n])
 		p.queue = p.queue[n:]
 		p.mu.Unlock()
@@ -140,8 +135,7 @@ func (p *BatchProcessor) flush() {
 func (p *BatchProcessor) ForceFlush() { p.flush() }
 
 // Shutdown stops the background goroutine after a final flush, returning early
-// if ctx ends first. Items arriving afterwards are dropped and counted,
-// reaching OnDrop like any other.
+// if ctx ends first; later items are dropped and counted like any other.
 func (p *BatchProcessor) Shutdown(ctx context.Context) {
 	p.mu.Lock()
 	p.shutdown = true
@@ -158,8 +152,7 @@ func (p *BatchProcessor) Shutdown(ctx context.Context) {
 	}
 }
 
-// Dropped returns the number of items dropped due to a full queue or because
-// they arrived after Shutdown.
+// Dropped returns the number of items dropped by a full queue or after Shutdown.
 func (p *BatchProcessor) Dropped() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()

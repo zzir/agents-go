@@ -16,10 +16,9 @@ import (
 	"github.com/zzir/agents-go/models/modelkit"
 )
 
-// The two continuity blobs ride in encrypted_content behind a prefix, so the
-// adapter can tell them apart and drop another provider's (base64 never has ':').
-// After the prefix comes the fingerprint of the request prefix the block was
-// produced under, then ':' and the blob — see spec §2.15.
+// The two continuity blobs ride in encrypted_content as prefix, fingerprint of
+// the request prefix the block was produced under, ':' and the blob (base64
+// never has ':', so another provider's blob is told apart) — see spec §2.15.
 const (
 	signaturePrefix = "thinking_signature:"
 	redactedPrefix  = "redacted_thinking:"
@@ -82,17 +81,15 @@ var unsupportedFeatures = []modelkit.Feature{
 	modelkit.FeatureConversationID,
 }
 
-// Capabilities declares this adapter's unsupported request features, for
-// hosting layers that surface limits ahead of a run. The enforced truth is
-// the per-call rejection.
+// Capabilities declares this adapter's unsupported request features, for a
+// hosting layer to surface ahead of a run; the per-call Reject is the enforced truth.
 func Capabilities() modelkit.Capabilities {
 	return modelkit.Capabilities{Unsupported: unsupportedFeatures}
 }
 
-// DefaultMaxTokens is used when the request does not set MaxTokens. The
-// Messages API requires max_tokens on every call, so "unset" needs a value;
-// requiring every caller to pick one would make the provider unusable as a
-// drop-in. With a reasoning effort set the default grows by the effort's room.
+// DefaultMaxTokens is max_tokens when the request sets none: the Messages API
+// requires it on every call. With a reasoning effort set the default grows by
+// the effort's room.
 const DefaultMaxTokens int64 = 8192
 
 // adaptiveEfforts maps reasoning effort to output_config.effort, the form
@@ -107,8 +104,7 @@ var adaptiveEfforts = map[agents.ReasoningEffort]ant.OutputConfigEffort{
 }
 
 // thinkingRoom is what the default max_tokens leaves an adaptive effort to
-// think in: thinking counts against max_tokens. Past high the caller sets
-// MaxTokens, since a larger default could exceed a model's output limit.
+// think in (thinking counts against max_tokens); past high the caller sets MaxTokens.
 var thinkingRoom = map[ant.OutputConfigEffort]int64{
 	ant.OutputConfigEffortLow:    4096,
 	ant.OutputConfigEffortMedium: 16384,

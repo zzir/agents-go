@@ -32,10 +32,8 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 	// With a session, prepend stored history to the model input.
 	modelInput := userInput
 	if opts.Conversation.Session != nil {
-		// Read the active branch minus what compaction folded, then project:
-		// the projection renders each checkpoint's summary in the folded
-		// history's place. An annotation or terminal entry is recorded but not
-		// sent unless Conversation.Projectors says otherwise.
+		// The active branch minus what compaction folded, projected per kind —
+		// see spec §2.5b.
 		limit := session.ResolveLimit(opts.Conversation.Settings)
 		entries, herr := opts.Conversation.Session.ContextEntries(ctx, session.Cursor{Limit: -limit})
 		if herr != nil {
@@ -52,9 +50,8 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 			modelInput = make([]InputItem, 0, len(history)+len(userInput))
 			modelInput = append(modelInput, history...)
 			modelInput = append(modelInput, userInput...)
-			// Scrub the merged history+input before it reaches the model: a
-			// stored dangling tool call (e.g. persisted at an interruption) or
-			// a duplicate re-sent item would otherwise 400 at the Responses API.
+			// Scrub the merged history+input: a dangling call or a duplicate
+			// would 400 — see spec §2.1b.
 			modelInput = normalizeStoredInput(modelInput)
 		}
 	}
@@ -108,9 +105,7 @@ type loopSeed struct {
 	// iteration re-processes instead of calling the model.
 	pendingResponse *ModelResponse
 
-	// cursor, on a resume, is the pause-time server-conversation cursor, so
-	// the resumed run keeps sending deltas. Zero for a fresh run and for
-	// locally-managed history.
+	// cursor is a resume's pause-time server-conversation cursor; zero otherwise.
 	cursor serverCursor
 
 	startTurn int

@@ -11,21 +11,20 @@ import (
 var Now = time.Now
 
 // Tracer creates traces and spans and notifies a Processor of their lifecycle.
-// A nil Tracer is a no-op, so call sites need not check for one.
+// A nil Tracer is a no-op.
 type Tracer struct {
 	proc Processor
 }
 
-// NewTracer returns a Tracer that reports to proc. If proc is nil the tracer is
-// a no-op.
+// NewTracer returns a Tracer reporting to proc; a nil proc makes it a no-op.
 func NewTracer(proc Processor) *Tracer { return &Tracer{proc: proc} }
 
 // TraceHandle represents an in-progress trace.
 type TraceHandle struct {
 	Trace  *Trace
 	tracer *Tracer
-	// finished is atomic: a detached child run may still be starting spans on
-	// this handle while the owner finishes the trace from another goroutine.
+	// finished is atomic: a detached child run may start spans while another
+	// goroutine finishes.
 	finished atomic.Bool
 }
 
@@ -35,18 +34,15 @@ type SpanHandle struct {
 	tracer *Tracer
 	// finished is atomic for the same reason as TraceHandle.finished.
 	finished atomic.Bool
-	// mu guards the span's mutable fields against Finish's handover: the finished
-	// flag alone is read before the write, and Data is a map (spec §2.11e).
+	// mu guards Data and EndedAt against Finish's handover — see spec §2.11e.
 	mu sync.Mutex
 }
 
-// TraceOption customizes a Trace before it is handed to the processor.
-// Mutating a Trace after StartTrace races with background exporting; options
-// are the safe way to set fields like GroupID and Metadata.
+// TraceOption customizes a Trace before it reaches the processor; mutating one
+// after StartTrace races the export (spec §2.11e).
 type TraceOption func(*Trace)
 
-// WithGroupID links this trace to a group of related traces (e.g. one chat
-// thread across several runs).
+// WithGroupID links this trace to a group of related traces (e.g. one chat thread).
 func WithGroupID(id string) TraceOption { return func(tr *Trace) { tr.GroupID = id } }
 
 // WithMetadata attaches user metadata to the trace.
@@ -67,8 +63,7 @@ func (t *Tracer) StartTrace(workflowName string, opts ...TraceOption) *TraceHand
 	return &TraceHandle{Trace: tr, tracer: t}
 }
 
-// Finish ends the trace. It is idempotent: only the first call notifies the
-// processor, so deferred and explicit finishes can coexist safely.
+// Finish ends the trace; idempotent, only the first call notifies the processor.
 func (h *TraceHandle) Finish() {
 	if h == nil || h.tracer == nil || h.Trace == nil || !h.finished.CompareAndSwap(false, true) {
 		return
@@ -96,8 +91,8 @@ func (h *TraceHandle) startSpan(name, parentID, spanType string, data map[string
 	return &SpanHandle{Span: sp, tracer: h.tracer}
 }
 
-// StartSpan begins an untyped span under this trace, optionally nested under
-// parentID. Prefer a typed constructor (StartAgentSpan, etc.) where one fits.
+// StartSpan begins an untyped span under this trace, nested under parentID when
+// non-empty; prefer a typed constructor where one fits.
 func (h *TraceHandle) StartSpan(name, parentID string) *SpanHandle {
 	return h.startSpan(name, parentID, "", nil)
 }
@@ -108,14 +103,11 @@ func (h *TraceHandle) StartAgentSpan(name, parentID string) *SpanHandle {
 }
 
 // StartGenerationSpan begins a span for a model call (Type SpanTypeGeneration).
-// Callers typically Set("response_id", …) on the returned span.
 func (h *TraceHandle) StartGenerationSpan(name, parentID string) *SpanHandle {
 	return h.startSpan("generation:"+name, parentID, SpanTypeGeneration, map[string]any{"name": name})
 }
 
-// StartCompactionSpan begins a span for a session-history compaction pass
-// (Type SpanTypeCompaction). The session implementation annotates it with
-// before/after item counts.
+// StartCompactionSpan begins a span for a compaction pass (Type SpanTypeCompaction).
 func (h *TraceHandle) StartCompactionSpan(parentID string) *SpanHandle {
 	return h.startSpan("compaction", parentID, SpanTypeCompaction, nil)
 }
@@ -153,12 +145,8 @@ func (h *SpanHandle) StartSpan(name string) *SpanHandle {
 	return &SpanHandle{Span: sp, tracer: h.tracer}
 }
 
-// Set attaches a key/value to the span's data. It is ignored after Finish: the
-// finished Span belongs to the processor. Safe to call while another goroutine
-// finishes the span — the annotation is then simply dropped.
-//
-// Writing through the exported Span field instead is not: it bypasses this and
-// races the export, the same way mutating a Trace after StartTrace does.
+// Set attaches a key/value to the span's data; after Finish it is ignored, safely
+// from any goroutine — see spec §2.11e.
 func (h *SpanHandle) Set(key string, value any) {
 	if h == nil || h.Span == nil {
 		return
@@ -187,25 +175,20 @@ func (h *SpanHandle) SetError(message string, data map[string]any) {
 	h.Span.Error = &SpanError{Message: message, Data: data}
 }
 
-// Finish ends the span, stamping its end time. It is idempotent: only the
-// first call exports the span, so deferred and explicit finishes can coexist.
+// Finish ends the span, stamping its end time; idempotent, only the first call exports.
 func (h *SpanHandle) Finish() {
 	if h == nil || h.tracer == nil || h.Span == nil || !h.finished.CompareAndSwap(false, true) {
 		return
 	}
-	// Under mu, so an annotation in flight lands before the handover or is
-	// dropped by the finished check — never written to a map the processor reads.
+	// Under mu: an annotation in flight lands before the handover or is dropped.
 	h.mu.Lock()
 	h.Span.EndedAt = Now()
 	h.mu.Unlock()
 	h.tracer.proc.OnSpanEnd(h.Span)
 }
 
-// StartTypedSpan begins a typed span nested under this one.
-//
-// It exists so a subsystem far from the runner — an MCP client, a sandbox
-// backend — can contribute a span of its own kind without the tracing package
-// growing a constructor per caller.
+// StartTypedSpan begins a typed span nested under this one, for a subsystem
+// (MCP, sandbox) contributing a span kind of its own.
 func (h *SpanHandle) StartTypedSpan(name, spanType string, data map[string]any) *SpanHandle {
 	if h == nil || h.tracer == nil || h.Span == nil {
 		return &SpanHandle{}

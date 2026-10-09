@@ -8,12 +8,11 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// ErrorCode is the stable classification vocabulary, declared in the session
-// package because stored entries and diagnostics persist it; the derivation
-// (CodeOf, Classify) lives here, with the error types it reads.
+// ErrorCode is the stable error classification vocabulary, declared in the
+// session package — see decisions §5.11.
 type ErrorCode = session.ErrorCode
 
-// The codes the SDK produces today, re-exported from the session package.
+// The codes the SDK produces, re-exported from the session package.
 const (
 	CodeUnknown           = session.CodeUnknown
 	CodeMaxTurns          = session.CodeMaxTurns
@@ -28,15 +27,8 @@ const (
 	CodeMCP               = session.CodeMCP
 )
 
-// CodeOf reports the ErrorCode carried by err, unwrapping %w chains. It returns
-// CodeUnknown for a nil error or one the SDK did not produce.
-//
-// The code is DERIVED from the error's type, so there is exactly one source of
-// truth: an SDK error cannot be built with a mismatched code, because there is
-// no code to set.
-//
-// This is the accessor a transport should use. Branching on the concrete error
-// types instead means a code added later is invisible to it.
+// CodeOf reports the ErrorCode carried by err, unwrapping %w chains; CodeUnknown
+// for nil or an error the SDK did not produce — see spec §2.10.
 func CodeOf(err error) ErrorCode {
 	if err == nil {
 		return CodeUnknown
@@ -71,13 +63,11 @@ func isType[T error](err error) bool {
 	return ok
 }
 
-// codedError attaches an ErrorCode to an error the SDK did not type — how a
-// package outside the run loop (sandbox, mcp, a custom tool) contributes a
-// classification. Built by Classify (and by the panic path, which carries a
-// message of its own); read only through CodeOf.
+// codedError attaches an ErrorCode to an error the SDK did not type; built by
+// Classify and the panic path, read only through CodeOf.
 type codedError struct {
 	code  ErrorCode
-	msg   string // optional; empty means the cause speaks for itself
+	msg   string // empty means the cause speaks for itself
 	cause error
 }
 
@@ -90,12 +80,8 @@ func (e *codedError) Error() string {
 
 func (e *codedError) Unwrap() error { return e.cause }
 
-// Classify tags err with code without hiding it: the result reports code
-// through CodeOf while errors.Is and errors.As still reach err itself.
-//
-// Returns nil for a nil err, so it can wrap a return value directly. An err
-// that already carries a code is returned unchanged — the innermost
-// classification wins, since it knows the most about the failure.
+// Classify tags err with code without hiding it from errors.Is/As; nil stays
+// nil and an already-coded err is returned unchanged — see spec §2.10.
 func Classify(code ErrorCode, err error) error {
 	if err == nil {
 		return nil
@@ -107,22 +93,12 @@ func Classify(code ErrorCode, err error) error {
 }
 
 // RunError is the terminal error of a run that failed after its loop started:
-// the cause, plus everything the run produced before failing.
-//
-// Result carries the partial progress — input, generated items, raw responses,
-// usage, guardrail results, diagnostics — as a *RunResult with a nil
-// FinalOutput: a failed run and a finished one describe the same thing, and
-// only one has an answer.
-//
-// Reach it with errors.AsType; classify the cause with CodeOf, which sees
-// through this wrapper:
+// the cause plus the partial progress; an error from before the loop is
+// returned bare — see spec §2.10.
 //
 //	if re, ok := errors.AsType[*agents.RunError](err); ok {
 //	    items := re.Result.NewItems // what the run produced before failing
 //	}
-//
-// Errors from before the loop — a bad option combination, an unresolvable
-// model — are returned bare: there is no progress to report.
 type RunError struct {
 	// Result is the run's partial progress. Never nil; its FinalOutput is nil.
 	Result *RunResult
@@ -131,7 +107,7 @@ type RunError struct {
 
 func (e *RunError) Error() string { return e.err.Error() }
 
-// Unwrap exposes the cause, so errors.Is and errors.As see through the wrapper.
+// Unwrap exposes the cause to errors.Is and errors.As.
 func (e *RunError) Unwrap() error { return e.err }
 
 // MaxTurnsError is returned when a run exceeds its configured turn budget.
@@ -143,17 +119,15 @@ func (e *MaxTurnsError) Error() string {
 	return fmt.Sprintf("max turns (%d) exceeded", e.MaxTurns)
 }
 
-// ModelBehaviorError indicates the model did something invalid or unexpected
-// (e.g. called a tool that does not exist, or emitted malformed tool calls).
+// ModelBehaviorError indicates the model did something invalid (an unknown
+// tool, malformed tool calls).
 type ModelBehaviorError struct {
 	Message string
 }
 
 func (e *ModelBehaviorError) Error() string { return e.Message }
 
-// NewModelBehaviorError constructs a *ModelBehaviorError with a formatted
-// message. It is exported so provider packages (e.g. models/openai) can
-// classify terminal model failures.
+// NewModelBehaviorError constructs a *ModelBehaviorError with a formatted message.
 func NewModelBehaviorError(format string, args ...any) *ModelBehaviorError {
 	return &ModelBehaviorError{Message: fmt.Sprintf(format, args...)}
 }
@@ -174,8 +148,7 @@ type UserError struct {
 
 func (e *UserError) Error() string { return e.Message }
 
-// NewUserError constructs a *UserError with a formatted message. It is exported
-// so provider packages (e.g. models/openai) can report incorrect SDK usage.
+// NewUserError constructs a *UserError with a formatted message.
 func NewUserError(format string, args ...any) *UserError {
 	return &UserError{Message: fmt.Sprintf(format, args...)}
 }

@@ -1,13 +1,6 @@
-// Command branching demonstrates that a session is a tree, not a list.
-//
-// "Try that again differently" is the natural shape of a conversation, and a
-// list cannot express it: the alternative is deleting the attempt you did not
-// like. A branch keeps it, and the two branches share everything before the
-// point they diverge rather than duplicating it.
-//
-// The switch is itself an APPEND — a leaf entry — so the history records that a
-// branch was abandoned and when, and the current leaf is derived by folding the
-// log rather than stored beside it where it could disagree after a crash.
+// Command branching demonstrates that a session is a tree, not a list: a
+// branch keeps the attempt it abandons, shares everything before the fork, and
+// the switch is itself an appended leaf entry — see spec §2.5d.
 //
 // Run with: go run ./examples/branching   (no API key needed)
 package main
@@ -49,8 +42,8 @@ func main() {
 	say(agents.SourceModel, "Then: Nishiki Market and the Railway Museum.")
 	show(ctx, sess, "after the first branch")
 
-	// Branch from the earlier point. Everything before it is shared; the two
-	// answers above are not lost, they are simply not on this branch.
+	// Branch from the earlier point; the two answers above stay stored, off
+	// this branch.
 	if err := sess.Branch(ctx, forkPoint); err != nil {
 		log.Fatal(err)
 	}

@@ -16,8 +16,7 @@ type Strategy interface {
 }
 
 // PipelineStrategy runs strategies in order, stopping at the first one that
-// brings the index under budget. Order is the design: cheap and lossless first
-// (fold tool output), lossy last (drop exchanges, summarize).
+// brings the index under budget; order cheap and lossless first, lossy last.
 type PipelineStrategy struct {
 	Strategies []Strategy
 }
@@ -39,15 +38,14 @@ func (p *PipelineStrategy) Compact(ctx context.Context, idx *Index) (bool, error
 }
 
 // ToolResultStrategy folds old tool-call groups into a compact summary of what
-// was called, leaving user messages and assistant prose untouched. Folding
-// needs no model call and is the only answer to one enormous tool result.
+// was called, without a model call; user messages and assistant prose are untouched.
 type ToolResultStrategy struct {
 	// Trigger decides when to start; nil never runs.
 	Trigger Trigger
-	// Target decides when to stop. Nil means "once Trigger stops firing".
+	// Target decides when to stop; nil means once Trigger stops firing.
 	Target Trigger
-	// MinimumPreservedGroups keeps this many groups at the end untouched, so the
-	// most recent tool results survive. Defaults to 2.
+	// MinimumPreservedGroups keeps this many groups at the end untouched.
+	// Defaults to 2.
 	MinimumPreservedGroups int
 	// Formatter renders a folded group. Nil uses DefaultToolCallFormatter.
 	Formatter func(*Group) string
@@ -94,9 +92,8 @@ func (s *ToolResultStrategy) Compact(_ context.Context, idx *Index) (bool, error
 	return changed, nil
 }
 
-// DefaultToolCallFormatter renders a tool-call group as one line per tool, with
-// its results beneath. It keeps the tool names and drops the payloads — usually
-// all a model needs from an old call is that it happened.
+// DefaultToolCallFormatter renders a tool-call group as one line per tool with
+// its results beneath, keeping the tool names and dropping the payloads.
 func DefaultToolCallFormatter(g *Group) string {
 	byTool := map[string][]string{}
 	var order []string
@@ -109,8 +106,7 @@ func DefaultToolCallFormatter(g *Group) string {
 				order = append(order, p.Name)
 			}
 		case "function_call_output":
-			// Outputs are keyed by call id: attribute them to the call's tool where
-			// possible, else to the last tool seen (right for a single-tool group).
+			// An output goes to its call's tool by call id, else to the last tool seen.
 			name := toolNameForCall(g, p.CallID)
 			if name == "" && len(order) > 0 {
 				name = order[len(order)-1]
@@ -154,8 +150,7 @@ func toolNameForCall(g *Group, callID string) string {
 	return ""
 }
 
-// summarizeOutput reduces a tool result to a single short line. The whole point
-// of folding is that the payload is gone, so this describes rather than quotes.
+// summarizeOutput reduces a tool result to a single short line.
 func summarizeOutput(raw []byte) string {
 	const maxChars = 120
 	s := strings.TrimSpace(string(raw))
@@ -193,15 +188,15 @@ func foldedEntry(text string) (session.Entry, error) {
 	return session.NewItemEntry(items[0], agents.Source{Type: agents.SourceCompaction})
 }
 
-// TruncationStrategy drops whole groups from the oldest end. It loses content
-// outright, so it belongs after tool folding in a pipeline.
+// TruncationStrategy drops whole groups from the oldest end; lossy, so it
+// belongs after tool folding in a pipeline.
 type TruncationStrategy struct {
 	Trigger Trigger
 	Target  Trigger
 	// MinimumPreservedGroups keeps this many groups at the end. Defaults to 2.
 	MinimumPreservedGroups int
 	// DropSystem lets truncation drop system groups too; the zero value keeps
-	// them regardless of age, since instructions apply to the whole conversation.
+	// them regardless of age.
 	DropSystem bool
 }
 
@@ -235,19 +230,18 @@ func (s *TruncationStrategy) Compact(_ context.Context, idx *Index) (bool, error
 	return changed, nil
 }
 
-// ContextWindowStrategy derives its thresholds from the model's own limits.
-// Two stages: fold tool results at half the input budget, drop whole groups at
-// four fifths — cheap first, lossy last.
+// ContextWindowStrategy derives its thresholds from the model's own limits:
+// tool results fold at ToolEvictionThreshold of the input budget, whole groups
+// drop at TruncationThreshold.
 type ContextWindowStrategy struct {
 	// MaxContextWindowTokens is the model's context window.
 	MaxContextWindowTokens int
 	// MaxOutputTokens is what must stay free for the answer.
 	MaxOutputTokens int
 	// ToolEvictionThreshold is the fraction of the input budget at which tool
-	// results start folding. Defaults to 0.5.
+	// results fold. Defaults to 0.5.
 	ToolEvictionThreshold float64
-	// TruncationThreshold is the fraction at which whole groups start dropping.
-	// Defaults to 0.8.
+	// TruncationThreshold is the fraction at which whole groups drop. Defaults to 0.8.
 	TruncationThreshold float64
 	// MinimumPreservedGroups is passed to both stages. Defaults to 2.
 	MinimumPreservedGroups int

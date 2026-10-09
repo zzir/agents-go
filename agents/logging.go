@@ -5,40 +5,23 @@ import (
 	"log/slog"
 )
 
-// LogConfig controls the SDK's own structured logging.
-//
-// Logging is off by default. An SDK that logs to the process default the
-// moment it is imported is one that shows up uninvited in somebody's
-// production output; a caller who wants records asks for them.
+// LogConfig controls the SDK's own structured logging; off by default — see
+// spec §2.11c.
 type LogConfig struct {
-	// Logger receives the records. Nil disables SDK logging entirely.
-	//
-	// The logger's own handler sets the level floor. Most of what the SDK says
-	// is Debug, so hand it a dedicated logger whose handler enables Debug —
-	// slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level:
-	// slog.LevelDebug})) — to see it without enabling Debug application-wide.
+	// Logger receives the records; nil disables SDK logging. Its handler sets
+	// the level floor, and most of what the SDK says is Debug.
 	Logger *slog.Logger
 
-	// SensitiveData includes attributes marked with Sensitive: prompts, tool
-	// arguments, tool results, model output.
-	//
-	// It is off by default and separate from the logger itself, so "log what
-	// the SDK is doing" and "log what the user said" stay different decisions.
-	// The one that leaks a conversation into a log aggregator has to be made on
-	// purpose.
+	// SensitiveData includes attributes marked with Sensitive (prompts, tool
+	// arguments and results, model output). Off by default.
 	SensitiveData bool
 }
 
-// sensitiveKey marks an attribute as carrying conversation content. It is a
-// wrapper type rather than a naming convention because a convention gets
-// broken silently and a type does not.
+// sensitiveValue wraps an attribute carrying conversation content.
 type sensitiveValue struct{ v any }
 
-// LogValue implements slog.LogValuer so a sensitive attribute that reaches a
-// handler WITHOUT going through the SDK's opt-in filter renders as a redaction
-// marker, never the value. The only path that reveals the value is
-// LogConfig.SensitiveData, which unwraps before the handler sees it — so
-// passing a Sensitive attribute to your own slog.Logger is safe by default.
+// LogValue renders a sensitive attribute that bypassed the SDK's filter as a
+// redaction marker, never the value.
 func (s sensitiveValue) LogValue() slog.Value { return slog.StringValue("«redacted»") }
 
 // Sensitive marks a log attribute as conversation content, dropped unless
@@ -49,16 +32,13 @@ func Sensitive(key string, value any) slog.Attr {
 	return slog.Any(key, sensitiveValue{value})
 }
 
-// runLogger is the SDK's internal logger: it tags every record with the
-// component that emitted it and drops sensitive attributes unless they were
-// asked for.
+// runLogger tags every record with its component and filters sensitive attributes.
 type runLogger struct {
 	log       *slog.Logger
 	sensitive bool
 }
 
-// newRunLogger builds the logger for a run. A nil Logger yields one that does
-// nothing, so call sites never have to check.
+// newRunLogger builds the logger for a run; a nil Logger yields a no-op one.
 func newRunLogger(cfg LogConfig) *runLogger {
 	if cfg.Logger == nil {
 		return &runLogger{}
@@ -106,8 +86,7 @@ func (l *runLogger) Error(ctx context.Context, msg string, attrs ...slog.Attr) {
 	l.emit(ctx, slog.LevelError, msg, attrs)
 }
 
-// enabled reports whether a record at this level would be emitted. Call sites
-// that would have to build an expensive attribute check it first.
+// enabled reports whether a record at this level would be emitted.
 func (l *runLogger) enabled(ctx context.Context, level slog.Level) bool {
 	return l != nil && l.log != nil && l.log.Enabled(ctx, level)
 }
@@ -119,8 +98,7 @@ func (l *runLogger) emit(ctx context.Context, level slog.Level, msg string, attr
 	l.log.LogAttrs(ctx, level, msg, l.filter(attrs)...)
 }
 
-// filter drops sensitive attributes unless they were asked for, then unwraps them
-// so a handler that ignores slog.LogValuer prints the value, not the wrapper.
+// filter drops sensitive attributes unless asked for, unwrapping the kept ones.
 func (l *runLogger) filter(attrs []slog.Attr) []slog.Attr {
 	kept := attrs[:0:0]
 	for _, a := range attrs {

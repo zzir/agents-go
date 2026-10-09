@@ -2,26 +2,18 @@ package agents
 
 import "fmt"
 
-// ToolLoopPolicy bounds the tool loop: each valve guards a way an agent can
-// keep going and get nowhere, with a default that leaves the ordinary run
-// untouched.
+// ToolLoopPolicy bounds the tool loop's safety valves — see spec §2.7d.
 type ToolLoopPolicy struct {
 	// MaxConsecutiveErrorTurns aborts the run after this many turns in which
-	// every tool call failed. Zero means 3; a negative value disables it.
-	//
-	// It counts TURNS, not calls: a turn where every tool failed increments it,
-	// and a turn where any tool succeeded clears it.
+	// every tool call failed. Zero means 3; negative disables it.
 	MaxConsecutiveErrorTurns int
 
-	// FinalTurnWithoutTools makes an exhausted turn budget call the model once
-	// more with no tools, so it closes out in prose instead of the run failing
-	// with a *MaxTurnsError. Opt-in, because it spends a model call the caller's
-	// budget said not to spend.
+	// FinalTurnWithoutTools buys an exhausted turn budget one more model call
+	// with no tools, so the model closes out in prose. Opt-in.
 	FinalTurnWithoutTools bool
 }
 
-// maxConsecutiveErrorTurns resolves the configured limit. A negative value
-// disables the valve.
+// maxConsecutiveErrorTurns resolves the configured limit; negative disables the valve.
 func (p ToolLoopPolicy) maxConsecutiveErrorTurns() int {
 	if p.MaxConsecutiveErrorTurns == 0 {
 		return 3
@@ -29,8 +21,7 @@ func (p ToolLoopPolicy) maxConsecutiveErrorTurns() int {
 	return p.MaxConsecutiveErrorTurns
 }
 
-// ToolLoopError aborts a run whose tools failed on every one of the last N
-// turns.
+// ToolLoopError aborts a run whose tools failed on every one of the last N turns.
 type ToolLoopError struct {
 	// Turns is how many consecutive all-failed turns were seen.
 	Turns int
@@ -61,8 +52,8 @@ func (r *runner) noteToolTurn(results []functionToolResult) error {
 	return nil
 }
 
-// truncatedCallResults answers every call of a truncated response — function and
-// handoff alike — with a refusal instead of running it (spec §2.7e).
+// truncatedCallResults answers every call of a truncated response with a
+// refusal instead of running it — see spec §2.7e.
 func truncatedCallResults(agent *Agent, calls []functionCall) []functionToolResult {
 	const msg = "The model response was truncated at the output-token limit, so this tool call's " +
 		"arguments may be incomplete. It was NOT executed. Resend the call with complete arguments, " +
@@ -76,8 +67,8 @@ func truncatedCallResults(agent *Agent, calls []functionCall) []functionToolResu
 	return out
 }
 
-// unknownCallResults answers every call naming no tool on the agent with a
-// not-found error output, so the model corrects itself (spec §2.2 step 7).
+// unknownCallResults answers every call naming no tool with a not-found error
+// output — see spec §2.2 step 7.
 func unknownCallResults(agent *Agent, calls []functionCall) []functionToolResult {
 	out := make([]functionToolResult, 0, len(calls))
 	for _, call := range calls {
@@ -89,8 +80,7 @@ func unknownCallResults(agent *Agent, calls []functionCall) []functionToolResult
 	return out
 }
 
-// anySequential reports whether any tool in the batch refuses to run beside
-// others.
+// anySequential reports whether any tool in the batch is Sequential.
 func anySequential(runs []toolRunFunction) bool {
 	for _, run := range runs {
 		if run.Tool.Sequential {
@@ -100,8 +90,8 @@ func anySequential(runs []toolRunFunction) bool {
 	return false
 }
 
-// toolConcurrency resolves how many of a batch's calls may run at once. One
-// sequential tool makes the WHOLE batch sequential.
+// toolConcurrency resolves how many of a batch's calls may run at once; one
+// Sequential tool serializes the whole batch.
 func (r *runner) toolConcurrency(runs []toolRunFunction) int {
 	if anySequential(runs) {
 		return 1
@@ -109,8 +99,8 @@ func (r *runner) toolConcurrency(runs []toolRunFunction) int {
 	return r.opts.Exec.MaxToolConcurrency
 }
 
-// discloseTools records the deferred tools this batch's results opened up;
-// disclosure is cumulative for the rest of the run.
+// discloseTools records the deferred tools this batch's results opened up, for
+// the rest of the run.
 func (r *runner) discloseTools(results []functionToolResult) {
 	for _, res := range results {
 		for _, name := range res.addedTools {

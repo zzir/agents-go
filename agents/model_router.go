@@ -6,29 +6,22 @@ import (
 	"strings"
 )
 
-// RouterProvider routes model names to different ModelProviders by a name
-// prefix, so a single run can drive each agent against a different backend by
-// model name alone. It implements ModelProvider.
-//
-// A name like "groq/llama-3.3-70b" is split on the first "/": the prefix
-// ("groq") selects the provider and the remainder ("llama-3.3-70b") is the
-// model name passed to it. Names without a known prefix go to the fallback
-// provider, if one is set.
+// RouterProvider is a ModelProvider that routes by name prefix: "groq/llama"
+// sends "llama" to the "groq" provider; an unknown prefix goes to the fallback.
 type RouterProvider struct {
 	routes   map[string]ModelProvider
 	fallback ModelProvider
 }
 
-// NewRouterProvider builds a router from a prefix→provider map. The map is
-// copied, so later mutations to the caller's map do not affect the router.
+// NewRouterProvider builds a router from a copy of the prefix→provider map.
 func NewRouterProvider(routes map[string]ModelProvider) *RouterProvider {
 	cp := make(map[string]ModelProvider, len(routes))
 	maps.Copy(cp, routes)
 	return &RouterProvider{routes: cp}
 }
 
-// WithFallback sets the provider used for model names whose prefix matches no
-// route (including names with no separator). Returns the router for chaining.
+// WithFallback sets the provider for names matching no route; returns the
+// router for chaining.
 func (r *RouterProvider) WithFallback(p ModelProvider) *RouterProvider {
 	r.fallback = p
 	return r

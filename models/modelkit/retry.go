@@ -28,12 +28,10 @@ func UnwrapAs[E error](status func(E) (int, http.Header)) UnwrapAPIError {
 	}
 }
 
-// RetryableError reports whether a model-call error is transient — the shared
-// half of each adapter's RetryableError. context.Canceled never retries;
-// context.DeadlineExceeded does. For an API error an exact X-Should-Retry
-// "true"/"false" header outranks the status; otherwise 408, 409, 429 and any
-// 5xx retry and other 4xx do not. An error the unwrap does not recognize
-// retries only as a transport failure: a net.Error or io.ErrUnexpectedEOF.
+// RetryableError reports whether a model-call error is transient, the shared
+// half of each adapter's RetryableError: context.Canceled never, DeadlineExceeded
+// always; for an API error an exact X-Should-Retry header outranks the status,
+// else 408/409/429 and 5xx retry; otherwise only a net.Error or io.ErrUnexpectedEOF.
 func RetryableError(err error, unwrap UnwrapAPIError) bool {
 	if err == nil {
 		return false

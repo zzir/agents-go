@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// InMemoryRepo is a Repo holding everything in memory, for tests and
-// short-lived processes.
+// InMemoryRepo is a Repo holding everything in memory.
 type InMemoryRepo struct {
 	mu       sync.Mutex
 	sessions map[string]*InMemoryStorage
@@ -43,8 +42,7 @@ func (r *InMemoryRepo) Create(_ context.Context, opts CreateOptions) (*Session, 
 	return NewSession(st), nil
 }
 
-// Open implements Repo. An unknown id is ErrNotFound, never an empty session
-// (spec §2.5e).
+// Open implements Repo; an unknown id is ErrNotFound — spec §2.5e.
 func (r *InMemoryRepo) Open(_ context.Context, id string) (*Session, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -55,8 +53,7 @@ func (r *InMemoryRepo) Open(_ context.Context, id string) (*Session, error) {
 	return NewSession(st), nil
 }
 
-// List implements Repo: newest first, cut to ListOptions.Limit — the same
-// answer every repo gives (spec §2.5e2).
+// List implements Repo: newest first, cut to ListOptions.Limit — spec §2.5e2.
 func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]Metadata, error) {
 	r.mu.Lock()
 	stores := make([]*InMemoryStorage, 0, len(r.order))
@@ -76,8 +73,7 @@ func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]Metadata, 
 		}
 		out = append(out, md)
 	}
-	// Stable, so sessions sharing an UpdatedAt keep creation order instead of
-	// shuffling between two calls that read the same sessions.
+	// Stable: sessions sharing an UpdatedAt keep creation order between calls.
 	slices.SortStableFunc(out, func(a, b Metadata) int {
 		return b.UpdatedAt.Compare(a.UpdatedAt)
 	})
@@ -87,8 +83,8 @@ func (r *InMemoryRepo) List(ctx context.Context, opts ListOptions) ([]Metadata, 
 	return out, nil
 }
 
-// Delete implements Repo. An unknown id is not an error, and a handle already
-// handed out is retired so a later write refuses — spec §2.5e2.
+// Delete implements Repo: an unknown id is not an error, and a handle already
+// handed out refuses every later write — spec §2.5e2.
 func (r *InMemoryRepo) Delete(_ context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

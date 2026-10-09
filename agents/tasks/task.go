@@ -14,8 +14,7 @@ type Status string
 const (
 	// StatusWorking is running.
 	StatusWorking Status = "working"
-	// StatusInputRequired is paused for a human — NOT terminal. The approval
-	// flow surfaces it, and the resumed run lands back on a terminal status.
+	// StatusInputRequired is paused for a human; not terminal — see spec §2.13.
 	StatusInputRequired Status = "input_required"
 	// StatusCompleted finished with a result.
 	StatusCompleted Status = "completed"
@@ -25,8 +24,7 @@ const (
 	StatusCancelled Status = "cancelled"
 )
 
-// Terminal reports whether the status is final. input_required is deliberately
-// not terminal: a task waiting on a human is still in flight.
+// Terminal reports whether the status is final; input_required is not.
 func (s Status) Terminal() bool {
 	switch s {
 	case StatusCompleted, StatusFailed, StatusCancelled:
@@ -35,43 +33,40 @@ func (s Status) Terminal() bool {
 	return false
 }
 
-// Task is one background job. ID and RunID are separate: the task is the
-// durable entity, the run one attempt at it (spec §2.13). A job may span
-// several runs (Config.Continue); RunID is always the current one.
+// Task is one background job: ID is the durable entity, RunID the current
+// attempt at it — see spec §2.13.
 type Task struct {
 	ID    string `json:"id"`
 	RunID string `json:"run_id"`
 	Label string `json:"label"`
-	// Kind names what sort of job this is, in the host's vocabulary; the SDK
-	// does not interpret it. Empty is a plain sub-agent task.
+	// Kind names the job in the host's vocabulary, opaque to the SDK; empty is
+	// a plain sub-agent task.
 	Kind string `json:"kind,omitzero"`
 
 	ParentSessionID string `json:"parent_session_id"`
 	ParentRunID     string `json:"parent_run_id,omitzero"`
-	// ToolCallID is the spawn_task call in the parent turn, so a UI card can be
-	// updated when the task finishes — long after that turn ended.
+	// ToolCallID is the spawn_task call in the parent turn, the key of its UI card.
 	ToolCallID     string `json:"tool_call_id,omitzero"`
 	ChildSessionID string `json:"child_session_id"`
 
 	// Depth is how many task hops from a user-initiated run; it bounds recursion.
 	Depth int `json:"depth,omitzero"`
 
-	// Attempt counts the runs this task has had: 1 for the original, one more
-	// for each retry. Zero reads as 1 (see AttemptNo).
+	// Attempt counts the task's runs, the original included; zero reads as 1
+	// (AttemptNo).
 	Attempt int `json:"attempt,omitzero"`
 
-	// Inherit is configuration snapshotted from the spawning run and handed back
-	// to the Launcher verbatim, opaque to the SDK — a snapshot, since the
-	// wake-up run comes much later (spec §2.13).
+	// Inherit is configuration snapshotted at spawn and handed to the Launcher
+	// verbatim, opaque to the SDK — see spec §2.13.
 	Inherit json.RawMessage `json:"inherit,omitzero"`
-	// State is the host's own record of where a multi-run job stands, opaque to
-	// the SDK; replaced atomically with each run transition (Store.Advance).
+	// State is the host's record of a multi-run job, opaque to the SDK;
+	// Store.Advance replaces it.
 	State json.RawMessage `json:"state,omitzero"`
 
 	Status Status `json:"status"`
 
-	// Summary is the truncated result, for the notification and the card;
-	// Result is the whole thing, fetched on demand by task_status.
+	// Summary is Result truncated, for the notification and the card;
+	// task_status fetches Result.
 	Summary string `json:"summary,omitzero"`
 	Result  string `json:"result,omitzero"`
 
@@ -79,8 +74,7 @@ type Task struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// AttemptNo is the task's attempt count, reading the zero value as the first
-// attempt. Every caller wants this rather than the raw field.
+// AttemptNo is Attempt with the zero value read as 1.
 func (t *Task) AttemptNo() int {
 	if t.Attempt <= 0 {
 		return 1
@@ -98,8 +92,7 @@ type Info struct {
 	Attempt int    `json:"attempt,omitzero"`
 	Summary string `json:"summary,omitzero"`
 	Result  string `json:"result,omitzero"`
-	// State is the host's record of the job (Task.State), carried so a host
-	// can say where a job of its kind stands (Config.DescribeState).
+	// State is Task.State, for Config.DescribeState.
 	State json.RawMessage `json:"state,omitzero"`
 }
 

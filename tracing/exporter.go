@@ -6,23 +6,20 @@ import (
 	"sync"
 )
 
-// Item is the sealed union of things an Exporter can receive: a *Trace or a
-// *Span. The interface is closed — only this package's Trace and Span implement
-// the unexported isTraceItem marker — so a type switch over an Item is
-// exhaustive, mirroring how the core seals the Tool interface.
+// Item is the sealed union an Exporter receives: a *Trace or a *Span, so a type
+// switch over it is exhaustive.
 type Item interface {
 	isTraceItem()
 }
 
-// FuncExporter adapts a function to the Exporter interface, convenient for tests
-// and custom sinks.
+// FuncExporter adapts a function to the Exporter interface.
 type FuncExporter func(items []Item)
 
 // Export implements Exporter.
 func (f FuncExporter) Export(items []Item) { f(items) }
 
-// ConsoleExporter writes each item as a line of JSON to an io.Writer. It is
-// goroutine-safe.
+// ConsoleExporter writes each item as a line of JSON to an io.Writer; safe for
+// concurrent use.
 type ConsoleExporter struct {
 	mu sync.Mutex
 	w  io.Writer
@@ -41,8 +38,7 @@ func (e *ConsoleExporter) Export(items []Item) {
 	}
 }
 
-// CollectingExporter accumulates exported items in memory for inspection, mainly
-// for tests. It is goroutine-safe.
+// CollectingExporter accumulates exported items in memory; safe for concurrent use.
 type CollectingExporter struct {
 	mu    sync.Mutex
 	items []Item

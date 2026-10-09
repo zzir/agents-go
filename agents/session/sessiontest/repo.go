@@ -16,28 +16,19 @@ type RepoUnderTest struct {
 	Repo session.Repo
 
 	// IDs maps the suite's literal session names ("x", "shared") to ids the
-	// backend accepts — a backend with a uuid-typed id column supplies a
-	// memoized generator. Nil uses the names as they are. A name maps to the
-	// same id for the whole check, so open-after-create still meets its row.
+	// backend accepts, the same id per name for a whole check; nil uses the
+	// names (spec §2.5e).
 	IDs func(name string) string
 
-	// Direct opens a session by id through the backend's NON-repo constructor
-	// — sessions.New — where the id names the storage
-	// outright. A backend without one leaves this nil and those checks skip.
-	//
-	// It is the scope a repo must never reach, in either direction.
+	// Direct opens a session through the backend's NON-repo constructor
+	// (sessions.New), where the id names the storage; nil skips those checks —
+	// spec §2.5e2.
 	Direct func(id string) (*session.Session, error)
 }
 
-// RepoConformance holds a SessionRepo to the parts of the entry lifecycle
-// contract in docs/reference/spec.md §2.5e2 that a repo owns: how it addresses a session,
-// and what its listing says about the sessions it holds.
-//
-// Most of it is checking that a backend addresses a session by session.Ref and
-// not by its id — every one of those failed at least once in a backend that
-// carried the generation as a field some code path forgot. The listing checks
-// are here for the same reason: an order or a limit that only one backend
-// honours is fine until a caller switches.
+// RepoConformance holds a Repo to the parts of spec §2.5e2 a repo owns: that
+// it addresses a session by session.Ref rather than its id, and what its
+// listing says about the sessions it holds.
 func RepoConformance(t *testing.T, newRepo func(t *testing.T) RepoUnderTest) {
 	t.Helper()
 	for _, c := range repoChecks {
@@ -147,12 +138,8 @@ func checkDeleteUnknown(t *testing.T, r RepoUnderTest) {
 	}
 }
 
-// A handle to a deleted session must not follow its id onto the next one.
-//
-// The handle is deliberately NOT used before the delete: a backend that binds
-// its scope on first use rather than when the handle is built passes only when
-// a test happens to touch it early, which is how that stayed broken through two
-// rounds of review.
+// A handle to a deleted session must not follow its id onto the next one. It is
+// deliberately NOT used before the delete: binding is at build time — spec §2.5e2.
 func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
@@ -176,11 +163,8 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	if got := repoTexts(t, stale); len(got) != 0 {
 		t.Fatalf("a handle to the deleted session reads the new one's history: %v", got)
 	}
-	// A write through the stale handle REFUSES — its destination is gone. A
-	// quietly "isolated" write would mint entries nothing references:
-	// invisible to every listing, unreachable by Delete, orphaned storage by
-	// construction (spec §2.5e2: writing and proving the destination still
-	// exists are one step).
+	// A write through the stale handle REFUSES; it never lands quietly
+	// elsewhere — spec §2.5e2.
 	item, err := session.UnmarshalInputItem([]byte(`{"role":"user","content":"from the dead"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -194,11 +178,8 @@ func checkRecreatedID(t *testing.T, r RepoUnderTest) {
 	}
 }
 
-// EVERY write refuses, not just the one a test reached for. A repo's storage
-// is usually a wrapper around a plain one, and the wrapper is what proves the
-// session still exists — so a capability the inner store gains arrives here on
-// its own, past that proof, and writes storage nothing references: invisible to
-// a listing, unreachable by Delete (spec §2.5e2).
+// EVERY write refuses, not just the one a test reached for: a capability the
+// inner store gains must not bypass the wrapper's existence proof (spec §2.5e2).
 func checkDeletedHandleRefusesEveryWrite(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
@@ -232,9 +213,8 @@ func checkDeletedHandleRefusesEveryWrite(t *testing.T, r RepoUnderTest) {
 	}
 }
 
-// The same rule for what a handle SAYS about itself, not just what it holds. A
-// stale one answering with the replacement's title and timestamps reports one
-// session's size under another's name.
+// The same rule for what a handle SAYS about itself: a stale one must not
+// answer with the replacement's title and timestamps.
 func checkStaleHandleMetadata(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()
@@ -300,17 +280,10 @@ func checkDeleteVsDirect(t *testing.T, r RepoUnderTest) {
 	}
 }
 
-// repoSessionsNewestFirst creates one session per id and then writes to them in
-// REVERSE, so the order List owes back — last changed first — is the ids as
-// given, and the order they were created in is its opposite. Creating and
-// writing in one pass would make the two agree, and then a backend sorting by
-// CreatedAt would satisfy every check below without ever reading UpdatedAt.
-//
-// The pause is what makes the stamps distinct. The backends time a write by
-// three different clocks — a wall clock, a file's mtime, a database timestamp —
-// and the coarsest of them decides whether two writes microseconds apart can be
-// told apart at all. Ties are unordered by contract, so without it these checks
-// would pass on any order a backend felt like.
+// repoSessionsNewestFirst creates one session per id, then writes to them in
+// REVERSE: List owes the ids as given, and creation order is the opposite, so a
+// CreatedAt sort fails. The pause keeps the coarsest backend clock from tying
+// the stamps.
 func repoSessionsNewestFirst(t *testing.T, r RepoUnderTest, ids ...string) []string {
 	t.Helper()
 	ctx := context.Background()
@@ -341,9 +314,8 @@ func metadataIDs(md []session.Metadata) []string {
 	return out
 }
 
-// A listing is ordered by last change, newest first — the order a sidebar shows
-// and the order Limit truncates, so a backend sorting by creation (or not at
-// all) hands the caller a different conversation than every other backend does.
+// A listing is ordered by last change, newest first: the order Limit truncates
+// (spec §2.5e2).
 func checkListNewestFirst(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	want := repoSessionsNewestFirst(t, r, "newest", "middle", "oldest")
@@ -355,8 +327,8 @@ func checkListNewestFirst(t *testing.T, r RepoUnderTest) {
 	if got := metadataIDs(md); !slices.Equal(got, want) {
 		t.Fatalf("List = %v, want %v (newest first)", got, want)
 	}
-	// And the stamps agree with the order: a backend that sorts by one column
-	// and reports another is right here only by coincidence.
+	// The stamps agree with the order: sorting by one column and reporting
+	// another is a coincidence.
 	for i := 1; i < len(md); i++ {
 		if md[i].UpdatedAt.After(md[i-1].UpdatedAt) {
 			t.Fatalf("List is not ordered by UpdatedAt: %s at %v precedes %s at %v",
@@ -365,9 +337,8 @@ func checkListNewestFirst(t *testing.T, r RepoUnderTest) {
 	}
 }
 
-// Limit caps the listing, and it caps it from the newest end — a backend that
-// applies it before sorting, or ignores it, returns the wrong page rather than
-// a short one. Anything not positive means no limit.
+// Limit caps the listing from the newest end, after sorting; anything not
+// positive is no limit (spec §2.5e2).
 func checkListLimit(t *testing.T, r RepoUnderTest) {
 	t.Helper()
 	ctx := context.Background()

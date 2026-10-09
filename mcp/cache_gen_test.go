@@ -10,12 +10,8 @@ import (
 )
 
 // TestMCP_InvalidateDuringFetchNotCached locks the generation guard: an
-// InvalidateToolsCache that runs WHILE a ListTools fetch is in flight must stop
-// that fetch's result from being cached. Otherwise a tools/list_changed firing
-// mid-fetch is lost — the stale pre-change list gets written back over the
-// just-cleared cache and the new tools are never seen. We block the first
-// tools/list, invalidate during it, release it, then assert a SECOND ListTools
-// still issues a fresh RPC (the stale result was not cached).
+// InvalidateToolsCache that runs WHILE a ListTools fetch is in flight must keep
+// that fetch's stale result out of the cache, so a second ListTools refetches.
 func TestMCP_InvalidateDuringFetchNotCached(t *testing.T) {
 	ctx := context.Background()
 

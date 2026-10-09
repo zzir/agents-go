@@ -1,12 +1,10 @@
 package session
 
-// ErrorCode is the stable, machine-readable classification of an SDK error;
-// it survives serialization, so a transport can carry why a run failed. The
+// ErrorCode is the stable, machine-readable classification of an SDK error. The
 // set is open: an unrecognized code gets generic handling, never a failure.
 type ErrorCode string
 
-// The codes the SDK produces: lowercase snake_case, never changed once shipped
-// — renaming one reclassifies errors for every consumer branching on it.
+// The codes the SDK produces: lowercase snake_case, never renamed once shipped.
 const (
 	// CodeUnknown is what CodeOf reports for an error the SDK did not classify,
 	// including a plain error from user code.

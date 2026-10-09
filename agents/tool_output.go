@@ -9,26 +9,15 @@ import (
 	"github.com/zzir/agents-go/internal/oaiitems"
 )
 
-// ToolOutputContent is one content part of a structured tool result fed back to
-// the model as function_call_output content. A function tool returns a value
-// implementing this interface — or a []ToolOutputContent for several parts — to
-// hand the model native text, image or file input instead of a plain string or
-// JSON result.
-//
-// The interface is sealed: ToolOutputText, ToolOutputImage and ToolOutputFile
-// are its only implementations, mirroring the Responses API's input_text,
-// input_image and input_file content parts.
-//
-// A tool that returns an ordinary value (string, struct, …) still has it
-// stringified as before; only values implementing this interface take the
-// multimodal content path.
+// ToolOutputContent is one content part of a multimodal tool result (native
+// text, image or file input); a tool returns one, or a []ToolOutputContent.
+// Sealed: ToolOutputText, ToolOutputImage and ToolOutputFile.
 type ToolOutputContent interface {
 	isToolOutputContent()
 	toContentParam() responses.ResponseFunctionCallOutputItemUnionParam
 }
 
-// ToolOutputText is a plain-text content part. It is equivalent to returning the
-// string directly, but can be combined with images/files in a []ToolOutputContent.
+// ToolOutputText is a plain-text content part, combinable with images and files.
 type ToolOutputText struct {
 	Text string
 }
@@ -39,8 +28,7 @@ func (t ToolOutputText) toContentParam() responses.ResponseFunctionCallOutputIte
 	return responses.ResponseFunctionCallOutputItemParamOfInputText(t.Text)
 }
 
-// ToolOutputImageDetail is the requested fidelity of a ToolOutputImage. Use the
-// DetailLow, DetailHigh, DetailAuto or DetailOriginal constants.
+// ToolOutputImageDetail is the requested fidelity of a ToolOutputImage.
 type ToolOutputImageDetail string
 
 // The predefined image-detail levels.
@@ -51,10 +39,8 @@ const (
 	DetailOriginal ToolOutputImageDetail = "original"
 )
 
-// ToolOutputImage is an image content part handed to the model as native image
-// input. Set exactly one of ImageURL (a fully-qualified URL, or a data: URL
-// carrying base64 image data) or FileID (an already-uploaded OpenAI file).
-// Detail is optional: DetailLow, DetailHigh, DetailAuto or DetailOriginal.
+// ToolOutputImage is an image content part: exactly one of ImageURL (a URL or
+// data: URL) or FileID (an uploaded OpenAI file); Detail is optional.
 type ToolOutputImage struct {
 	ImageURL string
 	FileID   string
@@ -77,8 +63,7 @@ func (im ToolOutputImage) toContentParam() responses.ResponseFunctionCallOutputI
 	return responses.ResponseFunctionCallOutputItemUnionParam{OfInputImage: &p}
 }
 
-// ToolOutputFile is a file content part (e.g. a PDF) handed to the model as
-// native file input. Set one of FileData (base64-encoded bytes), FileURL or
+// ToolOutputFile is a file content part: one of FileData (base64), FileURL or
 // FileID; Filename is optional metadata shown to the model.
 type ToolOutputFile struct {
 	FileData string
@@ -106,14 +91,12 @@ func (f ToolOutputFile) toContentParam() responses.ResponseFunctionCallOutputIte
 	return responses.ResponseFunctionCallOutputItemUnionParam{OfInputFile: &p}
 }
 
-// DataURL builds a base64 data: URL from raw bytes and a MIME type, suitable for
-// ToolOutputImage.ImageURL.
+// DataURL builds a base64 data: URL from raw bytes and a MIME type.
 func DataURL(mimeType string, data []byte) string {
 	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
-// ToolOutputImageFromBytes builds an image content part from raw image bytes and
-// a MIME type, encoding them as a base64 data URL.
+// ToolOutputImageFromBytes builds an image content part from raw bytes and a MIME type.
 func ToolOutputImageFromBytes(mimeType string, data []byte) ToolOutputImage {
 	return ToolOutputImage{ImageURL: DataURL(mimeType, data)}
 }

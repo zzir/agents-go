@@ -8,12 +8,9 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// Compactor decides what a session's history should look like as model context.
-//
-// It takes the entries the run would otherwise send and returns the ones it
-// should. It never deletes — the answer is a projection of a log that stays
-// whole, which is what lets a session be forked, replayed and read concurrently
-// while its context shrinks. Build one with compaction.New.
+// Compactor decides what a session's history should look like as model
+// context: a projection of a log that stays whole, never a deletion — see
+// spec §2.5f. Build one with compaction.New.
 type Compactor interface {
 	Compact(ctx context.Context, entries []session.Entry) ([]session.Entry, error)
 }
@@ -22,39 +19,27 @@ type Compactor interface {
 type CompactionPoint uint8
 
 const (
-	// CompactBeforeRun compacts after reading the session, before the first
-	// model call. It is what keeps a long conversation from blowing the
-	// context window on its very first turn.
+	// CompactBeforeRun compacts after reading the session, before the first model call.
 	CompactBeforeRun CompactionPoint = 1 << iota
 
-	// CompactAtSavePoint compacts at each turn boundary — after the turn's
-	// items are persisted, before the next model call. It is the point that
-	// matters for agentic work: a run that calls thirty tools overruns its
-	// window inside a single run, long before a run-level pass would look.
+	// CompactAtSavePoint compacts at each turn boundary, after the turn's
+	// items are persisted and before the next model call.
 	CompactAtSavePoint
 
-	// CompactAfterRun compacts once the run's final output is produced and
-	// persisted. It changes nothing about this run — it shrinks what the next
-	// one starts from.
-	//
-	// This is where a self-compacting STORAGE gets its turn (a server-side
-	// compact API); a Compactor records its result here as a checkpoint.
+	// CompactAfterRun compacts once the final output is persisted, shrinking
+	// what the next run starts from; a self-compacting storage takes this point.
 	CompactAfterRun
 )
 
 // Has reports whether p includes q.
 func (p CompactionPoint) Has(q CompactionPoint) bool { return p&q != 0 }
 
-// CompactionOptions configures context compaction for a run — a run-level
-// concern, since what to drop depends on the model and its context window
-// (spec §2.5f).
+// CompactionOptions configures context compaction for a run — see spec §2.5f.
 type CompactionOptions struct {
-	// Compactor shrinks the context. Nil disables compaction entirely.
+	// Compactor shrinks the context; nil disables compaction.
 	Compactor Compactor
 
-	// Points selects when to consult the Compactor. The zero value means all
-	// of them, which is the useful default — a caller who wants no compaction
-	// leaves Compactor nil rather than clearing this.
+	// Points selects when to consult the Compactor; zero means all of them.
 	Points CompactionPoint
 }
 
@@ -66,29 +51,26 @@ func (c CompactionOptions) active(point CompactionPoint) bool {
 	return c.Points == 0 || c.Points.Has(point)
 }
 
-// compactContext asks the Compactor what the model's context should be, returning
-// entries unchanged when compaction is off, inapplicable, or failed (spec §2.5f).
+// compactContext asks the Compactor what the model's context should be,
+// returning entries unchanged when compaction is off, inapplicable or failed —
+// see spec §2.5f.
 func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entries []session.Entry) ([]session.Entry, bool) {
 	if !r.opts.Compaction.active(point) {
 		return entries, false
 	}
 	if r.opts.Conversation.Session == nil {
-		// No history to shrink: the caller's input is all the context there is.
 		return entries, false
 	}
 	if _, ok := r.opts.Conversation.Session.Storage().(session.CompactionAware); ok {
-		// A self-compacting storage takes the after-run point instead; the two
-		// never both run on one session.
+		// A self-compacting storage takes the after-run point instead.
 		return entries, false
 	}
 
-	// The span opens only when a pass actually runs, so no-op turns leave the
-	// trace alone.
+	// The span opens only when a pass actually runs.
 	span := r.trace.StartCompactionSpan(r.agentParentID())
 	before := len(entries)
 	out, err := r.opts.Compaction.Compactor.Compact(ctx, entries)
 	if err != nil {
-		// Aborting would turn a housekeeping problem into a failed run.
 		span.SetError(err.Error(), nil)
 		span.Finish()
 		r.log.component("compaction").Warn(ctx, "compaction pass failed; continuing uncompacted",
@@ -100,8 +82,7 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 	span.Set("before_items", before)
 	span.Set("after_items", len(out))
 	span.Finish()
-	// Whole entries, not the count: same count with different content is a
-	// legal pass (spec §2.5f).
+	// Whole entries, not the count: same count with different content is a legal pass.
 	changed := changedEntries(entries, out)
 	if changed {
 		r.log.component("compaction").Info(ctx, "context compacted",
@@ -113,7 +94,7 @@ func (r *runner) compactContext(ctx context.Context, point CompactionPoint, entr
 }
 
 // changedEntries reports whether a compaction pass altered the context, by
-// whole-entry identity rather than by size.
+// whole-entry identity.
 func changedEntries(before, after []session.Entry) bool {
 	return !slices.EqualFunc(before, after, session.Entry.Equal)
 }
@@ -133,7 +114,7 @@ func (p CompactionPoint) String() string {
 }
 
 // recompactAtSavePoint rebuilds the run's context from the persisted log at
-// CompactAtSavePoint (spec §2.5f); ok=false leaves the caller's context alone.
+// CompactAtSavePoint; ok=false leaves the caller's context alone — see spec §2.5f.
 func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, ok bool, err error) {
 	if !r.opts.Compaction.active(CompactAtSavePoint) {
 		return nil, false, nil
@@ -143,9 +124,8 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, o
 		return nil, false, nil
 	}
 
-	// The compactor indexes the whole branch, so the checkpoint after the run
-	// describes what the passes saw; the history limit bounds the projection
-	// afterwards, as it does for the first turn (spec §2.5f).
+	// The whole branch is compacted; the history limit bounds the projection
+	// afterwards.
 	entries, err := sess.ContextEntries(ctx, session.Cursor{})
 	if err != nil {
 		return nil, false, err
@@ -164,29 +144,23 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, o
 	return normalizeStoredInput(history), true, nil
 }
 
-// historyWindow applies Conversation.Settings to entries the way the first
-// turn's read does: the newest Limit of them, all when unbounded.
+// historyWindow applies Conversation.Settings to entries: the newest Limit, all
+// when unbounded.
 func (r *runner) historyWindow(entries []session.Entry) []session.Entry {
 	return session.PageEntries(entries, session.Cursor{Limit: -session.ResolveLimit(r.opts.Conversation.Settings)})
 }
 
-// CompactionCheckpointer is an optional Compactor capability: describe the last
-// pass as an append-only checkpoint entry. It is optional — a compactor that
-// only reshapes context in memory has nothing durable to record.
+// CompactionCheckpointer is an optional Compactor capability: describe the
+// last pass as an append-only checkpoint entry.
 type CompactionCheckpointer interface {
-	// Checkpoint returns the entry recording what the compactor folded away
-	// from exactly this context — the entries the caller's own preceding Compact
-	// call saw. ok is false when nothing was folded, and when the compactor's
-	// shared state no longer describes these entries: a concurrent run may have
-	// re-aimed it, and recording that here would leak another conversation's
-	// exclusions into this log (spec §2.5f).
-	//
-	// seen is that preceding Compact call's INPUT, not its result.
+	// Checkpoint records what the preceding Compact call folded away from
+	// seen, that call's INPUT; ok=false when nothing was folded or the
+	// compactor's state no longer describes seen — see spec §2.5f.
 	Checkpoint(seen []session.Entry) (session.Entry, bool, error)
 }
 
-// checkpointAfterRun appends the run's compaction as a checkpoint entry and reports
-// whether it wrote one; only a CompactionCheckpointer runs the after-run pass.
+// checkpointAfterRun appends the run's compaction as a checkpoint entry and
+// reports whether it wrote one.
 func (r *runner) checkpointAfterRun(ctx context.Context) bool {
 	if !r.opts.Compaction.active(CompactAfterRun) || r.opts.Conversation.Session == nil {
 		return false

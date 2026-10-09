@@ -1,21 +1,6 @@
-// Command contextmanagement demonstrates the levers a run can hand the model
-// for managing its own context.
-//
-// The budget notice: every model call ends with one line saying how full the
-// window is, appended to the input rather than the instructions so a cached
-// prefix stays cached, and never written to the session.
-//
-// The history tools: history_search and history_read read the session's log,
-// folded history included, so the model can find what its context no longer
-// holds. Here the third question can only be answered by searching.
-//
-// The memory tools: memory_write and friends give the model a memory of its
-// own, by scope. The session scope is its working notes; a host may bind
-// more, writable or not, behind approval or not.
-//
-// The reset: new_context lets the model start a fresh window at the turn's
-// end; the compactor folds everything but the latest question and carries
-// the session memory in its place, which is what the last question tests.
+// Command contextmanagement demonstrates the levers a run hands the model for
+// managing its own context: the budget notice, the history tools, the memory
+// tools and a new_context reset — see spec §2.5i and docs/howto/sessions.md.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/contextmanagement
 package main
@@ -38,8 +23,8 @@ func main() {
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 	sess := session.NewInMemorySession()
 
-	// One writable scope: the conversation's own notes. A second, read-only
-	// or approval-gated scope would be one more ScopeSpec.
+	// One writable scope, the conversation's own notes; another scope is one
+	// more ScopeSpec.
 	notes := memory.NewInMemoryStore()
 	scopes := []memory.ScopeSpec{{
 		Scope: memory.Scope{Kind: "session", ID: "demo"}, Name: "session", Writable: true,
@@ -57,23 +42,21 @@ func main() {
 			agents.NewContextTool()),
 	}
 
-	// A compactor that never folds on its own; a reset is the model's call,
-	// and what it carries over is the session memory.
+	// Never folds on its own; a model-requested reset carries the session memory over.
 	compactor := compaction.New(&compaction.TruncationStrategy{Trigger: compaction.Never()}, nil)
 	compactor.ResetSummary = func(ctx context.Context) (string, error) {
 		return memory.Snapshot(ctx, notes, scopes[0].Scope, 20_000)
 	}
 
-	// The window is declared: no provider reports it. Occupied stays zero
-	// here, so the very first call carries no figure and every later call
-	// reports the run's own last measured call.
+	// Window is declared: no provider reports it. Occupied stays zero, so the
+	// first call carries no figure and later calls report the last measured one.
 	budget := agents.ContextBudget{Window: 128_000}.InputFilter()
 
 	opts := agents.RunOptions{
 		Model: agents.ModelOptions{
 			Provider: provider,
-			// Wrapping the filter shows what the model is sent; a real program
-			// installs budget.InputFilter() directly.
+			// Wrapped only to print the notice; a real program installs budget
+			// directly.
 			InputFilter: func(ctx context.Context, rc *agents.RunContext, a *agents.Agent, data agents.ModelInputData) (agents.ModelInputData, error) {
 				out, err := budget(ctx, rc, a, data)
 				if err == nil && len(out.Input) > len(data.Input) {

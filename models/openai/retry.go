@@ -18,10 +18,8 @@ var unwrapAPIError = modelkit.UnwrapAs(func(e *oai.Error) (int, http.Header) {
 	return e.StatusCode, e.Response.Header
 })
 
-// RetryableError reports whether err from a Responses API call is transient and
-// worth retrying: HTTP 408/409/429 and any 5xx (with an explicit X-Should-Retry
-// header outranking the status), plus network-level transport errors; never
-// context cancellation. See modelkit.RetryableError for the full rules.
+// RetryableError reports whether err from a Responses API call is transient
+// and worth retrying, by modelkit.RetryableError's rules.
 //
 // Use it as agents.RetryPolicy.RetryIf:
 //

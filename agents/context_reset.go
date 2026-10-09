@@ -9,17 +9,14 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// ContextResetter is an optional Compactor capability: fold everything but
-// the newest user message on request, carrying whatever the compactor keeps
-// for the fresh context (spec §2.5i). compaction.Compactor implements it.
+// ContextResetter is an optional Compactor capability: fold everything but the
+// newest user message on request — see spec §2.5i.
 type ContextResetter interface {
 	Reset(ctx context.Context, entries []session.Entry) ([]session.Entry, error)
 }
 
-// NewContextTool returns new_context: the model asks for a fresh context
-// window, which the run grants at the turn's save point (spec §2.5i). Give
-// it only to a run whose session can reset; elsewhere the request is
-// recorded as ignored.
+// NewContextTool returns new_context, by which the model asks for a fresh
+// context window at the turn's save point — see spec §2.5i.
 func NewContextTool() *Tool {
 	return NewTool("new_context",
 		"Start a new context window when the current one no longer helps. It takes effect when this turn ends: "+
@@ -33,10 +30,9 @@ func NewContextTool() *Tool {
 		})
 }
 
-// resetContext performs a model-requested reset at the save point: a
-// CompactionAware storage compacts with Reset set, a ContextResetter folds
-// in memory. did reports that the context was rebuilt; a session that
-// cannot reset ignores the request and says so in a diagnostic.
+// resetContext performs a model-requested reset at the save point (a
+// CompactionAware storage or a ContextResetter); did reports the context was
+// rebuilt, and a session that cannot reset records a diagnostic.
 func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool, err error) {
 	sess := r.opts.Conversation.Session
 	if sess == nil {
@@ -84,8 +80,7 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 			return nil, false, nil
 		}
 		startSpan()
-		// The whole branch, as every compactor pass reads it; the history
-		// limit applies to the projection below (spec §2.5f).
+		// The whole branch; the history limit applies to the projection below.
 		before, rerr := sess.ContextEntries(ctx, session.Cursor{})
 		if rerr != nil {
 			return nil, false, rerr
@@ -108,9 +103,8 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 	return normalizeStoredInput(history), true, nil
 }
 
-// turnDidWork reports whether a turn did anything but ask for a reset: a
-// tool call other than new_context, or a message. Such a turn ends the
-// fresh state, so a later reset request is honored again.
+// turnDidWork reports whether a turn did anything but ask for a reset, which
+// ends the fresh state — see spec §2.5i.
 func turnDidWork(items []*RunItem) bool {
 	for _, it := range items {
 		switch it.Kind {

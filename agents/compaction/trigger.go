@@ -1,8 +1,7 @@
 package compaction
 
-// Trigger decides whether a strategy should act on an index. Strategies take
-// two, one to start and one to stop, so a pass can stop at a comfortable size
-// rather than re-trigger next turn.
+// Trigger decides whether a strategy should act on an index; a strategy takes
+// one to start and one to stop.
 type Trigger func(*Index) bool
 
 // Always fires unconditionally.
@@ -11,9 +10,7 @@ func Always() Trigger { return func(*Index) bool { return true } }
 // Never fires.
 func Never() Trigger { return func(*Index) bool { return false } }
 
-// TokensExceed fires when the estimated context is larger than n. Its
-// inversion — stop once the history is comfortably under budget — is a Target
-// written inline: func(idx *Index) bool { return idx.ContextTokens() < n }.
+// TokensExceed fires when the estimated context is larger than n.
 func TokensExceed(n int) Trigger {
 	return func(idx *Index) bool { return idx.ContextTokens() > n }
 }
@@ -23,8 +20,7 @@ func GroupsExceed(n int) Trigger {
 	return func(idx *Index) bool { return idx.Counts().IncludedGroups > n }
 }
 
-// Any fires when at least one trigger does. A Trigger is a plain predicate;
-// compose anything richer inline.
+// Any fires when at least one trigger does.
 func Any(triggers ...Trigger) Trigger {
 	return func(idx *Index) bool {
 		for _, t := range triggers {
@@ -39,8 +35,8 @@ func Any(triggers ...Trigger) Trigger {
 // fires reports a trigger's verdict, treating nil as "no".
 func fires(t Trigger, idx *Index) bool { return t != nil && t(idx) }
 
-// reachedTarget reports whether a pass should stop. With no target, stopping
-// means the trigger no longer fires — the minimum that avoids an immediate re-trigger.
+// reachedTarget reports whether a pass should stop: target, or with none, the
+// trigger no longer firing.
 func reachedTarget(target, trigger Trigger, idx *Index) bool {
 	if target != nil {
 		return target(idx)

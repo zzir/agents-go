@@ -12,66 +12,53 @@ import (
 // ErrNotFound is returned by Store lookups for an unknown task.
 var ErrNotFound = errors.New("tasks: not found")
 
-// Store persists tasks. It requires TRANSACTIONAL semantics: every transition
-// below is a compare-and-set, and correctness depends on it — spec §2.13. The
-// SDK ships InMemoryStore; the sessions module ships a SQL one.
+// Store persists tasks on a transactional backend: every transition below is a
+// compare-and-set, and each answers an unknown id with ErrNotFound, never
+// won=false — see spec §2.13. InMemoryStore is built in; the sessions module
+// ships SQL ones.
 type Store interface {
 	Create(ctx context.Context, t *Task) error
 	Get(ctx context.Context, id string) (*Task, error)
 	ByChildSession(ctx context.Context, sessionID string) (*Task, error)
 	ListByParent(ctx context.Context, parentSessionID string) ([]Task, error)
 
-	// Finalize records a terminal status and its result in ONE conditional
-	// transition, only while the task is non-terminal AND still on the attempt
-	// runID names. won=false means another finalizer owned the transition or the
-	// attempt is no longer current: do nothing further; an unknown id is
-	// ErrNotFound. state, when non-nil, is the job's final State, written in
-	// the same transition — spec §2.13.
+	// Finalize records a terminal status, result and non-nil state in one
+	// compare-and-set on runID; won=false means the row moved first — see spec §2.13.
 	Finalize(ctx context.Context, id, runID string, st Status, summary, result string, state json.RawMessage) (won bool, err error)
 
-	// RetryClaim reopens a failed task for another attempt, in one transition
-	// and only while it is failed and under maxAttempts (counts the original
-	// run; <= 0 is no limit): working, run_id=newRunID, attempt+1, summary and
-	// result cleared. won=false means the row could not be claimed (not failed,
-	// out of attempts, a lost race); an unknown id is ErrNotFound — spec §2.13.
+	// RetryClaim reopens a failed task in one compare-and-set: working on
+	// newRunID, attempt+1, summary and result cleared, only under maxAttempts
+	// (<= 0 is no limit) — see spec §2.13.
 	RetryClaim(ctx context.Context, id, newRunID string, maxAttempts int) (won bool, err error)
 
-	// Advance moves a working task on to its next run in one transition, only
-	// while runID is current: run_id=nextRunID, State replaced by state (nil
-	// keeps it). Attempt is untouched; nextRunID may equal runID, which
-	// rewrites State in place. won=false means another writer moved the task
-	// first; an unknown id is ErrNotFound — spec §2.13.
+	// Advance moves a working task from runID to nextRunID in one compare-and-set,
+	// replacing State unless state is nil; the same id on both sides rewrites
+	// State in place — see spec §2.13.
 	Advance(ctx context.Context, id, runID, nextRunID string, state json.RawMessage) (won bool, err error)
 
 	// ReleaseRetryClaim undoes a RetryClaim whose run never launched: failed
-	// again, the attempt rolled back (it counts runs the task HAD), the launch
-	// failure recorded as summary/result — an ending reported like any other.
-	// Only while runID is current and the row is working; won=false means
-	// another writer moved the task first; an unknown id is ErrNotFound — spec §2.13.
+	// again, the attempt rolled back, the launch failure as summary/result, only
+	// while runID is current and working — see spec §2.13.
 	ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (won bool, err error)
 
-	// MarkInputRequired flips working → input_required, only while runID is the
-	// current attempt. Best-effort: a concurrent terminal transition or a newer
-	// attempt wins (spec §2.13).
+	// MarkInputRequired flips working → input_required while runID is current;
+	// a lost race is a silent no-op — see spec §2.13.
 	MarkInputRequired(ctx context.Context, id, runID string) error
-	// ReclaimWorking flips input_required → working when an approval resumes
-	// the run, only while runID is current. false means the resume must be
-	// abandoned and a stale approval discarded, not retried.
+	// ReclaimWorking flips input_required → working while runID is current; false
+	// means the approval is stale: discard it, do not retry — see spec §2.13.
 	ReclaimWorking(ctx context.Context, id, runID string) (bool, error)
 
-	// FailOrphans marks every still-working task failed and returns them, so
-	// each parent can be told (spec §2.13). Called at startup.
+	// FailOrphans fails every still-working task and returns the rows, for the
+	// restart sweep — see spec §2.13.
 	FailOrphans(ctx context.Context) ([]Task, error)
-	// ListNonTerminal returns a parent's unfinished tasks, for a teardown that
-	// must stop them.
+	// ListNonTerminal returns a parent's unfinished tasks, for a teardown to stop.
 	ListNonTerminal(ctx context.Context, parentSessionID string) ([]Task, error)
 
 	Delete(ctx context.Context, id string) error
 }
 
-// InMemoryStore is a goroutine-safe Store for tests and single-process use.
-// One lock guards every operation: the operations are short and a torn read of
-// the state machine is a wrong answer, not a slow one.
+// InMemoryStore is a goroutine-safe Store for tests and single-process use;
+// one lock guards every operation.
 type InMemoryStore struct {
 	mu    sync.Mutex
 	tasks map[string]*Task
@@ -139,8 +126,7 @@ func (s *InMemoryStore) ListByParent(_ context.Context, parentSessionID string) 
 	return out, nil
 }
 
-// Finalize implements Store. The whole transition happens under one lock, so a
-// reader can never see a terminal task whose result has not landed.
+// Finalize implements Store.
 func (s *InMemoryStore) Finalize(_ context.Context, id, runID string, st Status, summary, result string, state json.RawMessage) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -179,8 +165,6 @@ func (s *InMemoryStore) RetryClaim(_ context.Context, id, newRunID string, maxAt
 	t.Status = StatusWorking
 	t.RunID = newRunID
 	t.Attempt = t.AttemptNo() + 1
-	// The previous attempt's account, cleared: it describes a run that is no
-	// longer this task's.
 	t.Summary, t.Result = "", ""
 	t.UpdatedAt = time.Now().UTC()
 	return true, nil
@@ -217,8 +201,7 @@ func (s *InMemoryStore) ReleaseRetryClaim(_ context.Context, id, runID, summary,
 		return false, nil
 	}
 	t.Status = StatusFailed
-	// The claim counted a run that never happened; AttemptNo() floors at 1, so
-	// the rollback can never go below the original run.
+	// Floored at 1: the rollback never goes below the original run.
 	t.Attempt = max(t.AttemptNo()-1, 1)
 	t.Summary, t.Result = summary, result
 	t.UpdatedAt = time.Now().UTC()
@@ -259,8 +242,7 @@ func (s *InMemoryStore) FailOrphans(_ context.Context) ([]Task, error) {
 	var out []Task
 	for _, id := range s.order {
 		t := s.tasks[id]
-		// input_required rows are kept: their pending approval persists and
-		// resumes the run, so they are not orphans.
+		// A paused row is not an orphan — see spec §2.13.
 		if t == nil || t.Status != StatusWorking {
 			continue
 		}

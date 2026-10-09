@@ -29,10 +29,8 @@ type messagePartJSON struct {
 }
 
 // MessageItem synthesizes a canonical assistant message item with one
-// output_text part per text. Several parts is how a backend that splits one
-// assistant turn into consecutive text blocks keeps them ONE message: the
-// runner reads only a turn's last message item. id may be empty when the
-// backend does not assign item ids.
+// output_text part per text; several parts keep a backend's consecutive text
+// blocks ONE message, since the runner reads only a turn's last. id may be empty.
 func MessageItem(id string, texts ...string) (agents.OutputItem, error) {
 	parts := make([]messagePartJSON, 0, len(texts))
 	for _, text := range texts {
@@ -86,10 +84,9 @@ func RefusalItem(id, refusal string) (agents.OutputItem, error) {
 	return OutputItemFromJSON(raw)
 }
 
-// FunctionCallItem synthesizes a canonical function_call item. argumentsJSON is
-// the tool arguments as a JSON document; empty means "{}" — the Responses
-// format carries arguments as a string that must itself parse as JSON, and the
-// runner hands it to the tool's argument decoder verbatim.
+// FunctionCallItem synthesizes a canonical function_call item; argumentsJSON
+// is the arguments as a JSON document (empty means "{}"), handed to the tool's
+// argument decoder verbatim.
 func FunctionCallItem(id, callID, name, argumentsJSON string) (agents.OutputItem, error) {
 	if argumentsJSON == "" {
 		argumentsJSON = "{}"
@@ -121,10 +118,9 @@ type reasoningTextJSON struct {
 	Text string `json:"text"`
 }
 
-// ReasoningItem synthesizes a canonical reasoning item. text goes into the
-// content parts (reasoning_text), not the summary, where raw reasoning text
-// belongs; encryptedContent is the adapter's opaque continuity blob (thinking
-// signature, redacted reasoning, …), kept across session storage. text may be "".
+// ReasoningItem synthesizes a canonical reasoning item: text (may be "") goes
+// into the content parts as reasoning_text, encryptedContent is the adapter's
+// opaque continuity blob, kept across session storage.
 func ReasoningItem(id, text, encryptedContent string) (agents.OutputItem, error) {
 	var content []reasoningTextJSON
 	if text != "" {

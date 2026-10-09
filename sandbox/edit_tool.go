@@ -36,12 +36,9 @@ const applyPatchDesc = "Apply a patch to one or more files in the sandbox. Forma
 	"'*** Move to: new/path' right after '*** Update File:'. All files in one " +
 	"patch apply atomically — a change that can't be located changes nothing."
 
-// ApplyPatchTool returns a tool that applies a Codex-style patch to files in the
-// sandbox. It edits through the Sandbox abstraction, so it targets the same
-// filesystem the exec/read/write tools do. Multiple files change atomically:
-// new content is computed entirely in memory first — any hunk that can't be
-// located aborts before a single file is touched — and if a write fails
-// mid-commit the already-applied operations are rolled back from a snapshot.
+// ApplyPatchTool returns a tool that applies a Codex-style patch to files in
+// the sandbox, all of them atomically: content is computed in memory first, and
+// a write that fails mid-commit is rolled back from a snapshot (decisions §5.48).
 func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
 	cfg = cfg.withDefaults()
 	return agents.NewTool(
@@ -123,8 +120,9 @@ func applyPatch(ctx context.Context, sb Sandbox, patch string) (string, error) {
 		switch e.op {
 		case opAdd:
 			p, body := e.path, []byte(e.addBody)
-			// Adding over an existing file is an error, not an overwrite; CreateExclusive
-			// makes that race-free, and its undo can never delete another patch's file.
+			// Adding over an existing file is an error, not an overwrite;
+			// CreateExclusive makes that race-free, and its undo can never
+			// delete another patch's file.
 			ops = append(ops, fsOp{
 				do: func() error {
 					if err := sb.CreateExclusive(ctx, p, body); err != nil {

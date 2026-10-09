@@ -150,16 +150,9 @@ func TestSQLTaskStore_Listings(t *testing.T) {
 	}
 }
 
-// ListNonTerminal filters in SQL, so its idea of "terminal" is a copy of
-// tasks.Status.Terminal rather than a call to it. This drives a task into each
-// of the statuses below and asks whether the two still agree — one that changes
-// sides upstream shows up here as a task listed as live after it finished (a
-// teardown then tries to cancel it) or dropped while it is still running (a
-// teardown leaves it behind).
-//
-// The list is written out because tasks exports no enumeration to walk, which
-// is also this test's blind spot: a status ADDED upstream has to be added here
-// and to terminalStatuses by hand.
+// ListNonTerminal filters in SQL, so terminalStatuses is a copy of
+// tasks.Status.Terminal: this drives a task into each status and checks the two
+// agree. A status ADDED upstream must be added here and to terminalStatuses by hand.
 func TestSQLTaskStore_ListNonTerminalMatchesStatusTerminal(t *testing.T) {
 	ctx := context.Background()
 	s := newTaskStore(t)

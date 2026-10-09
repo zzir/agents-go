@@ -25,8 +25,7 @@ type SpanError struct {
 	Data    map[string]any
 }
 
-// Span types attached by the typed span constructors (StartAgentSpan, etc.) so
-// consumers can dispatch on Span.Type instead of parsing Span.Name.
+// Span types set by the typed span constructors; consumers dispatch on Span.Type.
 const (
 	SpanTypeAgent      = "agent"
 	SpanTypeGeneration = "generation"
@@ -34,13 +33,12 @@ const (
 	SpanTypeHandoff    = "handoff"
 	SpanTypeGuardrail  = "guardrail"
 	SpanTypeCompaction = "compaction"
-	// SpanTypeModelRetry is one retried model call, nested under its generation
+	// SpanTypeModelRetry marks one failed model attempt under its generation
 	// span (spec §2.11e).
 	SpanTypeModelRetry = "model_retry"
 	// SpanTypeMCP is an MCP server round trip: listing tools, or calling one.
 	SpanTypeMCP = "mcp"
-	// SpanTypeSandbox is a sandbox operation: running a command, applying a
-	// patch, reading or writing a file.
+	// SpanTypeSandbox is a sandbox operation: a command, a patch, a file read or write.
 	SpanTypeSandbox = "sandbox"
 )
 
@@ -51,14 +49,13 @@ type Span struct {
 	SpanID   string
 	ParentID string
 	Name     string
-	// Type is one of the SpanType constants when the span was created via a typed
-	// constructor; it is empty for spans from the untyped StartSpan. Data holds
-	// the span's structured fields (e.g. "name", "stage", "response_id").
+	// Type is a SpanType constant, or empty for a span from the untyped StartSpan.
 	Type      string
 	StartedAt time.Time
 	EndedAt   time.Time
 	Error     *SpanError
-	Data      map[string]any
+	// Data holds the span's structured fields ("name", "stage", "response_id", …).
+	Data map[string]any
 }
 
 func (*Span) isTraceItem() {}
@@ -76,11 +73,9 @@ type Processor interface {
 	Shutdown(ctx context.Context)
 }
 
-// Exporter ships finished traces and spans to a destination. Export may be
-// called concurrently (a periodic flush overlapping ForceFlush/Shutdown), so
-// implementations must be safe for concurrent use; batches are never
-// delivered twice, but ordering across calls is not guaranteed. Each Item is
-// a *Trace or a *Span — the union is sealed, so type-switch:
+// Exporter ships finished traces and spans to a destination. Export may run
+// concurrently (a periodic flush overlapping ForceFlush); a batch is delivered
+// once, in no guaranteed order. Each Item is a *Trace or a *Span, so type-switch:
 //
 //	func (e *myExporter) Export(items []Item) {
 //	    for _, item := range items {
@@ -96,19 +91,16 @@ type Exporter interface {
 	Export(items []Item)
 }
 
-// randHex returns 2n random hex characters. crypto/rand.Read never fails as of
-// Go 1.24 (it aborts the program if the OS source is unavailable).
+// randHex returns 2n random hex characters; crypto/rand.Read cannot fail (Go 1.24+).
 func randHex(n int) string {
 	buf := make([]byte, n)
 	_, _ = rand.Read(buf)
 	return hex.EncodeToString(buf)
 }
 
-// NewTraceID returns a fresh trace identifier: "trace_" followed by 32 hex
-// characters. The shape is what trace backends and dashboards already parse.
+// NewTraceID returns a fresh trace identifier: "trace_" followed by 32 hex characters.
 func NewTraceID() string { return "trace_" + randHex(16) }
 
 // NewSpanID returns a fresh span identifier: "span_" followed by 16 hex
-// characters — 8 bytes, the OpenTelemetry width, so an OTel-shaped exporter
-// reuses it verbatim (decisions §5.6b).
+// characters, the OpenTelemetry width — see decisions §5.6b.
 func NewSpanID() string { return "span_" + randHex(8) }

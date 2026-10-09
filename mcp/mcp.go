@@ -52,23 +52,20 @@ type Options struct {
 	// (unprefixed) tool name and may consult the run context.
 	ToolFilter func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, toolName string) bool
 
-	// ToolNamePrefix is prepended to every exposed tool name (e.g. "github_") to
-	// avoid collisions when multiple servers expose same-named tools. The server
-	// is still called with the original name.
+	// ToolNamePrefix is prepended to every exposed tool name (e.g. "github_");
+	// the server is still called with the original name.
 	ToolNamePrefix string
 
 	// RequireApproval, when set, decides per call whether an exposed MCP tool
-	// needs human approval (HITL), receiving the run context, the current agent
-	// (captured per ListTools call) and the tool's
-	// original (unprefixed) name. For the common static case use ApproveTools:
+	// needs human approval, receiving the run context, the current agent and
+	// the tool's original (unprefixed) name. For the static case use ApproveTools:
 	//
 	//	mcp.Options{RequireApproval: mcp.ApproveTools("write_file")}
 	RequireApproval func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, toolName string) bool
 
-	// MaxRetryAttempts is the number of times to retry a failed list_tools or
-	// call_tool request. 0 (default) means no retries; -1 retries indefinitely.
-	// A call_tool is retried only when the connection could not be made, so a
-	// tool never runs twice; a list_tools retries any transport failure.
+	// MaxRetryAttempts is how many times a failed list_tools or call_tool is
+	// retried: 0 (default) never, -1 indefinitely. A call_tool is retried only
+	// when the connection could not be made (spec §2.16).
 	MaxRetryAttempts int
 
 	// RetryBackoffBase is the base delay for exponential backoff between retries
@@ -77,8 +74,7 @@ type Options struct {
 	RetryBackoffBase time.Duration
 
 	// UseStructuredContent sends a tool result's structuredContent exclusively,
-	// ignoring the content blocks. Off by default: most servers duplicate their
-	// structured data in the blocks.
+	// ignoring the content blocks. Off by default.
 	UseStructuredContent bool
 
 	// OAuthHandler, when set, is passed to the streamable HTTP transport to
@@ -86,10 +82,9 @@ type Options struct {
 	// refresh, dynamic client registration). Ignored for stdio transports.
 	OAuthHandler auth.OAuthHandler
 
-	// Redial builds a fresh transport for a dead connection — one that can connect
-	// NOW (an unstarted command; the same endpoint, headers and OAuth handler).
-	// ctx is the connection's own, so a subprocess bound to it lives as long as
-	// the connection does. Nil: a dead connection is reported, not repaired.
+	// Redial builds a fresh transport for a dead connection, one that can connect
+	// NOW; ctx is the connection's own, so a subprocess bound to it lives as long
+	// as the connection does. Nil: a dead connection is reported, not repaired.
 	Redial func(ctx context.Context) (mcpsdk.Transport, error)
 }
 
@@ -350,10 +345,9 @@ func (s *Server) allow(toolName string) bool {
 	return true
 }
 
-// ListTools implements agents.MCPServer, fetching (or reusing a cached) tool
-// list and adapting each into an agents.Tool that proxies to CallTool.
-// Static (AllowedTools/BlockedTools) and dynamic (ToolFilter) filters run here on
-// every call, so caching never hides a context-dependent filter decision.
+// ListTools implements agents.MCPServer, adapting the (possibly cached) tool
+// list into agents.Tools that proxy to CallTool; the static and dynamic filters
+// run on every call, so caching never hides a context-dependent decision.
 func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]*agents.Tool, error) {
 	span, ctx := tracing.StartSpanFrom(ctx, "mcp.list_tools", tracing.SpanTypeMCP,
 		map[string]any{"server": s.name})
@@ -509,9 +503,8 @@ const (
 var errServerClosed = errors.New("server is closed")
 
 // retryable reports whether err is worth another attempt: a transport failure
-// is; an answer the server sent, or a call after Close, is not (spec §2.16).
-// The transport's own "rejected" counts as an answer unless a failed dial is
-// behind it.
+// is; an answer the server sent (a "rejected" with no failed dial behind it
+// included), or a call after Close, is not (spec §2.16).
 func retryable(err error) bool {
 	if errors.Is(err, errServerClosed) {
 		return false
@@ -593,8 +586,7 @@ func (s *Server) InvalidateToolsCache() {
 
 func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 	schema := schemaToMap(mt.InputSchema)
-	// Capture the required-argument list from the original (non-strict) schema,
-	// used for client-side validation before every call_tool request.
+	// The required-argument list, from the original (non-strict) schema.
 	required := requiredKeys(schema)
 	strict := false
 	if s.opts.Strict {
@@ -632,8 +624,8 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 					args = map[string]any{}
 				}
 			}
-			// Client-side pre-validation of required parameters, before touching
-			// the server: a missing required key is a *agents.UserError.
+			// A missing required argument is a *agents.UserError before the
+			// server is reached.
 			if err := validateRequiredArgs(s.name, originalName, required, args); err != nil {
 				return agents.ToolResult{}, err
 			}
@@ -664,8 +656,6 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 				// Repair the connection but do NOT repeat the call (decisions §5.21).
 				s.healed(err, session)
 				span.SetError(err.Error(), nil)
-				// A transport/protocol failure is fed back to the model via the
-				// FailureErrorFunction (SDK-wide default) so it can recover.
 				return agents.ToolResult{}, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp tool %q call failed: %w", originalName, err))
 			}
 			span.Set("is_error", result.IsError)

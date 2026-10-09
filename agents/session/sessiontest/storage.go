@@ -7,17 +7,9 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// StorageConformance holds a SessionStorage to the entry-lifecycle contract in
-// docs/reference/spec.md §2.5e2.
-//
-// It exists because the contract is mostly implemented by shared code, and
-// shared code only helps if every backend actually routes through it. A backend
-// that reimplements one of these answers is a defect even when its answer looks
-// right, because the next backend will answer differently — which is what four
-// implementations did to every rule in that section before it was written down.
-//
-// newStorage must return an empty store, and must be callable repeatedly within
-// one test.
+// StorageConformance holds a Storage to the entry-lifecycle contract in spec
+// §2.5e2; a backend answering a shared question itself fails even when the answer
+// is right. newStorage returns an empty store and is callable repeatedly in one test.
 func StorageConformance(t *testing.T, newStorage func(t *testing.T) session.Storage) {
 	t.Helper()
 	for _, c := range storageChecks {
@@ -113,11 +105,8 @@ func checkSeqSurvivesReplace(t *testing.T, st session.Storage) {
 	}
 }
 
-// A replace keeps the ids it is given. A rewrite that carries entries over —
-// server-side compaction keeps everything it did not summarize — hands them
-// back as it read them, and an update entry names its target by id: a store
-// that re-mints on the way through leaves the update pointing at an entry no
-// longer there, and a fold that finds no target is dropped in silence.
+// A replace keeps the ids it is given: a rewrite carries entries over as read,
+// and an update names its target by id, so a re-minting store strands it (spec §2.5e2).
 func checkReplaceKeepsIDs(t *testing.T, st session.Storage) {
 	t.Helper()
 	ctx := context.Background()
@@ -128,8 +117,7 @@ func checkReplaceKeepsIDs(t *testing.T, st session.Storage) {
 	storageWrite(t, st, "one", "two")
 	kept := storageEntries(t, st)[1]
 
-	// An entry as a rewrite hands it back: identity intact, and the fields the
-	// store owns left for the store to fill in again.
+	// As a rewrite hands it back: identity intact, store-owned fields cleared.
 	carried := kept
 	carried.ParentID, carried.Seq = "", 0
 	if err := replacer.ReplaceEntries(ctx, carried); err != nil {

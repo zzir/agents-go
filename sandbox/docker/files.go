@@ -6,13 +6,9 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// Every file operation below dispatches the same way: a bind-mounted WorkDir
-// runs on the host under an os.Root (files_host.go), Persistent goes through
-// exec in the container (files_container.go), neither is sandbox.ErrNoWorkDir.
-
-// ReadFile implements sandbox.Sandbox. Files larger than
-// Options.MaxReadFileBytes (default sandbox.DefaultMaxReadFileBytes) fail
-// with sandbox.ErrReadLimitExceeded instead of being loaded into host memory.
+// ReadFile implements sandbox.Sandbox: a bind-mounted WorkDir reads on the
+// host (files_host.go), Persistent through exec (files_container.go); a file
+// over Options.MaxReadFileBytes fails with sandbox.ErrReadLimitExceeded.
 func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 	switch {
 	case s.opts.WorkDir != "":
@@ -36,10 +32,9 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 	}
 }
 
-// CreateExclusive implements sandbox.Sandbox atomically: bind-mount mode uses
-// O_EXCL under os.Root; persistent mode writes a temp file and publishes it with
-// a hard link (ln fails with EEXIST if the target exists). The parent directory
-// is created first so adding into a new directory works.
+// CreateExclusive implements sandbox.Sandbox atomically: O_EXCL under os.Root
+// in bind-mount mode, a temp file published by hard link (EEXIST on an existing
+// target) in persistent mode. Parent directories are created first.
 func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte) error {
 	switch {
 	case s.opts.WorkDir != "":

@@ -11,12 +11,10 @@ import (
 type GuardrailStage string
 
 const (
-	// StageInput inspects the run's input before the first model call. By
-	// default it runs concurrently with that call; set Guardrail.Blocking to
-	// make it a gate that runs to completion first.
+	// StageInput inspects the run's input before the first model call,
+	// concurrently with it unless Guardrail.Blocking is set.
 	StageInput GuardrailStage = "input"
-	// StageOutput inspects the final output after the run produces it and
-	// before it is persisted.
+	// StageOutput inspects the final output before it is persisted.
 	StageOutput GuardrailStage = "output"
 	// StageToolInput inspects a tool call's arguments before the tool runs.
 	StageToolInput GuardrailStage = "tool_input"
@@ -31,8 +29,7 @@ const (
 	// GuardrailAllow lets the run proceed unchanged. The zero value.
 	GuardrailAllow GuardrailAction = iota
 	// GuardrailReplace substitutes GuardrailDecision.Message for the inspected
-	// content and lets the run continue. What gets replaced depends on the
-	// stage; see GuardrailDecision.Message.
+	// content and lets the run continue.
 	GuardrailReplace
 	// GuardrailTrip halts the run with a *GuardrailTripwireError.
 	GuardrailTrip
@@ -42,16 +39,11 @@ const (
 type GuardrailDecision struct {
 	// Action is the verdict. The zero value allows.
 	Action GuardrailAction
-	// Message is the replacement content when Action is GuardrailReplace:
-	//
-	//   StageInput       the run input is replaced by a single user message
-	//                    carrying this text
-	//   StageOutput      it becomes the run's final output
-	//   StageToolInput   the tool does not execute; this becomes its result
-	//   StageToolOutput  it replaces the result sent back to the model
+	// Message is the replacement content when Action is GuardrailReplace: the
+	// run input, the final output, the tool's result or its output, by stage —
+	// see spec §2.6.
 	Message string
-	// OutputInfo is arbitrary diagnostic data carried on the result regardless
-	// of the action, so callers can inspect why a guardrail decided as it did.
+	// OutputInfo is diagnostic data carried on the result whatever the action.
 	OutputInfo any
 }
 
@@ -71,34 +63,28 @@ func Trip(outputInfo any) GuardrailDecision {
 	return GuardrailDecision{Action: GuardrailTrip, OutputInfo: outputInfo}
 }
 
-// GuardrailPayload is what a guardrail inspects. Which fields are populated
-// depends on Stage:
-//
-//	StageInput       Input
-//	StageOutput      Output
-//	StageToolInput   ToolName, ToolCallID, Arguments
-//	StageToolOutput  ToolName, ToolCallID, Arguments, Output
-//
-// Agent is always the agent whose turn is being guarded.
+// GuardrailPayload is what a guardrail inspects; Agent is always the agent
+// whose turn is guarded, the other fields are populated per Stage.
 type GuardrailPayload struct {
 	Stage GuardrailStage
 	Agent *Agent
 
 	// Input is the run input under inspection (StageInput).
 	Input []InputItem
-	// Output is the value under inspection: the run's final output
-	// (StageOutput) or a tool's result (StageToolOutput).
+	// Output is the run's final output (StageOutput) or a tool's result
+	// (StageToolOutput).
 	Output any
 
-	// ToolName, ToolCallID and Arguments describe the tool call under
-	// inspection at the tool stages. Arguments is the raw JSON the model emitted.
+	// ToolName, ToolCallID and Arguments describe the tool call at the tool
+	// stages; Arguments is the raw JSON the model emitted.
 	ToolName   string
 	ToolCallID string
 	Arguments  string
 }
 
 // Guardrail inspects a run at one or more stages and decides whether to allow,
-// substitute, or halt (spec §2.6). One value can cover several stages:
+// substitute or halt; placement decides scope — see spec §2.6. The typed
+// constructors ([NewInputGuardrail] and friends) cover a single stage:
 //
 //	scanner := agents.Guardrail{
 //	    Name:   "pii",
@@ -107,20 +93,13 @@ type GuardrailPayload struct {
 //	        ...
 //	    },
 //	}
-//
-// For a single stage the typed constructors ([NewInputGuardrail] and friends)
-// are shorter. Placement decides scope: guardrails on an [Agent] or in
-// [RunOptions] apply to the run, tool stages included; those on a [Tool] to
-// that tool only.
 type Guardrail struct {
 	// Name identifies the guardrail in results and errors.
 	Name string
-	// Stages lists where this guardrail is consulted. A guardrail with no
-	// stages is never run.
+	// Stages lists where this guardrail is consulted; none means never run.
 	Stages []GuardrailStage
-	// Blocking makes a StageInput guardrail run to completion before the first
-	// model call — a gate. The zero value races the call and cancels it on a
-	// tripwire. No effect at other stages.
+	// Blocking makes a StageInput guardrail a gate before the first model call
+	// instead of racing it. No effect at other stages.
 	Blocking bool
 	// Run inspects the payload and returns a decision.
 	Run func(ctx context.Context, rc *RunContext, p GuardrailPayload) (GuardrailDecision, error)
@@ -131,8 +110,7 @@ func (g Guardrail) Covers(stage GuardrailStage) bool {
 	return slices.Contains(g.Stages, stage)
 }
 
-// resolvedName returns Name, or a stable label when unset (Go has no
-// function-name reflection to name the callback).
+// resolvedName returns Name, or a stable label when unset.
 func (g Guardrail) resolvedName() string {
 	if g.Name != "" {
 		return g.Name
@@ -140,18 +118,16 @@ func (g Guardrail) resolvedName() string {
 	return "guardrail"
 }
 
-// GuardrailResult pairs a guardrail with the decision it made at one stage.
-// Every consulted guardrail produces one, including those that allowed, so
-// callers can read OutputInfo from all of them.
+// GuardrailResult pairs a guardrail with the decision it made at one stage;
+// every consulted guardrail produces one, allowing decisions included.
 type GuardrailResult struct {
 	Guardrail Guardrail
 	Stage     GuardrailStage
 	Decision  GuardrailDecision
 	// Agent is the agent whose turn was guarded.
 	Agent *Agent
-	// Checked is the value that was inspected: the run input (StageInput), the
-	// final output (StageOutput), or the tool result (StageToolOutput). It is
-	// nil at StageToolInput, where Arguments carries the inspected value.
+	// Checked is the inspected value; nil at StageToolInput, where Arguments
+	// carries it.
 	Checked any
 	// ToolName, ToolCallID and Arguments identify the call at the tool stages.
 	ToolName   string
@@ -168,8 +144,7 @@ func (e *GuardrailTripwireError) Error() string {
 	return fmt.Sprintf("%s guardrail %s tripwire triggered", e.Result.Stage, e.Result.Guardrail.resolvedName())
 }
 
-// Stage reports where the tripwire fired, so a caller can branch without
-// inspecting the whole result.
+// Stage reports where the tripwire fired.
 func (e *GuardrailTripwireError) Stage() GuardrailStage { return e.Result.Stage }
 
 func newTripwireError(res GuardrailResult) *GuardrailTripwireError {
@@ -179,8 +154,7 @@ func newTripwireError(res GuardrailResult) *GuardrailTripwireError {
 // --- typed constructors -----------------------------------------------------
 
 // NewInputGuardrail builds a StageInput guardrail from a callback that sees
-// only the input items. Use a [Guardrail] literal when you need the
-// [RunContext], the [Agent], or more than one stage.
+// only the input items; a [Guardrail] literal covers more.
 func NewInputGuardrail(name string, fn func(ctx context.Context, input []InputItem) (GuardrailDecision, error)) Guardrail {
 	return Guardrail{
 		Name:   name,
@@ -240,8 +214,8 @@ func selectStage(guardrails []Guardrail, stage GuardrailStage) []Guardrail {
 	return out
 }
 
-// guardrailPanicError converts a panic recovered from a user callback into an
-// error carrying a truncated stack, so a buggy guardrail fails the run only.
+// guardrailPanicError converts a recovered guardrail panic into an error with a
+// truncated stack.
 func guardrailPanicError(stage GuardrailStage, name string, recovered any) error {
 	stack := debug.Stack()
 	const maxStack = 4096
@@ -262,8 +236,8 @@ func runOne(ctx context.Context, rc *RunContext, g Guardrail, p GuardrailPayload
 }
 
 // runStageConcurrent runs every guardrail covering stage concurrently, failing
-// fast on the first tripwire or error (spec §2.6); Replace is the caller's to apply.
-// Results come back in declaration order, whatever order they finished in.
+// fast on the first tripwire or error; results come back in declaration order —
+// see spec §2.6.
 func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) ([]GuardrailResult, error) {
 	sel := selectStage(guardrails, p.Stage)
 	if len(sel) == 0 {
@@ -277,8 +251,8 @@ func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardr
 		result GuardrailResult
 		err    error
 	}
-	// Buffered to len(sel): every goroutine can deliver its outcome and exit
-	// even when this function has already returned, so none leaks.
+	// Buffered to len(sel) so a late goroutine can deliver and exit after an
+	// early return.
 	done := make(chan outcome, len(sel))
 	for i, g := range sel {
 		go func() {
@@ -309,7 +283,7 @@ func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardr
 }
 
 // inputReplacement reports the substituted run input when a StageInput
-// guardrail returned Replace: the message becomes the whole input (spec §2.6).
+// guardrail returned Replace — see spec §2.6.
 func inputReplacement(results []GuardrailResult) ([]InputItem, bool) {
 	for _, r := range results {
 		if r.Decision.Action == GuardrailReplace {
@@ -319,8 +293,7 @@ func inputReplacement(results []GuardrailResult) ([]InputItem, bool) {
 	return nil, false
 }
 
-// checkedValue is the inspected value recorded on a result; nil at
-// StageToolInput, where Arguments carries it.
+// checkedValue is the inspected value recorded on a result; nil at StageToolInput.
 func checkedValue(p GuardrailPayload) any {
 	switch p.Stage {
 	case StageInput:
@@ -346,8 +319,8 @@ func newGuardrailResult(g Guardrail, p GuardrailPayload, d GuardrailDecision) Gu
 	}
 }
 
-// runStageSequential runs every guardrail covering stage in order, stopping at
-// the first Replace or Trip (spec §2.6); it returns the results so far.
+// runStageSequential runs every guardrail covering stage in order, stopping
+// at the first Replace or Trip; it returns the results so far — see spec §2.6.
 func runStageSequential(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) (results []GuardrailResult, replacement string, replaced bool, err error) {
 	for _, g := range selectStage(guardrails, p.Stage) {
 		d, rerr := runOne(ctx, rc, g, p)

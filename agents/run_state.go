@@ -13,22 +13,17 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// RunStateSchemaVersion is the version stamped into serialized RunState. It
-// round-trips within this SDK only. Decoding accepts the same major, no newer
-// than this minor and no older than runStateOldestDecodableMinor; the minors
-// name format steps, not releases — see decisions §5.18.
+// RunStateSchemaVersion is the version stamped into serialized RunState;
+// decoding accepts the same major, minor within the window — see decisions §5.18.
 const RunStateSchemaVersion = "1.8"
 
-// runStateOldestDecodableMinor is the oldest minor this decoder accepts. Raise
-// it when a bump REPLACES or reinterprets a field — decisions §5.18.
+// runStateOldestDecodableMinor is the oldest minor this decoder accepts — see
+// decisions §5.18.
 const runStateOldestDecodableMinor = 4
 
-// RunState is the serializable state of a run paused for human-in-the-loop tool
-// approval. Obtain one from RunResult.State, record approvals/rejections via
-// Approve/Reject, then continue with ResumeRun.
-//
-// Serialize it with MarshalJSON to persist across processes and rebuild with
-// RunStateFromJSON.
+// RunState is the serializable state of a run paused for tool approval: take
+// it from RunResult.State, Approve/Reject, then ResumeRun. MarshalJSON and
+// RunStateFromJSON carry it across processes.
 type RunState struct {
 	CurrentAgent        *Agent
 	OriginalInput       []InputItem
@@ -38,80 +33,68 @@ type RunState struct {
 	Interruptions       []*ToolApprovalItem
 	Approvals           *ApprovalStore
 	// Usage is a detached copy of the usage accumulated up to the pause; a
-	// resumed run adopts it and keeps adding, without touching the RunResult
-	// the pause also returned.
+	// resumed run adopts it and keeps adding.
 	Usage       *Usage
 	CurrentTurn int
 
-	// MaxTurns is the interrupted run's turn budget; ResumeRun continues under
-	// it, ignoring RunOptions.Exec.MaxTurns. Zero → DefaultMaxTurns; negative
-	// (MaxTurnsUnlimited) disables the budget.
+	// MaxTurns is the interrupted run's turn budget, which ResumeRun continues
+	// under; zero means DefaultMaxTurns, negative unlimited.
 	MaxTurns int
 
-	// UserInput is the new input the interrupted Run was invoked with (without
-	// session history), so the resumed run can persist it to the session.
+	// UserInput is the new input the interrupted Run was invoked with, for the
+	// resumed run to persist.
 	UserInput []InputItem
 
 	// SessionItems is the run's full item log; GeneratedItems is its tail, the
-	// items the model still sees (a resume takes it as such, by length). Nil
-	// means the two are one.
+	// items the model still sees. Nil means the two are one.
 	SessionItems []*RunItem
 
 	// PersistedSessionItems counts the leading SessionItems already written
-	// before the pause; the resume continues from here. Zero re-persists all.
+	// before the pause; zero re-persists all.
 	PersistedSessionItems int
 
-	// ToolsUsed lists the agents that had called tools when the run paused, so
-	// ResumeRun keeps their tool_choice reset in effect.
+	// ToolsUsed lists the agents that had called tools when the run paused
+	// (tool_choice reset).
 	ToolsUsed []string
 
-	// DisclosedTools names the deferred tools opened up before the pause, so a
-	// resumed run does not re-hide a tool the model has already been told about.
+	// DisclosedTools names the deferred tools opened up before the pause.
 	DisclosedTools []string
 
-	// ContextReset is a new_context request the pause cut off before its save
-	// point; ContextFresh says the context is the last reset's with no work
-	// since. Both resume with the run (spec §2.5i).
+	// ContextReset is a new_context request cut off before its save point;
+	// ContextFresh says the context is the last reset's — see spec §2.5i.
 	ContextReset bool
 	ContextFresh bool
 
-	// PendingInput carries input queued through RunControl that the run had
-	// not consumed when it paused — spec §2.11b.
+	// PendingInput carries input queued through RunControl and not yet consumed
+	// — see spec §2.11b.
 	PendingInput PendingInput
 
-	// ReasoningItemIDPolicy carries the interrupted run's policy so a resume
-	// keeps it without the caller repeating the option. Absent → Preserve.
+	// ReasoningItemIDPolicy carries the interrupted run's policy. Absent → Preserve.
 	ReasoningItemIDPolicy ReasoningItemIDPolicy
 
-	// GuardrailResults carries every result accumulated before the pause, the
-	// only source of first-turn input results on resume. Serialized lossily: a
-	// decoded result carries a name-only stub guardrail.
+	// GuardrailResults carries every result accumulated before the pause,
+	// serialized lossily: a decoded result carries a name-only stub guardrail.
 	GuardrailResults []GuardrailResult
 
-	// Extra is host-owned state riding the pause, carried verbatim and never
-	// read by the SDK. It covers pause→resume, not crashes — decisions §5.18.
-	// Absent → nil.
+	// Extra is host-owned state riding the pause, never read by the SDK — see
+	// decisions §5.18.
 	Extra map[string]json.RawMessage
 
-	// cursor is the server-managed-conversation cursor at the pause, so a
-	// resume keeps sending deltas.
+	// cursor is the server-managed-conversation cursor at the pause.
 	cursor serverCursor
 
-	// nestedToolStates carries paused agent-as-tool nested states, keyed by
-	// parent tool call id, serialized recursively. Absent → nil.
+	// nestedToolStates carries paused agent-as-tool states by parent call id.
+	// Absent → nil.
 	nestedToolStates map[string]*RunState
 
 	// usagePending records whether the interrupted response's usage was still
-	// unattributed at the pause; re-armed only then — spec §2.7f.
+	// unattributed at the pause — see spec §2.7f.
 	usagePending bool
 }
 
-// Approve records approval for a pending tool call. Pass always=true to approve
-// every call to the same tool that has no decision of its own.
-//
-// Concurrent Approve/Reject calls are safe once Approvals is non-nil, which
-// every state the SDK produces guarantees; a hand-constructed zero value must
-// be seeded from one goroutine first.
+// Approve records approval for a pending tool call; always approves every
+// call to the tool without a decision of its own. Concurrent calls are safe
+// once Approvals is non-nil, which every SDK-produced state guarantees.
 func (s *RunState) Approve(item *ToolApprovalItem, always bool) {
 	if s.Approvals == nil {
 		s.Approvals = NewApprovalStore()
@@ -119,10 +102,8 @@ func (s *RunState) Approve(item *ToolApprovalItem, always bool) {
 	s.Approvals.Approve(item, always)
 }
 
-// Reject records rejection for a pending tool call. message, if non-empty, is
-// sent back to the model in place of the tool output. Pass always=true to reject
-// every call to the same tool that has no decision of its own. Concurrency: see
-// Approve.
+// Reject records rejection for a pending tool call, with an optional message
+// for the model; always rejects every call to the tool without a decision of its own.
 func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 	if s.Approvals == nil {
 		s.Approvals = NewApprovalStore()
@@ -130,27 +111,24 @@ func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 	s.Approvals.Reject(item, always, message)
 }
 
-// ResumeRun continues a paused run after approvals have been recorded on the
-// state, with Run's shape and semantics: nothing executes until the stream is
-// ranged. Items emitted before the pause are not re-emitted. opts.Middlewares
-// apply as in Run; a middleware may edit in.Opts, but the paused state's agent
-// and input are already decided.
+// ResumeRun continues a paused run after approvals are recorded, with Run's
+// shape; items emitted before the pause are not re-emitted and opts.Middlewares
+// apply as in Run — see spec §2.12.
 func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (RunStream, RunControl) {
 	ctrl := newResumedControl(state)
 	return resumeWithMiddleware(ctx, state, opts, ctrl, true), ctrl
 }
 
-// ResumeRunSync continues a paused run to completion and returns its result.
-// It is ResumeRun without the stream, matching RunSync.
+// ResumeRunSync continues a paused run to completion and returns its result
+// (ResumeRun as RunSync).
 func ResumeRunSync(ctx context.Context, state *RunState, opts RunOptions) (*RunResult, error) {
 	ctrl := newResumedControl(state)
 	return resumeWithMiddleware(ctx, state, opts, ctrl, false).Collect()
 }
 
-// ResumeRunWith is ResumeRun under the control of the run that paused: the
-// caller's StopAfterTurn and queued input keep working, and the control's live
-// queue is carried as is rather than reseeded (spec §2.11b). ctrl must come
-// from Run or ResumeRun; anything else panics.
+// ResumeRunWith is ResumeRun under the control of the run that paused, its
+// live queue carried as is — see spec §2.11b. ctrl must come from Run or
+// ResumeRun; anything else panics.
 func ResumeRunWith(ctx context.Context, state *RunState, opts RunOptions, ctrl RunControl) RunStream {
 	c, ok := ctrl.(*runControl)
 	if !ok {
@@ -159,8 +137,7 @@ func ResumeRunWith(ctx context.Context, state *RunState, opts RunOptions, ctrl R
 	return resumeWithMiddleware(ctx, state, opts, c, true)
 }
 
-// newResumedControl mints a control seeded from the paused state's queue
-// before the caller can enqueue, so a new Steer sequences after the backlog.
+// newResumedControl mints a control seeded from the paused state's queue.
 func newResumedControl(state *RunState) *runControl {
 	ctrl := newRunControl()
 	if state != nil {
@@ -172,8 +149,7 @@ func newResumedControl(state *RunState) *runControl {
 // resumeWithMiddleware is ResumeRun's counterpart of withMiddleware.
 func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool) RunStream {
 	if state == nil {
-		// Let resumeStream report the nil-state error on the stream; reading
-		// state fields below would panic before any middleware could see it.
+		// resumeStream reports the nil-state error on the stream.
 		return singleUse(func(yield func(StreamEvent, error) bool) {
 			resumeStream(ctx, nil, opts, ctrl, rawEvents, yield)
 		})
@@ -189,35 +165,30 @@ func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions,
 func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) {
 	r, res, err := resumeLoop(ctx, state, opts, ctrl, rawEvents, yield)
 	if r == nil {
-		// The failure happened before a runner existed (nil state, bad options).
 		yield(nil, err)
 		return
 	}
 	r.finishStream(res, err)
 }
 
-// resumeLoop is the shared body of ResumeRun and ResumeRunSync. A nil runner
-// means the failure predates one existing; the caller yields it directly.
+// resumeLoop is the shared body of ResumeRun and ResumeRunSync; a nil runner
+// means the failure predates one existing.
 func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) (*runner, *RunResult, error) {
 	if state == nil {
 		return nil, nil, NewUserError("ResumeRun: state must not be nil")
 	}
-	// Every state the SDK produces carries the agent it paused on; a
-	// hand-constructed one may not, and the loop dereferences it throughout.
 	if state.CurrentAgent == nil {
 		return nil, nil, NewUserError("ResumeRun: state.CurrentAgent must not be nil")
 	}
 	if err := validateServerState(opts); err != nil {
 		return nil, nil, err
 	}
-	// The interrupted run's own budget always wins (see RunState.MaxTurns); only
-	// a zero falls back to the default.
+	// The interrupted run's own budget wins; only a zero falls back to the default.
 	maxTurns := state.MaxTurns
 	if maxTurns == 0 {
 		maxTurns = DefaultMaxTurns
 	}
-	// Reasoning-item id policy: an explicit opts override wins, else the state's
-	// own policy, so a run started with Omit keeps stripping ids on resume.
+	// An explicit opts override wins, else the state's own policy.
 	if opts.Exec.ReasoningItemIDPolicy == ReasoningItemIDPreserve {
 		opts.Exec.ReasoningItemIDPolicy = state.ReasoningItemIDPolicy
 	}
@@ -228,21 +199,18 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	rc.contextReset.Store(state.ContextReset)
 	rc.contextFresh.Store(state.ContextFresh)
 	if state.Usage != nil {
-		// A copy: a second resume of the same state (Retry over ResumeRun)
-		// must start from the pause snapshot, not an inflated one.
+		// A copy, so a second resume of the same state starts from the pause snapshot.
 		u := state.Usage.Snapshot()
 		rc.Usage = &u
 	}
-	// A clone: taking a nested state deletes it, and a second resume must not
-	// find the map depleted and restart each nested run.
+	// A clone: taking a nested state deletes it, and a second resume needs the
+	// map whole.
 	rc.nestedToolStates = maps.Clone(state.nestedToolStates)
 	rc.inheritedOpts = &opts
-	// Scrubbed like session history: a serialized or hand-edited state may
-	// carry a dangling call. The pending approval call is in GeneratedItems.
+	// Scrubbed like session history: a hand-edited state may carry a dangling call.
 	state.OriginalInput = normalizeStoredInput(state.OriginalInput)
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput, yield: yield, ctrl: ctrl, rawEvents: rawEvents}
-	// The same start-up a fresh run gets: a nested resume joins the parent's
-	// trace, a root one carries the caller's group id and metadata.
+	// The same observation start-up a fresh run gets.
 	finishTrace := r.observeRun(state.CurrentAgent, true)
 	defer finishTrace()
 	for _, name := range state.DisclosedTools {
@@ -253,8 +221,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 	}
 	// First-turn input guardrails are not re-run on resume; this is their only source.
 	r.guardrailResults = state.GuardrailResults
-	// Restore the tool-use tracker so tool_choice stays reset for every agent
-	// that had used tools before the pause (not only the interrupted one).
+	// tool_choice stays reset for every agent that had used tools before the pause.
 	if len(state.ToolsUsed) > 0 {
 		r.toolsUsedBy = make(map[string]bool, len(state.ToolsUsed))
 		for _, name := range state.ToolsUsed {
@@ -271,8 +238,8 @@ type serialItem struct {
 	Type  string          `json:"type"`
 	Agent string          `json:"agent"`
 	Input json.RawMessage `json:"input"`
-	// Source and Display carry the item's provenance and UI projection across an
-	// interruption, so a reloaded paused conversation renders the same timeline.
+	// Source and Display carry the item's provenance and UI projection across
+	// an interruption.
 	Source  Source      `json:"source,omitzero"`
 	Display ItemDisplay `json:"display,omitzero"`
 }
@@ -281,8 +248,8 @@ type serialResponse struct {
 	ID     string            `json:"id"`
 	Output []json.RawMessage `json:"output"`
 	Usage  *Usage            `json:"usage,omitempty"`
-	// Status and IncompleteReason survive so Truncated() still reads true after
-	// a cross-process resume — spec §2.7e.
+	// Status and IncompleteReason survive so Truncated() holds after a resume —
+	// see spec §2.7e.
 	Status           string `json:"status,omitempty"`
 	IncompleteReason string `json:"incomplete_reason,omitempty"`
 }
@@ -481,8 +448,7 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 			ConversationActive: s.cursor.conversationActive,
 		}
 	}
-	// Serialize nested agent-as-tool states recursively so a cross-process resume
-	// can continue them.
+	// Nested agent-as-tool states serialize recursively.
 	if len(s.nestedToolStates) > 0 {
 		out.NestedToolStates = make(map[string]json.RawMessage, len(s.nestedToolStates))
 		for callID, nested := range s.nestedToolStates {
@@ -610,10 +576,7 @@ func serializeResponse(resp *ModelResponse) serialResponse {
 }
 
 // RunStateVersionSupported reports whether a serialized state stamped with
-// version can be decoded by this SDK: same major, minor no newer than
-// RunStateSchemaVersion and no older than the oldest this decoder accepts. It
-// answers from the version string alone, so a host can triage a stored state
-// without a registry or a full decode.
+// version can be decoded by this SDK, from the version string alone.
 func RunStateVersionSupported(version string) bool {
 	return checkRunStateSchemaVersion(version) == nil
 }
@@ -656,10 +619,8 @@ func parseSchemaVersion(v string) (major, minor int, ok bool) {
 	return major, minor, true
 }
 
-// RunStateFromJSON rebuilds a RunState from JSON produced by MarshalJSON, by
-// this SDK or by an earlier one whose schema minor this build still decodes
-// (see RunStateSchemaVersion). The registry maps agent names to *Agent so the
-// runner can resolve the current agent and item agents; it must include every
+// RunStateFromJSON rebuilds a RunState from MarshalJSON output of a decodable
+// schema version; registry maps agent names to *Agent and must include every
 // agent that participated in the run.
 func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error) {
 	var in serialRunState
@@ -669,7 +630,8 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 	if err := checkRunStateSchemaVersion(in.SchemaVersion); err != nil {
 		return nil, err
 	}
-	// Collects the names the registry misses (an empty name is "no agent") — see spec §2.5.
+	// Collects the names the registry misses (an empty name is "no agent") —
+	// see spec §2.5.
 	var missingAgents []string
 	seenMissing := map[string]bool{}
 	lookup := func(name string) *Agent {
@@ -760,8 +722,8 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		})
 	}
 	st.Approvals.restore(in.ApprovalEntries)
-	// Rebuild nested agent-as-tool states recursively via the same registry, so a
-	// resumed parent continues (not restarts) them. Absent (pre-1.2) → nil.
+	// Nested agent-as-tool states rebuild recursively via the same registry.
+	// Absent → nil.
 	if len(in.NestedToolStates) > 0 {
 		st.nestedToolStates = make(map[string]*RunState, len(in.NestedToolStates))
 		for callID, raw := range in.NestedToolStates {

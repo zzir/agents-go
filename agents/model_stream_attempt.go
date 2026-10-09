@@ -2,9 +2,8 @@ package agents
 
 import "iter"
 
-// streamAttempt is the outcome of deliverStreamAttempt: one inner stream
-// delivered to a consumer with pre-commit events held back. It lets
-// NewRetryModel and NewFallbackModel share one commit rule (decisions §5.16).
+// streamAttempt is the outcome of deliverStreamAttempt, the commit rule
+// NewRetryModel and NewFallbackModel share — see decisions §5.16.
 type streamAttempt struct {
 	// committed reports that output reached the consumer, committing this attempt.
 	committed bool
@@ -17,9 +16,9 @@ type streamAttempt struct {
 	pending []*ResponseStreamEvent
 }
 
-// deliverStreamAttempt consumes one inner stream for a retry/fallback decorator,
-// holding back lifecycle and failure events until output commits it (decisions §5.16).
-// onEvent, if non-nil, sees every event with whether the attempt is committed.
+// deliverStreamAttempt consumes one inner stream, holding back lifecycle and
+// failure events until output commits it; onEvent sees every event — see
+// decisions §5.16.
 func deliverStreamAttempt(
 	seq iter.Seq2[*ResponseStreamEvent, error],
 	yield func(*ResponseStreamEvent, error) bool,

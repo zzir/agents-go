@@ -10,19 +10,17 @@ import (
 	"time"
 )
 
-// EntryKind classifies what a session entry holds. It is an open vocabulary: an
-// unknown kind must be ignored, not rejected, so a session written by a newer
-// build stays readable.
+// EntryKind classifies what a session entry holds. The vocabulary is open: an
+// unknown kind is ignored, never rejected — spec §2.5b.
 type EntryKind string
 
 const (
 	// EntryKindItem is a Responses item — the conversation itself.
 	EntryKindItem EntryKind = "item"
-	// EntryKindAnnotation is for people, not the model: an error banner, the
-	// partial output left behind by a cancelled run.
+	// EntryKindAnnotation is for people, not the model: an error banner, a
+	// cancelled run's partial output.
 	EntryKindAnnotation EntryKind = "annotation"
-	// EntryKindCompaction is a compaction checkpoint: a summary plus the tail
-	// it retained.
+	// EntryKindCompaction is a compaction checkpoint. See CompactionPayload.
 	EntryKindCompaction EntryKind = "compaction"
 	// EntryKindTerminal is output from an interactive terminal session.
 	EntryKindTerminal EntryKind = "terminal"
@@ -34,15 +32,13 @@ const (
 	EntryKindCustom EntryKind = "custom"
 )
 
-// Entry is one record in a session's history. Entries are append-only: a
-// display that must change later gets an EntryKindUpdate naming it, folded in
-// at read time — spec §2.5b.
+// Entry is one record in a session's history. Entries are append-only: a later
+// change is an EntryKindUpdate naming its target, folded in at read time — spec §2.5b.
 type Entry struct {
-	// ID identifies the entry within its session. Storage assigns it when
-	// empty.
+	// ID identifies the entry within its session; storage assigns it when empty.
 	ID string `json:"id"`
-	// Seq is the entry's position in append order, assigned by storage. A Cursor
-	// pages on it.
+	// Seq is the entry's position in append order, assigned by storage; a
+	// Cursor pages on it.
 	Seq int64 `json:"seq,omitzero"`
 	// ParentID is the entry this one follows; empty means a root (spec §2.5d).
 	ParentID string `json:"parent_id,omitzero"`
@@ -54,46 +50,38 @@ type Entry struct {
 	Source Source `json:"source,omitzero"`
 	// AgentName is the agent that produced it, when one did.
 	AgentName string `json:"agent_name,omitzero"`
-	// ResponseID ties the entry to the model call that produced it. Several
-	// entries from one response share it, which is what makes per-response
-	// usage attributable.
+	// ResponseID ties the entry to the model call that produced it; entries from
+	// one response share it.
 	ResponseID string `json:"response_id,omitzero"`
 
 	// Item is the Responses item's wire JSON, for Kind == EntryKindItem. Raw
-	// bytes, not a decoded union, so an item type this build does not model
-	// survives verbatim; see UnknownOutputItem.
+	// bytes, so an item type this build does not model survives verbatim.
 	Item json.RawMessage `json:"item,omitzero"`
 	// Payload is the structured body of every other kind.
 	Payload json.RawMessage `json:"payload,omitzero"`
 
 	// Display is the entry's UI projection, when it has one.
 	Display *ItemDisplay `json:"display,omitzero"`
-	// Usage is the token usage of the model call this entry belongs to. Exactly
-	// one entry per response carries it, so summing over entries counts each
-	// request once.
+	// Usage is the token usage of the model call this entry belongs to; exactly
+	// one entry per response carries it — spec §2.7f.
 	Usage *RequestUsage `json:"usage,omitzero"`
-	// Diagnostics records trouble the run survived while producing this entry —
-	// retries, a fallback model, a compaction pass that gave up: the failures
-	// that do NOT fail the run and so never reach an error return.
+	// Diagnostics records trouble the run survived while producing this entry.
 	Diagnostics []Diagnostic `json:"diagnostics,omitzero"`
 
-	// NestedUsage is what a nested run started by this entry's tool spent. Kept
-	// separate from Usage because those tokens were spent on a different
-	// conversation — counting them as context would overstate this one's size.
+	// NestedUsage is what a nested run started by this entry's tool spent; kept
+	// apart from Usage — spec §2.7f.
 	NestedUsage *RequestUsage `json:"nested_usage,omitzero"`
 
 	// CreatedAt is when the entry was produced. Storage sets it when zero.
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// UpdatePayload is the body of an EntryKindUpdate entry: it amends the display
-// of an entry recorded earlier. An update may be stored BEFORE its target;
-// projection associates them by id (spec §2.5b).
+// UpdatePayload is the body of an EntryKindUpdate entry: it amends an earlier
+// entry's display. It may be stored BEFORE its target — spec §2.5b.
 type UpdatePayload struct {
 	// TargetID is the entry being amended.
 	TargetID string `json:"target_id,omitzero"`
-	// TargetCallID amends the entry whose display carries this tool call id, for
-	// an amender that knows the call but not the storage-assigned entry id.
+	// TargetCallID amends the entry whose display carries this tool call id.
 	TargetCallID string `json:"target_call_id,omitzero"`
 	// Display is merged over the target's display. Only non-zero fields apply.
 	Display ItemDisplay `json:"display"`
@@ -161,8 +149,7 @@ func NewUpdateEntry(targetID string, display ItemDisplay) (Entry, error) {
 }
 
 // NewCallUpdateEntry builds an entry amending the display of whichever entry
-// holds the given tool call — what a long-running task reports through, knowing
-// the call it was started by but not the storage-assigned entry id.
+// holds the tool call, for an amender that knows the call but not the entry id.
 func NewCallUpdateEntry(callID string, display ItemDisplay) (Entry, error) {
 	return newUpdate(UpdatePayload{TargetCallID: callID, Display: display})
 }
@@ -228,8 +215,8 @@ func (d *ItemDisplay) merge(other ItemDisplay) {
 		d.IsError = true
 	}
 	if len(other.Extra) > 0 {
-		// Copy-on-write: d's Extra may be shared with a stored entry, and merging
-		// is on the read path, so writing in place would edit storage from a read.
+		// Copy, never write in place: d.Extra may be shared with the stored
+		// entry — spec §2.5b.
 		m := make(map[string]any, len(d.Extra)+len(other.Extra))
 		maps.Copy(m, d.Extra)
 		maps.Copy(m, other.Extra)
@@ -237,13 +224,9 @@ func (d *ItemDisplay) merge(other ItemDisplay) {
 	}
 }
 
-// Equal reports whether two entries are the same entry, field for field. It
-// compares every field: a partial comparison would let a compactor that
-// rewrites only a payload look like a no-op.
-//
-// Not == (Entry holds maps, so it is not comparable) and not reflect.DeepEqual
-// (which distinguishes two readings of the same instant by their monotonic
-// clock, so a stored entry would never equal its in-memory twin).
+// Equal reports whether two entries are the same entry, every field compared
+// (spec §2.5f). Not reflect.DeepEqual: time.Time's monotonic reading would make
+// a stored entry differ from its in-memory twin.
 func (e Entry) Equal(other Entry) bool {
 	switch {
 	case e.ID != other.ID,
@@ -280,8 +263,7 @@ func equalDisplay(a, b *ItemDisplay) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	// Extra holds arbitrary values, so it is the one field that cannot be
-	// compared structurally here.
+	// Extra holds arbitrary values: DeepEqual is the only comparison for it.
 	return a.Kind == b.Kind && a.Renderer == b.Renderer && a.Title == b.Title &&
 		a.Summary == b.Summary && a.Text == b.Text &&
 		a.CallID == b.CallID && a.ToolName == b.ToolName && a.Arguments == b.Arguments &&

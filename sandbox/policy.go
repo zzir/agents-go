@@ -18,8 +18,8 @@ type Policy struct {
 	Deny []string
 }
 
-// Compile reports a malformed pattern without keeping the compiled form, so a
-// policy fails when configured rather than on the first command it would stop.
+// Compile reports a malformed pattern at configuration time, without keeping
+// the compiled form.
 func (p *Policy) Compile() error {
 	_, err := p.compile()
 	return err
@@ -28,9 +28,8 @@ func (p *Policy) Compile() error {
 // Empty reports whether the policy filters nothing.
 func (p *Policy) Empty() bool { return len(p.Allow) == 0 && len(p.Deny) == 0 }
 
-// Check reports why a command is refused, or nil. The error names the pattern
-// that refused it (spec §2.7j). Patterns are compiled per call; CodeTool keeps
-// a compiled form for the tool's lifetime.
+// Check reports why a command is refused, or nil; the error names the pattern
+// (spec §2.7j). Patterns are compiled per call.
 func (p *Policy) Check(cmd string) error {
 	if p.Empty() {
 		return nil
@@ -80,8 +79,7 @@ func (c *compiledPolicy) check(cmd string) error {
 	}
 	for _, re := range c.deny {
 		if re.MatchString(cmd) {
-			// re.String is the pattern as written, so the reason names the
-			// rule the caller configured.
+			// re.String is the pattern as the caller wrote it.
 			return &PolicyError{Command: cmd, Reason: "denied by pattern " + strconv.Quote(re.String())}
 		}
 	}

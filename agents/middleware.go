@@ -6,36 +6,22 @@ import (
 )
 
 // RunInput is what a middleware sees and may change before the run proceeds.
-// Opts is the run's own copy, by pointer, so a middleware can tighten a
-// budget, swap a model or add a guardrail for this run and nothing else.
+// Opts is the run's own copy, so edits apply to this run only.
 type RunInput struct {
 	Agent *Agent
 	Input []InputItem
 	Opts  *RunOptions
-	// Control is the handle the caller holds on this run. A middleware that
-	// resumes a paused attempt hands it to ResumeRunWith, so the caller's stop
-	// request and queued input survive the resume (spec §2.12).
+	// Control is the caller's handle on this run; a resuming middleware passes
+	// it to ResumeRunWith — see spec §2.12.
 	Control RunControl
 }
 
-// RunFunc executes a run and returns its stream. A middleware receives one as
-// `next` and decides whether, when and with what to call it.
+// RunFunc executes a run and returns its stream; a middleware receives it as next.
 type RunFunc func(ctx context.Context, in RunInput) RunStream
 
-// RunMiddleware wraps a run. It is the extension point for optional policy —
-// retrying, logging, recovering, rewriting input — so those are not loop
-// fields; what is deliberately NOT middleware is listed in spec §2.12.
-//
-// The stream contract (spec §2.12) — an implementation owes all three clauses:
-//
-//  1. Every event other than *RunCompletedEvent flows through as it happens.
-//     Buffering until satisfied turns a live retry into an apparent hang.
-//  2. *RunCompletedEvent appears exactly once, LAST, on a run that ends
-//     without error — and zero times on one that errors. A middleware that
-//     re-enters the run holds back each attempt's completion event and emits
-//     a single one for the attempt it accepts.
-//  3. Once the consumer stops ranging — yield returned false — nothing more
-//     is yielded, not even an error. There is nobody to receive it.
+// RunMiddleware wraps a whole run. An implementation owes the three-clause
+// stream contract (events flow through live; one RunCompletedEvent, last, on
+// success only; nothing after the consumer stops) — see spec §2.12.
 type RunMiddleware interface {
 	Run(ctx context.Context, next RunFunc, in RunInput) RunStream
 }
@@ -48,8 +34,7 @@ func (f RunMiddlewareFunc) Run(ctx context.Context, next RunFunc, in RunInput) R
 	return f(ctx, next, in)
 }
 
-// chainMiddleware wraps base so the first middleware in the slice is the
-// outermost — the order they are read in is the order they see the run.
+// chainMiddleware wraps base so the first middleware in the slice is outermost.
 func chainMiddleware(base RunFunc, mws []RunMiddleware) RunFunc {
 	for _, mw := range slices.Backward(mws) {
 		if mw == nil {

@@ -1,12 +1,6 @@
-// Command fallback demonstrates composing Model decorators for resilience:
-// each backend retries transient failures, and the run falls back to a second
-// backend if the first is exhausted.
-//
-// Here both models come from one OpenAI provider for a single-key demo. In
-// production the backup is typically a *different* provider (a second
-// openai.NewProvider with option.WithBaseURL pointing at another OpenAI-compatible
-// service such as Groq, Together, or a local vLLM), so an outage at one vendor
-// fails over to another.
+// Command fallback composes Model decorators for resilience: each backend
+// retries transient failures, and the run falls back to a second backend when
+// the first is exhausted — see docs/howto/models.md.
 //
 // Run with: OPENAI_API_KEY=... go run ./examples/fallback
 package main
@@ -24,10 +18,8 @@ import (
 func main() {
 	provider := openai.NewProvider() // reads OPENAI_API_KEY
 
-	// A second provider would point at another vendor, e.g.:
-	//   backupProvider := openai.NewProvider(
-	//       option.WithBaseURL("https://api.groq.com/openai/v1"),
-	//       option.WithAPIKey(os.Getenv("GROQ_API_KEY")))
+	// A production backup is another vendor:
+	// openai.NewProvider(option.WithBaseURL(...), option.WithAPIKey(...)).
 
 	primary, err := provider.Model("gpt-4o")
 	if err != nil {
@@ -38,24 +30,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Retry transient errors (429/5xx/network) on each backend, honoring any
-	// Retry-After header, then fall back from primary to backup. An attempt
-	// that has not produced output within a minute is retried too.
+	// Each backend retries transient errors (429/5xx/network), honoring
+	// Retry-After; an attempt silent for a minute is retried too.
 	policy := agents.RetryPolicy{
 		MaxAttempts:    3,
 		RetryIf:        openai.RetryableError,
 		RetryAfter:     openai.RetryAfter,
 		AttemptTimeout: time.Minute,
 	}
-	// By default every error except context cancellation advances the chain.
-	// WithShouldFallback narrows that: with openai.RetryableError only
-	// transient failures (429/5xx/network) try the backup — a deterministic
-	// 400 (bad schema, context too long) fails fast instead of burning a
-	// doomed call on every backend.
-	//
-	// A streaming-only backend (one that rejects non-streaming requests, like
-	// the ChatGPT Codex backend) is adapted innermost, before the other
-	// decorators: primary = agents.NewStreamOnlyModel(primary)
+	// Only transient errors advance the chain; a deterministic 400 fails fast
+	// — see docs/howto/models.md. A stream-only backend is adapted innermost:
+	// primary = agents.NewStreamOnlyModel(primary) (decisions §5.15).
 	model := agents.NewFallbackModel(
 		agents.NewRetryModel(primary, policy),
 		agents.NewRetryModel(backup, policy),

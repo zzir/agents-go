@@ -1,9 +1,7 @@
 // Package anthropic implements the agents Model interface against the
-// Anthropic Messages API, using the official anthropic-sdk-go. The adapter
-// translates in both directions at the model boundary — canonical Responses
-// items in, canonical items and response.* events out (via modelkit) — so
-// nothing outside it knows this backend exists (decisions §5.10). Features the
-// API lacks fail with a *agents.UserError; see Capabilities.
+// Anthropic Messages API via anthropic-sdk-go, translating canonical Responses
+// items in and canonical items and response.* events out at the model boundary
+// (decisions §5.10). Features the API lacks fail with a *agents.UserError.
 package anthropic
 
 import (
@@ -18,8 +16,7 @@ import (
 type Provider struct {
 	client       ant.Client
 	defaultModel string
-	// promptCaching applies the request-level cache_control marker: on by
-	// default, since an agent loop resends a growing prefix every turn.
+	// promptCaching applies the request-level cache_control marker; on by default.
 	promptCaching bool
 	// budgetThinking: see WithBudgetThinking.
 	budgetThinking bool
@@ -27,11 +24,10 @@ type Provider struct {
 	thinkingBinding bool
 }
 
-// NewProvider builds a Provider. Pass anthropic-sdk-go request options such as
-// option.WithAPIKey or option.WithBaseURL to configure the client. With no
-// options, the API key is read from the ANTHROPIC_API_KEY environment variable.
-// The client's own transport-level retries are DISABLED, as in models/openai
-// (decisions §5.22); pass option.WithMaxRetries explicitly to re-enable them.
+// NewProvider builds a Provider from anthropic-sdk-go request options
+// (option.WithAPIKey, option.WithBaseURL, …); with none, ANTHROPIC_API_KEY is
+// read. The client's own retries are DISABLED (decisions §5.22);
+// option.WithMaxRetries re-enables them.
 func NewProvider(opts ...option.RequestOption) *Provider {
 	all := append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)
 	return &Provider{client: ant.NewClient(all...), promptCaching: true, thinkingBinding: true}

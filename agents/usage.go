@@ -35,9 +35,7 @@ type Usage struct {
 func NewUsage() *Usage { return &Usage{} }
 
 // UsageFromResponseUsage translates a Responses usage block into a Usage
-// counted as ONE request; it is the single place the field mapping lives.
-// Whether the response carried a usage block at all is the caller's question:
-// an all-zero block is a real request that spent no tokens.
+// counted as one request; an all-zero block is a real request.
 func UsageFromResponseUsage(u responses.ResponseUsage) *Usage {
 	return &Usage{
 		Requests:     1,
@@ -52,11 +50,8 @@ func UsageFromResponseUsage(u responses.ResponseUsage) *Usage {
 	}
 }
 
-// Snapshot returns a point-in-time copy of u's counters under the same lock
-// Add uses, so it is safe while other goroutines accumulate into u. Read the
-// exported fields directly only when no goroutine can be calling Add. The copy
-// is standalone (RequestUsageEntries is a fresh slice); copy it by field, not
-// wholesale, as its zero-value mutex is unused.
+// Snapshot returns a point-in-time copy of u's counters, safe while other
+// goroutines Add; read the exported fields directly only when none can be.
 func (u *Usage) Snapshot() Usage {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -76,9 +71,8 @@ func (u *Usage) Snapshot() Usage {
 	}
 }
 
-// Add aggregates another Usage into the receiver. Per-request entries are
-// preserved: other's entries are appended, or a synthetic entry is recorded
-// when other is a single request with tokens.
+// Add aggregates another Usage into the receiver, appending its per-request
+// entries (or a synthetic one for a single request with tokens).
 func (u *Usage) Add(other *Usage) {
 	if other == nil {
 		return

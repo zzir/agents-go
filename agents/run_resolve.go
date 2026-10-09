@@ -29,9 +29,7 @@ func (r *runner) resolveSettings(agent *Agent) *ModelSettings {
 		base = &ModelSettings{}
 	}
 	s := base.Resolve(r.opts.Model.Settings)
-	// Once an agent has called tools, leave tool_choice unset on its later turns
-	// so a "required"/specific-tool setting cannot force an infinite tool-call
-	// loop.
+	// Once an agent has called tools, tool_choice is left unset on its later turns.
 	if !agent.DisableToolChoiceReset && s.ToolChoice != "" && r.toolsUsedBy[agent.Name] {
 		s.ToolChoice = ""
 	}
@@ -55,9 +53,8 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]*Tool, error
 		if !enabled {
 			continue
 		}
-		// A deferred tool waits until something discloses it. It is checked
-		// after IsEnabled so a disclosed tool that is also disabled stays
-		// hidden — disclosure opens a door, it does not force one.
+		// A deferred tool waits for disclosure, which never overrides IsEnabled
+		// — see spec §2.7i.
 		if t.Deferred && !r.disclosed[t.Name] {
 			continue
 		}
@@ -66,9 +63,8 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]*Tool, error
 	for _, server := range agent.MCPServers {
 		mcpTools, err := server.ListTools(ctx, r.rc, agent)
 		if err != nil {
-			// Failing the turn, not skipping the server: with its tools quietly
-			// missing, the model's next call to one becomes a "tool not found"
-			// error blamed on the model. A listing failure is this run's failure.
+			// A listing failure fails the turn; skipping the server would blame
+			// the model for a "tool not found".
 			return nil, fmt.Errorf("listing tools of MCP server for agent %q: %w", agent.Name, err)
 		}
 		out = append(out, mcpTools...)

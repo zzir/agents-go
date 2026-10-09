@@ -252,20 +252,20 @@ func (r *runner) executeToolsAndSideEffects(
 		}
 	}
 	// Unknown calls (ToolNotFoundReturnToModel) are answered with an error
-	// output like any other failed call; hasToolsToRun stays true, forcing another turn.
+	// output like any other failed call; hasToolsToRun stays true, forcing
+	// another turn.
 	if len(unknown) > 0 {
 		names := make([]string, len(unknown))
 		for i, call := range unknown {
 			names[i] = call.Name
 		}
-		// Data, not SetError: the model recovers next turn, so the run is not
-		// failed. The name is model-chosen metadata, recorded regardless.
+		// Data, not SetError: the run is not failed. The name is model-chosen,
+		// recorded regardless.
 		r.agentSpan.Set("tool_not_found", names)
 	}
 	functionResults := orderToolResults(pr.CallIDs, executed, rejected, refusedHandoffs, unknownCallResults(agent, unknown))
 
-	// A model stuck calling a broken tool would otherwise burn the whole turn
-	// budget rediscovering that it is broken, and bill for it.
+	// The consecutive-error valve — see spec §2.7d.
 	if err := r.noteToolTurn(functionResults); err != nil {
 		return nil, err
 	}
