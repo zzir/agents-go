@@ -27,15 +27,8 @@ const silentRedirectURL = "http://127.0.0.1/mcp-oauth-silent-reconnect"
 // background context, so this client timeout is the only bound on a hung endpoint.
 const oauthHTTPTimeout = 30 * time.Second
 
-// oauthHTTPClient is the OAuth client: the proxy client's transport when one
-// is set, bounded by oauthHTTPTimeout.
-func oauthHTTPClient(proxy *http.Client) *http.Client {
-	client := &http.Client{Timeout: oauthHTTPTimeout}
-	if proxy != nil {
-		client.Transport = proxy.Transport
-	}
-	return client
-}
+// oauthHTTPClient is the OAuth client, bounded by oauthHTTPTimeout.
+var oauthHTTPClient = &http.Client{Timeout: oauthHTTPTimeout}
 
 // Connect-attempt phases for the OAuth fetcher (see newConnectFetcher).
 const (
@@ -187,7 +180,7 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 	// which ends when the handler returns the authorize URL.
 	fetcher, phase := newConnectFetcher(cfg.Name, urlCh, codeCh)
 
-	httpClient := oauthHTTPClient(mgr.proxyClient(context.Background()))
+	httpClient := oauthHTTPClient
 
 	handlerCfg := &auth.AuthorizationCodeHandlerConfig{
 		RedirectURL:              redirectURI,

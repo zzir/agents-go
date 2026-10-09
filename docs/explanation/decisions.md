@@ -1836,3 +1836,26 @@ repository produces a deferred tool; absent a producer or a settled native
 deferral by the next breaking minor, the surface goes under the zero-consumer rule.
 
 Rules: spec §2.7i.
+
+### 5.89 The outbound proxy is the process environment, not a setting
+
+Decided 2026-10-10.
+
+**Decision.** `agents-server` defines no proxy flag and no proxy setting.
+Every outbound HTTP request — model APIs, MCP servers, skill imports, the
+attachment bucket, sandbox services, the OAuth login exchange — goes through
+Go's default transport, which reads `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`.
+
+**Rejected.** The `proxy_url` runtime setting: it reached only the six call
+sites that threaded a client through, never the login exchange that runs
+before anyone can open Settings, nor E2B or a TCP docker daemon — two
+mechanisms for one concern, and the one in the panel claimed to cover all.
+A `--proxy-url` flag: a second spelling of `HTTPS_PROXY` that would have to
+re-grow `NO_PROXY` before a LAN MCP server or a local model could coexist with it.
+
+**Cost accepted.** A proxy change is a restart. Internal HTTP endpoints — a
+LAN MCP server, a local provider, MinIO, a `DOCKER_HOST` over TCP — need
+listing in `NO_PROXY`. A `proxy_url` row left in an upgraded database is
+listed as unknown and deleted from the panel.
+
+Rules: [invariant 54](workbench-invariants.md); spec §2.14.

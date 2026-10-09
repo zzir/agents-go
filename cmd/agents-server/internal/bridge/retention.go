@@ -185,7 +185,7 @@ func RunAttachmentReaper(ctx context.Context, cfg *settings.Reader, atts *store.
 		if len(orphans) == 0 {
 			return
 		}
-		client := attachments.ClientFrom(cfg.S3Config(ctx), cfg.ProxyClient(ctx))
+		client := attachments.ClientFrom(cfg.S3Config(ctx))
 		removed := 0
 		for _, a := range orphans {
 			// Storage unconfigured: the object is unreachable, the row goes.

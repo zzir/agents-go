@@ -314,7 +314,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     the DB and API exist or is security-load-bearing (`--token`,
     `--trusted-proxies`, `--audit-retention-days`); an environment variable is
     only a flag's fallback that keeps a secret off argv; everything tuned live
-    is a DB setting (invariant 40). Tables: [configuration](../reference/configuration.md).
+    is a DB setting (invariant 40). A convention the runtime already reads
+    (`HTTPS_PROXY`, `DOCKER_HOST`, `TZ`) is honored, never mirrored (decisions §5.89). Tables: [configuration](../reference/configuration.md).
 55. **A persisted MCP OAuth grant is bound to the config identity it was
     minted under.** An update that moves the endpoint, the auth mode or the
     client id clears the stored grant in the same transaction; a token minted

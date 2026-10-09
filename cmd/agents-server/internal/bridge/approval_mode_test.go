@@ -97,7 +97,7 @@ func approvalModeRunner(t *testing.T, mode string, approveTools ...string) (*Run
 		Tasks:          store.NewTaskStore(db),
 		Settings:       settings.NewReader(store.NewSettingStore(db)),
 		Memories:       store.NewMemoryStore(db),
-		McpManager:     mcpservers.NewManager(ctx, settings.NewReader(store.NewSettingStore(db))),
+		McpManager:     mcpservers.NewManager(ctx),
 		SandboxManager: mgr,
 		Traces:         store.NewTraceStore(db),
 	})

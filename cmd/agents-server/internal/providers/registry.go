@@ -5,7 +5,6 @@ package providers
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"slices"
 	"strings"
 
@@ -43,13 +42,13 @@ type Def struct {
 	AuthModes []string
 	// Build constructs the provider. creds is set only for a chatgpt_login
 	// provider; the fallback-entries path always passes nil.
-	Build func(apiKey, baseURL string, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider
+	Build func(apiKey, baseURL string, creds *ChatGPTCredentials) agents.ModelProvider
 	// Capabilities is the adapter's own unsupported-feature declaration,
 	// served to config UIs via Types.
 	Capabilities modelkit.Capabilities
 	// ListModels asks the backend which models the key may use — a live
 	// answer from the provider, never a table of this project's.
-	ListModels func(ctx context.Context, apiKey, baseURL string, hc *http.Client) ([]ModelInfo, error)
+	ListModels func(ctx context.Context, apiKey, baseURL string) ([]ModelInfo, error)
 }
 
 // ModelInfo is one model a provider lists; what a backend does not report stays zero.
@@ -75,15 +74,15 @@ var providerDefs = []Def{
 	},
 	{
 		Type: TypeAnthropic,
-		Build: func(apiKey, baseURL string, _ *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
-			return newAnthropicModelProvider(apiKey, baseURL, proxyClient)
+		Build: func(apiKey, baseURL string, _ *ChatGPTCredentials) agents.ModelProvider {
+			return newAnthropicModelProvider(apiKey, baseURL)
 		},
 		Capabilities: anthropicProvider.Capabilities(),
 		ListModels:   listAnthropicModels,
 	},
 }
 
-func openaiOptions(apiKey, baseURL string, hc *http.Client) []option.RequestOption {
+func openaiOptions(apiKey, baseURL string) []option.RequestOption {
 	var opts []option.RequestOption
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
@@ -91,13 +90,10 @@ func openaiOptions(apiKey, baseURL string, hc *http.Client) []option.RequestOpti
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	if hc != nil {
-		opts = append(opts, option.WithHTTPClient(hc))
-	}
 	return opts
 }
 
-func anthropicOptions(apiKey, baseURL string, hc *http.Client) []antoption.RequestOption {
+func anthropicOptions(apiKey, baseURL string) []antoption.RequestOption {
 	var opts []antoption.RequestOption
 	if apiKey != "" {
 		opts = append(opts, antoption.WithAPIKey(apiKey))
@@ -105,16 +101,13 @@ func anthropicOptions(apiKey, baseURL string, hc *http.Client) []antoption.Reque
 	if baseURL != "" {
 		opts = append(opts, antoption.WithBaseURL(baseURL))
 	}
-	if hc != nil {
-		opts = append(opts, antoption.WithHTTPClient(hc))
-	}
 	return opts
 }
 
 // listOpenAIModels reads GET /models; the Responses-shaped listing names
 // models only, so the window and output ceiling stay unknown.
-func listOpenAIModels(ctx context.Context, apiKey, baseURL string, hc *http.Client) ([]ModelInfo, error) {
-	client := openaisdk.NewClient(append(openaiOptions(apiKey, baseURL, hc), option.WithMaxRetries(0))...)
+func listOpenAIModels(ctx context.Context, apiKey, baseURL string) ([]ModelInfo, error) {
+	client := openaisdk.NewClient(append(openaiOptions(apiKey, baseURL), option.WithMaxRetries(0))...)
 	var out []ModelInfo
 	it := client.Models.ListAutoPaging(ctx)
 	for it.Next() {
@@ -125,8 +118,8 @@ func listOpenAIModels(ctx context.Context, apiKey, baseURL string, hc *http.Clie
 
 // listAnthropicModels reads GET /v1/models, which carries each model's
 // window, output ceiling and the thinking forms it takes.
-func listAnthropicModels(ctx context.Context, apiKey, baseURL string, hc *http.Client) ([]ModelInfo, error) {
-	client := anthropicsdk.NewClient(append(anthropicOptions(apiKey, baseURL, hc), antoption.WithMaxRetries(0))...)
+func listAnthropicModels(ctx context.Context, apiKey, baseURL string) ([]ModelInfo, error) {
+	client := anthropicsdk.NewClient(append(anthropicOptions(apiKey, baseURL), antoption.WithMaxRetries(0))...)
 	var out []ModelInfo
 	it := client.Models.ListAutoPaging(ctx, anthropicsdk.ModelListParams{})
 	for it.Next() {
@@ -143,8 +136,8 @@ func listAnthropicModels(ctx context.Context, apiKey, baseURL string, hc *http.C
 	return out, it.Err()
 }
 
-func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, proxyClient *http.Client) agents.ModelProvider {
-	opts := openaiOptions(apiKey, baseURL, proxyClient)
+func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials) agents.ModelProvider {
+	opts := openaiOptions(apiKey, baseURL)
 	if creds != nil {
 		opts = append(opts, option.WithMiddleware(newChatGPTMiddleware(creds.AccountID)))
 	}
@@ -156,8 +149,8 @@ func newOpenAIModelProvider(apiKey, baseURL string, creds *ChatGPTCredentials, p
 	return p
 }
 
-func newAnthropicModelProvider(apiKey, baseURL string, proxyClient *http.Client) agents.ModelProvider {
-	return anthropicProvider.NewProvider(anthropicOptions(apiKey, baseURL, proxyClient)...)
+func newAnthropicModelProvider(apiKey, baseURL string) agents.ModelProvider {
+	return anthropicProvider.NewProvider(anthropicOptions(apiKey, baseURL)...)
 }
 
 // ThinkingModeBudget is the behavior.thinking_mode value that sends an
@@ -210,15 +203,6 @@ func DefFor(t string) (Def, error) {
 		types[i] = d.Type
 	}
 	return Def{}, fmt.Errorf("unknown provider %q (valid: %s)", t, strings.Join(types, ", "))
-}
-
-// BuildPlain is the lookup+Build pairing for fallback entries.
-func BuildPlain(providerType, apiKey, baseURL string, proxyClient *http.Client) (agents.ModelProvider, error) {
-	def, err := DefFor(providerType)
-	if err != nil {
-		return nil, err
-	}
-	return def.Build(apiKey, baseURL, nil, proxyClient), nil
 }
 
 // ValidateType rejects a provider selector outside the registry; both save

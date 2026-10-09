@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -18,7 +17,7 @@ import (
 func TestMcpServerReadOnlyToolsRoundTrip(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	h := NewMcpServerHandler(store.NewMcpServerStore(db), mcpservers.NewManager(t.Context(), settings.NewReader(store.NewSettingStore(db))), nil, "")
+	h := NewMcpServerHandler(store.NewMcpServerStore(db), mcpservers.NewManager(t.Context()), nil, "")
 	engine := newTestEngine()
 	engine.POST("/mcp-servers", h.Create)
 	engine.GET("/mcp-servers/:id", h.Get)

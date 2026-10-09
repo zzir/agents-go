@@ -69,7 +69,7 @@ func authzRig(t *testing.T) rig {
 		Approvals: NewApprovalHandler(approvals, runner),
 		Triggers:  NewTriggerHandler(triggers, sessions, store.NewWorkflowStore(db), store.NewAgentConfigStore(db), &fakeFirer{}),
 		Workflows: NewWorkflowHandler(store.NewWorkflowStore(db), agents, sessions, runner),
-		Skills:    NewSkillHandler(store.NewSkillStore(db), settings.NewReader(store.NewSettingStore(db))),
+		Skills:    NewSkillHandler(store.NewSkillStore(db)),
 	}.Register)
 	return rig{engine: s.Engine, sessions: sessions, db: db, runner: runner}
 }

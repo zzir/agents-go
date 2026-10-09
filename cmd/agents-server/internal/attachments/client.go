@@ -44,16 +44,12 @@ type Client struct {
 }
 
 // ClientFrom returns a client for cfg, or nil when cfg is incomplete (the
-// feature is off); a nil httpClient uses http.DefaultClient, the proxy client
-// follows proxy_url.
-func ClientFrom(cfg settings.S3Config, httpClient *http.Client) *Client {
+// feature is off).
+func ClientFrom(cfg settings.S3Config) *Client {
 	if !cfg.Complete() {
 		return nil
 	}
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	return &Client{cfg: cfg, http: httpClient}
+	return &Client{cfg: cfg, http: http.DefaultClient}
 }
 
 // objectURL is the S3-API URL for key: path-style puts the bucket in the

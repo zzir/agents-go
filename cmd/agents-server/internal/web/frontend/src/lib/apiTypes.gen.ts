@@ -6259,7 +6259,7 @@ export interface paths {
         };
         /**
          * List settings
-         * @description Every stored key/value. Secrets are masked, and so is the user:pass of proxy_url; the storage (s3_*) keys are listed for admins only. A key the registry no longer defines is flagged `unknown` with its value masked too (whether it was a secret is unknowable), so it can be deleted. The definitions themselves are at /setting-defs.
+         * @description Every stored key/value. Secrets are masked; the storage (s3_*) keys are listed for admins only. A key the registry no longer defines is flagged `unknown` with its value masked too (whether it was a secret is unknowable), so it can be deleted. The definitions themselves are at /setting-defs.
          */
         get: {
             parameters: {
@@ -6307,7 +6307,7 @@ export interface paths {
         };
         /**
          * Get setting
-         * @description Secrets are masked, and so is the user:pass of proxy_url; a storage (s3_*) key is 403 for a member.
+         * @description Secrets are masked; a storage (s3_*) key is 403 for a member.
          */
         get: {
             parameters: {

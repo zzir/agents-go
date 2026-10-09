@@ -46,7 +46,7 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 		Memories:       store.NewMemoryStore(db),
 		McpServers:     store.NewMcpServerStore(db),
 		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
-		McpManager:     mcpservers.NewManager(ctx, settings.NewReader(store.NewSettingStore(db))),
+		McpManager:     mcpservers.NewManager(ctx),
 		SandboxManager: sandboxes.NewManager(),
 		Projects:       store.NewProjectStore(db),
 	})

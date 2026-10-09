@@ -74,6 +74,25 @@ budgets exist, each answering `429` with code `rate_limited` when exceeded:
 
 `/auth/config` is a static fact and carries no budget.
 
+### Outbound proxy
+
+There is no proxy flag or setting: the server honors the variables Go's
+`net/http` reads, and they cover every outbound request — model APIs, MCP
+servers, skill imports, the attachment bucket, sandbox services and the OAuth
+login exchange (decisions §5.89). Set them on the process and restart:
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:7890 NO_PROXY=localhost,127.0.0.1 agents-server --auth oauth …
+```
+
+`socks5://` works too. In a container the proxy must listen on an address the
+container can reach — `host.docker.internal` on Docker Desktop, the host's
+LAN address otherwise — and the proxy must accept connections from it (a
+loopback-only listener will not). List in `NO_PROXY` every HTTP endpoint the
+proxy must not sit in front of: a LAN MCP server, a local model server,
+MinIO, and a `DOCKER_HOST` reached over TCP. The compose file in
+[`scripts/`](../../scripts/docker-compose.yml) carries the two lines commented out.
+
 ### Trust boundary
 
 The model is **one team, one trust boundary**. Three consequences an operator
@@ -81,10 +100,10 @@ owns from outside the server:
 
 - **Member-supplied URLs are not SSRF-guarded.** MCP server endpoints, provider
   base URLs and skill imports are outbound requests to addresses a member
-  typed, with no private-network defence (decisions §5.29). Confine egress at the network — a
-  proxy allowlist, or `proxy_url` in
-  [runtime settings](../reference/configuration.md#runtime-settings) — if
-  members are not fully trusted or the server can reach an internal network.
+  typed, with no private-network defence (decisions §5.29). Confine egress at
+  the network — a firewall, or an allowlisting proxy set as the
+  [outbound proxy](#outbound-proxy) — if members are not fully trusted or the
+  server can reach an internal network.
 - **Credentials are plaintext at rest without a key.** Set `AGENTS_SECRET_KEY`
   (or `--secret-key-file`) to seal provider keys and OAuth tokens; without it
   they are stored in the clear and the server warns once at startup. Settings →

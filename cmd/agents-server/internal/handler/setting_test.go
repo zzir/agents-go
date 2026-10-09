@@ -40,10 +40,10 @@ func newSettingEngineAs(t *testing.T, user protocol.UserInfo) (*gin.Engine, *sto
 // that is stored forever and read by nobody.
 func TestSetRejectsUnknownKey(t *testing.T) {
 	e, st := newSettingEngine(t)
-	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_urlll", `{"value":"http://127.0.0.1:1"}`); w.Code != http.StatusBadRequest {
+	if w := doJSON(t, e, http.MethodPut, "/settings/system_promptt", `{"value":"be terse"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body)
 	}
-	if _, err := st.Get(t.Context(), "proxy_urlll"); err == nil {
+	if _, err := st.Get(t.Context(), "system_promptt"); err == nil {
 		t.Fatal("a refused key must not have been stored")
 	}
 }
@@ -57,7 +57,6 @@ func TestSetRejectsMalformedValues(t *testing.T) {
 		{"int below min", settings.KeyTraceSpanDataKB, `{"value":"0"}`},
 		{"int above max", settings.KeyMaxTerminalsPerSandbox, `{"value":"500"}`},
 		{"bool gets maybe", settings.KeyTraceIncludeSensitiveData, `{"value":"maybe"}`},
-		{"proxy without a scheme", settings.KeyProxyURL, `{"value":"127.0.0.1:7890"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if w := doJSON(t, e, http.MethodPut, "/settings/"+tc.key, tc.body); w.Code != http.StatusBadRequest {
@@ -70,7 +69,7 @@ func TestSetRejectsMalformedValues(t *testing.T) {
 func TestSetAcceptsValidValues(t *testing.T) {
 	e, st := newSettingEngine(t)
 	for _, tc := range []struct{ key, value string }{
-		{settings.KeyProxyURL, "socks5://127.0.0.1:1080"},
+		{settings.KeySystemPrompt, "be terse"},
 		{settings.KeyTraceSpanDataKB, "4096"},
 		{settings.KeyApprovalTTLMinutes, "0"},
 		{settings.KeyTraceIncludeSensitiveData, "false"},
@@ -98,7 +97,7 @@ func TestListFlagsUnknownKeysAndDeleteClearsThem(t *testing.T) {
 	if err := st.Set(t.Context(), "retired_key", "leftover"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Set(t.Context(), settings.KeyProxyURL, "http://127.0.0.1:7890"); err != nil {
+	if err := st.Set(t.Context(), settings.KeySystemPrompt, "be terse"); err != nil {
 		t.Fatal(err)
 	}
 	var list []SettingView
@@ -116,7 +115,7 @@ func TestListFlagsUnknownKeysAndDeleteClearsThem(t *testing.T) {
 	if byKey["retired_key"].Value != SecretMask {
 		t.Errorf("an unknown row's value must be masked, got %q", byKey["retired_key"].Value)
 	}
-	if byKey[settings.KeyProxyURL].Unknown {
+	if byKey[settings.KeySystemPrompt].Unknown {
 		t.Error("a defined key must not be flagged unknown")
 	}
 	if w := doJSON(t, e, http.MethodDelete, "/settings/retired_key", ""); w.Code != http.StatusNoContent {
@@ -149,60 +148,18 @@ func mustQuote(s string) string {
 	return string(b)
 }
 
-// http://user:pass@proxy is a supported proxy credential, so a read masks the
-// user:pass and a write that echoes the mask keeps the stored one; a mask
-// with nothing behind it is dropped rather than stored.
-func TestProxyURLUserinfoIsMaskedOnReadAndKeptOnEcho(t *testing.T) {
-	e, st := newSettingEngine(t)
-	const full, masked = "http://alice:s3cret@proxy.local:3128", "http://********@proxy.local:3128"
-	stored := func() string {
-		t.Helper()
-		got, err := st.Get(t.Context(), settings.KeyProxyURL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return got.Value
-	}
-	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_url", `{"value":"`+full+`"}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), masked) || strings.Contains(w.Body.String(), "s3cret") {
-		t.Fatalf("set = %d %s, want the masked url back", w.Code, w.Body)
-	}
-	for _, path := range []string{"/settings/proxy_url", "/settings"} {
-		if w := doJSON(t, e, http.MethodGet, path, ""); !strings.Contains(w.Body.String(), masked) || strings.Contains(w.Body.String(), "s3cret") {
-			t.Fatalf("GET %s = %s, want the masked url", path, w.Body)
-		}
-	}
-	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_url", `{"value":"`+masked+`"}`); w.Code != http.StatusOK {
-		t.Fatalf("echo = %d %s", w.Code, w.Body)
-	}
-	if got := stored(); got != full {
-		t.Fatalf("stored after echoing the mask = %q, want %q kept", got, full)
-	}
-	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_url", `{"value":"http://proxy.local:3128"}`); w.Code != http.StatusOK {
-		t.Fatalf("clear userinfo = %d %s", w.Code, w.Body)
-	}
-	if got := stored(); got != "http://proxy.local:3128" {
-		t.Fatalf("stored after a url without userinfo = %q, want it as sent", got)
-	}
-	if w := doJSON(t, e, http.MethodPut, "/settings/proxy_url", `{"value":"http://********@other.local:1"}`); w.Code != http.StatusOK {
-		t.Fatalf("mask over nothing = %d %s", w.Code, w.Body)
-	}
-	if got := stored(); got != "http://other.local:1" {
-		t.Fatalf("stored after a mask with nothing behind it = %q, want the mask dropped", got)
-	}
-}
-
 // The storage group is the admin's to read as it is to write: a member's
 // listing leaves the s3_* keys out and a direct read is 403.
 func TestStorageSettingsAreReadByAdminsOnly(t *testing.T) {
 	member := protocol.UserInfo{ID: "u-member", Email: "member@example.com", Role: store.RoleMember}
 	e, st := newSettingEngineAs(t, member)
-	for k, v := range map[string]string{settings.KeyS3Bucket: "pics", settings.KeyS3AccessKeyID: "AKIA", settings.KeyProxyURL: "http://proxy.local:1"} {
+	for k, v := range map[string]string{settings.KeyS3Bucket: "pics", settings.KeyS3AccessKeyID: "AKIA", settings.KeySystemPrompt: "be terse"} {
 		if err := st.Set(t.Context(), k, v); err != nil {
 			t.Fatal(err)
 		}
 	}
 	w := doJSON(t, e, http.MethodGet, "/settings", "")
-	if strings.Contains(w.Body.String(), "s3_") || !strings.Contains(w.Body.String(), "proxy_url") {
+	if strings.Contains(w.Body.String(), "s3_") || !strings.Contains(w.Body.String(), "system_prompt") {
 		t.Fatalf("member listing = %s, want the storage keys out and the rest in", w.Body)
 	}
 	if w := doJSON(t, e, http.MethodGet, "/settings/s3_bucket", ""); w.Code != http.StatusForbidden {

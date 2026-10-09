@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 	"github.com/zzir/agents-go/mcp"
@@ -27,7 +26,7 @@ import (
 // disabled server stays connected with stale config. Disconnect also cancels
 // the in-flight handshake so it releases the connect slot promptly.
 func TestFinishConnectDiscardsSupersededHandshake(t *testing.T) {
-	m := NewManager(context.Background(), nil)
+	m := NewManager(context.Background())
 
 	done, hctx, gen, err := m.beginConnect(context.Background(), "srv1")
 	if err != nil || done {
@@ -69,7 +68,7 @@ func TestFinishConnectDiscardsSupersededHandshake(t *testing.T) {
 // slot and releases the manager lock (the handshake runs outside it), so
 // Get/IsConnected/Disconnect stay responsive while a slow server connects.
 func TestMcpManagerConnectDoesNotBlockReads(t *testing.T) {
-	m := NewManager(context.Background(), nil)
+	m := NewManager(context.Background())
 
 	// Simulate a claimed-but-not-finished connect (a slow handshake in flight).
 	done, _, gen, err := m.beginConnect(context.Background(), "srv1")
@@ -192,7 +191,7 @@ func TestConnectEnabledMcpServersConcurrent(t *testing.T) {
 	mk("hung", "http://"+hung.Addr().String())
 	mk("fast", fast.URL)
 
-	mgr := NewManager(ctx, settings.NewReader(store.NewSettingStore(db)))
+	mgr := NewManager(ctx)
 	go ConnectEnabled(ctx, mgr, mcpStore, nil)
 
 	// The reachable server must be reached well within the hung server's 30s
@@ -232,7 +231,7 @@ func (b *syncBuffer) String() string {
 func TestReconcileLogsFailedReconnect(t *testing.T) {
 	var logs syncBuffer
 	ctx := logging.Into(t.Context(), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	m := NewManager(ctx, nil)
+	m := NewManager(ctx)
 
 	m.Reconcile(&store.McpServerConfig{
 		ID: store.NewID(), Name: "broken", Enabled: true,

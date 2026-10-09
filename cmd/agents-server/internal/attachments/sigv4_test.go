@@ -71,22 +71,22 @@ func TestObjectURLStyles(t *testing.T) {
 		Endpoint: "https://s3.example.com", Region: "auto", Bucket: "imgs",
 		AccessKeyID: "k", SecretKey: "s", PublicBaseURL: "https://pub.example.com",
 	}
-	c := ClientFrom(cfg, nil)
+	c := ClientFrom(cfg)
 	if got, want := c.objectURL("att/x.png"), "https://imgs.s3.example.com/att/x.png"; got != want {
 		t.Fatalf("virtual-hosted url = %q, want %q", got, want)
 	}
 	cfg.PathStyle = true
-	c = ClientFrom(cfg, nil)
+	c = ClientFrom(cfg)
 	if got, want := c.objectURL("att/x.png"), "https://s3.example.com/imgs/att/x.png"; got != want {
 		t.Fatalf("path-style url = %q, want %q", got, want)
 	}
 }
 
 func TestClientFromIncomplete(t *testing.T) {
-	if ClientFrom(settings.S3Config{Endpoint: "https://x"}, nil) != nil {
+	if ClientFrom(settings.S3Config{Endpoint: "https://x"}) != nil {
 		t.Fatal("incomplete config must yield a nil client")
 	}
-	if ClientFrom(settings.S3Config{}, nil) != nil {
+	if ClientFrom(settings.S3Config{}) != nil {
 		t.Fatal("empty config must yield a nil client")
 	}
 }
@@ -132,7 +132,7 @@ func TestPutDeleteProbe(t *testing.T) {
 		Endpoint: api.URL, Region: "auto", Bucket: "imgs", PathStyle: true,
 		AccessKeyID: "AK", SecretKey: "SK", PublicBaseURL: pub.URL,
 	}
-	c := ClientFrom(cfg, nil)
+	c := ClientFrom(cfg)
 	if err := c.Probe(context.Background()); err != nil {
 		t.Fatalf("probe: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestProbeNotPublic(t *testing.T) {
 	c := ClientFrom(settings.S3Config{
 		Endpoint: api.URL, Region: "auto", Bucket: "b", PathStyle: true,
 		AccessKeyID: "k", SecretKey: "s", PublicBaseURL: pub.URL,
-	}, nil)
+	})
 	err := c.Probe(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "anonymous reads") {
 		t.Fatalf("want anonymous-read error, got %v", err)

@@ -11,6 +11,10 @@ services:
       - "9527:9527"
     environment:
       - AGENTS_TOKEN=change-me-please
+      # Outbound proxy for every HTTP request, OAuth login included; the proxy
+      # must listen on an address the container can reach.
+      # - HTTPS_PROXY=http://host.docker.internal:7890
+      # - NO_PROXY=localhost,127.0.0.1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agents-data:/data

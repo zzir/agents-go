@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -16,7 +15,7 @@ import (
 func TestChatGPTOAuthMissingProvider(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	o := NewChatGPTOAuth(store.NewProviderStore(db), settings.NewReader(store.NewSettingStore(db)))
+	o := NewChatGPTOAuth(store.NewProviderStore(db))
 
 	if _, err := o.StartLogin(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("StartLogin(missing) err = %v, want ErrNotFound", err)
@@ -64,7 +63,7 @@ func TestParseChatGPTCallback(t *testing.T) {
 func TestCompleteLoginGuards(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
-	o := NewChatGPTOAuth(store.NewProviderStore(db), settings.NewReader(store.NewSettingStore(db)))
+	o := NewChatGPTOAuth(store.NewProviderStore(db))
 
 	if err := o.CompleteLogin(ctx, "pid", "http://localhost:1455/auth/callback?code=ac_x&state=unknown"); !errors.Is(err, ErrChatGPTLoginExpired) {
 		t.Fatalf("unknown state err = %v, want ErrChatGPTLoginExpired", err)

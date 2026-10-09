@@ -28,7 +28,6 @@ const (
 // The keys; every read, mask and validation names one of these, never a
 // string literal.
 const (
-	KeyProxyURL                  = "proxy_url"
 	KeySystemPrompt              = "system_prompt"
 	KeyTraceRetentionDays        = "trace_retention_days"
 	KeyTracePayloadRetentionDays = "trace_payload_retention_days"
@@ -51,7 +50,6 @@ const (
 
 // The groups the panel renders as sections, in the order defs are listed.
 const (
-	GroupNetwork = "network"
 	GroupPrompt  = "prompt"
 	GroupTracing = "tracing"
 	GroupLogging = "logging"
@@ -80,17 +78,9 @@ type Def struct {
 	Validate func(string) error `json:"-"`
 }
 
-// defs is the table. Order is panel order: network and prompt first (what
-// every agent inherits), then the diagnostics and the caps.
+// defs is the table. Order is panel order: the prompt first (what every
+// agent inherits), then the diagnostics and the caps.
 var defs = []Def{{
-	Key:         KeyProxyURL,
-	Kind:        KindString,
-	Group:       GroupNetwork,
-	Label:       "Proxy URL",
-	Placeholder: "http://127.0.0.1:7890 or socks5://127.0.0.1:1080",
-	Description: "All outbound API and MCP HTTP requests are routed through this proxy; a user:pass@ in it is masked on read.",
-	Validate:    validateProxyURL,
-}, {
 	Key:         KeySystemPrompt,
 	Kind:        KindText,
 	Group:       GroupPrompt,
@@ -301,17 +291,4 @@ func validateHTTPURL(key string) func(string) error {
 		}
 		return nil
 	}
-}
-
-// validateProxyURL rejects what Reader.ProxyClient would drop on the floor: an
-// unparsable proxy, or one with no scheme to dial.
-func validateProxyURL(v string) error {
-	u, err := url.Parse(v)
-	if err != nil {
-		return fmt.Errorf("%s is not a URL: %w", KeyProxyURL, err)
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("%s needs a scheme and host, e.g. http://127.0.0.1:7890", KeyProxyURL)
-	}
-	return nil
 }

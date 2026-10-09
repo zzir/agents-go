@@ -118,9 +118,9 @@ type services struct {
 func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protocol.AuditFunc) *services {
 	svc := &services{
 		Guardrails: guardrails.NewResolver(st.Guardrails),
-		Mcp:        mcpservers.NewManager(ctx, st.SettingReader),
+		Mcp:        mcpservers.NewManager(ctx),
 		OAuth:      mcpservers.NewOAuthCoordinator(st.McpServers),
-		ChatGPT:    providers.NewChatGPTOAuth(st.Providers, st.SettingReader),
+		ChatGPT:    providers.NewChatGPTOAuth(st.Providers),
 		Sandboxes:  sandboxes.NewManager(),
 	}
 	svc.Sandboxes.SetInstanceRefWriter(st.Projects.SetInstanceRef)
@@ -205,8 +205,8 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			McpServers: handler.NewMcpServerHandler(st.McpServers, svc.Mcp, svc.OAuth, baseURL),
 			Memories:   handler.NewMemoryHandler(st.Memories, st.Sessions, st.AgentConfigs, st.Entries),
 			Settings:   handler.NewSettingHandler(st.Settings),
-			Skills:     handler.NewSkillHandler(st.Skills, st.SettingReader),
-			Providers:  handler.NewProviderHandler(st.Providers, st.SettingReader),
+			Skills:     handler.NewSkillHandler(st.Skills),
+			Providers:  handler.NewProviderHandler(st.Providers),
 			Workflows:  handler.NewWorkflowHandler(st.Workflows, st.AgentConfigs, st.Sessions, svc.Runner),
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, st.Workflows, st.AgentConfigs, svc.Scheduler),
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),

@@ -412,8 +412,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	agent.OutputType = spec.OutputType
 
 	// Provider + retry/fallback decorators.
-	proxyClient := deps.Settings.ProxyClient(ctx)
-	result.Provider, result.ProviderType, result.PrefixBound, err = resolveProvider(ctx, deps, ac, spec, proxyClient)
+	result.Provider, result.ProviderType, result.PrefixBound, err = resolveProvider(ctx, deps, ac, spec)
 	if err != nil {
 		return nil, err
 	}

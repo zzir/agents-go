@@ -65,12 +65,18 @@ Each is the fallback of one flag (flag wins), never a standalone knob
 | `AGENTS_OAUTH_GOOGLE_CLIENT_SECRET` | `--oauth-google-client-secret` | The Google OAuth client secret |
 | `AGENTS_OAUTH_GITHUB_CLIENT_SECRET` | `--oauth-github-client-secret` | The GitHub OAuth client secret |
 
-Three variables the process does not define but honors, each a vendor
-convention ([spec §2.14](spec.md#214-the-sdk-reads-no-environment-variable)):
-`TZ` is the zone cron triggers tick in unless a schedule carries a `CRON_TZ=`
-prefix (Go's `time.Local`, reported by `GET /api/v1/server`), `DOCKER_HOST` is
-where a docker sandbox with an empty `host` dials, and `SSH_AUTH_SOCK` is the
-agent an `ssh://` sandbox with `ssh_use_agent` authenticates through.
+Variables the process does not define but honors, each a convention of the
+Go runtime or of a tool it drives
+([spec §2.14](spec.md#214-the-sdk-reads-no-environment-variable)):
+`HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` route every outbound HTTP request —
+model APIs, MCP servers, skill imports, the attachment bucket, sandbox
+services and the OAuth login exchange — through a proxy, and are the only
+proxy configuration there is (decisions §5.89;
+[outbound proxy](../howto/workbench-deploy.md#outbound-proxy)); `TZ` is the
+zone cron triggers tick in unless a schedule carries a `CRON_TZ=` prefix
+(Go's `time.Local`, reported by `GET /api/v1/server`); `DOCKER_HOST` is where
+a docker sandbox with an empty `host` dials; and `SSH_AUTH_SOCK` is the agent
+an `ssh://` sandbox with `ssh_use_agent` authenticates through.
 
 ## Runtime settings
 
@@ -83,7 +89,6 @@ entry in the settings registry (invariant 40). Keys by panel group:
 <!-- settings-table:begin — generated from internal/settings/registry.go by `make settings-doc` -->
 | Key | Group | Default | Meaning |
 |---|---|---|---|
-| `proxy_url` | network | — | All outbound API and MCP HTTP requests are routed through this proxy; a user:pass@ in it is masked on read. |
 | `system_prompt` | prompt | — | Prepended to every agent, whether or not it binds a sandbox; an agent opts out under its own Instructions. Keep it tool-agnostic: file and shell tools mount only when a session binds a sandbox, so put machine- and tool-specific instructions in that sandbox's own Prompt, not here. |
 | `trace_retention_days` | tracing | `30` | Trace events older than this many days are pruned daily, and a session left with none loses its stored payloads too. 0 keeps everything. |
 | `trace_payload_retention_days` | tracing | — | A session whose newest trace span is older than this many days loses its stored model requests, replies and tool payloads daily. The spans stay with their timing, usage and errors, so the trace panel reads as before; only Replay has nothing to seed from. Unset or 0 keeps payloads as long as their spans. |

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -69,8 +68,6 @@ func TestValidate(t *testing.T) {
 		{"ttl accepts zero", settings.KeyApprovalTTLMinutes, "0", false},
 		{"bool accepts false", settings.KeyTraceIncludeSensitiveData, "false", false},
 		{"bool rejects maybe", settings.KeyTraceIncludeSensitiveData, "maybe", true},
-		{"proxy accepts a URL", settings.KeyProxyURL, "socks5://127.0.0.1:1080", false},
-		{"proxy rejects a bare host", settings.KeyProxyURL, "127.0.0.1:7890", true},
 		{"free text takes anything", settings.KeySystemPrompt, "be terse\nand kind", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,8 +93,8 @@ func TestNilReaderYieldsDefaults(t *testing.T) {
 	if got := r.Int(ctx, settings.KeyTraceSpanDataKB); got != 1024 {
 		t.Errorf("span cap = %d, want the 1024 default", got)
 	}
-	if got := r.String(ctx, settings.KeyProxyURL); got != "" {
-		t.Errorf("proxy = %q, want empty", got)
+	if got := r.String(ctx, settings.KeySystemPrompt); got != "" {
+		t.Errorf("system prompt = %q, want empty", got)
 	}
 }
 
@@ -147,50 +144,5 @@ func TestTraceSensitiveResolvesDefault(t *testing.T) {
 	}
 	if !r.Bool(ctx, settings.KeyTraceIncludeSensitiveData) {
 		t.Fatal("an unusable value must fall back to the default true")
-	}
-}
-
-// ProxyClient is called per agent build, per compaction, per MCP transport and
-// per token refresh, and a fresh http.Transport is a fresh connection pool —
-// so the TRANSPORT is pooled, keyed by the URL, while every caller gets a
-// client of its own: a timeout one sets must not reach its peers.
-func TestProxyClientPoolsTheTransportPerURL(t *testing.T) {
-	r, s := newReader(t)
-	ctx := context.Background()
-
-	if c := r.ProxyClient(ctx); c != nil {
-		t.Fatal("no proxy set: want nil")
-	}
-	if err := s.Set(ctx, settings.KeyProxyURL, "http://127.0.0.1:7890"); err != nil {
-		t.Fatal(err)
-	}
-
-	first := r.ProxyClient(ctx)
-	if first == nil {
-		t.Fatal("proxy set: want a client")
-	}
-	first.Timeout = time.Second
-	again := r.ProxyClient(ctx)
-	if again == first {
-		t.Error("two callers were handed the same client")
-	}
-	if again.Transport != first.Transport {
-		t.Error("the same proxy URL built a second transport")
-	}
-	if again.Timeout != 0 {
-		t.Errorf("one caller's Timeout reached another's client: %v", again.Timeout)
-	}
-
-	if err := s.Set(ctx, settings.KeyProxyURL, "socks5://127.0.0.1:1080"); err != nil {
-		t.Fatal(err)
-	}
-	changed := r.ProxyClient(ctx)
-	if changed == nil || changed.Transport == first.Transport {
-		t.Error("an edited proxy URL must produce a different transport")
-	}
-
-	var nilReader *settings.Reader
-	if c := nilReader.ProxyClient(ctx); c != nil {
-		t.Error("a nil Reader must proxy nothing")
 	}
 }

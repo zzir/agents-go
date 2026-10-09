@@ -28,7 +28,7 @@ func thinkingOnTheWire(t *testing.T, providerType, mode string, binding bool) ma
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := ApplyThinking(def.Build("k", srv.URL, nil, nil), mode, binding)
+	p := ApplyThinking(def.Build("k", srv.URL, nil), mode, binding)
 	m, err := p.Model("some-model")
 	if err != nil {
 		t.Fatal(err)

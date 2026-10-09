@@ -180,16 +180,8 @@ const skillImportBudget = 5 * time.Minute
 // documents, which are all fetched before any is written.
 const maxImportBytes = 16 << 20
 
-// httpClient is the import fetcher: the proxy_url client when one is set, a
-// plain client otherwise, bounded by skillFetchTimeout.
-func (h *SkillHandler) httpClient(ctx context.Context) *http.Client {
-	c := h.settings.ProxyClient(ctx)
-	if c == nil {
-		c = &http.Client{}
-	}
-	c.Timeout = skillFetchTimeout
-	return c
-}
+// skillFetchClient is the import fetcher, bounded by skillFetchTimeout.
+var skillFetchClient = &http.Client{Timeout: skillFetchTimeout}
 
 // githubGet performs one anonymous GitHub API GET (two calls per import, so
 // the anonymous rate limit goes far).
@@ -200,7 +192,7 @@ func (h *SkillHandler) githubGet(c *gin.Context, url string) (*http.Response, er
 	}
 	req.Header.Set("User-Agent", "agents-server")
 	req.Header.Set("Accept", "application/vnd.github+json")
-	return h.httpClient(c.Request.Context()).Do(req)
+	return skillFetchClient.Do(req)
 }
 
 // readBody drains a response up to maxSkillBytes, reporting oversize as an
@@ -323,7 +315,7 @@ func (h *SkillHandler) importRawURL(c *gin.Context, rawURL string) (*skillImport
 		return nil, nil //nolint:nilerr // the 400 above is the answer; nil,nil = "already responded"
 	}
 	req.Header.Set("User-Agent", "agents-server")
-	raw, err := h.httpClient(c.Request.Context()).Do(req)
+	raw, err := skillFetchClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -44,7 +44,7 @@ func NewAttachmentHandler(s *store.AttachmentStore, cfg *settings.Reader, settin
 // client returns the bucket client for the current settings, or nil when the
 // feature is unconfigured.
 func (h *AttachmentHandler) client(ctx context.Context) *attachments.Client {
-	return attachments.ClientFrom(h.settings.S3Config(ctx), h.settings.ProxyClient(ctx))
+	return attachments.ClientFrom(h.settings.S3Config(ctx))
 }
 
 // attachmentConfigResp is what the composer renders and validates from.
@@ -279,7 +279,7 @@ func (h *AttachmentHandler) checkStorage(ctx context.Context, cfg settings.S3Con
 			return err.Error()
 		}
 	}
-	client := attachments.ClientFrom(cfg, h.settings.ProxyClient(ctx))
+	client := attachments.ClientFrom(cfg)
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := client.Probe(probeCtx); err != nil {

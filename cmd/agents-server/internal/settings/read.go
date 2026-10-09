@@ -2,11 +2,8 @@ package settings
 
 import (
 	"context"
-	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -15,8 +12,6 @@ import (
 // default; a nil Reader, or one without a store, yields every default. Uncached.
 type Reader struct {
 	store *store.SettingStore
-	// transports pools one *http.Transport per proxy URL; see ProxyClient.
-	transports sync.Map
 }
 
 // NewReader returns a Reader over s. A nil store is valid and reads defaults.
@@ -67,21 +62,6 @@ func (r *Reader) Bool(ctx context.Context, key string) bool {
 		v, _ = strconv.ParseBool(d.Default)
 	}
 	return v
-}
-
-// ProxyClient returns a fresh *http.Client routed through the proxy_url
-// setting, or nil when none is set; the transport is pooled per proxy URL.
-func (r *Reader) ProxyClient(ctx context.Context) *http.Client {
-	u, err := url.Parse(r.String(ctx, KeyProxyURL))
-	if r == nil || err != nil || u.String() == "" {
-		return nil
-	}
-	key := u.String()
-	t, ok := r.transports.Load(key)
-	if !ok {
-		t, _ = r.transports.LoadOrStore(key, &http.Transport{Proxy: http.ProxyURL(u)})
-	}
-	return &http.Client{Transport: t.(*http.Transport)}
 }
 
 // SpanDataCap is the trace_span_data_kb setting in bytes: how much of one

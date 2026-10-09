@@ -40,7 +40,7 @@ func TestFallbackProvidersResolveByIDOrEndpoint(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		_, _, _, err = resolveProvider(ctx, deps, ac, spec, nil)
+		_, _, _, err = resolveProvider(ctx, deps, ac, spec)
 		return err
 	}
 	if err := resolve(store.FallbackModel{ProviderID: keyed.ID, Model: "claude"}); err != nil {
@@ -89,7 +89,7 @@ func TestProviderChainWithAnthropicIsPrefixBound(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _, prefixBound, err := resolveProvider(ctx, deps, ac, spec, nil)
+		_, _, prefixBound, err := resolveProvider(ctx, deps, ac, spec)
 		if err != nil {
 			t.Fatal(err)
 		}

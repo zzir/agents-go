@@ -220,7 +220,7 @@ cmd/agents-server/
 │   ├── sandboxes/              live sandbox instances behind stored configs; exec_command trust
 │   ├── guardrails/             stored + built-in guardrail definitions → SDK guardrails
 │   ├── attachments/            image attachments: the S3 client (SigV4, three operations) and the upload reaper
-│   ├── settings/               the settings registry and the typed reader (incl. the proxy client)
+│   ├── settings/               the settings registry and the typed reader
 │   ├── logging/                structured logging + context propagation
 │   ├── docs/                   generated OpenAPI 3.1 document, swagger.yaml (make openapi)
 │   ├── store/                  data layer (bun ORM; SQLite or PostgreSQL; the tables are listed under Database in docs/howto/workbench-deploy.md)

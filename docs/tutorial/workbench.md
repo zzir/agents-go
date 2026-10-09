@@ -130,7 +130,7 @@ service), and stops or rebuilds the container.
 Each panel in Settings is a thing you can add: **MCP servers** (streamable
 HTTP, with OAuth), **Skills** (`SKILL.md` documents, imported from a GitHub
 repository or written here), **Memory**, **Guardrails**, and **General** — the
-runtime settings (a proxy, a system prompt, trace retention, the caps, the
+runtime settings (a system prompt, trace retention, the caps, the
 attachment bucket that turns on [image input](../howto/attachments.md)). Your
 **Account** panel holds your profile and personal access tokens.
 

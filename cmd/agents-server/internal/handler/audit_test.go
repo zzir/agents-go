@@ -14,7 +14,6 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -116,7 +115,7 @@ func TestAuditLogNamesImportsAndRepoScopeFlips(t *testing.T) {
 		seen = append(seen, r)
 		mu.Unlock()
 	}
-	h := NewSkillHandler(store.NewSkillStore(db), settings.NewReader(store.NewSettingStore(db)))
+	h := NewSkillHandler(store.NewSkillStore(db))
 	gh := fakeGitHub(t, "sha1", map[string]string{"pdf/SKILL.md": pdfSkillDoc})
 	h.githubAPI, h.githubRaw = gh.URL, gh.URL
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, record)

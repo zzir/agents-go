@@ -269,7 +269,7 @@ func startInteractiveConnect(t *testing.T, rs *httptest.Server) (*OAuthCoordinat
 	if err := st.Create(context.Background(), cfg); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	mgr := NewManager(context.Background(), nil)
+	mgr := NewManager(context.Background())
 	t.Cleanup(mgr.CloseAll)
 	c := NewOAuthCoordinator(st)
 
@@ -333,7 +333,7 @@ func TestConnectWithOAuthSilentReconnectAfterRestart(t *testing.T) {
 	if err := json.Unmarshal(cfg2.Config, &hc); err != nil {
 		t.Fatal(err)
 	}
-	mgr2 := NewManager(context.Background(), nil)
+	mgr2 := NewManager(context.Background())
 	t.Cleanup(mgr2.CloseAll)
 	res, err := NewOAuthCoordinator(st).ConnectWithOAuth(context.Background(), mgr2, cfg2, &hc, "")
 	if err != nil {

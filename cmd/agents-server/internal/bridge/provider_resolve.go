@@ -3,7 +3,6 @@ package bridge
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
@@ -38,12 +37,12 @@ func AgentProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig) 
 // resolveProvider builds the agent's model provider with retry and fallback
 // decorators; nil (no error) when no API key is available. prefixBound reports
 // an anthropic backend anywhere in the chain (invariant 83).
-func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, spec *AgentSpec, proxyClient *http.Client) (provider agents.ModelProvider, providerType string, prefixBound bool, err error) {
+func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, spec *AgentSpec) (provider agents.ModelProvider, providerType string, prefixBound bool, err error) {
 	pv, err := AgentProvider(ctx, deps, ac)
 	if err != nil {
 		return nil, "", false, err
 	}
-	provider, def, err := buildProvider(ctx, deps, ac, pv, proxyClient)
+	provider, def, err := buildProvider(ctx, deps, ac, pv)
 	if err != nil {
 		return nil, "", false, err
 	}
@@ -55,7 +54,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 		provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
 	}
 	if len(spec.FallbackModels) > 0 {
-		fallbacks, anthropic, err := fallbackProviders(ctx, deps, ac, spec.FallbackModels, proxyClient)
+		fallbacks, anthropic, err := fallbackProviders(ctx, deps, ac, spec.FallbackModels)
 		if err != nil {
 			return nil, "", false, err
 		}
@@ -72,7 +71,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 
 // buildProvider turns a provider row into a model provider; nil (no error)
 // when the row reaches no credential.
-func buildProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, pv store.Provider, proxyClient *http.Client) (agents.ModelProvider, providers.Def, error) {
+func buildProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, pv store.Provider) (agents.ModelProvider, providers.Def, error) {
 	if err := providers.Validate(&pv); err != nil {
 		return nil, providers.Def{}, fmt.Errorf("agent %q: %w", ac.Name, err)
 	}
@@ -99,14 +98,14 @@ func buildProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, 
 	if chatgptCreds != nil {
 		baseURL = providers.ChatGPTBaseURL
 	}
-	provider := providers.ApplyThinking(def.Build(apiKey, baseURL, chatgptCreds, proxyClient), ac.Behavior.ThinkingMode, ac.Behavior.ThinkingBindingOn())
+	provider := providers.ApplyThinking(def.Build(apiKey, baseURL, chatgptCreds), ac.Behavior.ThinkingMode, ac.Behavior.ThinkingBindingOn())
 	return provider, def, nil
 }
 
 // fallbackProviders resolves each fallback entry to a keyed provider the agent
 // may reference, pinned to the entry's model; an entry that resolves to no
 // such provider fails the build — decisions §5.69.
-func fallbackProviders(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, entries []store.FallbackModel, proxyClient *http.Client) (fallbacks []agents.ModelProvider, anthropic bool, err error) {
+func fallbackProviders(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, entries []store.FallbackModel) (fallbacks []agents.ModelProvider, anthropic bool, err error) {
 	if deps.Providers == nil {
 		return nil, false, fmt.Errorf("agent %q names fallback providers but no provider store is wired", ac.Name)
 	}
@@ -116,7 +115,7 @@ func fallbackProviders(ctx context.Context, deps *AgentDeps, ac *store.AgentConf
 		if err != nil {
 			return nil, false, err
 		}
-		fp, def, err := buildProvider(ctx, deps, ac, pv, proxyClient)
+		fp, def, err := buildProvider(ctx, deps, ac, pv)
 		if err != nil {
 			return nil, false, fmt.Errorf("fallback_models[%d]: %w", i, err)
 		}

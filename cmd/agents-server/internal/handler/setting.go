@@ -2,8 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"net/url"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -40,38 +38,10 @@ func settingViewOf(st store.Setting) SettingView {
 		v.Value = maskSecret(v.Value)
 		return v
 	}
-	switch {
-	case settings.IsSecret(st.Key):
+	if settings.IsSecret(st.Key) {
 		v.Value = maskSecret(v.Value)
-	case st.Key == settings.KeyProxyURL:
-		v.Value = maskProxyUserinfo(v.Value)
 	}
 	return v
-}
-
-// maskProxyUserinfo hides a proxy URL's user:pass — the credential the proxy
-// client sends as Proxy-Authorization (settings/read.go).
-func maskProxyUserinfo(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.User == nil {
-		return raw
-	}
-	u.User = nil // url.Userinfo would percent-encode the mask's asterisks
-	return u.Scheme + "://" + SecretMask + "@" + strings.TrimPrefix(u.String(), u.Scheme+"://")
-}
-
-// keepProxyUserinfo restores prev's user:pass into next when next carries the
-// mask back; a mask with nothing stored behind it is dropped, never stored.
-func keepProxyUserinfo(next, prev string) string {
-	n, err := url.Parse(next)
-	if err != nil || n.User == nil || n.User.Username() != SecretMask {
-		return next
-	}
-	n.User = nil
-	if p, err := url.Parse(prev); err == nil && p.User != nil {
-		n.User = p.User
-	}
-	return n.String()
 }
 
 // storageReadable reports whether the caller may read key: the storage group
@@ -87,7 +57,7 @@ func storageReadable(c *gin.Context, key string) bool {
 // List responds with all stored settings, secrets masked.
 //
 //	@Summary		List settings
-//	@Description	Every stored key/value. Secrets are masked, and so is the user:pass of proxy_url; the storage (s3_*) keys are listed for admins only. A key the registry no longer defines is flagged `unknown` with its value masked too (whether it was a secret is unknowable), so it can be deleted. The definitions themselves are at /setting-defs.
+//	@Description	Every stored key/value. Secrets are masked; the storage (s3_*) keys are listed for admins only. A key the registry no longer defines is flagged `unknown` with its value masked too (whether it was a secret is unknowable), so it can be deleted. The definitions themselves are at /setting-defs.
 //	@Tags			settings
 //	@Produce		json
 //	@Success		200	{array}		SettingView
@@ -113,7 +83,7 @@ func (h *SettingHandler) List(c *gin.Context) {
 // masked.
 //
 //	@Summary		Get setting
-//	@Description	Secrets are masked, and so is the user:pass of proxy_url; a storage (s3_*) key is 403 for a member.
+//	@Description	Secrets are masked; a storage (s3_*) key is 403 for a member.
 //	@Tags			settings
 //	@Produce		json
 //	@Param			key	path		string	true	"Setting key"
@@ -176,9 +146,6 @@ func (h *SettingHandler) Set(c *gin.Context) {
 			if found {
 				req.Value = prev
 			}
-		}
-		if key == settings.KeyProxyURL {
-			req.Value = keepProxyUserinfo(req.Value, prev)
 		}
 		if err := settings.Validate(key, req.Value); err != nil {
 			return "", badRequestError(err.Error())

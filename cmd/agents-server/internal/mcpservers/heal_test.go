@@ -11,9 +11,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
 type swapHandler struct {
@@ -58,8 +56,7 @@ func TestManagerConnectionHealsItself(t *testing.T) {
 	endpoint := httptest.NewServer(swap)
 	defer endpoint.Close()
 
-	db := testdb.New(t)
-	mgr := NewManager(ctx, settings.NewReader(store.NewSettingStore(db)))
+	mgr := NewManager(ctx)
 	cfg := &store.McpServerConfig{
 		ID: store.NewID(), Name: "healer", Enabled: true,
 		Config: []byte(`{"endpoint":"` + endpoint.URL + `"}`),

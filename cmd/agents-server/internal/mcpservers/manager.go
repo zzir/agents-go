@@ -19,7 +19,6 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/mcp"
 )
@@ -28,10 +27,9 @@ import (
 type Manager struct {
 	// rootCtx bounds the connections' own lifetime (an in-flight handshake
 	// included), independent of the request that triggered the connect.
-	rootCtx  context.Context
-	settings *settings.Reader
-	mu       sync.RWMutex
-	servers  map[string]*mcp.Server
+	rootCtx context.Context
+	mu      sync.RWMutex
+	servers map[string]*mcp.Server
 	// connecting marks in-flight handshakes with their cancel; the handshake
 	// runs OUTSIDE mu (network I/O), this map dedups concurrent Connects.
 	connecting map[string]*connectState
@@ -48,13 +46,12 @@ type connectState struct {
 }
 
 // NewManager returns an empty manager; rootCtx scopes every connection's lifetime.
-func NewManager(rootCtx context.Context, cfg *settings.Reader) *Manager {
+func NewManager(rootCtx context.Context) *Manager {
 	if rootCtx == nil {
 		rootCtx = context.Background()
 	}
 	return &Manager{
 		rootCtx:    rootCtx,
-		settings:   cfg,
 		servers:    make(map[string]*mcp.Server),
 		connecting: make(map[string]*connectState),
 		connectGen: make(map[string]uint64),
@@ -120,12 +117,12 @@ func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error
 	if cerr := store.DecodeConfig(cfg.Config, &hc); cerr != nil {
 		return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 	}
-	transport := m.httpTransport(ctx, &hc, nil)
+	transport := m.httpTransport(&hc, nil)
 	opts := buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent)
 	// Redial makes the connection self-healing (spec §2.16), on the manager's
 	// own context.
 	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {
-		return m.httpTransport(m.rootCtx, &hc, nil), nil
+		return m.httpTransport(&hc, nil), nil
 	}
 
 	done, hctx, gen, err := m.beginConnect(ctx, cfg.ID)
@@ -196,26 +193,18 @@ func IsOAuthConfig(cfg *store.McpServerConfig) bool {
 	return hc.AuthMode == "oauth"
 }
 
-func (m *Manager) proxyClient(ctx context.Context) *http.Client {
-	return m.settings.ProxyClient(ctx)
-}
-
 // httpTransport builds the streamable transport for an HTTP server config; the
 // first connect and every re-dial go through it, so a healed connection cannot drift.
-func (m *Manager) httpTransport(ctx context.Context, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) *mcpsdk.StreamableClientTransport {
+func (m *Manager) httpTransport(hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) *mcpsdk.StreamableClientTransport {
 	t := &mcpsdk.StreamableClientTransport{Endpoint: hc.Endpoint, OAuthHandler: oauthHandler}
-	t.HTTPClient = httpClientFor(m.proxyClient(ctx), hc.Headers)
+	t.HTTPClient = httpClientFor(hc.Headers)
 	return t
 }
 
-// httpClientFor builds an HTTP MCP transport's client: the proxy transport when
-// set, static headers, no client timeout (each call's bound is its context's).
-func httpClientFor(proxy *http.Client, headers map[string]string) *http.Client {
-	base := http.DefaultTransport
-	if proxy != nil && proxy.Transport != nil {
-		base = proxy.Transport
-	}
-	var rt http.RoundTripper = &errorBodyRoundTripper{base: base}
+// httpClientFor builds an HTTP MCP transport's client: static headers, no
+// client timeout (each call's bound is its context's).
+func httpClientFor(headers map[string]string) *http.Client {
+	var rt http.RoundTripper = &errorBodyRoundTripper{base: http.DefaultTransport}
 	if len(headers) > 0 {
 		rt = &headerRoundTripper{base: rt, headers: headers}
 	}
@@ -268,13 +257,13 @@ func (m *Manager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServer
 		return err
 	}
 
-	transport := m.httpTransport(ctx, hc, oauthHandler)
+	transport := m.httpTransport(hc, oauthHandler)
 	opts := buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent)
 	// The same handler on the re-dial: a healed connection re-authorizes through
 	// the handler that holds the persisting token source (invariant 11).
 	hcCopy := *hc
 	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {
-		return m.httpTransport(m.rootCtx, &hcCopy, oauthHandler), nil
+		return m.httpTransport(&hcCopy, oauthHandler), nil
 	}
 
 	srv, cerr := mcp.NewWithTransport(hctx, cfg.Name, transport, opts)

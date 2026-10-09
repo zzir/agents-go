@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -46,8 +45,6 @@ const chatgptHTTPTimeout = 30 * time.Second
 // ChatGPTOAuth manages the OAuth flow for ChatGPT subscription authentication.
 type ChatGPTOAuth struct {
 	providers *store.ProviderStore
-	// settings routes token endpoint calls through the configured proxy_url.
-	settings *settings.Reader
 	// tokenURL is the token endpoint; tests point it at a fake.
 	tokenURL string
 
@@ -65,30 +62,20 @@ type chatgptPending struct {
 	timer *time.Timer
 }
 
-// NewChatGPTOAuth returns the OAuth manager over the provider rows it logs in
-// and the settings its token calls honor (proxy_url).
-func NewChatGPTOAuth(providers *store.ProviderStore, cfg *settings.Reader) *ChatGPTOAuth {
-	if providers == nil || cfg == nil {
-		panic("bridge: NewChatGPTOAuth needs the provider store and the setting reader")
+// NewChatGPTOAuth returns the OAuth manager over the provider rows it logs in.
+func NewChatGPTOAuth(providers *store.ProviderStore) *ChatGPTOAuth {
+	if providers == nil {
+		panic("providers: NewChatGPTOAuth needs the provider store")
 	}
 	return &ChatGPTOAuth{
 		providers: providers,
-		settings:  cfg,
 		tokenURL:  chatgptTokenURL,
 		pending:   make(map[string]*chatgptPending),
 	}
 }
 
-// httpClient returns a timed HTTP client for the token endpoint, routed through
-// the configured proxy when one is set.
-func (o *ChatGPTOAuth) httpClient(ctx context.Context) *http.Client {
-	c := o.settings.ProxyClient(ctx)
-	if c == nil {
-		c = &http.Client{}
-	}
-	c.Timeout = chatgptHTTPTimeout
-	return c
-}
+// chatgptHTTPClient is the token endpoint client, bounded by chatgptHTTPTimeout.
+var chatgptHTTPClient = &http.Client{Timeout: chatgptHTTPTimeout}
 
 // ChatGPTLoginResult is returned by StartLogin with the authorize URL. The
 // state is not exposed: it rides back inside the callback URL the user pastes
@@ -175,7 +162,7 @@ func (o *ChatGPTOAuth) CompleteLogin(ctx context.Context, providerID, callback s
 		return fmt.Errorf("%w: this callback belongs to a different sign-in", ErrChatGPTCallbackInvalid)
 	}
 
-	tokens, err := exchangeCode(ctx, o.httpClient(ctx), o.tokenURL, code, p.codeVerifier, chatgptRedirectURI)
+	tokens, err := exchangeCode(ctx, chatgptHTTPClient, o.tokenURL, code, p.codeVerifier, chatgptRedirectURI)
 	if err != nil {
 		// A refusal (4xx) is the code's fault: spent, expired, or another
 		// flow's. A 5xx or transport failure stays a server error.
@@ -287,7 +274,7 @@ func (o *ChatGPTOAuth) refreshCredentials(ctx context.Context, providerID string
 		}
 	}
 
-	refreshed, err := refreshToken(ctx, o.httpClient(ctx), o.tokenURL, tok.RefreshToken)
+	refreshed, err := refreshToken(ctx, chatgptHTTPClient, o.tokenURL, tok.RefreshToken)
 	if err != nil {
 		return chatgptTokens{}, fmt.Errorf("token refresh failed: %w", err)
 	}

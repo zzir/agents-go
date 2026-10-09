@@ -90,7 +90,7 @@ func TestSandboxHeadersMasking(t *testing.T) {
 func TestProviderUpdateRejectsMaskedKeyAcrossDestinationChange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	h := NewProviderHandler(store.NewProviderStore(db), nil)
+	h := NewProviderHandler(store.NewProviderStore(db))
 	engine := newTestEngine()
 	engine.POST("/providers", h.Create)
 	engine.PUT("/providers/:id", h.Update)

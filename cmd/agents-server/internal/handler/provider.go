@@ -15,22 +15,19 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // ProviderHandler serves CRUD endpoints for provider endpoints and their
 // credentials — the ONLY surface a model-API key crosses.
 type ProviderHandler struct {
-	store    *store.ProviderStore
-	settings *settings.Reader
-	models   modelListCache
+	store  *store.ProviderStore
+	models modelListCache
 }
 
-// NewProviderHandler returns a handler backed by the given store; cfg supplies
-// the proxy the model listing goes through (nil: none).
-func NewProviderHandler(s *store.ProviderStore, cfg *settings.Reader) *ProviderHandler {
-	return &ProviderHandler{store: s, settings: cfg}
+// NewProviderHandler returns a handler backed by the given store.
+func NewProviderHandler(s *store.ProviderStore) *ProviderHandler {
+	return &ProviderHandler{store: s}
 }
 
 // modelListCache keeps a provider's live model list for modelListTTL, keyed by
@@ -84,11 +81,7 @@ func (h *ProviderHandler) listModels(ctx context.Context, pv *store.Provider) ([
 	if models, ok := h.models.get(key); ok {
 		return models, nil
 	}
-	var hc *http.Client
-	if h.settings != nil {
-		hc = h.settings.ProxyClient(ctx)
-	}
-	models, err := def.ListModels(ctx, pv.APIKey, pv.BaseURL, hc)
+	models, err := def.ListModels(ctx, pv.APIKey, pv.BaseURL)
 	if err != nil {
 		return nil, providerFailure(err)
 	}

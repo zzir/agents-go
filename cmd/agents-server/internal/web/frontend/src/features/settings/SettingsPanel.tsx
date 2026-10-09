@@ -30,7 +30,6 @@ interface SettingDef {
 }
 
 const GROUP_TITLES: Record<string, string> = {
-  network: 'Network',
   prompt: 'Prompt',
   tracing: 'Tracing',
   logging: 'Logging',

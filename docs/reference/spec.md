@@ -1817,6 +1817,9 @@ Everything the SDK acts on is passed in: `RunOptions`, the `Agent`, its
   `SSH_AUTH_SOCK` for an `ssh://` daemon); the local sandbox passes `PATH`,
   `HOME` and `TMPDIR` through to the child. Each is documented on the backend
   and overridable by an explicit option.
+- **Go's default transport keeps its own proxy contract.** A provider or MCP
+  client built without an explicit `*http.Client` reads `HTTP_PROXY`,
+  `HTTPS_PROXY` and `NO_PROXY` as `net/http` does; passing a client overrides it.
 - **`Observe.IncludeSensitiveData` nil means include**
   ([§4](#4-reference-behavior-you-can-rely-on)); no variable decides it.
 

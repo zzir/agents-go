@@ -19,7 +19,7 @@ func TestErrorBodyRoundTripperPreservesBody(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	resp, err := httpClientFor(nil, nil).Get(srv.URL)
+	resp, err := httpClientFor(nil).Get(srv.URL)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

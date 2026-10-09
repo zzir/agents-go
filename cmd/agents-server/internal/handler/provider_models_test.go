@@ -59,7 +59,7 @@ func TestProviderModelsListsAndCaches(t *testing.T) {
 	if err := ps.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
-	engine := providerEngine(NewProviderHandler(ps, nil), protocol.UserInfo{ID: store.LocalUserID, Role: store.RoleAdmin})
+	engine := providerEngine(NewProviderHandler(ps), protocol.UserInfo{ID: store.LocalUserID, Role: store.RoleAdmin})
 
 	list := func() []providers.ModelInfo {
 		rec := serve(engine, httptest.NewRequest(http.MethodGet, "/providers/"+pv.ID+"/models", nil))
@@ -112,7 +112,7 @@ func TestProviderTestReportsBadKeyAs502(t *testing.T) {
 	if err := ps.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
-	engine := providerEngine(NewProviderHandler(ps, nil), protocol.UserInfo{ID: store.LocalUserID, Role: store.RoleAdmin})
+	engine := providerEngine(NewProviderHandler(ps), protocol.UserInfo{ID: store.LocalUserID, Role: store.RoleAdmin})
 	for _, p := range []struct{ method, path string }{
 		{http.MethodPost, "/providers/" + pv.ID + "/test"},
 		{http.MethodGet, "/providers/" + pv.ID + "/models"},
@@ -146,7 +146,7 @@ func TestProviderModelsForeignRowIs404(t *testing.T) {
 		t.Fatal(err)
 	}
 	stranger := protocol.UserInfo{ID: store.NewID(), Role: store.RoleMember}
-	engine := providerEngine(NewProviderHandler(ps, nil), stranger)
+	engine := providerEngine(NewProviderHandler(ps), stranger)
 	for _, p := range []struct{ method, path string }{
 		{http.MethodGet, "/providers/" + pv.ID + "/models"},
 		{http.MethodPost, "/providers/" + pv.ID + "/test"},
@@ -165,7 +165,7 @@ func TestProviderModelsChatGPTLoginIs409(t *testing.T) {
 	if err := ps.Create(ctx, pv); err != nil {
 		t.Fatal(err)
 	}
-	engine := providerEngine(NewProviderHandler(ps, nil), protocol.UserInfo{ID: store.LocalUserID, Role: store.RoleAdmin})
+	engine := providerEngine(NewProviderHandler(ps), protocol.UserInfo{ID: store.LocalUserID, Role: store.RoleAdmin})
 	if rec := serve(engine, httptest.NewRequest(http.MethodGet, "/providers/"+pv.ID+"/models", nil)); rec.Code != http.StatusConflict {
 		t.Fatalf("models of a ChatGPT-login provider = %d %s, want 409", rec.Code, rec.Body.String())
 	}

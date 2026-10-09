@@ -41,7 +41,7 @@ func statusRig(t *testing.T) rig {
 		Approvals: NewApprovalHandler(approvals, runner),
 		Triggers:  NewTriggerHandler(store.NewTriggerStore(db), sessions, store.NewWorkflowStore(db), store.NewAgentConfigStore(db), &fakeFirer{}),
 		Workflows: NewWorkflowHandler(store.NewWorkflowStore(db), store.NewAgentConfigStore(db), sessions, runner),
-		Skills:    NewSkillHandler(store.NewSkillStore(db), settings.NewReader(store.NewSettingStore(db))),
+		Skills:    NewSkillHandler(store.NewSkillStore(db)),
 	}.Register)
 	return rig{engine: s.Engine, sessions: sessions, db: db, runner: runner}
 }

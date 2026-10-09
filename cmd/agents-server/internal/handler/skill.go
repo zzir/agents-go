@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
 )
@@ -20,19 +19,17 @@ const maxSkillBytes = 256 << 10
 // SkillHandler manages stored SKILL.md documents: CRUD plus import from a
 // GitHub repository or a raw URL (decisions §5.26).
 type SkillHandler struct {
-	store    *store.SkillStore
-	settings *settings.Reader
+	store *store.SkillStore
 	// githubAPI / githubRaw are the GitHub endpoints; tests point them at a
 	// local fake.
 	githubAPI string
 	githubRaw string
 }
 
-// NewSkillHandler returns a handler over the skills store; settings supplies
-// the outbound proxy for imports.
-func NewSkillHandler(st *store.SkillStore, se *settings.Reader) *SkillHandler {
+// NewSkillHandler returns a handler over the skills store.
+func NewSkillHandler(st *store.SkillStore) *SkillHandler {
 	return &SkillHandler{
-		store: st, settings: se,
+		store:     st,
 		githubAPI: "https://api.github.com",
 		githubRaw: "https://raw.githubusercontent.com",
 	}

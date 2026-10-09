@@ -10,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -31,7 +30,7 @@ func skillTestEnv(t *testing.T) (*gin.Engine, *SkillHandler, *store.SkillStore) 
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	st := store.NewSkillStore(db)
-	h := NewSkillHandler(st, settings.NewReader(store.NewSettingStore(db)))
+	h := NewSkillHandler(st)
 	engine := newTestEngine()
 	engine.GET("/skills", h.List)
 	engine.GET("/skills/:id", h.Get)
