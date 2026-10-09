@@ -203,12 +203,11 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     decision. The phase is the materialized `sessions.planning` column,
     cleared by an approved `submit_plan`, copied by a fork (decisions §5.53).
 34. **A background run is built without what only a chat has, and is told
-    nobody is reading.** No plan mode (a person's switch, invariant 33), task
-    tools, memory or history tools, or workflow authoring; the checklist comes
-    along when the agent has one (invariant 91); `BackgroundInstructions` is
-    its suffix. A trigger's turn and a wake-up are chat runs. Background is "a
-    task's child session", a FAILED lookup an error; a chat run drops the task
-    tools only via `behavior.subagents: false`.
+    nobody is reading.** No plan mode (a person's switch, invariant 33), task,
+    memory, history or workflow-authoring tools; the checklist comes along
+    when the agent has one (invariant 91); `BackgroundInstructions` is its
+    suffix. A trigger's turn and a wake-up are chat runs. Background is "a
+    task's child session", a FAILED lookup an error; a chat run drops the task tools only via `behavior.subagents: false`.
 35. **A step's approval is answerable from the session that asked.**
     `GET /sessions/:id/approvals` includes the approvals paused inside this
     session's tasks, tagged with their task, so the chat is the one approval
@@ -392,8 +391,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     own text alone, empty included (`layerInstructions`, `bridge/agent.go`),
     and the Context panel then lists no System prompt layer. Memories, the
     sandbox prompt, the skills index, the plan preamble while planning and a
-    background run's suffix are other layers and unaffected, and the Context
-    panel lists them — decisions §5.65.
+    background run's suffix are other layers, unaffected and listed by the panel — decisions §5.65.
 68. **The sidebar has two shapes and one divider.** Dragged well inside its
     260px minimum it snaps to a 48px rail (Expand, Workflows, New; the account
     menu at the foot) and snaps back only past a wider point, so the edge never
@@ -447,8 +445,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     does (a run's per-turn persist, `touchSessionIn`) or the plan phase
     flips. A rename, a pin, an unpin and the generated title leave it alone:
     naming a month-old session does not carry it to the top, and unpinning
-    returns a session to where its last message left it
-    (`SessionStore.UpdateFields`, `NameIfDefault`).
+    returns it to where its last message left it (`SessionStore.UpdateFields`, `NameIfDefault`).
 77. **A New composer's picks go to the session its first message makes.**
     The agent and project chosen before a session exists are drafted under
     the empty id; the send that creates the session moves them to its id and

@@ -54,7 +54,3 @@ Most examples only need `OPENAI_API_KEY`. The exceptions:
 (cd skills && go run ./example)          # Agent Skills (SKILL.md)
 (cd sandbox/docker && go run ./example)  # needs a running Docker daemon
 ```
-
-[`examples/testing`](../../examples/testing) is the worked version of
-[Testing your agents](../howto/testing.md): a scripted `Model`, the agent's real
-tool, and a test asserting both the answer and that the script was consumed.

@@ -87,7 +87,7 @@ if verdict, _ := agents.FinalOutputAs[Verdict](check); !verdict.Good {
 story, err := agents.RunSync(ctx, writer, outline.FinalOutputString(), opts)
 ```
 
-Two more patterns worth naming:
+More patterns worth naming:
 
 - **Structured decisions**: use [`OutputType`](agents.md#structured-output-types) to get a typed verdict you can branch on.
 - **Chaining**: feed one agent's output into the next.

@@ -52,12 +52,10 @@ the callback. Two causes:
 - The authorization server rejected the `redirect_uri` — a pre-registered
   `oauth_client_id` whose allowed callback does not list this exact path.
   Register the path the first log line names.
-- The browser cannot reach the origin the `redirect_uri` names. The server
-  builds it from `--base-url` when set, otherwise from the direct request's
-  scheme and host — forwarding headers (`Forwarded`, `X-Forwarded-*`) are
-  never consulted — so behind a reverse proxy without `--base-url` the URI
-  names the backend, not what the browser loaded. Set `--base-url`
-  ([deploying](workbench-deploy.md#deployment)).
+- The browser cannot reach the origin the `redirect_uri` names: behind a
+  reverse proxy without `--base-url` the URI names the backend, not what the
+  browser loaded, since forwarding headers are never consulted. Set
+  `--base-url` ([deploying](workbench-deploy.md#deployment)).
 
 A callback that arrives but cannot be matched logs
 `mcp oauth callback: could not deliver authorization code` with the reason.

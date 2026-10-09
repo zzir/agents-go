@@ -125,4 +125,4 @@ if string(state.Extra["plan:unlocked"]) == "true" {
 
 ## Sessions and approvals
 
-With a [Session](sessions.md), the completed part of the turn is already saved when the run pauses and only the pending, output-less tool calls are held back until resume — pass the same `Session` in `ResumeRun`'s options ([Session semantics](sessions.md#session-semantics)).
+With a [Session](sessions.md), pass the same `Session` in `ResumeRun`'s options; what is saved at the pause and what is held back until resume is [Session semantics](sessions.md#session-semantics).

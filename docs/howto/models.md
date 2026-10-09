@@ -49,7 +49,7 @@ provider = provider.WithDefaultModel("claude-opus-5")
 go get github.com/zzir/agents-go/models/anthropic
 ```
 
-Until the module carries its own release tags, take it and the core from the same commit: [Create a project](../tutorial/quickstart.md#create-a-project).
+The module is tagged in lockstep with the core ([Create a project](../tutorial/quickstart.md#create-a-project)).
 
 The adapter (`anthropic.MessagesModel`) translates the **Messages API** to and from the SDK's canonical Responses format at the model boundary, so tools, sessions, streaming, handoffs and structured output work unchanged.
 
@@ -64,7 +64,7 @@ The adapter (`anthropic.MessagesModel`) translates the **Messages API** to and f
 - **A thinking budget is an opt-in.** `provider.WithBudgetThinking(true)` sends the effort as `budget_tokens` (minimal 1024 / low 4096 / medium 16384 / high 32768), the form Claude Haiku 4.5 and older take; there an explicit `MaxTokens` at or below the budget, `Temperature`/`TopP` and a forced tool choice are rejected up front ([decisions §5.76](../explanation/decisions.md#576-anthropic-effort-maps-to-adaptive-thinking-a-thinking-budget-is-an-opt-in)). `service_tier` is unsupported: Anthropic's values do not correspond to the Responses tiers, and a guessed mapping would buy a different QoS than configured.
 - **Mismatched thinking is dropped, not fatal.** A request that sets an effort also asks the API to drop a replayed thinking block whose prefix has changed (`thinking.block_binding`, under the `thinking-binding-controls-2026-08-01` beta) instead of failing; each drop is a `thinking_dropped` diagnostic on the run. A request with no effort carries no thinking object and gets no such protection. `provider.WithThinkingBinding(false)` turns it off for an endpoint that rejects the beta header ([decisions §5.77](../explanation/decisions.md#577-a-bound-reasoning-block-is-dropped-not-fatal)).
 - **A compaction summary at the very front** is hoisted into the top-level `system` parameter so the first message stays a user/assistant turn.
-- **`stop_reason: max_tokens`** becomes `incomplete` / `max_output_tokens`; `stop_reason: refusal` becomes one canonical refusal message (decisions §5.49).
+- **`stop_reason: max_tokens`** becomes `incomplete` / `max_output_tokens` ([spec §2.7e](../reference/spec.md#27e-truncated-responses)); a refusal is [below](#what-the-translation-does).
 
 ### What the translation does
 
@@ -107,7 +107,7 @@ model := agents.NewRetryModel(primary, policy)
 
 Without `RetryIf`, the default (`agents.DefaultRetryIf`) retries every error except context cancellation and deadline expiry (`context.Canceled`, `context.DeadlineExceeded`); `openai.RetryableError` adds OpenAI-aware status-code classification. `openai.RetryAfter` understands both `Retry-After-Ms` (milliseconds, checked first — what OpenAI actually sends on short rate limits) and `Retry-After` (seconds or HTTP-date); a server-suggested delay longer than the policy's `MaxDelay` ends the retries with that attempt's error rather than being clamped to the cap.
 
-The two timeouts are the retry layer's own clocks, apart from the caller's `ctx`: an attempt they end is retried whatever `RetryIf` says, and when the attempts run out the error wraps `agents.ErrAttemptTimeout` or `agents.ErrIdleTimeout` — not `context.DeadlineExceeded`, which stays the caller's. A request that chains server-side state (`UsePreviousResponseID`, `ConversationID`) is retried only when the server answered it or the dial failed; a timeout or a connection severed after the send fails the run rather than risk landing the turn twice (spec §2.16).
+The two timeouts are the retry layer's own clocks, apart from the caller's `ctx`: an attempt they end is retried whatever `RetryIf` says, and when the attempts run out the error wraps `agents.ErrAttemptTimeout` or `agents.ErrIdleTimeout` — not `context.DeadlineExceeded`, which stays the caller's. A request that chains server-side state (`UsePreviousResponseID`, `ConversationID`) is retried only when the server answered it or the dial failed; a timeout or a connection severed after the send fails the run rather than risk landing the turn twice ([spec §2.16](../reference/spec.md#216-mcp-client-shared-connections-and-retry)).
 
 > **One layer of retry.** Both `openai.NewProvider` and `anthropic.NewProvider` build their clients with `WithMaxRetries(0)`, so a provider without `NewRetryModel` performs no retries at all; pass `option.WithMaxRetries(n)` explicitly to hand retries back to the transport ([decisions §5.22](../explanation/decisions.md#522-retry-policy-lives-in-one-layer)).
 

@@ -1,20 +1,11 @@
 # agents-server — the agents-go workbench
 
-**Go agents. Local first.** The Go-native agent workbench you run yourself,
-built on the [agents-go](../../README.md) SDK: one binary, your data (SQLite
-or PostgreSQL), an embedded UI. Its documentation lives with the rest of the
-project in [`docs/`](../../docs/README.md), sorted by what you came for —
-start at [Running the workbench](../../docs/tutorial/workbench.md).
+The workbench's source: the Go server and, under `internal/web/frontend`, the
+SPA it embeds. Its documentation lives with the rest of the project in
+[`docs/`](../../docs/README.md); [Running the workbench](../../docs/tutorial/workbench.md)
+goes from a release binary, or `make build` here, to a first session.
 
 ![screenshot](screenshot.png)
-
-## First mile
-
-`make build` here — Node 22 and npm for the SPA, then Go — leaves
-`./agents-server` beside this file; run it and open `http://127.0.0.1:9527`
-with the token it printed. Add a provider and an agent in Settings, and say
-something. Nothing on that path needs Docker; a sandbox is
-[the tutorial's second chapter](../../docs/tutorial/workbench.md#give-it-a-sandbox).
 
 ## Development loop
 

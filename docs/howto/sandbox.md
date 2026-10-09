@@ -11,7 +11,7 @@ agents.Agent ── CodeTool  ──► sandbox.Sandbox (interface)
                                                                or a compatible service)
 ```
 
-The Docker backend is a **separate Go module** (`sandbox/docker`; [how to `go get` it today](../tutorial/quickstart.md#create-a-project)) so the core module stays dependency-light; the E2B backend needs only the standard library and lives in the root module.
+The Docker backend is a **separate Go module** (`sandbox/docker`, tagged in lockstep with the core — [Create a project](../tutorial/quickstart.md#create-a-project)) so the core module stays dependency-light; the E2B backend needs only the standard library and lives in the root module.
 
 ## Restricting what may run
 
@@ -27,11 +27,9 @@ sandbox.CodeTool(sb, sandbox.CodeToolConfig{
 })
 ```
 
-`Deny` is checked after `Allow`, so a deny always wins; a refusal reaches the
-model as a result naming the rule; the zero value allows everything and a
-policy whose patterns do not compile refuses everything. A policy filters
-approval noise and is **not a security boundary** — it matches command text,
-not shell semantics; containment comes from the backend
+A deny always wins, a refusal reaches the model as a result naming the rule,
+the zero value allows everything, and a policy is a filter on approval noise,
+**not a security boundary** — containment comes from the backend
 ([spec §2.7j](../reference/spec.md#27j-sandbox-command-policy)).
 
 ## Persistent shells
@@ -46,16 +44,13 @@ boundaries.
 sandbox.CodeTool(sb, sandbox.CodeToolConfig{Sessions: true})
 ```
 
-The model then passes a `session_id`, and that named shell is held open between
-calls, so `cd`, exported variables, an activated virtualenv and a started
-background process all survive. The `session_id` argument exists only when
-`Sessions` is on. Completion is detected with a random per-session sentinel, a
-timed-out session is closed rather than reused, and the named shells belong to
-the tool, not the run ([spec §2.7k](../reference/spec.md#27k-persistent-shells)).
-
-Requires a backend with interactive terminal support (persistent Docker, e2b).
-Off by default, because a held-open shell is a resource with a lifetime and a
-caller that never closes one leaks it.
+The model then passes a `session_id` (an argument that exists only when
+`Sessions` is on), and that named shell is held open between calls, so `cd`,
+exported variables, an activated virtualenv and a started background process
+all survive; how completion is detected, what a timeout does and whom the
+shells belong to is [spec §2.7k](../reference/spec.md#27k-persistent-shells).
+Requires a backend with interactive terminal support (persistent Docker,
+e2b); off by default, because a held-open shell is a resource with a lifetime.
 
 ## Quickstart
 
@@ -181,15 +176,13 @@ sandbox.FileToolConfig{
 
 File operations require a **persistent working directory** (`WorkDir`). Backends without one (bare `sandbox.NewLocal()`, ephemeral Docker without `WorkDir`) return `sandbox.ErrNoWorkDir`.
 
-**Path resolution follows shell semantics, the same view `exec_command` has** ([spec §2.7t](../reference/spec.md#27t-sandbox-file-tools-share-execs-path-view)): a relative path resolves under the working directory, an absolute path is used as-is — the model learns real paths from `pwd`/`ls` output and both spellings reach the same file. The one exception is **docker bind-mount mode**, whose file operations run on the *host* side of the mount: they are confined to `WorkDir` via `os.Root`, absolute paths must lie under the in-container mount point `/workspace` (translated to the host directory), and anything else fails with `sandbox.ErrOutsideWorkDir` (rendered to the model as "outside the working directory").
+**Path resolution follows shell semantics, the same view `exec_command` has**: a relative path resolves under the working directory, an absolute path is used as-is, so the paths the model learns from `pwd`/`ls` reach the same file either way. Docker bind-mount mode is the one exception — file operations run on the host side of the mount, confined to `WorkDir`, and a path outside it fails with `sandbox.ErrOutsideWorkDir` ([spec §2.7t](../reference/spec.md#27t-sandbox-file-tools-share-execs-path-view), which also fixes what every backend answers for a missing path, a directory read and the order of `list_files`).
 
-Every backend answers the file tools the same way: a missing path is `fs.ErrNotExist` ("not found" to the model), a directory read is "is a directory", and `list_files` sorts entries by name whatever order the backend returned them in.
-
-`ReadFile` is size-capped on every backend: files larger than the backend's `MaxReadFileBytes` option (0 = `sandbox.DefaultMaxReadFileBytes`, 8 MiB) fail with `sandbox.ErrReadLimitExceeded` instead of being read into memory — model code cannot OOM the host by creating a huge file and reading it back. `apply_patch` still deletes such a file: it parks it under a temp name beside itself for the commit instead of snapshotting it in memory ([spec §2.7s](../reference/spec.md#27s-apply_patch-locates-hunks-by-whole-lines)). Errors returned to the model contain only the requested relative path and the error kind, never host or remote absolute paths.
+`ReadFile` is size-capped on every backend: files larger than the backend's `MaxReadFileBytes` option (0 = `sandbox.DefaultMaxReadFileBytes`, 8 MiB) fail with `sandbox.ErrReadLimitExceeded` instead of being read into memory — model code cannot OOM the host by creating a huge file and reading it back; `apply_patch` can still delete such a file ([spec §2.7s](../reference/spec.md#27s-apply_patch-locates-hunks-by-whole-lines)). Errors returned to the model contain only the requested relative path and the error kind, never host or remote absolute paths.
 
 ## Writing a backend
 
-Implement [`sandbox.Sandbox`](https://pkg.go.dev/github.com/zzir/agents-go/sandbox#Sandbox) — `Exec`, `ReadFile`, `WriteFile`, `CreateExclusive`, `ListDir`, `RemoveFile`, `Rename`, `Close` — to add your own backend (Firecracker, Kubernetes, remote runners, …). Optional interfaces the tools and the workbench discover by type assertion: `ExecStreamer` (output written to the writers as it arrives; the result's `Stdout`/`Stderr` are then empty), `TerminalOpener` (an interactive PTY shell — what powers the web terminal; the context bounds establishment only, the `Terminal` lives until `Close`), `Lifecycle`, `Detacher` and `Exporter`. All three built-in backends stream; the docker backend hosts terminals only in `Persistent` mode and force-kills the shell's process tree on `Close`, e2b always does, and the local backend never does — handing out a host shell is a deliberately bigger grant than running commands. `OpenTerminal` returns an error wrapping `ErrTerminalUnsupported` when the current configuration cannot host one.
+Implement [`sandbox.Sandbox`](https://pkg.go.dev/github.com/zzir/agents-go/sandbox#Sandbox) to add your own backend (Firecracker, Kubernetes, remote runners, …). Optional interfaces the tools and the workbench discover by type assertion: `ExecStreamer` (output written to the writers as it arrives; the result's `Stdout`/`Stderr` are then empty), `TerminalOpener` (an interactive PTY shell — what powers the web terminal; the context bounds establishment only, the `Terminal` lives until `Close`), `Lifecycle`, `Detacher` and `Exporter`. All three built-in backends stream; the docker backend hosts terminals only in `Persistent` mode and force-kills the shell's process tree on `Close`, e2b always does, and the local backend never does — handing out a host shell is a deliberately bigger grant than running commands. `OpenTerminal` returns an error wrapping `ErrTerminalUnsupported` when the current configuration cannot host one.
 
 Three things a backend must get right:
 

@@ -93,7 +93,7 @@ t.IsEnabled = func(ctx context.Context, rc *agents.RunContext, agent *agents.Age
 
 ### Approval (human-in-the-loop)
 
-`NeedsApproval` (or per-call `NeedsApprovalFunc`) pauses the run before the tool executes, surfacing an interruption you approve or reject — see [Human-in-the-loop](human_in_the_loop.md). The per-call predicate is `func(ctx context.Context, rc *agents.RunContext, argsJSON string, callID string) (bool, error)`, so a decision can turn on the raw arguments and the model-assigned call id.
+`NeedsApproval` (or per-call `NeedsApprovalFunc`, which sees the raw arguments and the model-assigned call id) pauses the run before the tool executes, surfacing an interruption you approve or reject — [Human-in-the-loop](human_in_the_loop.md).
 
 ### Tool guardrails
 
@@ -192,13 +192,7 @@ renderChart := agents.NewTool("render_chart", "Render a chart as an image.",
 	})
 ```
 
-The three content parts mirror the Responses API:
-
-- `ToolOutputText{Text}` — a text part (same as returning the string directly, but combinable with images/files).
-- `ToolOutputImage{ImageURL, FileID, Detail}` — native image input; set `ImageURL` (a URL or a base64 `data:` URL — `ToolOutputImageFromBytes(mime, bytes)` builds one) **or** `FileID` (an uploaded file).
-- `ToolOutputFile{FileData, FileURL, FileID, Filename}` — native file input (e.g. a PDF).
-
-A runnable example lives in `examples/toolimage`. It is also what lets MCP image results reach the model as real images ([MCP](mcp.md)).
+The three part types mirror the Responses API — `ToolOutputText`, `ToolOutputImage` (a URL, a base64 `data:` URL that `ToolOutputImageFromBytes(mime, bytes)` builds, or an uploaded file's id) and `ToolOutputFile` — each on [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#ToolOutputContent). A runnable program is [examples/toolimage](../../examples/toolimage/main.go); the same path is what lets MCP image results reach the model as real images ([MCP](mcp.md)).
 
 For a UI, the item's `Display().Output` is the same content list as JSON — `[{"type":"input_text","text":"…"},{"type":"input_image","image_url":"data:…"}]` — so a renderer that reads `type` can show the image (or offer the file) instead of printing the payload.
 
@@ -224,7 +218,7 @@ agents.NewTool("query_orders", "…",
 | `Display` | The renderer you would like: `"diff"`, `"terminal"`, `"table"`, `"json"`, `"markdown"`. A hint — an unknown name falls back to text |
 | `Title` / `Summary` | A card heading when the tool name is not it, and a one-line account of what happened (`WithTitle`/`WithSummary`); overrides a consumer may ignore, never reaching the model |
 
-A tool returning a `string`, a struct, or a `[]ToolOutputContent` is wrapped automatically, so `return "sunny", nil` is still the shortest correct tool. `Details` must survive a JSON round-trip or the call fails while it is still identifiable; `Terminate` stops the run only when every tool in the batch asks; `IsError` renders a failure whose content still reaches the model; `Usage` is the tool's own model spend ([spec §2.7b](../reference/spec.md#27b-tool-results)).
+A tool returning a `string`, a struct, or a `[]ToolOutputContent` is wrapped automatically, so `return "sunny", nil` is still the shortest correct tool. The remaining fields — `Terminate`, `IsError`, `Usage` — and the round-trip rule on `Details` are [spec §2.7b](../reference/spec.md#27b-tool-results).
 
 ### Hand-built tools
 

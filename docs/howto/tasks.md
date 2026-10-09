@@ -82,15 +82,12 @@ attempt rather than being overwritten by the old one's outcome.
 | `OnResultDelivered` | Report: the model pulled this result in-turn |
 | `Continue` | "Does this run's ending end the task, or is there a next run?" — see below |
 
-A `Stopper` reports **what it did**, not just whether it errored:
-`StopCancelled` (this call cancelled the run — the ordinary answer),
-`StopAfterTurn` (still going, will record its own ending), `StopAlreadyFinished`
-(its outcome is on its way — the stop waits briefly, and records the ending
-itself if the outcome was lost rather than late) or `StopUnknownRun` (a real
-state: a task claims its run before the launch registers it). Answering "fine"
-for having done nothing is how a stop gets reported as accepted while the task
-runs on. The `*Task` a report hands you is the claimed snapshot, not a re-read
-([spec §2.13](../reference/spec.md#213-background-tasks)).
+A `Stopper` reports **what it did** — `StopCancelled`, `StopAfterTurn`,
+`StopAlreadyFinished` or `StopUnknownRun` — because answering "fine" for
+having done nothing is how a stop gets reported as accepted while the task
+runs on; what each answer commits the Manager to, and that the `*Task` a
+report hands you is the claimed snapshot rather than a re-read, is
+[spec §2.13](../reference/spec.md#213-background-tasks).
 
 ## Jobs of several runs
 
@@ -117,15 +114,12 @@ Continue: func(ctx context.Context, t *tasks.Task, out tasks.RunOutcome) (*tasks
 },
 ```
 
-A `Continuation` with an `Input` moves the task on through `Store.Advance` — run
-id and `State` replaced in one compare-and-set, only while the task is still
-working on the run that just ended; without an `Input` it ends the task, with
-`State` written alongside the ending; `nil` ends it with `State` untouched. A
-failed launch, a lost transition or an error from the hook ends the task failed
-([spec §2.13](../reference/spec.md#213-background-tasks)).
-`Config.MaxContinuations` (default 50) caps how many further runs the hook may
-chain since the spawn or the last retry — the counter in the example is the
-host's own bound, not the only one.
+A `Continuation` with an `Input` moves the task on (one compare-and-set
+through `Store.Advance`), without one ends it, and `nil` ends it with `State`
+untouched; a failed launch, a lost transition or an error from the hook ends
+it failed, and `Config.MaxContinuations` (default 50) bounds the chain
+([spec §2.13](../reference/spec.md#213-background-tasks)) — the counter in
+the example is the host's own bound, not the only one.
 
 What the host gets: one lifecycle for every kind of background work — stop
 chases the current run, retry re-launches the current `State`
@@ -148,9 +142,7 @@ handoffs — the names the model already sees on its `transfer_to_*` tools.
 Empty runs the task as the agent itself (the Resolver gets `""`), a target's
 name reaches the Resolver as that target's `AgentName`, and a name outside the
 graph is refused with the targets listed
-([spec §2.13](../reference/spec.md#213-background-tasks)). A host whose
-spawnable agents are not its handoffs provides its own spawn tool, with
-`tasks.SpawnTarget` replaced by its own rule.
+([spec §2.13](../reference/spec.md#213-background-tasks)).
 
 `task_retry` starts a new run on the task's existing session, so the model
 continues from the progress the failed attempt made. Only a **failed** task can
@@ -168,10 +160,11 @@ compaction dropped; a listing settles no wake-up debt).
 `progress:` beside the status.
 
 Four verbs are the whole model-facing surface, whatever the kind: a host that
-starts jobs by name provides its own spawn tool from the public parts
-(`Manager.Spawn`, `tasks.SpawnTarget`, `Manager.ModelHasResult`,
-`tasks.ToolResult`) and attaches
-`TaskTools` beside it ([spec §2.13](../reference/spec.md#213-background-tasks)).
+starts jobs by name, or whose spawnable agents are not its handoffs, provides
+its own spawn tool from the public parts (`Manager.Spawn`,
+`tasks.SpawnTarget`, `Manager.ModelHasResult`, `tasks.ToolResult`) and
+attaches `TaskTools` beside it
+([spec §2.13](../reference/spec.md#213-background-tasks)).
 
 A task's own run must not get these tools — that is what bounds recursion. Ask
 `MetaFor` before attaching them:

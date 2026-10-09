@@ -8,7 +8,7 @@
 go get github.com/zzir/agents-go/mcp
 ```
 
-Until the module carries its own release tags, take it and the core from the same commit: [Create a project](../tutorial/quickstart.md#create-a-project).
+The module is tagged in lockstep with the core ([Create a project](../tutorial/quickstart.md#create-a-project)).
 
 ## Connecting a server
 
@@ -32,13 +32,11 @@ agent := &agents.Agent{
 }
 ```
 
-Transports:
-
-| Constructor | Transport |
-|---|---|
-| `mcp.NewStdioServer(ctx, name, cmd, opts)` | Subprocess over stdio |
-| `mcp.NewStreamableHTTPServer(ctx, name, endpoint, opts)` | Streamable HTTP |
-| `mcp.NewWithTransport(ctx, name, transport, opts)` | Anything implementing the go-sdk `Transport` (e.g. in-memory for tests, or the legacy SSE transport) |
+Three constructors, one per transport: `mcp.NewStdioServer` (a subprocess
+over stdio), `mcp.NewStreamableHTTPServer` (streamable HTTP) and
+`mcp.NewWithTransport` (anything implementing the go-sdk `Transport` — an
+in-memory one for tests, the legacy SSE transport); signatures on
+[pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/mcp).
 
 The agent lists each server's tools at the start of every turn, so servers may add or remove tools between turns.
 

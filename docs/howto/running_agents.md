@@ -16,14 +16,7 @@ res, err := agents.RunSync(ctx, agent, "Write a haiku about recursion.", agents.
 
 ## The agent loop
 
-`Run` executes this loop:
-
-1. Call the model for the current agent with the conversation so far.
-2. If the model produced a final output (a message with no pending tool calls, matching the agent's output type), the loop ends.
-3. If the model requested a handoff, switch the current agent and loop.
-4. Otherwise execute the tool calls (concurrently), append their results, and loop.
-
-If the number of turns exceeds the budget, the run fails with `*agents.MaxTurnsError` — unless a [`MaxTurns` error handler](#error-handlers) recovers it with a fallback final output.
+Each turn calls the model for the current agent with the conversation so far, then ends on a final output, switches agent on a handoff, or executes the turn's tool calls (concurrently) and loops ([spec §2.1](../reference/spec.md#21-the-run-loop)). Past the turn budget the run fails with `*agents.MaxTurnsError` — unless a [`MaxTurns` error handler](#error-handlers) recovers it with a fallback final output.
 
 ## Run options
 
@@ -127,11 +120,10 @@ ctrl.FollowUp("now summarize it for a customer")      // and then do this
 `Steer` lands on the next model call and `FollowUp` after the final output —
 both extend a run that was finishing, in the **same** run; `NextTurn` rides
 along with the next turn boundary if there is one, and whatever arrived too
-late is reported by `ctrl.Pending()`. Injections reach the model in arrival
-order, delivery is transactional across retries and resumes, and input queued
-before an [approval pause](human_in_the_loop.md) rides along in
-`RunState.PendingInput` ([spec §2.11b](../reference/spec.md#211b-run-control)).
-Injected input passes the run's input guardrails before the model sees it; one a guardrail trips on fails the run ([spec §2.6](../reference/spec.md#26-guardrails)).
+late is reported by `ctrl.Pending()`. Arrival order, delivery across retries,
+resumes and an [approval pause](human_in_the_loop.md), and the input
+guardrails an injection passes first are
+[spec §2.11b](../reference/spec.md#211b-run-control).
 
 A runnable program is [examples/steering](../../examples/steering/main.go).
 
@@ -156,14 +148,12 @@ opts.Exec.PrepareNextTurn = func(ctx context.Context, tr *agents.TurnResult) (*a
 ```
 
 `ShouldStopAfterTurn` is a predicate, not a producer: a run stopped here has
-its full history saved, and its final output is the turn's last message (else
-its last tool output). The other two places a run can end early are a tool's
-own result, `ToolResult.Terminate`
-([Tools](tools.md#returning-more-than-a-value-toolresult)), and the caller's
-`RunControl.StopAfterTurn`, the only one that sets `RunResult.StoppedEarly`
-([Streaming](streaming.md)). The policy belongs
-to the run rather than the agent, so the same agent stops at different points
-in different runs ([spec §2.3c](../reference/spec.md#23c-stopping-early)).
+its full history saved, and its final output is derived from the turn. The
+other two places a run can end early — a tool's own `ToolResult.Terminate`
+([Tools](tools.md#returning-more-than-a-value-toolresult)) and the caller's
+`RunControl.StopAfterTurn` ([Streaming](streaming.md)) — and what each
+reports as the final output are
+[spec §2.3c](../reference/spec.md#23c-stopping-early).
 
 `PrepareNextTurn` reshapes **one** turn without mutating the `Agent`; the
 `*TurnResult` it receives is read-only, and the runner owns `Snapshot.Input` —
@@ -250,9 +240,8 @@ All failures come back as Go errors. The SDK's typed errors —
 `*ToolTimeoutError`, `*ToolLoopError`, `*GuardrailTripwireError` — carry their
 data as plain fields and are matched with `errors.As`; each is documented on
 [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#MaxTurnsError).
-A run that fails after its loop started returns a `*RunError` wrapping the
-cause; its `Result` is the partial progress in the same `*RunResult` shape a
-finished run reports — see [Results](results.md#errors).
+A run that fails after its loop started returns a `*RunError` carrying the
+partial progress ([Results](results.md#errors)).
 
 ### Error codes
 
@@ -308,9 +297,9 @@ res, err := agents.RunSync(ctx, agent, "Analyze this long transcript", agents.Ru
 })
 ```
 
-The run then completes normally: output guardrails and the agent's `OnEnd` callback run on the fallback, and `res.FinalOutput` carries it. Unless `ExcludeFromHistory` is set, an assistant message with the fallback is appended to `res.NewItems` and the session. For an agent with an output type, `FinalOutput` must marshal to JSON that validates against the output schema — anything else fails the run with a `*UserError`.
+The run then completes normally — the fallback finishes through the same tail as a model-produced answer: `OnEnd`, output guardrails, persistence ([spec §2.10](../reference/spec.md#how-the-safety-valves-compose)) — and `res.FinalOutput` carries it. Unless `ExcludeFromHistory` is set, an assistant message with the fallback is appended to `res.NewItems` and the session; for an agent with an output type, `FinalOutput` must validate against the output schema, or the run fails with a `*UserError`.
 
-Return `(nil, nil)` to decline recovery and keep the original error. A declined (or missing) `InvalidFinalOutput` handler keeps the empty-output default: when the model returns no final text for a structured output type, the runner runs the model again rather than failing.
+Return `(nil, nil)` to decline recovery and keep the original error; a declined or missing `InvalidFinalOutput` handler keeps the empty-output default, under which the runner calls the model again (spec §2.10).
 
 ```go
 ErrorHandlers: agents.RunErrorHandlers{

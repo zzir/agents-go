@@ -359,31 +359,23 @@ row with its session's name — `?live=true` is the `working` /
 
 ### Agents — `/api/v1/agents`
 
-An agent config is the top-level scalars, the knobs as **grouped nested
-objects** (`behavior`, `resilience`, `guardrails`, `session`, `approval`,
-`compaction` — each group one JSON column, so a new knob needs no schema
-change) and the top-level JSON blobs. **The list fields are JSON arrays**
-(decisions §5.67): `tools` (MCP server ids), `handoffs` (agent ids),
-`approval.approve_tools` (tool names, or `["*"]`) and `skills` (skill ids) —
-`skills` is the one whose absence means something: `null`/omitted gives the
-agent every skill its scope can see, `[]` none. `approval.approval_mode` is
-`never`, `on_change` or `always` (invariant 90): a create without one is
-written as `never`, a row from before the field reads as empty and behaves
-as `never`, another value is `400`, and `"*"` in `approve_tools` beside
-`on_change` or `always` is `400`. `GET /agents/:id/tools` lists the surface
-a run would carry, each tool with its `source` (`sandbox`, `skills`, `tasks`,
-`workflows`, `context`, `checklist`, `plan`, or `mcp:<server>`) and
-`read_only` as plan mode and `on_change` see it; the sandbox tools are listed
-as a bound project would add them. Beyond the shape, a write checks:
-`avatar` is a path into the UI's built-in catalog (anything else, an external
-URL included, is `400`); a `resilience.fallback_models` entry is
-`{provider_id, model}` — the provider must exist and be one the agent may
-reference (re-checked as the row is written, and a fallback entry holds the
-provider like a primary would: its delete, unpublish and transfer are refused
-while the agent stands), an `api_key` or an unknown key in an entry is `400`
-(decisions §5.69); an entry stored before `provider_id` reads back with the endpoint it
-named (`provider_type`, `base_url`, read-only, never its key) and resolves to
-a provider at that endpoint when the run builds; an `error_handlers` entry's
+An agent config's knobs are **grouped nested objects** (`behavior`,
+`resilience`, `guardrails`, `session`, `approval`, `compaction` — each group
+one JSON column, so a new knob needs no schema change) and its list fields
+are JSON arrays (decisions §5.67); what each field holds is the OpenAPI
+document. Beyond the shape, a write checks: `approval.approval_mode`
+(invariant 90) — a create without one is written as `never`, a row from
+before the field reads as empty and behaves as `never`, another value is
+`400`, and `"*"` in `approve_tools` beside `on_change` or `always` is `400`;
+`avatar` must be a path into the UI's built-in catalog (anything else, an
+external URL included, is `400`); a `resilience.fallback_models` entry's
+provider must exist and be one the agent may reference (re-checked as the
+row is written, and a fallback entry holds the provider like a primary would:
+its delete, unpublish and transfer are refused while the agent stands), an
+`api_key` or an unknown key in an entry is `400` (decisions §5.69), and an
+entry stored before `provider_id` reads back with the endpoint it named
+(`provider_type`, `base_url`, read-only, never its key) and resolves to a
+provider at that endpoint when the run builds; an `error_handlers` entry's
 `final_output` is a string for a plain-text agent or matches `output_schema`
 for a structured one. With compaction enabled, a context-overflow error from
 the provider also triggers a FORCED pass and the turn retries from the shrunk
@@ -405,10 +397,11 @@ the `system_prompt` setting is not prepended, even when they are empty
 
 `GET /agents/:id/tools` is the agent's CURRENT surface — the built-ins,
 connected MCP servers' tools (a server whose listing fails is skipped, not
-fatal) and the skills reader — as a member's own runs would get it; it backs
-the Replay dialog's tool picker. An agent body carries no model-API
-credential — it names a provider, which is where the key lives
-([providers](#providers--apiv1providers)).
+fatal), the skills reader and the sandbox tools as a bound project would add
+them — as a member's own runs would get it, each tool's `read_only` as plan
+mode and `on_change` see it; it backs the Replay dialog's tool picker. An
+agent body carries no model-API credential — it names a provider, which is
+where the key lives ([providers](#providers--apiv1providers)).
 
 ### MCP Servers — `/api/v1/mcp-servers`
 
@@ -471,9 +464,8 @@ default. Reads are laxer than writes on purpose: `GET /settings` lists a key
 the registry no longer defines with `"unknown": true` and its value masked
 (whether it WAS a secret is unknowable once the def is gone), and `DELETE`
 takes it, so a value left behind by an older build can be seen and cleared.
-The `storage` keys (the attachment bucket) are the exception: they are written
-as one section through `PUT /attachments/storage` and `PUT /settings/:key`
-refuses them one at a time — see
+The `storage` keys (the attachment bucket) are the exception, written as one
+section and refused one at a time —
 [Attachments](#attachments--apiv1attachments).
 
 ### Server info — `/api/v1/server` (read-only)
@@ -646,10 +638,11 @@ the workflow or the agent a trigger fires deletes the trigger. Triggers are capp
 above it), and the [how-to](../howto/workflows.md) has the cron syntax and a
 signing example.
 
-A webhook proves itself by signature, not token: `X-Timestamp` (UNIX seconds,
-within five minutes of the server's clock) and `X-Signature-256` = hex
-HMAC-SHA256(secret, `timestamp + "." + body`), a `sha256=` prefix accepted; a
-bad or stale signature is `401`. The secret is minted at creation and shown in
+A webhook proves itself by signature, not token (`X-Timestamp` and
+`X-Signature-256`; the formula and a signing example are in the
+[how-to](../howto/workflows.md#run-it-on-a-schedule-or-from-a-webhook)): the
+timestamp must be within five minutes of the server's clock, a `sha256=`
+prefix is accepted, and a bad or stale signature is `401`. The secret is minted at creation and shown in
 that response only; `POST /triggers/:id/rotate-secret` mints another and the
 old one stops working the moment the rotation answers (`400` on a cron
 trigger). A delivery fires ONCE: the same timestamp and body sent again inside
@@ -939,44 +932,48 @@ full replay. The replay ring holds a run's last 512 events, with its
 `run.started` pinned outside the ring so a late subscriber is always told
 which run this is.
 
+Each payload's fields, with a line on each, are the struct field comments in
+[`internal/protocol/messages.go`](../../cmd/agents-server/internal/protocol/messages.go),
+mirrored in `src/lib/protocol.ts`
+([invariant 15](../explanation/workbench-invariants.md)); the tables carry
+what those comments cannot.
+
 ### Client → Server
 
-| type            | Description                                                                                                     |
-|-----------------|-----------------------------------------------------------------------------------------------------------------|
-| `run.create`    | Start a run — `{session_id, input, attachment_ids?, agent_config_id?, project_id?, plan?}` (the project matters only until the session's first project-carrying run binds it; `plan` and `attachment_ids` as in the REST body) |
-| `run.subscribe` | (Re)attach to a run's event stream — `{run_id, from_seq?}` (omit `from_seq` or `0` replays everything retained) |
-| `run.cancel`    | Cancel an in-flight run — `{run_id, mode?}`; `mode: "graceful"` finishes the current turn, default aborts; a run paused for approval is abandoned either way (see [Approvals](#approvals--apiv1approvals)) |
-| `run.inject`    | Inject input into the live run — `{run_id, queue, input}`; `queue: "steer"` changes course inside the current exchange, `"next_turn"` is consumed at the next turn boundary, `"follow_up"` starts a new exchange once this one finishes. REST twin: `POST /runs/:id/inject` |
-| `tool.approve`  | Approve a pending tool call — `{tool_call_id, scope?}`; `scope` widens an `exec_command` approval's trust: `"once"` (default), `"same"` (this exact command, for the session) or `"all"` (every command) |
-| `tool.reject`   | Reject a tool call — `{tool_call_id, reason?}`                                                                  |
+| type            | Meaning |
+|-----------------|---------|
+| `run.create`    | Start a run in a session; `plan` and `attachment_ids` mean what they do in the REST body, and the project named matters only until the session's first project-carrying run binds it |
+| `run.subscribe` | (Re)attach to a run's event stream from a cursor; no `from_seq` (or `0`) replays everything retained |
+| `run.cancel`    | Cancel an in-flight run, `graceful` finishing the current turn first; a run paused for approval is abandoned either way ([Approvals](#approvals--apiv1approvals)) |
+| `run.inject`    | Queue input on the live run: `steer` changes course inside the current exchange, `next_turn` is consumed at the next turn boundary, `follow_up` starts a new exchange once this one finishes. REST twin: `POST /runs/:id/inject` |
+| `tool.approve`  | Approve a pending tool call; `scope` widens an `exec_command` approval's trust ([Approvals](#approvals--apiv1approvals)) |
+| `tool.reject`   | Reject a pending tool call, with an optional reason the model reads as the call's result |
 
 ### Server → Client
 
-| type                    | Description                                                                                                                                             |
-|-------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `run.started`           | Run begun — `{run_id, session_id, input, attachments?}`; `input` is the user prompt, so a browser that didn't send it can render the user bubble, and `attachments` its image refs (`{id, url}`) for the same reason. A background task run additionally carries `{task_id, parent_session_id, parent_run_id, tool_call_id, label, kind, attempt, max_attempts}` — `kind` is `workflow` for an execution's step run (a step ending is not a workflow ending), `attempt` is which run of the task this is (1, more after a retry — how a new attempt is told from a replay) and `max_attempts` its ceiling; clients key task state by the durable `task_id`, route events by `run_id`, and send it to the parent session's task list, never a chat timeline |
-| `run.agent_start`       | Agent taking its turn — `{run_id, agent_name, agent_config_id?}`; the id names the config behind the agent                                              |
-| `run.step`              | Streaming text delta — `{run_id, delta}`                                                                                                                |
-| `run.reasoning`         | Streaming reasoning delta — `{run_id, delta}`                                                                                                           |
-| `run.message`           | One completed assistant message: a turn's full text, interim narration or final answer, authoritative over its `run.step` deltas — `{run_id, text, item_id?}`; `item_id` is the model item's stable id, what a client dedups a hub replay by (text equality when absent) |
-| `run.reasoning_item`    | One completed reasoning block: a turn's full thinking text, authoritative over its `run.reasoning` deltas — `{run_id, text, item_id?}`, deduped like `run.message` |
-| `run.tool_call`         | Tool invoked — `{run_id, tool_call_id, tool_name, arguments, needs_approval}`                                                                           |
-| `run.tool_progress`     | Partial output from a running tool — `{run_id, call_id, tool_name, delta, renderer?}`; `delta` appends to what the client holds for the call, `renderer` is a display hint (e.g. `terminal`) |
-| `run.tool_result`       | Tool output — `{run_id, tool_call_id, output, title?, summary?, renderer?, is_error?, extra?}`; the optional display fields mirror the stored output entry's `display` (`extra` is the tool's `Details` bag), so the live card carries the same data a reload rebuilds. A multimodal result's `output` is the Responses content list as JSON (`[{"type":"input_text",…},{"type":"input_image","image_url":…},{"type":"input_file",…}]`, SDK spec §2.7b) — the card shows the image and offers the file; anything else is text |
-| `run.handoff`           | Agent handoff — `{run_id, from, to, from_id?, to_id?}`; the ids name the config rows behind the agents, for their avatars                               |
-| `run.compaction`        | Session compaction running at end of turn — `{run_id, phase: started\|finished, detail?}`                                                               |
-| `run.injected`          | The run read an input queued on it (`run.inject`, `POST /runs/:id/inject`) — `{run_id, input, index}`; a user message in the middle of the run: the turn so far ends and a new one follows. `index` counts the run's injections from 1, what a client dedups a hub replay by. A read input stays in the transcript when the run then fails or is stopped |
-| `run.output`            | Final output — `{run_id, final_output}`                                                                                                                 |
-| `run.interrupted`       | Paused for tool approval — `{run_id}`; NOT final: the decision resumes the SAME run id, and its events continue the sequence on the same subscription. Sent only once the pause is durable (the `pending_approvals` row written) — a pause that cannot be recorded ends the run as `run.error` (`persist_error`) instead, so nothing is ever announced as awaiting a decision nobody can make |
-| `run.diagnostic`        | Trouble the run survived — `{run_id, type, code?, message?, details?}`; `type` is an open vocabulary (`model_retry`, `model_fallback`, `tool_panic`, …), so show unknown kinds generically |
-| `run.gap`               | This connection fell behind and events were dropped — `{run_id, dropped, last_good, next}`; resubscribe from `last_good` to refetch. A gap with `last_good: 0` is the ring having moved past the run's start before this connection attached: nothing to refetch (the UI does not ask) |
-| `run.error`             | Error — `{run_id?, session_id?, code, message, guardrail?, stage?}`; `session_id` is set when the failure precedes `run.started` (e.g. `session_busy`, `session_not_found`); `guardrail`/`stage` are set when `code` is `guardrail_tripwire` |
-| `run.cancelled`         | Cancelled — `{run_id, reason}`; `reason` is `stopped` (a cancel, a task stop), `superseded` (a newer message on the session while the run waited for approval — [invariant 19](../explanation/workbench-invariants.md)) or `shutdown` (the server stopped; a task run so ended is failed by the next start's orphan sweep) |
-| `session.title_updated` | Title changed — `{session_id, title}`                                                                                                                   |
-| `task.updated`          | A background task moved — the task row (`task_id`, `status`, `kind`, `state`, `attempt`, `dismissed`, a paused one's `pending_call_id`…) as the store has it; on the task's run stream when the hub holds that run, else broadcast to every connection |
-| `session.project_bound` | The session's first project-carrying run permanently bound its project — `{session_id, project_id}`; published exactly once, by the run that won the bind |
-| `session.status`        | A session's derived status may have changed — `{session_id, status, live_run_id?, pending_count, oldest_pending_at?}`, the fields `GET /sessions` carries; broadcast to every connection of the owner and never replayed, so a reconnect relists |
-| `trace.span`            | Trace span — `{run_id, trace_id, span_id, error?, data?, payload_omitted?, attachments?, ...}`; `payload_omitted` says the 256KB live cap replaced the payload fields, which the stored row still has; `attachments` lists the image attachments the span's input references, resolved to `{id, url}` as `run.started` carries the message's |
+| type                    | Meaning |
+|-------------------------|---------|
+| `run.started`           | A run began; it carries the prompt and its image refs so a browser that did not send them still renders the user bubble. A background task's run adds the task linkage: `kind` is `workflow` for an execution's step run (a step ending is not a workflow ending), `attempt` tells a new attempt from a replay; clients key task state by the durable `task_id`, route events by `run_id`, and send such a run to the parent session's task list, never a chat timeline |
+| `run.agent_start`       | An agent takes its turn, the config id behind the name riding along for its avatar |
+| `run.step`, `run.reasoning` | Streaming text and reasoning deltas |
+| `run.message`, `run.reasoning_item` | One completed assistant message (interim narration or the final answer) or reasoning block — a turn's full text, authoritative over its deltas; `item_id` is what a client dedups a hub replay by, text equality when it is absent |
+| `run.tool_call`         | A tool was invoked, or asked approval for |
+| `run.tool_progress`     | Partial output from a running tool, appended to what the client holds for the call; `run.tool_result` replaces it |
+| `run.tool_result`       | A tool's output, with the stored entry's display fields so the live card carries what a reload rebuilds. A multimodal result's `output` is the Responses content list as JSON (SDK spec §2.7b) — the card shows the image and offers the file; anything else is text |
+| `run.handoff`           | Control moved between agents, the config ids riding along for their avatars |
+| `run.compaction`        | Session compaction running at the end of a turn, `started` then `finished` |
+| `run.injected`          | The run read an input queued on it (`run.inject`, `POST /runs/:id/inject`): a user message in the middle of the run, so the turn so far ends and a new one follows; `index` is what a client dedups a hub replay by. A read input stays in the transcript when the run then fails or is stopped |
+| `run.output`            | The final output |
+| `run.interrupted`       | Paused for tool approval; NOT final: the decision resumes the SAME run id, and its events continue the sequence on the same subscription. Sent only once the pause is durable (the `pending_approvals` row written) — a pause that cannot be recorded ends the run as `run.error` (`persist_error`) instead, so nothing is ever announced as awaiting a decision nobody can make |
+| `run.diagnostic`        | Trouble the run survived; `type` is an open vocabulary, so show unknown kinds generically |
+| `run.gap`               | This connection fell behind and events were dropped; resubscribe from `last_good` to refetch. A gap with `last_good: 0` is the ring having moved past the run's start before this connection attached: nothing to refetch (the UI does not ask) |
+| `run.error`             | The run failed; `session_id` is set when the failure precedes `run.started` (`session_busy`, `session_not_found`), `guardrail` and `stage` when the code is `guardrail_tripwire` ([codes](#run-error-codes)) |
+| `run.cancelled`         | Cancelled: `stopped` (a cancel, a task stop), `superseded` (a newer message on the session while the run waited for approval — [invariant 19](../explanation/workbench-invariants.md)) or `shutdown` (the server stopped; a task run so ended is failed by the next start's orphan sweep) |
+| `session.title_updated` | A session's title changed |
+| `task.updated`          | A background task moved — the row as the store has it; on the task's run stream when the hub holds that run, else broadcast to every connection |
+| `session.project_bound` | The session's first project-carrying run permanently bound its project; published exactly once, by the run that won the bind |
+| `session.status`        | A session's derived status may have changed — the fields `GET /sessions` carries; broadcast to every connection of the owner and never replayed, so a reconnect relists |
+| `trace.span`            | A trace span; `payload_omitted` says the 256KB live cap replaced the payload fields, which the stored row still has, and `attachments` resolves the image attachments the span's input references, as `run.started` does for the message's |
 
 Generation spans carry the full model request/response in their `data` — what
 each call sent after compaction and filters, MCP and skill tool definitions
@@ -1034,13 +1031,13 @@ the `/ws` event bus: an ordered byte stream with backpressure, not broadcast
 envelopes with replay. Authentication is the same first-message `auth`
 handshake, after which the client sends exactly one control envelope:
 
-| type              | Direction | Description                                                                  |
-|-------------------|-----------|------------------------------------------------------------------------------|
-| `terminal.open`   | C → S     | Start the session — `{project_id, cols?, rows?}`; must be the first message  |
-| `terminal.ready`  | S → C     | Shell is live; binary frames flow from here                                  |
-| `terminal.error`  | S → C     | Open failed (unknown sandbox or project, foreign project, backend error) |
-| `terminal.resize` | C → S     | PTY resize — `{cols, rows}`                                                  |
-| `terminal.exit`   | S → C     | Shell exited — `{code}` (`-1` when unknown); the server then closes          |
+| type              | Direction | Meaning |
+|-------------------|-----------|---------|
+| `terminal.open`   | C → S     | Start the session in the named project's container; must be the first message |
+| `terminal.ready`  | S → C     | Shell is live; binary frames flow from here |
+| `terminal.error`  | S → C     | Open failed (unknown sandbox or project, foreign project, backend error); the server then closes |
+| `terminal.resize` | C → S     | PTY resize |
+| `terminal.exit`   | S → C     | Shell exited (`-1` when the code is unknown); the server then closes |
 
 **Binary WebSocket frames carry the terminal byte stream in both directions**
 (client → stdin, PTY output → client); text frames are reserved for the JSON

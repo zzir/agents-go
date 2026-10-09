@@ -46,8 +46,8 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 - `compact_before` folds the transcript into a summary before the step runs,
   with the step's own agent's compaction settings.
 - `budget` — `max_steps`, `max_tokens`, `max_minutes` (each `0` = no bound)
-  and `max_laps` (`0` = 3): checked before every step launch and retry, never
-  mid-run.
+  and `max_laps` (`0` = 3); when each is checked is in
+  [the wire surface](../reference/protocol.md#workflows--apiv1workflows).
 
 Steps carry stable ids the server assigns, so inserting one above another
 renumbers nothing a run in flight is naming. Editing a workflow never steers
@@ -126,12 +126,9 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   the same row in the hub; a trigger's `last_error` says why the last fire
   started nothing.
 - What a trigger starts does not use the commands you trusted in that
-  session: with `exec_command` in the agent's approve list, each run it starts
-  (its turn, a task, a workflow step) asks until one of that run's own cards
-  says otherwise. **Approve once** lets that call through, **Trust this
-  command** that command for the rest of the run, **Trust all this session**
-  the rest of the run and, as always, your own turns. The next fire starts
-  from nothing again ([invariant 84](../explanation/workbench-invariants.md)).
+  session: each run it starts asks again until that run's own cards say
+  otherwise, and the next fire starts from nothing
+  ([invariant 84](../explanation/workbench-invariants.md)).
 
 Deleting the session, the workflow or the agent a trigger fires deletes the
 trigger with it.
@@ -146,10 +143,10 @@ trigger with it.
   the brief, and the child session's transcript. A step waiting on
   `pause_before` is an approval card there and in the session.
 - A failed execution can be retried (**Retry** on the row, `task_retry` from
-  the model, `POST /tasks/:id/retry`): it re-runs the step it stopped at, on
-  the same session, so the work already done is kept. Completed and cancelled
-  executions do not retry — that would repeat their side effects. **Stop**
-  cancels the current step's run and ends the execution.
+  the model, `POST /tasks/:id/retry`) from the step it stopped at, on the
+  same session; completed and cancelled ones cannot
+  ([the wire surface](../reference/protocol.md#workflows--apiv1workflows)).
+  **Stop** cancels the current step's run and ends the execution.
 - The trace panel labels the result's wake-up run by what started it
   (`▶ ship (you)`, `▶ ship (cron @daily)`).
 

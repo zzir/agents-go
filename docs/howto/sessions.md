@@ -1,6 +1,6 @@
 # Sessions
 
-A `Session` persists conversation history across runs, so multi-turn chat needs no manual item threading: prior items are prepended to the input before the run, and the new input plus everything the run generates is saved incrementally as the run proceeds.
+A `Session` persists conversation history across runs, so multi-turn chat needs no manual item threading; when history is read and saved is [below](#session-semantics).
 
 ```go
 sess := session.NewInMemorySession()
@@ -153,7 +153,7 @@ The built-ins sit on a spectrum from "zero dependencies" to "full database". The
 
 ### SQL sessions (SQLite / PostgreSQL)
 
-The `github.com/zzir/agents-go/sessions` module backs a `Session` with a SQL database via [uptrace/bun](https://bun.uptrace.dev). It is a **separate Go module** so its database-driver dependencies never reach the core SDK — add it only if you use it ([how to `go get` it today](../tutorial/quickstart.md#create-a-project)):
+The `github.com/zzir/agents-go/sessions` module backs a `Session` with a SQL database via [uptrace/bun](https://bun.uptrace.dev). It is a **separate Go module** so its database-driver dependencies never reach the core SDK — add it only if you use it (tagged in lockstep with the core — [Create a project](../tutorial/quickstart.md#create-a-project)):
 
 ```go
 import "github.com/zzir/agents-go/sessions"
@@ -207,13 +207,11 @@ limits. `TruncationStrategy` drops from the oldest end but skips system groups
 whatever their age; set `DropSystem: true` when the instructions are re-sent on
 every run anyway.
 
-Nothing is deleted — a strategy marks groups excluded, the log stays whole and
-the model's context is a projection of it — and a compaction failure never
-fails the run. `CompactionOptions.Points` selects which of the three points
-(before the first model call, at each turn's save point, after the final
-output) the run consults, the zero value meaning all; the save-point pass is
-the one that matters for agentic work, since a run that calls thirty tools
-overruns its window inside a single run. A runnable program is
+Nothing is deleted and a failed pass never fails the run
+([spec §2.5f](../reference/spec.md#25f-compaction)). `CompactionOptions.Points`
+selects which of the three points the run consults, the zero value meaning
+all; the save-point pass is the one that matters for agentic work, since a run
+that calls thirty tools overruns its window inside a single run. A runnable program is
 [examples/runcompaction](../../examples/runcompaction/main.go).
 
 ### When the estimate is wrong
@@ -242,14 +240,13 @@ opts.Model.InputFilter = agents.ContextBudget{
 ```
 
 Every call then ends with one system item, `Context budget: about N of W
-tokens in use (P% left).`: the run's own last call once it has one, `Occupied`
-before that, nothing when neither is known. It is appended to the input, never
-to the instructions, so a cached prompt prefix stays cached, and it is not
-saved to the session ([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
+tokens in use (P% left).` — the run's own last call once it has one, `Occupied`
+before that, nothing when neither is known; it rides the input, not the
+instructions, and is never saved
+([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
 When handoffs cross models, `WindowFor func(*agents.Agent) int` answers the
-active agent's window and `Window` is the fallback.
-Leave it off on an Anthropic backend, which discards the reasoning it replays
-once the previous notice is gone
+active agent's window and `Window` is the fallback. Leave it off on an
+Anthropic backend
 ([decisions §5.60](../explanation/decisions.md#560-the-budget-rides-on-the-input-not-the-instructions)).
 A runnable program is [examples/contextmanagement](../../examples/contextmanagement/main.go).
 
@@ -324,12 +321,10 @@ opts.Compaction = agents.CompactionOptions{Compactor: compactor}
 ```
 
 A compactor with no strategy (`compaction.New(nil, nil)`) folds nothing on
-its own and still records a reset the model asked for. A session that cannot
-reset records `context_reset_ignored` and carries on; a request made in a
-turn that pauses for approval is performed when the run resumes, and a fresh
-context refuses another reset until the model has done some work, across a
-pause too
-([spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context)).
+its own and still records a reset the model asked for; what a session that
+cannot reset does, how a reset crosses an approval pause, and when a second
+reset is refused are
+[spec §2.5i](../reference/spec.md#25i-the-model-manages-its-own-context).
 In the workbench an agent's compaction mode chooses between `summary`
 (the default), `reset` and `hybrid`, and the panel's button becomes
 "Reset now". `hybrid` is a reset whose checkpoint also carries a short recap
@@ -429,5 +424,3 @@ func sessionFor(db *bun.DB, userID, threadID string) *session.Session {
 	return session.NewSession(sessions.New(db, userID+"-"+threadID))
 }
 ```
-
-On SQLite the pool is capped at one connection by `sessions.New` ([spec §2.5e2](../reference/spec.md#25e2-the-entry-lifecycle-contract)).

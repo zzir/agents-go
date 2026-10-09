@@ -74,11 +74,11 @@ agent an `ssh://` sandbox with `ssh_use_agent` authenticates through.
 
 ## Runtime settings
 
-Tuned live through `PUT /api/v1/settings/:key` (admin-only, as is `DELETE` —
-host configuration is [written by admins](protocol.md#authorization)) or the
-Settings panel; a change takes effect on the next run, tick or connect. Every key is one entry in the
-settings registry (invariant 40), which also decides masking and validation.
-An empty value returns a key to its default. Keys by panel group:
+Tuned live through `PUT /api/v1/settings/:key` or the Settings panel; a
+change takes effect on the next run, tick or connect. Who may write, what a
+write accepts and how a key returns to its default are
+[the wire surface](protocol.md#settings--apiv1settings); every key is one
+entry in the settings registry (invariant 40). Keys by panel group:
 
 <!-- settings-table:begin — generated from internal/settings/registry.go by `make settings-doc` -->
 | Key | Group | Default | Meaning |
@@ -112,6 +112,5 @@ backs the SDK's `tasks.Config.MaxConcurrentPerParent` resolver.
 
 The seven `storage` keys are **admin-only to read** (a member's
 `GET /settings` leaves them out, `GET /settings/:key` is `403`) and are written
-as **one group** through `PUT /api/v1/attachments/storage`, never key by key — see
-[attachments](../howto/attachments.md#configuring-the-bucket) and
-[invariant 58](../explanation/workbench-invariants.md).
+as one group, never key by key
+([the wire surface](protocol.md#attachments--apiv1attachments)).

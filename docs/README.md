@@ -1,29 +1,12 @@
 # agents-go docs
 
-**Go agents. Local first.**
-
-The documentation for both halves of the project: the **workbench** —
-`agents-server`, the local agent workbench you run yourself — and the **SDK**
-it is built on, the `agents` package, embeddable on its own. One core, two
-consumers ([scope §1.1](explanation/scope.md#11-what-this-is)).
-
-**New here?** [Running the workbench](tutorial/workbench.md) goes from a
-binary to a first session with the Inspector open; nothing on that path
-needs Docker. Embedding the SDK in your own program starts at the
-[Quickstart](tutorial/quickstart.md).
-
-The SDK's shape is idiomatic Go — generics instead of reflection magic,
-`context.Context`, errors, and `iter.Seq2` streams that run on the consumer's
-goroutine ([Streaming](howto/streaming.md#the-run-happens-on-your-goroutine)) —
-and its behavior is [specified](reference/spec.md), not inherited. Arriving
-from the OpenAI Agents SDK for Python? Start at
-[Differences from the Python SDK](explanation/migration_from_python.md).
-
----
+The documentation for the **workbench** (`agents-server`) and the **SDK** it
+is built on (the `agents` package), sorted by what you came for. New here?
+Start at [Running the workbench](tutorial/workbench.md); embedding the SDK
+starts at the [Quickstart](tutorial/quickstart.md), and a reader arriving from
+the Python SDK at [Differences from the Python SDK](explanation/migration_from_python.md).
 
 ## Documentation
-
-The pages are sorted by what you came for.
 
 ### Tutorial — learn by doing
 
