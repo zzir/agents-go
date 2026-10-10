@@ -1,85 +1,47 @@
-/* =============================================================
-   Syntax highlighting — GitHub Primer light / dark
-   Replaces external highlight.js theme so colors follow data-theme.
-   ============================================================= */
-
-/* Light theme (default) */
+/* Syntax highlighting: highlight.js classes on Primer's prettylights tokens,
+   which every theme file defines — the colors follow whichever of the
+   fourteen themes <html> carries. */
 .hljs {
-  color: #24292e;
+  color: var(--fgColor-default);
   background: transparent;
 }
 .hljs-comment,
-.hljs-quote { color: #6e7781; font-style: italic; }
+.hljs-quote { color: var(--color-prettylights-syntax-comment); font-style: italic; }
 .hljs-keyword,
-.hljs-selector-tag { color: #cf222e; }
+.hljs-selector-tag { color: var(--color-prettylights-syntax-keyword); }
 .hljs-string,
-.hljs-doctag { color: #0a3069; }
+.hljs-doctag { color: var(--color-prettylights-syntax-string); }
 .hljs-number,
-.hljs-literal { color: #0550ae; }
+.hljs-literal,
+.hljs-built_in,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-property { color: var(--color-prettylights-syntax-constant); }
 .hljs-title,
 .hljs-title.function_,
-.hljs-section { color: #8250df; }
-.hljs-built_in { color: #0550ae; }
+.hljs-section,
+.hljs-selector-class,
+.hljs-selector-id { color: var(--color-prettylights-syntax-entity); }
 .hljs-type,
-.hljs-title.class_ { color: #953800; }
-.hljs-attr,
-.hljs-attribute { color: #116329; }
+.hljs-title.class_,
 .hljs-variable,
-.hljs-template-variable { color: #953800; }
+.hljs-template-variable { color: var(--color-prettylights-syntax-variable); }
+.hljs-attr,
+.hljs-attribute,
 .hljs-name,
-.hljs-tag { color: #116329; }
+.hljs-tag { color: var(--color-prettylights-syntax-entity-tag); }
 .hljs-meta,
-.hljs-meta .hljs-keyword { color: #6e7781; }
-.hljs-symbol,
-.hljs-bullet { color: #0550ae; }
-.hljs-regexp { color: #116329; }
-.hljs-deletion { color: #82071e; background: #ffebe9; }
-.hljs-addition { color: #0a3069; background: #dafbe1; }
+.hljs-meta .hljs-keyword { color: var(--color-prettylights-syntax-comment); }
+.hljs-regexp { color: var(--color-prettylights-syntax-string-regexp); }
+.hljs-subst,
+.hljs-params { color: var(--color-prettylights-syntax-storage-modifier-import); }
+.hljs-deletion { color: var(--color-prettylights-syntax-markup-deleted-text); background: var(--color-prettylights-syntax-markup-deleted-bg); }
+.hljs-addition { color: var(--color-prettylights-syntax-markup-inserted-text); background: var(--color-prettylights-syntax-markup-inserted-bg); }
 /* GitHub-style full-row diff background. hljs emits one span per +/- line with
    the newline OUTSIDE the span, so `display: block` would double the breaks
    (block wrap + the pre newline) and leave a blank line between rows.
    inline-block + width:100% tints the whole row with no extra blank line. */
 .hljs-addition,
 .hljs-deletion { display: inline-block; width: 100%; }
-.hljs-subst { color: #24292e; }
-.hljs-params { color: #24292e; }
-.hljs-property { color: #0550ae; }
-.hljs-selector-class,
-.hljs-selector-id { color: #8250df; }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: bold; }
-
-/* Dark theme */
-[data-color-mode="dark"] .hljs { color: #e6edf3; }
-[data-color-mode="dark"] .hljs-comment,
-[data-color-mode="dark"] .hljs-quote { color: #8b949e; }
-[data-color-mode="dark"] .hljs-keyword,
-[data-color-mode="dark"] .hljs-selector-tag { color: #ff7b72; }
-[data-color-mode="dark"] .hljs-string,
-[data-color-mode="dark"] .hljs-doctag { color: #a5d6ff; }
-[data-color-mode="dark"] .hljs-number,
-[data-color-mode="dark"] .hljs-literal { color: #79c0ff; }
-[data-color-mode="dark"] .hljs-title,
-[data-color-mode="dark"] .hljs-title.function_,
-[data-color-mode="dark"] .hljs-section { color: #d2a8ff; }
-[data-color-mode="dark"] .hljs-built_in { color: #79c0ff; }
-[data-color-mode="dark"] .hljs-type,
-[data-color-mode="dark"] .hljs-title.class_ { color: #ffa657; }
-[data-color-mode="dark"] .hljs-attr,
-[data-color-mode="dark"] .hljs-attribute { color: #7ee787; }
-[data-color-mode="dark"] .hljs-variable,
-[data-color-mode="dark"] .hljs-template-variable { color: #ffa657; }
-[data-color-mode="dark"] .hljs-name,
-[data-color-mode="dark"] .hljs-tag { color: #7ee787; }
-[data-color-mode="dark"] .hljs-meta,
-[data-color-mode="dark"] .hljs-meta .hljs-keyword { color: #8b949e; }
-[data-color-mode="dark"] .hljs-symbol,
-[data-color-mode="dark"] .hljs-bullet { color: #79c0ff; }
-[data-color-mode="dark"] .hljs-regexp { color: #7ee787; }
-[data-color-mode="dark"] .hljs-deletion { color: #ffa198; background: rgba(248, 81, 73, 0.15); }
-[data-color-mode="dark"] .hljs-addition { color: #a5d6ff; background: rgba(46, 160, 67, 0.15); }
-[data-color-mode="dark"] .hljs-subst { color: #e6edf3; }
-[data-color-mode="dark"] .hljs-params { color: #e6edf3; }
-[data-color-mode="dark"] .hljs-property { color: #79c0ff; }
-[data-color-mode="dark"] .hljs-selector-class,
-[data-color-mode="dark"] .hljs-selector-id { color: #d2a8ff; }
