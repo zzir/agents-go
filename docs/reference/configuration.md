@@ -97,6 +97,7 @@ entry in the settings registry (invariant 40). Keys by panel group:
 | `log_sensitive_data` | logging | `false` | Include prompts, tool arguments and model output in SDK log records, shown at --log-level debug. |
 | `approval_ttl_minutes` | limits | `1440` | How long a run may sit awaiting tool approval before it is expired and the wait is recorded in the transcript. 0 disables expiry. |
 | `max_tasks_per_session` | limits | `6` | Concurrent live background tasks one session may have — a fat-finger guard against a runaway fan-out, not a scheduler. Read at each spawn, so a change applies to the next one. |
+| `task_session_retention_days` | limits | — | A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the session it reported to. 0 keeps them forever. |
 | `max_terminals_per_sandbox` | limits | `4` (max `32`) | Concurrent interactive terminals allowed on one sandbox — a fat-finger guard, not a scheduler. |
 | `sandbox_idle_minutes` | limits | `30` | Stop a project's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again. |
 | `s3_endpoint` | storage | — | S3-compatible API endpoint image attachments are uploaded to. The section saves as one form: Save probes the bucket end to end and refuses a broken configuration, Clear disables image input. |
@@ -106,7 +107,6 @@ entry in the settings registry (invariant 40). Keys by panel group:
 | `s3_secret_access_key` | storage | — | S3 secret access key (**secret**: masked on read) |
 | `s3_public_base_url` | storage | — | Public prefix an object's key is appended to — what model providers and browsers fetch. Anyone with a URL can read that image. Changing this (or the bucket) without moving the objects breaks images already in session history. |
 | `s3_path_style` | storage | `false` | On puts the bucket in the URL path (MinIO); off uses virtual-hosted addressing (AWS, R2). |
-| `task_session_retention_days` | limits | — | A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the session it reported to. 0 keeps them forever. |
 <!-- settings-table:end -->
 
 `system_prompt`'s per-agent override is

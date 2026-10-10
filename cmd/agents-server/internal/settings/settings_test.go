@@ -3,6 +3,7 @@ package settings_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
@@ -37,6 +38,21 @@ func TestDefsAreSelfConsistent(t *testing.T) {
 		if err := settings.Validate(d.Key, d.Default); err != nil {
 			t.Errorf("%s: its own default %q does not validate: %v", d.Key, d.Default, err)
 		}
+	}
+}
+
+// The panel opens a section wherever the group changes, so a group listed in
+// two runs renders as two sections under one name.
+func TestDefsListEachGroupInOneRun(t *testing.T) {
+	var runs []string
+	for _, d := range settings.Defs() {
+		if n := len(runs); n > 0 && runs[n-1] == d.Group {
+			continue
+		}
+		if slices.Contains(runs, d.Group) {
+			t.Errorf("%s: group %q is listed again after %q", d.Key, d.Group, runs[len(runs)-1])
+		}
+		runs = append(runs, d.Group)
 	}
 }
 

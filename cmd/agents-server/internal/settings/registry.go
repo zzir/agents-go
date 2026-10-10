@@ -48,7 +48,8 @@ const (
 	KeyTaskSessionRetentionDays  = "task_session_retention_days"
 )
 
-// The groups the panel renders as sections, in the order defs are listed.
+// The groups the panel renders as sections, in the order defs are listed. A
+// group's defs sit together: the panel opens a section wherever the group changes.
 const (
 	GroupPrompt  = "prompt"
 	GroupTracing = "tracing"
@@ -148,6 +149,14 @@ var defs = []Def{{
 	Default:     "6", // mirrors tasks.DefaultMaxConcurrentPerParent
 	Min:         1,
 }, {
+	Key:         KeyTaskSessionRetentionDays,
+	Kind:        KindInt,
+	Group:       GroupLimits,
+	Label:       "Finished task transcripts (days)",
+	Placeholder: "e.g. 30 — 0 keeps them forever",
+	Description: "A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the session it reported to. 0 keeps them forever.",
+	Min:         0,
+}, {
 	Key:         KeyMaxTerminalsPerSandbox,
 	Kind:        KindInt,
 	Group:       GroupLimits,
@@ -211,14 +220,6 @@ var defs = []Def{{
 	Label:       "Path-style addressing",
 	Default:     "false",
 	Description: "On puts the bucket in the URL path (MinIO); off uses virtual-hosted addressing (AWS, R2).",
-}, {
-	Key:         KeyTaskSessionRetentionDays,
-	Kind:        KindInt,
-	Group:       GroupLimits,
-	Label:       "Finished task transcripts (days)",
-	Placeholder: "e.g. 30 — 0 keeps them forever",
-	Description: "A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the session it reported to. 0 keeps them forever.",
-	Min:         0,
 }}
 
 // Defs returns the registry in panel order.
