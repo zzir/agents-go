@@ -8,27 +8,30 @@
        /favicon.ico and logs a 404 on every load. -->
   <link rel="icon" href="data:," />
   <meta name="theme-color" content="#ffffff" />
-  <!-- Theme init, inline so it runs before first paint — the dark body
-       background below keys off data-color-mode, and setting it from React
-       would flash white for dark-mode users. ThemeProvider takes over after
-       mount for live toggling. -->
+  <!-- Theme init, inline so it runs before first paint — the body background
+       below keys off the attributes, and setting them from React would flash
+       white for dark-mode users. ThemeProvider takes over after mount. -->
   <script>
     (function () {
-      var p = 'system';
-      try { p = localStorage.getItem('theme') || 'system'; } catch (e) {}
+      var get = function (key, fallback) { try { return localStorage.getItem(key) || fallback; } catch (e) { return fallback; } };
+      var p = get('theme', 'system');
       var d = p === 'dark' || (p !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      var hc = get('theme.highContrast', '') === 'true' ? '_high_contrast' : '';
+      var dark = get('theme.dark', 'dark');
       var h = document.documentElement;
       h.setAttribute('data-color-mode', d ? 'dark' : 'light');
-      h.setAttribute('data-dark-theme', 'dark');
-      h.setAttribute('data-light-theme', 'light');
+      h.setAttribute('data-light-theme', get('theme.light', 'light') + hc);
+      h.setAttribute('data-dark-theme', dark + hc);
       var m = document.querySelector('meta[name="theme-color"]');
-      if (m) m.content = d ? '#0d1117' : '#ffffff';
+      if (m) m.content = !d ? '#ffffff' : dark === 'dark_dimmed' ? '#212830' : hc ? '#010409' : '#0d1117';
     })();
   </script>
   <style>
     #root:not(:has(> *)) { visibility: hidden; }
     body { background: #fff; }
     html[data-color-mode="dark"] body { background: #0d1117; }
+    html[data-color-mode="dark"][data-dark-theme$="_high_contrast"] body { background: #010409; }
+    html[data-color-mode="dark"][data-dark-theme^="dark_dimmed"] body { background: #212830; }
   </style>
 </head>
 <body>

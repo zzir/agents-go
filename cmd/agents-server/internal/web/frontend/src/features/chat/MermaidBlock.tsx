@@ -3,18 +3,19 @@ import { CopyIcon, CheckIcon, CodeIcon, EyeIcon } from '@primer/octicons-react';
 import { sanitizeSVG } from '@/lib/markdown';
 import { useCopy } from '@/lib/hooks';
 import { ZoomOverlay } from '@/features/chat/ZoomOverlay';
+import { THEME_ATTRS } from '@/theme/themes';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mermaidMod: any = null;
 let mermaidTheme: string | null = null;
 let mermaidIdSeq = 0;
 
-function getColorModeEl(): Element {
-  return document.querySelector('[data-color-mode]') || document.documentElement;
-}
-
+// getColorMode is the theme in force, mode and exact theme: an SVG painted
+// for one dark theme is wrong for another.
 function getColorMode(): string {
-  return getColorModeEl().getAttribute('data-color-mode') || 'light';
+  const h = document.documentElement;
+  const mode = h.getAttribute('data-color-mode') || 'light';
+  return mode + ':' + (h.getAttribute(mode === 'dark' ? 'data-dark-theme' : 'data-light-theme') || mode);
 }
 
 function primerThemeVars(): Record<string, string> {
@@ -117,9 +118,8 @@ export function useMermaidSvg(source: string): { svg: string | null; failed: boo
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    const target = getColorModeEl();
     const obs = new MutationObserver(() => setColorMode(getColorMode()));
-    obs.observe(target, { attributes: true, attributeFilter: ['data-color-mode'] });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: THEME_ATTRS });
     return () => obs.disconnect();
   }, []);
 

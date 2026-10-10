@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, type ChangeEvent, type ReactNode } fr
 import { Button, TextInput, Textarea, FormControl, Stack, PageHeader, Label, useConfirm } from '@primer/react';
 import { SecretInput } from '@/components/SecretInput';
 import { ToggleRow } from '@/components/ToggleRow';
+import { AppearanceSection } from '@/features/settings/AppearanceSection';
 import { UnsavedForm } from '@/components/UnsavedForm';
 import { useReadOnly } from '@/lib/access';
 import { api } from '@/lib/api';
@@ -94,8 +95,9 @@ export function SettingsPanel() {
         <PageHeader.TitleArea>
           <PageHeader.Title>General</PageHeader.Title>
         </PageHeader.TitleArea>
-        <PageHeader.Description>Network, prompt, and integration settings that apply to all agents.</PageHeader.Description>
+        <PageHeader.Description>This browser&apos;s appearance, then settings that apply to all agents.</PageHeader.Description>
       </PageHeader>
+      <AppearanceSection />
       {/* A member sees the values and can change none: one fieldset over
           the rows disables every input and the Save each would show. */}
       <fieldset disabled={readOnly} className="readonly-form settings-form">

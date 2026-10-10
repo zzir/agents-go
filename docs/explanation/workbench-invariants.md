@@ -531,3 +531,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     context names (`bridge/agent.go`, `Runner.keepChecklist`); the task lens
     reads it from there, and a reset carries it along. The write is best
     effort: a failure is logged and the call succeeds — decisions §5.82.
+92. **The theme is the browser's choice, never a server setting.** Light, dark
+    or system in the sidebar menu; which light and dark theme, and high contrast,
+    under General → Appearance (`AppearanceSection.tsx`): outside the read-only
+    fieldset, applied on click, all in localStorage. `<html>` alone carries
+    Primer's three theme attributes (`index.html` before first paint, `ThemeProvider.tsx`
+    after); code and terminal colors are its tokens; only light and dark are bundled, the other twelve files fetched on demand.

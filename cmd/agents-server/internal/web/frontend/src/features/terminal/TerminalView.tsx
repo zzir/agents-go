@@ -8,41 +8,29 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { getToken } from '@/lib/api';
 import { EV } from '@/lib/protocol';
+import { THEME_ATTRS } from '@/theme/themes';
 
-// ANSI palettes matching GitHub's light/dark themes (Primer exposes no ANSI
-// variables); background and foreground track the live CSS variables instead.
-const ANSI_LIGHT: Partial<ITheme> = {
-  black: '#24292f', red: '#cf222e', green: '#116329', yellow: '#4d2d00',
-  blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
-  brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#1a7f37',
-  brightYellow: '#633c01', brightBlue: '#218bff', brightMagenta: '#a475f9',
-  brightCyan: '#3192aa', brightWhite: '#8c959f',
-};
-const ANSI_DARK: Partial<ITheme> = {
-  black: '#484f58', red: '#ff7b72', green: '#3fb950', yellow: '#d29922',
-  blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#b1bac4',
-  brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364',
-  brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#d2a8ff',
-  brightCyan: '#56d4dd', brightWhite: '#f0f6fc',
-};
-
-// xtermTheme derives the terminal theme from the live Primer CSS variables
-// plus the fixed ANSI palette for the current color mode.
+// xtermTheme derives the terminal theme from the live Primer tokens, ANSI
+// palette included, so every theme variant reaches it.
 function xtermTheme(): ITheme {
   const style = getComputedStyle(document.documentElement);
-  const v = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+  const v = (name: string) => style.getPropertyValue(name).trim() || undefined;
   const dark = document.documentElement.getAttribute('data-color-mode') === 'dark';
   return {
-    background: v('--bgColor-default', dark ? '#0d1117' : '#ffffff'),
-    foreground: v('--fgColor-default', dark ? '#e6edf3' : '#1f2328'),
-    cursor: v('--fgColor-default', dark ? '#e6edf3' : '#1f2328'),
+    background: v('--bgColor-default'),
+    foreground: v('--fgColor-default'),
+    cursor: v('--fgColor-default'),
     selectionBackground: dark ? 'rgba(56,139,253,0.4)' : 'rgba(84,174,255,0.4)',
     // xterm 6 renders its own scrollbar; align it with the app-wide native
     // scrollbar colors (thumb: borderColor-muted, hover: bgColor-neutral-muted).
-    scrollbarSliderBackground: v('--borderColor-muted', dark ? '#30363d' : '#d8dee4'),
-    scrollbarSliderHoverBackground: v('--bgColor-neutral-muted', dark ? 'rgba(110,118,129,0.4)' : 'rgba(175,184,193,0.2)'),
-    scrollbarSliderActiveBackground: v('--bgColor-neutral-muted', dark ? 'rgba(110,118,129,0.4)' : 'rgba(175,184,193,0.2)'),
-    ...(dark ? ANSI_DARK : ANSI_LIGHT),
+    scrollbarSliderBackground: v('--borderColor-muted'),
+    scrollbarSliderHoverBackground: v('--bgColor-neutral-muted'),
+    scrollbarSliderActiveBackground: v('--bgColor-neutral-muted'),
+    black: v('--color-ansi-black'), red: v('--color-ansi-red'), green: v('--color-ansi-green'), yellow: v('--color-ansi-yellow'),
+    blue: v('--color-ansi-blue'), magenta: v('--color-ansi-magenta'), cyan: v('--color-ansi-cyan'), white: v('--color-ansi-white'),
+    brightBlack: v('--color-ansi-black-bright'), brightRed: v('--color-ansi-red-bright'), brightGreen: v('--color-ansi-green-bright'),
+    brightYellow: v('--color-ansi-yellow-bright'), brightBlue: v('--color-ansi-blue-bright'), brightMagenta: v('--color-ansi-magenta-bright'),
+    brightCyan: v('--color-ansi-cyan-bright'), brightWhite: v('--color-ansi-white-bright'),
   };
 }
 
@@ -113,11 +101,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     termRef.current = term;
     fit.fit();
 
-    // Track Primer color-mode flips (ThemeProvider stamps <html data-color-mode>).
+    // Track theme flips (ThemeProvider stamps <html> with the three theme attributes).
     const themeObserver = new MutationObserver(() => {
       term.options.theme = xtermTheme();
     });
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-color-mode'] });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: THEME_ATTRS });
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/ws/terminal`);

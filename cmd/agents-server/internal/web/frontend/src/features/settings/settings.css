@@ -19,3 +19,76 @@
 .form-caption-error {
   color: var(--fgColor-danger);
 }
+
+/* Appearance: one bordered row per mode — the chosen theme named on the left,
+   the swatches on the right, each painted by its own theme's tokens. */
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--base-size-16);
+  padding: var(--base-size-12) var(--base-size-16);
+  border: 1px solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  background: var(--bgColor-default);
+}
+
+.theme-row-main {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.theme-row-title {
+  font-size: var(--base-text-size-sm);
+  font-weight: var(--base-text-weight-semibold);
+  color: var(--fgColor-default);
+}
+
+.theme-row-desc {
+  margin-top: var(--base-size-4);
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+}
+
+.theme-row-name {
+  margin-right: var(--base-size-4);
+  font-weight: var(--base-text-weight-semibold);
+  color: var(--fgColor-default);
+}
+
+.theme-swatches {
+  display: flex;
+  gap: var(--base-size-12);
+  padding: 2px;
+}
+
+.theme-swatch {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 50%;
+  background: var(--bgColor-default);
+  cursor: pointer;
+}
+
+/* The upper-left half is the canvas; the danger and success hues fill the rest. */
+.theme-swatch--wedges {
+  background: conic-gradient(from 45deg, var(--fgColor-danger) 0 90deg, var(--fgColor-success) 90deg 180deg, var(--bgColor-default) 180deg 360deg);
+}
+
+.theme-swatch:hover {
+  outline: 2px solid var(--borderColor-muted);
+  outline-offset: 2px;
+}
+
+.theme-swatch[aria-checked="true"] {
+  outline: 2px solid var(--borderColor-accent-emphasis);
+  outline-offset: 2px;
+}
+
+.theme-swatch:focus-visible {
+  outline: 2px solid var(--focus-outlineColor);
+  outline-offset: 2px;
+}

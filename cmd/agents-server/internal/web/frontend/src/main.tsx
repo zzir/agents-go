@@ -10,8 +10,11 @@ import './theme/toast.css'
 import './theme/syntax.css'
 
 import ReactDOM from 'react-dom/client'
+import { ensureSchemeCss, readScheme } from './theme/themes'
 
-import('./app').then(({ default: App }) => {
+// The stored scheme's theme files land with the app, so the first paint is
+// the right theme and not the default one.
+Promise.all([import('./app'), ensureSchemeCss(readScheme())]).then(([{ default: App }]) => {
   ReactDOM.createRoot(document.getElementById('root')!, {
     // A crash no boundary claims still lands in the console with its
     // component stack.
