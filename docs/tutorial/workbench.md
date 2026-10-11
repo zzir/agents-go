@@ -130,8 +130,8 @@ service), and stops or rebuilds the container.
 Each panel in Settings is a thing you can add: **MCP servers** (streamable
 HTTP, with OAuth), **Skills** (`SKILL.md` documents, imported from a GitHub
 repository or written here), **Memory**, **Guardrails**, and **General** —
-this browser's appearance (which light and which dark theme, high contrast;
-the sidebar's theme menu switches between light, dark and the system's), then
+this browser's appearance (light, dark or the system's, the theme each shows,
+high contrast; the sidebar's theme menu is the same choice), then
 the runtime settings (a system prompt, trace retention, the caps, the
 attachment bucket that turns on [image input](../howto/attachments.md)). Your
 **Account** panel holds your profile and personal access tokens.

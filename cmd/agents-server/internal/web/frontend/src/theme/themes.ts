@@ -4,9 +4,7 @@ export type LightTheme = 'light' | 'light_colorblind' | 'light_tritanopia';
 export type DarkTheme = 'dark' | 'dark_dimmed' | 'dark_colorblind' | 'dark_tritanopia';
 export type ThemeName = LightTheme | DarkTheme;
 
-export interface ThemeEntry<N extends ThemeName = ThemeName> {
-  name: N;
-  mode: 'light' | 'dark';
+interface ThemeText {
   label: string;
   description: string;
   // Whether the swatch shows the theme's success and danger hues — the two
@@ -14,13 +12,17 @@ export interface ThemeEntry<N extends ThemeName = ThemeName> {
   wedges: boolean;
 }
 
-export const LIGHT_THEMES: ThemeEntry<LightTheme>[] = [
+// A theme belongs to one mode: a light one is only ever the light pick, a dark
+// one the dark pick.
+export type ThemeEntry =
+  | (ThemeText & { mode: 'light'; name: LightTheme })
+  | (ThemeText & { mode: 'dark'; name: DarkTheme });
+
+// The seven, in the order the row shows them: light first, then dark.
+export const THEMES: ThemeEntry[] = [
   { name: 'light', mode: 'light', label: 'Light default', description: 'The standard light theme, full color contrast and brightness.', wedges: false },
   { name: 'light_colorblind', mode: 'light', label: 'Light protanopia and deuteranopia', description: 'Reds and greens are easier to tell apart.', wedges: true },
   { name: 'light_tritanopia', mode: 'light', label: 'Light tritanopia', description: 'Blues and greens, and yellows and purples, are easier to tell apart.', wedges: true },
-];
-
-export const DARK_THEMES: ThemeEntry<DarkTheme>[] = [
   { name: 'dark', mode: 'dark', label: 'Dark default', description: 'The standard dark theme, full color contrast and brightness.', wedges: false },
   { name: 'dark_colorblind', mode: 'dark', label: 'Dark protanopia and deuteranopia', description: 'Reds and greens are easier to tell apart.', wedges: true },
   { name: 'dark_tritanopia', mode: 'dark', label: 'Dark tritanopia', description: 'Blues and greens, and yellows and purples, are easier to tell apart.', wedges: true },
@@ -47,9 +49,10 @@ export function readScheme(): Scheme {
   const get = (key: string): string | null => { try { return localStorage.getItem(key); } catch { return null; } };
   const light = get(KEYS.light);
   const dark = get(KEYS.dark);
+  const known = (mode: 'light' | 'dark', v: string | null) => THEMES.some(t => t.mode === mode && t.name === v);
   return {
-    light: LIGHT_THEMES.some(t => t.name === light) ? light as LightTheme : DEFAULT_SCHEME.light,
-    dark: DARK_THEMES.some(t => t.name === dark) ? dark as DarkTheme : DEFAULT_SCHEME.dark,
+    light: known('light', light) ? light as LightTheme : DEFAULT_SCHEME.light,
+    dark: known('dark', dark) ? dark as DarkTheme : DEFAULT_SCHEME.dark,
     highContrast: get(KEYS.highContrast) === 'true',
   };
 }

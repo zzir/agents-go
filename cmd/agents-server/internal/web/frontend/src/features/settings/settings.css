@@ -20,14 +20,15 @@
   color: var(--fgColor-danger);
 }
 
-/* Appearance: one bordered row per mode — the chosen theme named on the left,
-   the swatches on the right, each painted by its own theme's tokens. */
+/* Appearance: bordered rows like the switch rows. The mode's control sits on
+   the right; the seven swatches are one line (light, a divider, dark), each
+   painted by its own theme's tokens, the one on screen named under them. */
 .theme-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--base-size-16);
+  column-gap: var(--base-size-16);
+  row-gap: var(--base-size-4);
   padding: var(--base-size-12) var(--base-size-16);
   border: 1px solid var(--borderColor-default);
   border-radius: var(--borderRadius-medium);
@@ -35,7 +36,6 @@
 }
 
 .theme-row-main {
-  flex: 1 1 240px;
   min-width: 0;
 }
 
@@ -46,9 +46,12 @@
 }
 
 .theme-row-desc {
-  margin-top: var(--base-size-4);
   font-size: var(--base-text-size-xs);
   color: var(--fgColor-muted);
+}
+
+.theme-row-desc--wide {
+  grid-column: 1 / -1;
 }
 
 .theme-row-name {
@@ -59,11 +62,34 @@
 
 .theme-swatches {
   display: flex;
+  align-items: center;
   gap: var(--base-size-12);
   padding: 2px;
+  /* Resolved here, in the page's theme, so the rings read against the page
+     rather than taking each swatch's own palette. */
+  --theme-ring-muted: var(--fgColor-muted);
+  --theme-ring-accent: var(--borderColor-accent-emphasis);
+  --theme-ring-focus: var(--focus-outlineColor);
+}
+
+.theme-swatches-divider {
+  width: 1px;
+  height: var(--base-size-24);
+  background: var(--borderColor-default);
+}
+
+/* A phone stacks each row: the control under its text, the seven closer together. */
+@media (max-width: 767px) {
+  .theme-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .theme-swatches {
+    gap: var(--base-size-8);
+  }
 }
 
 .theme-swatch {
+  position: relative;
   width: 32px;
   height: 32px;
   padding: 0;
@@ -78,17 +104,30 @@
   background: conic-gradient(from 45deg, var(--fgColor-danger) 0 90deg, var(--fgColor-success) 90deg 180deg, var(--bgColor-default) 180deg 360deg);
 }
 
-.theme-swatch:hover {
-  outline: 2px solid var(--borderColor-muted);
-  outline-offset: 2px;
+/* The ring is a pseudo-element, 2px out from the circle: the button's own
+   outline stays the keyboard focus ring, and Primer's reset of a clicked
+   button's outline cannot clear a selection. */
+.theme-swatch::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  pointer-events: none;
 }
 
-.theme-swatch[aria-checked="true"] {
-  outline: 2px solid var(--borderColor-accent-emphasis);
-  outline-offset: 2px;
+/* Hover and the pick the other time of day shows are muted; the theme on
+   screen is accent. */
+.theme-swatch:hover::after,
+.theme-swatch[data-ring="other"]::after {
+  border-color: var(--theme-ring-muted);
+}
+
+.theme-swatch[aria-checked="true"]::after {
+  border-color: var(--theme-ring-accent);
 }
 
 .theme-swatch:focus-visible {
-  outline: 2px solid var(--focus-outlineColor);
-  outline-offset: 2px;
+  outline: 2px solid var(--theme-ring-focus);
+  outline-offset: 5px;
 }
