@@ -45,6 +45,7 @@
     "vitest": "4.1.11"
   },
   "overrides": {
-    "vite": "$vite"
+    "vite": "$vite",
+    "katex": "$katex"
   }
 }
