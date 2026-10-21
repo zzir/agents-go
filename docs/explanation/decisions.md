@@ -1859,3 +1859,26 @@ listing in `NO_PROXY`. A `proxy_url` row left in an upgraded database is
 listed as unknown and deleted from the panel.
 
 Rules: [invariant 54](workbench-invariants.md); spec §2.14.
+
+### 5.90 A connection's protocol version is pinned per server
+
+Decided 2026-10-21.
+
+**Decision.** `mcp.Options.ProtocolVersion` (the workbench's `protocol_version`
+per MCP server) pins the version the handshake speaks; empty is the go-sdk's
+latest. Under 2026-07-28 the go-sdk opens a `subscriptions/listen` stream for
+the tool-list handler, and a server that answers that stream's resumption with
+404 while holding a session id is, by the transport's own rule, terminating the
+session: the whole connection dies seconds after every connect. Under
+2025-11-25 the same server's refusal of the standalone stream is tolerated.
+
+**Rejected.** Dropping the tool-list handler — the listen stream goes, and so
+does every `tools/list_changed`. A legacy default for every server — gives up
+`server/discover` and stateless MCP where they work. Waiting for the go-sdk —
+v1.8.0 tolerates the 404 only on a session-less connection and only on the
+stream's first request.
+
+**Cost accepted.** One more knob; a server pinned to an old version keeps the
+old handshake until someone unpins it.
+
+Rules: spec §2.16; [MCP servers](../reference/protocol.md#mcp-servers--apiv1mcp-servers).

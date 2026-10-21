@@ -1905,6 +1905,9 @@ runs, their background tasks, other conversations.
 - **A death is noticed as it happens** — the connection is watched — **and
   healing is throttled**; a heal the throttle skipped is retried once after
   the cooldown.
+- **The handshake speaks the go-sdk's latest protocol version unless
+  `Options.ProtocolVersion` pins one** of `ProtocolVersions()`; any other
+  value is refused at connect — see decisions §5.90.
 - **The redial repeats only idempotent work.** `tools/list` is re-issued on the
   fresh session; a failed tool CALL is reported to the model, never retried by
   the redial.

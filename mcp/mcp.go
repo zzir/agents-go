@@ -86,7 +86,15 @@ type Options struct {
 	// NOW; ctx is the connection's own, so a subprocess bound to it lives as long
 	// as the connection does. Nil: a dead connection is reported, not repaired.
 	Redial func(ctx context.Context) (mcpsdk.Transport, error)
+
+	// ProtocolVersion pins the MCP protocol version this client speaks to the
+	// server, one of ProtocolVersions(); empty is the go-sdk's latest (decisions §5.90).
+	ProtocolVersion string
 }
+
+// ProtocolVersions lists the protocol versions Options.ProtocolVersion may
+// name, newest first.
+func ProtocolVersions() []string { return mcpsdk.SupportedProtocolVersions() }
 
 // Server is a connected MCP server whose tools are exposed to an agent. It
 // implements agents.MCPServer.
@@ -187,8 +195,16 @@ func (s *Server) newClient() *mcpsdk.Client {
 	})
 }
 
+// sessionOptions carries the pinned protocol version into a connect.
+func (s *Server) sessionOptions() *mcpsdk.ClientSessionOptions {
+	return &mcpsdk.ClientSessionOptions{ProtocolVersion: s.opts.ProtocolVersion}
+}
+
 func (s *Server) connect(ctx context.Context, transport mcpsdk.Transport) error {
-	session, err := s.newClient().Connect(ctx, transport, nil)
+	if v := s.opts.ProtocolVersion; v != "" && !slices.Contains(ProtocolVersions(), v) {
+		return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: connecting to %q: protocol version %q is not one this client speaks (%s)", s.name, v, strings.Join(ProtocolVersions(), ", ")))
+	}
+	session, err := s.newClient().Connect(ctx, transport, s.sessionOptions())
 	if err != nil {
 		return agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: connecting to %q: %w", s.name, err))
 	}
@@ -249,7 +265,7 @@ func (s *Server) redial(failed *mcpsdk.ClientSession) (healed, throttled bool) {
 	}
 	hctx, cancel := context.WithTimeout(s.rpcCtx, redialConnectTimeout)
 	defer cancel()
-	session, err := s.newClient().Connect(hctx, transport, nil)
+	session, err := s.newClient().Connect(hctx, transport, s.sessionOptions())
 	if err != nil {
 		return false, false
 	}
