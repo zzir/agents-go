@@ -387,12 +387,21 @@ Rules: spec §2.16.
 SSE stream), so the connection owns its recovery, in place for every holder;
 the redial repeats only idempotent work, because a dead line cannot say whether
 the server ran a tool, and running a write twice is worse than reporting it once.
+A `tools/list` that finds the line dead inside the redial cooldown waits for the
+throttled heal: the death is being repaired, and a run failed on a stale error
+costs more than three seconds. The cooldown backs off while connections keep
+dying young, because a server that accepts and drops is a dial loop at any
+fixed rate. The death and every redial's outcome are logged, because the error
+a caller sees is the connection's death, never why healing failed.
 
 **Rejected.** Reconnecting without `Redial` — only the configuration's owner
 can rebuild a transport (an `*exec.Cmd` is spent once; an endpoint needs its
-headers, proxy and OAuth handler).
+headers, proxy and OAuth handler). Waiting in the tool-call path too — a tool
+call is never repeated by the redial, so its caller gains nothing by waiting.
 
 **Cost accepted.** Recovery is opt-in; without `Redial` the failure is reported.
+A `tools/list` inside the cooldown takes up to the base cooldown longer to
+fail; a server in backoff is retried minutes apart.
 
 Rules: spec §2.16.
 

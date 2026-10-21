@@ -1903,8 +1903,13 @@ runs, their background tasks, other conversations.
   `mcp.Options.Redial`, so every holder of that server recovers. Without
   `Redial` the failure is reported, not repaired.
 - **A death is noticed as it happens** — the connection is watched — **and
-  healing is throttled**; a heal the throttle skipped is retried once after
-  the cooldown.
+  healing is throttled**: the cooldown starts at 3s and doubles, capped at
+  5min, while connections die within a minute of being healed. A heal the
+  throttle skipped is retried once after the cooldown; a `tools/list` that
+  finds the line dead inside a base-length cooldown waits it out and asks
+  once more before reporting the death.
+- **A death, a redial and a redial's failure are logged on `Options.Logger`**
+  (`component=mcp`, the server's name as `mcp`); nil is silent.
 - **The handshake speaks the go-sdk's latest protocol version unless
   `Options.ProtocolVersion` pins one** of `ProtocolVersions()`; any other
   value is refused at connect — see decisions §5.90.
