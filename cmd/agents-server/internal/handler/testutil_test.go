@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/uptrace/bun"
 
-	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
@@ -89,20 +87,13 @@ func (noopCompactor) CompactSession(context.Context, string) (bool, int, int, er
 	return false, 0, 0, nil
 }
 
-// noLister is an MCPToolLister for a server nothing is connected to.
-type noLister struct{}
-
-func (noLister) ListToolsFor(context.Context, string) (string, []*agents.Tool, error) {
-	return "", nil, errors.New("not connected")
-}
-
 // testSessionDeps wires a SessionHandler over db with every store real and
 // the runner-side seams stubbed; tune adjusts the deps before construction.
 func testSessionDeps(db *bun.DB, tune ...func(*SessionDeps)) SessionDeps {
 	d := SessionDeps{
 		Sessions: store.NewSessionStore(db), Entries: store.NewSharedEntryStore(db), Traces: store.NewTraceStore(db),
 		Agents: store.NewAgentConfigStore(db), Profiles: store.NewContextProfileStore(db),
-		MCP: noLister{}, MCPServers: store.NewMcpServerStore(db), Users: store.NewUserStore(db),
+		Users:    store.NewUserStore(db),
 		Projects: store.NewProjectStore(db), Stopper: noopStopper{}, Compactor: noopCompactor{}, Statuses: noStatuses{},
 		Settings: settings.NewReader(store.NewSettingStore(db)),
 	}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -560,7 +561,7 @@ func (h *McpServerHandler) Tools(c *gin.Context) {
 		conflict(c, "server not connected")
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), contextMCPTimeout)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), mcpListTimeout)
 	defer cancel()
 	tools, err := srv.ListTools(ctx, nil, nil)
 	if err != nil {
@@ -574,3 +575,7 @@ func (h *McpServerHandler) Tools(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, items)
 }
+
+// mcpListTimeout bounds one tools/list made on a request's behalf: this
+// listing and the playground's tool surface.
+const mcpListTimeout = 2 * time.Second

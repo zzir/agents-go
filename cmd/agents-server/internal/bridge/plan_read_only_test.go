@@ -10,9 +10,9 @@ import (
 // the server says about it (invariant 89).
 func TestPlanReadOnlyNamesComeFromServerConfig(t *testing.T) {
 	got := planReadOnlyNames([]attachedMCP{
-		{id: "a", name: "docs", readOnly: []string{"search", "", "fetch"}},
-		{id: "b", name: "db"},
-		{id: "c", name: "git", readOnly: []string{"log"}},
+		{name: "docs", readOnly: []string{"search", "", "fetch"}},
+		{name: "db"},
+		{name: "git", readOnly: []string{"log"}},
 	})
 	want := []string{"docs__search", "docs__fetch", "git__log"}
 	if !slices.Equal(got, want) {

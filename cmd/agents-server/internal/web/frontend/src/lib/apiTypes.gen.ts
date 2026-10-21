@@ -9279,8 +9279,6 @@ export interface components {
             global_prompt_chars?: number;
             /** @description The instruction layers, in the order WrapInstructions composed them. */
             instructions_chars?: number;
-            /** @description MCPServerIDs are the servers the build wired up, in config order. */
-            mcp_server_ids?: string[];
             memory_chars?: number;
             /**
              * @description PlanPreambleChars is the plan-mode preamble, sent only while the session
@@ -9290,8 +9288,8 @@ export interface components {
             sandbox_prompt_chars?: number;
             skills_index_chars?: number;
             /**
-             * @description Tools are the locally attached tools by origin; MCP tools are sized by
-             *     the read path, not here.
+             * @description Tools are the attached tools by origin, one bucket per local source and
+             *     per MCP server, as the build sized them.
              */
             tools?: components["schemas"]["store.ToolBucket"][];
         };
@@ -9476,8 +9474,8 @@ export interface components {
             count?: number;
             source?: string;
             /**
-             * @description Unavailable marks a bucket that could not be measured (a disconnected MCP
-             *     server): unknown, never zero.
+             * @description Unavailable marks a bucket the build could not size (an MCP server that
+             *     did not answer): unknown, never zero.
              */
             unavailable?: boolean;
         };

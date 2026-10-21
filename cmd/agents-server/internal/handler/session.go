@@ -10,12 +10,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
@@ -40,12 +38,6 @@ type RunStopper interface {
 	WithSessionTreeFenced(ctx context.Context, sessionID string, fn func() error) error
 }
 
-// MCPToolLister answers what a connected MCP server currently exposes
-// (the bridge's McpManager); the Context report sizes MCP tool surfaces by asking.
-type MCPToolLister interface {
-	ListToolsFor(ctx context.Context, serverID string) (name string, tools []*agents.Tool, err error)
-}
-
 // SessionCompactor runs one forced compaction pass on a session outside any
 // run (the bridge's Runner). compacted=false with a nil error means nothing to fold.
 type SessionCompactor interface {
@@ -66,11 +58,8 @@ type SessionDeps struct {
 	Entries  *store.EntryStore
 	Traces   *store.TraceStore
 	Agents   *store.AgentConfigStore
-	// Profiles, MCP and MCPServers serve the Context report: the build
-	// snapshot, live tool listings, and the NAME of a disconnected server.
-	Profiles   *store.ContextProfileStore
-	MCP        MCPToolLister
-	MCPServers *store.McpServerStore
+	// Profiles serves the Context report: the build's snapshot of what a run sends.
+	Profiles *store.ContextProfileStore
 	// Users resolves the account a session is reassigned to; Projects answers
 	// whether that account owns a bound session's project (SetOwner's gate).
 	Users    *store.UserStore
@@ -87,19 +76,17 @@ type SessionDeps struct {
 
 // SessionHandler serves CRUD endpoints for chat sessions and their entries.
 type SessionHandler struct {
-	sessions   *store.SessionStore
-	entries    *store.EntryStore
-	traces     *store.TraceStore
-	agents     *store.AgentConfigStore
-	profiles   *store.ContextProfileStore
-	mcp        MCPToolLister
-	mcpServers *store.McpServerStore
-	users      *store.UserStore
-	projects   *store.ProjectStore
-	stopper    RunStopper
-	compactor  SessionCompactor
-	statuses   SessionStatuser
-	settings   *settings.Reader
+	sessions  *store.SessionStore
+	entries   *store.EntryStore
+	traces    *store.TraceStore
+	agents    *store.AgentConfigStore
+	profiles  *store.ContextProfileStore
+	users     *store.UserStore
+	projects  *store.ProjectStore
+	stopper   RunStopper
+	compactor SessionCompactor
+	statuses  SessionStatuser
+	settings  *settings.Reader
 }
 
 // NewSessionHandler returns a handler over d. It panics on a missing
@@ -107,14 +94,14 @@ type SessionHandler struct {
 func NewSessionHandler(d SessionDeps) *SessionHandler {
 	switch {
 	case d.Sessions == nil, d.Entries == nil, d.Traces == nil, d.Agents == nil,
-		d.Profiles == nil, d.MCPServers == nil, d.Users == nil, d.Projects == nil:
+		d.Profiles == nil, d.Users == nil, d.Projects == nil:
 		panic("handler: SessionDeps has a nil store")
-	case d.MCP == nil, d.Stopper == nil, d.Compactor == nil, d.Statuses == nil, d.Settings == nil:
-		panic("handler: SessionDeps has a nil MCP lister, stopper, compactor, statuses or settings")
+	case d.Stopper == nil, d.Compactor == nil, d.Statuses == nil, d.Settings == nil:
+		panic("handler: SessionDeps has a nil stopper, compactor, statuses or settings")
 	}
 	return &SessionHandler{
 		sessions: d.Sessions, entries: d.Entries, traces: d.Traces, agents: d.Agents,
-		profiles: d.Profiles, mcp: d.MCP, mcpServers: d.MCPServers, users: d.Users,
+		profiles: d.Profiles, users: d.Users,
 		projects: d.Projects, stopper: d.Stopper, compactor: d.Compactor, statuses: d.Statuses,
 		settings: d.Settings,
 	}
@@ -625,7 +612,6 @@ func (h *SessionHandler) Context(c *gin.Context) {
 	if prof, err := h.profiles.Get(ctx, sess.ID); err != nil {
 		logging.Ctx(ctx).Warn("context report: prompt profile unreadable", "error", err)
 	} else if prof != nil {
-		prof.Tools = append(prof.Tools, h.mcpBuckets(ctx, prof.MCPServerIDs)...)
 		rep.Prompt = prof
 	}
 	c.JSON(http.StatusOK, rep)
@@ -668,54 +654,6 @@ func (h *SessionHandler) Compact(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, CompactResponse{Compacted: compacted, BeforeItems: before, AfterItems: after})
-}
-
-// contextMCPTimeout bounds one tools/list made on a request's behalf; a slow
-// server costs the report that server's row, not the report.
-const contextMCPTimeout = 2 * time.Second
-
-// mcpBuckets sizes each connected MCP server's tool surface, asking the
-// servers concurrently; a server that is gone or slow reports UNAVAILABLE, not zero.
-func (h *SessionHandler) mcpBuckets(ctx context.Context, ids []string) []store.ToolBucket {
-	if len(ids) == 0 {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, contextMCPTimeout)
-	defer cancel()
-	buckets := make([]store.ToolBucket, len(ids))
-	var wg sync.WaitGroup
-	for i, id := range ids {
-		wg.Go(func() {
-			name, tools, err := h.mcp.ListToolsFor(ctx, id)
-			if name == "" {
-				// The manager only knows CONNECTED servers; a disconnected one
-				// still has its configured name in the store.
-				name = h.mcpServerName(ctx, id)
-			}
-			b := store.ToolBucket{Source: store.ToolSourceMCP + cmp.Or(name, id)}
-			if err != nil {
-				b.Unavailable = true
-			} else {
-				b.Count = len(tools)
-				for _, t := range tools {
-					b.Chars += store.ToolChars(t)
-				}
-			}
-			buckets[i] = b
-		})
-	}
-	wg.Wait()
-	return buckets
-}
-
-// mcpServerName reads a server's configured name off its row; empty when the
-// row is gone (a build snapshot can outlive the server it named).
-func (h *SessionHandler) mcpServerName(ctx context.Context, id string) string {
-	srv, err := h.mcpServers.Get(ctx, id)
-	if err != nil {
-		return ""
-	}
-	return srv.Name
 }
 
 type branchReq struct {

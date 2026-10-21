@@ -202,10 +202,12 @@ its model's context window, recomputed per call — there is no live event; the
 panel refetches when a run ends. Compacted and off-path entries keep their
 usage but leave the window figures, since the model no longer sees them; which
 ruler each figure is on is
-[invariant 28](../explanation/workbench-invariants.md). `prompt` is read from
-the `context_profiles` snapshot the runner writes per run, and MCP tools are
-asked live (bounded, 2s) — a server that cannot answer is reported with
-`unavailable: true` on its own bucket, its count unknown rather than zero.
+[invariant 28](../explanation/workbench-invariants.md). `prompt` is the
+`context_profiles` snapshot the runner writes per run, MCP tool buckets
+included — the call asks no server
+([invariant 93](../explanation/workbench-invariants.md)); a server the build
+could not size is reported with `unavailable: true` on its own bucket, its
+count unknown rather than zero.
 
 `POST /sessions/:id/compact` is one compaction pass through the run path's
 own construction, skipping only the threshold — the kept window, the

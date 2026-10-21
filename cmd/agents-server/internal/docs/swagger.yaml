@@ -2145,13 +2145,6 @@ components:
           description: The instruction layers, in the order WrapInstructions composed
             them.
           type: integer
-        mcp_server_ids:
-          description: MCPServerIDs are the servers the build wired up, in config
-            order.
-          items:
-            type: string
-          type: array
-          uniqueItems: false
         memory_chars:
           type: integer
         plan_preamble_chars:
@@ -2165,8 +2158,8 @@ components:
           type: integer
         tools:
           description: |-
-            Tools are the locally attached tools by origin; MCP tools are sized by
-            the read path, not here.
+            Tools are the attached tools by origin, one bucket per local source and
+            per MCP server, as the build sized them.
           items:
             $ref: '#/components/schemas/store.ToolBucket'
           type: array
@@ -2440,8 +2433,8 @@ components:
           type: string
         unavailable:
           description: |-
-            Unavailable marks a bucket that could not be measured (a disconnected MCP
-            server): unknown, never zero.
+            Unavailable marks a bucket the build could not size (an MCP server that
+            did not answer): unknown, never zero.
           type: boolean
       type: object
     store.TraceEvent:

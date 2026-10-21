@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
@@ -307,7 +309,47 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		bucketToolsSince(result.Agent, mark, store.ToolSourcePlan, &result.Profile)
 		result.Profile.PlanPreambleChars = len(strings.TrimSpace(middleware.DefaultPlanInstructions))
 	}
+	// The entry agent's MCP tool surface, sized after every attachment so the
+	// buckets read local then remote (invariant 93).
+	if result.Agent != nil {
+		measureMCPTools(ctx, result.Agent, &result.Profile)
+	}
 	return result, nil
+}
+
+// mcpMeasureTimeout bounds sizing one MCP server's listing at build; a slower
+// server is reported unknown, not waited for.
+const mcpMeasureTimeout = 10 * time.Second
+
+// measureMCPTools sizes the agent's MCP servers into prof, one bucket per
+// server, asking them concurrently: the listing is cached for the run's own
+// turns, and the Context panel reads this snapshot, never the servers.
+func measureMCPTools(ctx context.Context, agent *agents.Agent, prof *store.PromptProfile) {
+	if len(agent.MCPServers) == 0 {
+		return
+	}
+	buckets := make([]store.ToolBucket, len(agent.MCPServers))
+	var wg sync.WaitGroup
+	for i, srv := range agent.MCPServers {
+		wg.Go(func() {
+			b := store.ToolBucket{Source: store.ToolSourceMCP + srv.Name()}
+			lctx, cancel := context.WithTimeout(ctx, mcpMeasureTimeout)
+			defer cancel()
+			tools, err := srv.ListTools(lctx, nil, agent)
+			if err != nil {
+				logging.Ctx(ctx).Warn("mcp tool surface not sized", "mcp", srv.Name(), "error", err)
+				b.Unavailable = true
+			} else {
+				b.Count = len(tools)
+				for _, t := range tools {
+					b.Chars += store.ToolChars(t)
+				}
+			}
+			buckets[i] = b
+		})
+	}
+	wg.Wait()
+	prof.Tools = append(prof.Tools, buckets...)
 }
 
 // SentProfile is the profile as the NEXT request sends it: an unlocked phase
@@ -421,13 +463,9 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	// (see store.ContextProfile).
 	layerInstructions(ctx, deps, agent, ac, &result.Profile)
 
-	// MCP servers — a server not connected is skipped; their tools are
-	// measured by the Context handler (a network call), not here.
-	attached := attachMCPServers(ctx, deps, agent, spec, bc.ownerID)
-	for _, a := range attached {
-		result.Profile.MCPServerIDs = append(result.Profile.MCPServerIDs, a.id)
-	}
-	result.PlanReadOnly = planReadOnlyNames(attached)
+	// MCP servers — a server not connected is skipped; the entry agent's are
+	// sized once the build is whole (measureMCPTools).
+	result.PlanReadOnly = planReadOnlyNames(attachMCPServers(ctx, deps, agent, spec, bc.ownerID))
 
 	mark := len(agent.Tools)
 
@@ -515,15 +553,15 @@ func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agen
 	return nil
 }
 
-// attachedMCP is one server wired onto an agent: its row id, its name (the
-// tool prefix) and the tools its config lets plan mode call.
+// attachedMCP is one server wired onto an agent: its name (the tool prefix)
+// and the tools its config lets plan mode call.
 type attachedMCP struct {
-	id, name string
+	name     string
 	readOnly []string
 }
 
 // attachMCPServers wires the selected MCP servers, skipping any not connected
-// or not visible to the owner (decisions §5.29); returns the ids attached.
+// or not visible to the owner (decisions §5.29); returns the servers attached.
 func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) []attachedMCP {
 	var attached []attachedMCP
 	for _, id := range spec.Tools {
@@ -542,7 +580,7 @@ func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent,
 			continue
 		}
 		agent.MCPServers = append(agent.MCPServers, srv)
-		a := attachedMCP{id: id, name: srv.Name()}
+		a := attachedMCP{name: srv.Name()}
 		if row != nil {
 			var hc store.HTTPMcpConfig
 			if json.Unmarshal(row.Config, &hc) == nil {

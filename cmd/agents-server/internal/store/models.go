@@ -335,11 +335,9 @@ type PromptProfile struct {
 	PlanPreambleChars int `json:"plan_preamble_chars,omitempty"`
 	// BackgroundChars is the suffix a background run is given; 0 on a chat run.
 	BackgroundChars int `json:"background_chars,omitempty"`
-	// Tools are the locally attached tools by origin; MCP tools are sized by
-	// the read path, not here.
+	// Tools are the attached tools by origin, one bucket per local source and
+	// per MCP server, as the build sized them.
 	Tools []ToolBucket `json:"tools,omitempty"`
-	// MCPServerIDs are the servers the build wired up, in config order.
-	MCPServerIDs []string `json:"mcp_server_ids,omitempty"`
 }
 
 // ToolBucket is one origin's share of the tool surface.
@@ -347,8 +345,8 @@ type ToolBucket struct {
 	Source string `json:"source"`
 	Count  int    `json:"count"`
 	Chars  int    `json:"chars"`
-	// Unavailable marks a bucket that could not be measured (a disconnected MCP
-	// server): unknown, never zero.
+	// Unavailable marks a bucket the build could not size (an MCP server that
+	// did not answer): unknown, never zero.
 	Unavailable bool `json:"unavailable,omitempty"`
 }
 

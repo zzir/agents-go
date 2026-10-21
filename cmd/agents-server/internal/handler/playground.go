@@ -368,7 +368,7 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 	}
 	// A server whose listing fails is skipped, not the endpoint.
 	for _, srv := range built.Agent.MCPServers {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), contextMCPTimeout)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), mcpListTimeout)
 		tools, lerr := srv.ListTools(ctx, nil, built.Agent)
 		cancel()
 		if lerr != nil {

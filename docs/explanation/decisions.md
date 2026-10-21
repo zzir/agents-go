@@ -1893,3 +1893,24 @@ stream's first request.
 old handshake until someone unpins it.
 
 Rules: spec §2.16; [MCP servers](../reference/protocol.md#mcp-servers--apiv1mcp-servers).
+
+### 5.91 The Context report is read from what the run wrote
+
+Decided 2026-10-22.
+
+**Decision.** `/sessions/:id/context` makes no network call. The MCP tool
+buckets are sized at build, into the `context_profiles` snapshot beside the
+local ones, by the `tools/list` the run's first turn needs anyway (and keeps,
+cached); a server that did not answer within the build's bound is `unavailable`.
+
+**Rejected.** Sizing MCP tools on the read path — the panel's open waited on
+the slowest of the session's remote servers whenever the SDK's list cache was
+cold (every restart, heal and `list_changed`), and mixed what the last build
+sent with what a server exposes now. Serving the read path from the SDK's cache
+alone — every restart would show `unavailable` until a run.
+
+**Cost accepted.** The panel shows the servers as the last build saw them; a
+server reconfigured since reads stale until the next run. What a server
+exposes now is the MCP settings' own listing.
+
+Rules: invariant 93.

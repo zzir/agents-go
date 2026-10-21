@@ -537,3 +537,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     clicked, system keeps a pick per group, high contrast is a switch over both; all in
     localStorage, outside the read-only fieldset, applied on click. `<html>` alone carries Primer's three
     theme attributes (`index.html` before first paint, `ThemeProvider.tsx` after); code and terminal colors are its tokens; only light and dark are bundled, the other twelve files fetched on demand.
+93. **`/sessions/:id/context` makes no network call.** Every figure comes from
+    rows a run wrote: the entries' lifted columns and the `context_profiles`
+    snapshot, MCP tool buckets included — the build sizes each server's listing
+    (`measureMCPTools`, bounded) and a server that did not answer is
+    `unavailable`, never zero. What a server exposes now is the MCP settings'
+    own listing — see decisions §5.91.
