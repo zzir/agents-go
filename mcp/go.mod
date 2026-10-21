@@ -3,7 +3,7 @@ module github.com/zzir/agents-go/mcp
 go 1.27.0
 
 require (
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/zzir/agents-go v0.6.0
 )
 
