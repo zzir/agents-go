@@ -138,6 +138,11 @@ interface TurnBlockProps {
   // its ENTRY id (not a row id) and runs again.
   prompt: { entryId?: string; content?: string } | null;
   duration?: string;
+  // The run's output throughput ("233 tok/s"), shown in the duration's place
+  // while showSpeed; a click flips every turn, so the flag lives in the view.
+  speed?: string;
+  showSpeed?: boolean;
+  onToggleSpeed?: () => void;
   messageId?: string | number;
   // Sibling attempts at this point.
   branches?: Branches;
@@ -146,7 +151,7 @@ interface TurnBlockProps {
   runId?: string;
 }
 
-export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, prompt, duration, messageId, branches, runId }: TurnBlockProps) {
+export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, prompt, duration, speed, showSpeed, onToggleSpeed, messageId, branches, runId }: TurnBlockProps) {
   // Live-run state applies to the live turn only — every read below is gated
   // on isLive.
   const { running, compacting, projectBound } = useChatSession();
@@ -293,7 +298,9 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
               onClick={() => replayRun(runId)}
             />
           )}
-          {duration && <span className="turn-duration">{duration}</span>}
+          {duration && (speed && onToggleSpeed
+            ? <button type="button" className="turn-duration turn-duration-toggle" title={showSpeed ? 'Duration: ' + duration : 'Speed: ' + speed} onClick={onToggleSpeed}>{showSpeed ? speed : duration}</button>
+            : <span className="turn-duration">{duration}</span>)}
         </div>
       )}
     </div>

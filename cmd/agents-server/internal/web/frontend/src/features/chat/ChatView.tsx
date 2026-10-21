@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
 import { rowKeys, type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
 import { labelRuns } from '@/lib/runLabels';
+import { turnSpeed, loadSpeedPref, saveSpeedPref } from '@/lib/turnSpeed';
 import { queuedInputMarkers } from '@/lib/queuedInputs';
 import { useScrollToBottom, useApi, useCopy } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
@@ -359,6 +360,20 @@ export function ChatView({
     return parents;
   }, [traceRuns]);
 
+  // Each run's output throughput, for the turn footer's duration ↔ speed flip.
+  const turnSpeeds = useMemo(() => {
+    const speeds: Record<string, string> = {};
+    for (const [rid, evs] of Object.entries(traceRuns)) speeds[rid] = turnSpeed(evs);
+    return speeds;
+  }, [traceRuns]);
+  // One flag for every turn, kept by the browser.
+  const [showSpeed, setShowSpeed] = useState(loadSpeedPref);
+  const toggleSpeed = useCallback(() => {
+    const next = !showSpeed;
+    saveSpeedPref(next);
+    setShowSpeed(next);
+  }, [showSpeed]);
+
   const openTrace = useCallback((runId: string) => {
     onPanelChange({ kind: 'trace' });
     setTraceActiveRun(runId);
@@ -654,6 +669,9 @@ export function ChatView({
             isLive={isLive}
             prompt={prompt}
             duration={turnDuration}
+            speed={rid ? turnSpeeds[rid] : undefined}
+            showSpeed={showSpeed}
+            onToggleSpeed={toggleSpeed}
             messageId={m.messageId}
             branches={m.branches}
             runId={rid || undefined}

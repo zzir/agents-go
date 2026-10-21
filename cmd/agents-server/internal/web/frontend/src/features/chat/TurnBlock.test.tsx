@@ -154,6 +154,36 @@ describe('TurnBlock controls', () => {
     b.unmount();
   });
 
+  // The footer's duration is a button once the run's speed is known: a click
+  // asks the view to flip (one flag for every turn); without a speed it stays a label.
+  it('flips the duration to the output speed on request, a plain label without one', () => {
+    const onToggleSpeed = vi.fn();
+    const render = (props: { speed?: string; showSpeed?: boolean }) => mount(
+      <ChatSessionProvider session={{ sessionId: 's1', running: false, compacting: false, agentAvatars: {} }} actions={actions} tasks={{ items: [], lookups: { retryableByCallId: {}, liveTaskStatusByCallId: {}, liveTaskLabelByCallId: {}, taskLabelById: {} } }}>
+        <TurnBlock parts={[{ type: 'text', content: 'done' }]} streaming={null} reasoning={null} isLive={false} prompt={null}
+          duration="12.3s" onToggleSpeed={onToggleSpeed} {...props} />
+      </ChatSessionProvider>,
+    );
+    const a = render({ speed: '233 tok/s' });
+    const button = a.host.querySelector('.turn-duration') as HTMLButtonElement;
+    expect(button.tagName).toBe('BUTTON');
+    expect(button.textContent).toBe('12.3s');
+    expect(button.title).toBe('Speed: 233 tok/s');
+    act(() => button.click());
+    expect(onToggleSpeed).toHaveBeenCalledTimes(1);
+    a.unmount();
+    const b = render({ speed: '233 tok/s', showSpeed: true });
+    const flipped = b.host.querySelector('.turn-duration') as HTMLButtonElement;
+    expect(flipped.textContent).toBe('233 tok/s');
+    expect(flipped.title).toBe('Duration: 12.3s');
+    b.unmount();
+    const c = render({ showSpeed: true });
+    const label = c.host.querySelector('.turn-duration') as HTMLElement;
+    expect(label.tagName).toBe('SPAN');
+    expect(label.textContent).toBe('12.3s');
+    c.unmount();
+  });
+
   it('keeps the plain words on an unbound session', () => {
     const { host, unmount } = turn({ sessionId: 's1', running: false, compacting: false, agentAvatars: {} });
     const got = labels(host);

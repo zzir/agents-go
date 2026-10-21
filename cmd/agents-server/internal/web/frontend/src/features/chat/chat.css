@@ -141,6 +141,17 @@
   margin-left: var(--base-size-4);
   user-select: none;
 }
+/* The duration flips to the output speed on click: a text button, not an icon one. */
+.turn-actions .turn-duration-toggle {
+  width: auto;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: var(--base-text-size-xs);
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
 
 /* Scroll area wrapper — positions the "jump to latest" button. isolation
    keeps the button's z-index scoped here, so it never paints above overlays
