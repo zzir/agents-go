@@ -48,7 +48,7 @@ export function SidePanel({ icon: PanelIcon, title, count, onClose, children, st
       <div className="side-panel-header">
         <div className="side-panel-title">
           <PanelIcon size={16} />
-          <span>{title}</span>
+          <span className="side-panel-title-text" title={title}>{title}</span>
           {count !== undefined && <CounterLabel>{count}</CounterLabel>}
         </div>
         <IconButton icon={XIcon} variant="invisible" aria-label="Close" onClick={onClose} />

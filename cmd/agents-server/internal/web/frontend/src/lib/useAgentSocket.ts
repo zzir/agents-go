@@ -44,6 +44,9 @@ export interface SessionState {
   // compaction); cleared when a new run starts.
   diagnostics: RunDiagnostic[];
   traceRuns: Record<string, TraceEvent[]>;
+  // tracesLoaded is set once the stored spans have been asked for — what
+  // tells a run deep link "not here yet" from "not here".
+  tracesLoaded: boolean;
   liveRunId: string | null;
   loaded: boolean;
   // Why the persisted timeline could not be loaded; cleared by the next attempt.
@@ -76,7 +79,7 @@ export type UpdateSSFn = (sid: string, updater: (s: SessionState) => SessionStat
 export function defaultSS(): SessionState {
   return {
     messages: [], streaming: '', reasoning: '', running: false, compacting: false, diagnostics: [],
-    traceRuns: {}, liveRunId: null, loaded: false,
+    traceRuns: {}, tracesLoaded: false, liveRunId: null, loaded: false,
     entries: [], tasks: {}, tasksLoaded: false, taskView: null, queued: [],
   };
 }
@@ -366,16 +369,15 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   // resync after an outage).
   const fetchTraces = useCallback((sid: string, fetchedWins: boolean) => {
     (api.sessions.traces(sid, { summary: true }) as Promise<TraceRow[] | null>).then(events => {
-      if (!events || events.length === 0) return;
       const runs: Record<string, TraceEvent[]> = {};
-      for (const ev of events) {
+      for (const ev of events || []) {
         // Spans are the sole trace source; kind=hook rows are ignored.
         if (ev.kind !== 'span') continue;
         const rid = ev.run_id || 'unknown';
         if (!runs[rid]) runs[rid] = [];
         runs[rid].push(traceEventFromRow(ev));
       }
-      updateSS(sid, s => ({ ...s, traceRuns: fetchedWins ? { ...s.traceRuns, ...runs } : { ...runs, ...s.traceRuns } }));
+      updateSS(sid, s => ({ ...s, tracesLoaded: true, traceRuns: fetchedWins ? { ...s.traceRuns, ...runs } : { ...runs, ...s.traceRuns } }));
     }).catch(() => {
       // Roll back the mark so the next lens open retries.
       tracesLoadedRef.current.delete(sid);

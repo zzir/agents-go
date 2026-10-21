@@ -87,6 +87,7 @@ const PLAN_OFF_COMMAND = /^\/plan[ \t]+off\b[ \t]*/;
 function panelKey(p: InspectorPanel): string {
   if (!p) return '';
   if (p.kind === 'task') return `task/${p.taskId}`;
+  if (p.kind === 'run') return `run/${p.runId}`;
   return p.kind;
 }
 

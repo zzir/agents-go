@@ -131,9 +131,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `entry_store.go`; live mirror `syncTaskCard`). Status never comes from the
     hub after the fact. The parent wakes through a `[task-notification] `
     user-role input that never renders and carries no privileged behavior.
-22. **The right side panel is a single-instance Inspector.** Traces, context
-    usage, the task list and one task's detail are lenses of one panel; a new
-    surface is a new lens. A span's summary loads with the session, its
+22. **The right side panel is a single-instance Inspector.** The trace list,
+    one run's trace, context usage, the task list and one task's detail are
+    lenses of one panel; a new surface is a new lens. A span's summary loads with the session, its
     payload only when expanded (`loadSpanPayload`); task detail tails live
     events only while open. Run lineage is `trace_events.parent_run_id`, never
     derived from task rows, notification text or the rendered timeline.

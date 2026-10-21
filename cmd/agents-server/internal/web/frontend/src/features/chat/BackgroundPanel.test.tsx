@@ -22,7 +22,7 @@ vi.mock('@/components/LoadError', () => ({ LoadError: () => null }));
 vi.mock('@/components/AgentAvatar', () => ({ AgentAvatar: () => null }));
 vi.mock('@/features/chat/ToolCallCard', () => ({ ToolCallCard: () => null }));
 vi.mock('@/features/chat/StreamingMarkdown', () => ({ StreamingMarkdown: ({ text }: { text: string }) => <div>{text}</div> }));
-vi.mock('@/features/chat/TracePanel', () => ({ TraceRun: () => null }));
+vi.mock('@/features/chat/TracePanel', () => ({ TraceDetail: () => null }));
 vi.mock('@/features/chat/RejectButton', () => ({ RejectButton: () => null }));
 vi.mock('@/lib/markdown', () => ({ useAsyncMarkdown: (text: string) => text }));
 vi.mock('@/lib/toast', () => ({ toast: { success: () => {}, error: () => {} } }));

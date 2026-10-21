@@ -17,8 +17,10 @@ vi.mock('@primer/react', () => {
   const names = ['Button', 'Checkbox', 'CounterLabel', 'Dialog', 'Flash', 'IconButton', 'Link', 'SegmentedControl', 'Select', 'SelectPanel', 'Textarea', 'TextInput'];
   return Object.fromEntries(names.map(n => [n, stub()]));
 });
+// The run lens's loading state reaches Primer's experimental bundle, which ships CSS too.
+vi.mock('@/components/Loading', () => ({ Loading: () => null }));
 import { ChatSessionProvider, useDerivedChatTasks, type ChatActions, type ChatSessionState } from '@/features/chat/ChatSessionContext';
-import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
+import { TraceDetail, type TraceEventData } from '@/features/chat/TracePanel';
 import type { TraceMarker } from '@/lib/queuedInputs';
 
 const g = globalThis as Record<string, unknown>;
@@ -26,7 +28,7 @@ let savedActEnv: unknown;
 beforeAll(() => {
   savedActEnv = g.IS_REACT_ACT_ENVIRONMENT;
   g.IS_REACT_ACT_ENVIRONMENT = true;
-  // jsdom lays nothing out: the expanded card's scroll-into-view is a no-op.
+  // jsdom lays nothing out: the focused span's scroll-into-view is a no-op.
   Element.prototype.scrollIntoView = () => {};
 });
 afterAll(() => { if (savedActEnv === undefined) delete g.IS_REACT_ACT_ENVIRONMENT; else g.IS_REACT_ACT_ENVIRONMENT = savedActEnv; });
@@ -40,7 +42,7 @@ function Harness({ events, loadSpan, markers }: { events: TraceEventData[]; load
   const tasks = useDerivedChatTasks({});
   return (
     <ChatSessionProvider session={session} actions={actions} tasks={tasks}>
-      <TraceRun runId="r1" segments={[{ runId: 'r1', events }]} label="hello" isLive={false} isExpanded onToggle={noop} markers={markers} />
+      <TraceDetail segments={[{ runId: 'r1', events }]} markers={markers} />
     </ChatSessionProvider>
   );
 }
@@ -48,7 +50,7 @@ function Harness({ events, loadSpan, markers }: { events: TraceEventData[]; load
 // A summary row (payload left out) opens on a fetch: the row says it is
 // loading, asks once for exactly this span of this run in this session, and
 // renders the payload once the parent has swapped the whole span in.
-describe('TraceRun', () => {
+describe('TraceDetail', () => {
   it('fetches an opened span\'s payload once and renders it when it lands', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -164,8 +166,8 @@ describe('TraceRun', () => {
     act(() => { root.unmount(); });
   });
 
-  // A run whose loop failed says so on its card, and a stretch after a pause
-  // for approval is headed by how long the approval took.
+  // A run whose loop failed says so on its meta line, and a stretch after a
+  // pause for approval is headed by how long the approval took.
   it('marks a failed run and names the pause a resume waited through', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -176,7 +178,7 @@ describe('TraceRun', () => {
       { kind: 'span', name: 'a', type: 'agent', span_id: 'a2', started_at: t(134), ended_at: t(137), error: 'boom' },
     ];
     act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
-    // The card's own tag, and the failed row's.
+    // The meta line's tag, and the failed row's.
     expect(container.querySelectorAll('.trace-ev-tag-error')).toHaveLength(2);
     expect(container.querySelector('[title="awaiting approval: exec_command"]')?.textContent).toBe('paused');
     const segs = container.querySelectorAll('.trace-run-segment');

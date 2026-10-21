@@ -385,9 +385,19 @@ a:hover {
     display: flex;
     align-items: center;
     gap: var(--base-size-8);
+    min-width: 0;
     font-size: var(--base-text-size-sm);
     font-weight: var(--base-text-weight-semibold);
     color: var(--fgColor-default);
+}
+/* A title that is a message excerpt (the run lens) stays one line and gives
+   way before the icon and count; the whole of it is in the tooltip. */
+.side-panel-title > * { flex-shrink: 0; }
+.side-panel-title-text {
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .side-panel-body {

@@ -24,13 +24,14 @@ export function readHash(): HashState {
   const { view: h, settings } = splitSettings(window.location.hash);
   const hub = /^#\/workflows(?:\/(definitions|triggers|runs))?$/.exec(h);
   if (hub) return { sessionId: null, panel: null, hub: (hub[1] as HubTab) || 'definitions', settings };
-  const m = /^#\/session\/([a-zA-Z0-9_-]+)(?:\/(trace|tasks|context|task\/([a-zA-Z0-9_-]+)))?$/.exec(h);
+  const m = /^#\/session\/([a-zA-Z0-9_-]+)(?:\/(trace\/([a-zA-Z0-9_-]+)|trace|tasks|context|task\/([a-zA-Z0-9_-]+)))?$/.exec(h);
   if (!m) return { sessionId: null, panel: null, hub: null, settings };
   let panel: InspectorPanel = null;
-  if (m[2] === 'trace') panel = { kind: 'trace' };
+  if (m[3]) panel = { kind: 'run', runId: m[3] };
+  else if (m[2] === 'trace') panel = { kind: 'trace' };
   else if (m[2] === 'tasks') panel = { kind: 'tasks' };
   else if (m[2] === 'context') panel = { kind: 'context' };
-  else if (m[3]) panel = { kind: 'task', taskId: m[3] };
+  else if (m[4]) panel = { kind: 'task', taskId: m[4] };
   return { sessionId: m[1], panel, hub: null, settings };
 }
 
@@ -40,6 +41,7 @@ export function viewHash(sessionId: string | null, panel: InspectorPanel, hub: H
   if (!sessionId) return '';
   let next = `#/session/${sessionId}`;
   if (panel?.kind === 'trace') next += '/trace';
+  else if (panel?.kind === 'run') next += `/trace/${panel.runId}`;
   else if (panel?.kind === 'tasks') next += '/tasks';
   else if (panel?.kind === 'context') next += '/context';
   else if (panel?.kind === 'task') next += `/task/${panel.taskId}`;

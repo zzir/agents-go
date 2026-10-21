@@ -13,6 +13,8 @@ describe('readHash', () => {
     expect(readHash()).toEqual({ sessionId: 'abc-1', panel: { kind: 'trace' }, hub: null, settings: null });
     window.location.hash = '#/session/abc-1/task/t9';
     expect(readHash()).toEqual({ sessionId: 'abc-1', panel: { kind: 'task', taskId: 't9' }, hub: null, settings: null });
+    window.location.hash = '#/session/abc-1/trace/r7';
+    expect(readHash()).toEqual({ sessionId: 'abc-1', panel: { kind: 'run', runId: 'r7' }, hub: null, settings: null });
     window.location.hash = '#/workflows';
     expect(readHash()).toEqual({ sessionId: null, panel: null, hub: 'definitions', settings: null });
     window.location.hash = '#/workflows/runs';

@@ -695,10 +695,10 @@
 }
 
 /* A rejection's reason box (RejectButton): a line of its own under the
-   buttons of whichever wrapping row holds them. The task header does not
+   buttons of whichever wrapping row holds them. A lens head does not
    wrap (its id gives way instead), so there the box hangs below it. */
 .reject-reason { flex: 1 0 100%; }
-.task-detail-head .reject-reason { position: absolute; top: 100%; left: 0; right: 0; z-index: 1; }
+.lens-head .reject-reason { position: absolute; top: 100%; left: 0; right: 0; z-index: 1; }
 
 /* submit_plan review: the plan renders as prose, not JSON */
 .ToolCallCard-plan { margin: 0; font-size: var(--base-text-size-xs); }
@@ -935,14 +935,15 @@
 }
 .task-group:first-of-type .task-group-title { margin-top: var(--base-size-2); }
 
-.task-row {
+/* A list lens's row (Tasks, Traces): a bordered card that opens the detail lens. */
+.lens-row {
   border: 1px solid var(--borderColor-default);
   border-radius: var(--borderRadius-medium);
   padding: var(--base-size-8) var(--base-size-12);
   margin-bottom: var(--base-size-8);
   cursor: pointer;
 }
-.task-row:hover { background: var(--bgColor-muted); }
+.lens-row:hover { background: var(--bgColor-muted); }
 .task-row-head { display: flex; align-items: center; gap: var(--base-size-8); }
 /* A workflow execution's mark in the list; a task is the unmarked default. */
 .task-row-kind { color: var(--fgColor-muted); flex-shrink: 0; }
@@ -992,29 +993,38 @@
 .task-status-dot-failed         { background: var(--fgColor-danger); }
 .task-status-dot-cancelled      { background: var(--fgColor-muted); }
 
-.task-detail-head {
+/* A detail lens's head (a task, a run): back, state, the id to copy, actions. */
+.lens-head {
   position: relative;
   display: flex; align-items: center; gap: var(--base-size-8);
   padding-bottom: var(--base-size-8);
   border-bottom: 1px solid var(--borderColor-muted);
   margin-bottom: var(--base-size-8);
 }
-/* On a narrow panel the id gives way first (the full id is one copy-click
-   away), then the activity text; the action buttons stay whole. */
-.task-detail-head > * { flex-shrink: 0; }
-.task-detail-head > .task-row-activity { flex-shrink: 1; }
-.task-detail-spacer { flex: 1; }
-.task-detail-id {
-  border: none; background: none; padding: 0;
+/* On a narrow panel the id gives way first (the whole of it is in the
+   tooltip), then the activity text; the action buttons stay whole. */
+.lens-head > * { flex-shrink: 0; }
+.lens-head > .task-row-activity { flex-shrink: 1; }
+.lens-head-spacer { flex: 1; }
+.lens-head-id {
   font-family: var(--fontStack-monospace); font-size: var(--base-text-size-xs);
-  color: var(--fgColor-muted); cursor: pointer;
-  display: inline-flex; align-items: center; gap: var(--base-size-4);
+  color: var(--fgColor-muted);
+  display: inline-flex; align-items: center;
   flex-shrink: 100; min-width: 24px; overflow: hidden;
 }
-.task-detail-id-text {
+.lens-head-id-text {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.task-detail-id:hover { color: var(--fgColor-accent); }
+/* The lens's chrome — its head, and a task's tab row — stays put while the
+   body scrolls under it; the padding keeps the band below it opaque, and the
+   negative top pulls it through the body's own padding, flush with the header. */
+.lens-chrome {
+  position: sticky; top: calc(-1 * var(--base-size-8)); z-index: 2;
+  background: var(--bgColor-default);
+  padding-bottom: var(--base-size-8);
+}
+.lens-chrome > .lens-head, .lens-chrome > .task-detail-tabs { margin-bottom: 0; }
+.lens-chrome > .lens-head + .task-detail-tabs { margin-top: var(--base-size-8); }
 
 .task-detail-tabs { display: flex; gap: var(--base-size-4); margin-bottom: var(--base-size-8); }
 .task-detail-tabs button {

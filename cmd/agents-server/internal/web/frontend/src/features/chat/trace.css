@@ -18,11 +18,53 @@
   50% { opacity: 0.4; }
 }
 
-/* Trace run — content styles (shell is Disclosure) */
-.trace-run { margin-bottom: var(--base-size-6); }
-.trace-run .disclosure-header { font-size: var(--base-text-size-xs); font-weight: normal; padding: var(--base-size-8) var(--base-size-8); }
-.trace-run .disclosure-body { padding: var(--base-size-4) var(--base-size-6); }
-/* One card can hold a chain of runs (the user's run + the wake-up runs its
+/* Traces list — one row per exchange; the card shape is .lens-row (chat.css). */
+.trace-row {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-6);
+  font-size: var(--base-text-size-xs);
+}
+.trace-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace-row-tokens {
+  font-family: var(--fontStack-monospace);
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+}
+
+/* Run detail — the meta line (what the run cost, its tags) over the waterfall. */
+.trace-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-6);
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+  padding: var(--base-size-2) var(--base-size-4) var(--base-size-6);
+}
+.trace-meta > * { flex-shrink: 0; }
+.trace-meta-tokens { font-family: var(--fontStack-monospace); }
+/* The run id on the meta line: plain text, clipped before the tags. */
+.trace-meta-id {
+  flex-shrink: 1;
+  min-width: 0;
+  font-family: var(--fontStack-monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The run lens's head figure: what the run cost. */
+.trace-head-tokens {
+  font-family: var(--fontStack-monospace);
+  font-size: var(--base-text-size-xs);
+  color: var(--fgColor-muted);
+}
+/* One detail can hold a chain of runs (the user's run + the wake-up runs its
    tasks triggered); each segment keeps its own waterfall timeline, with a
    small gap between them. */
 /* Every row of a segment is the same three columns: label, duration, time. */
@@ -35,49 +77,6 @@
   font-weight: var(--base-text-weight-semibold);
   color: var(--fgColor-muted);
   padding: var(--base-size-2) 0;
-}
-.trace-run-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.trace-run-tokens {
-  font-size: var(--base-text-size-xs);
-  font-family: var(--fontStack-monospace);
-  color: var(--fgColor-muted);
-  margin-left: auto;
-  white-space: nowrap;
-}
-/* Jump-to-message control: hidden until the run header is hovered, so the
-   header stays quiet; sits between the label and the run meta. */
-.trace-run-jump {
-  display: inline-flex;
-  align-items: center;
-  padding: var(--base-size-2);
-  border-radius: var(--borderRadius-small);
-  color: var(--fgColor-muted);
-  opacity: 0;
-  transition: opacity var(--base-duration-100) var(--base-easing-ease);
-  flex-shrink: 0;
-}
-.trace-run .disclosure-header:hover .trace-run-jump,
-.trace-run-jump:focus-visible {
-  opacity: 1;
-}
-.trace-run-jump:hover,
-.trace-run-jump:focus-visible {
-  color: var(--fgColor-accent);
-  background: var(--bgColor-accent-muted);
-}
-.trace-run-jump:focus-visible {
-  outline: 2px solid var(--focus-outlineColor);
-  outline-offset: 1px;
-}
-/* Touch devices have no hover, so the jump control stays visible. */
-@media (hover: none) {
-  .trace-run-jump { opacity: 1; }
 }
 .trace-empty {
   font-size: var(--base-text-size-xs);
@@ -546,17 +545,6 @@
   color: var(--fgColor-muted);
 }
 
-/* Expand indicator for spans carrying data (e.g. generation payloads) */
-.trace-span-chevron {
-  display: inline-flex;
-  width: 10px;
-  flex-shrink: 0;
-  color: var(--fgColor-muted);
-  transition: transform var(--base-duration-200) var(--base-easing-ease);
-}
-.trace-span-chevron.open {
-  transform: rotate(90deg);
-}
 
 /* Generation span payload: the exact model request/response. Spacing, hover
    and type treatments mirror the span rows above it (Primer tokens). */

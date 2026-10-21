@@ -32,7 +32,8 @@ import type { AttachmentMeta } from '@/lib/attachments';
 import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
 import { ChecklistChip } from '@/features/chat/ChecklistChip';
 import { latestChecklist } from '@/lib/checklist';
-import { TraceDrawer, lastGenerationSpan } from '@/features/chat/TracePanel';
+import { TraceDrawer, TraceRunPanel, TraceRunMissingPanel, lastGenerationSpan, type TraceGroupView } from '@/features/chat/TracePanel';
+import { groupTraceRuns } from '@/lib/traceGroups';
 import { ReplayDialog } from '@/features/chat/ReplayDialog';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
@@ -40,9 +41,11 @@ import { NewProjectDialog, useProjectMenu } from '@/features/chat/ProjectControl
 import { ArrowDownIcon, FileDirectoryIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
-// `task` is the detail lens over ONE piece of background work — taskId is a
-// task id or a workflow-execution id, whichever the list row was.
-export type InspectorPanel = null | { kind: 'trace' } | { kind: 'tasks' } | { kind: 'task'; taskId: string } | { kind: 'context' };
+// `run` is the detail lens over ONE exchange's trace — runId is any run of it,
+// resolved to the exchange's root. `task` is the detail lens over ONE piece of
+// background work — taskId is a task id or a workflow-execution id, whichever
+// the list row was.
+export type InspectorPanel = null | { kind: 'trace' } | { kind: 'run'; runId: string } | { kind: 'tasks' } | { kind: 'task'; taskId: string } | { kind: 'context' };
 
 interface ChatMessage {
   role: string;
@@ -170,7 +173,7 @@ export function ChatView({
   const messages: ChatMessage[] = state.messages;
   const {
     entries, loaded, streaming, reasoning, running, compacting, diagnostics, traceRuns,
-    liveRunId, tasks, tasksLoaded, tasksError, taskView, queued,
+    liveRunId, tracesLoaded, tasks, tasksLoaded, tasksError, taskView, queued,
   } = state;
   const {
     onSend, onCancel, onApprove, onApproveAll, onReject, onInject, onFork, onSwitchBranch, onCompact, onRegenerate,
@@ -374,8 +377,17 @@ export function ChatView({
     setShowSpeed(next);
   }, [showSpeed]);
 
+  // The Traces lens's entries: a run with its wake-up runs chained under it,
+  // each run's events as a segment.
+  const { traceGroups, traceRootOf } = useMemo(() => {
+    const { groups, rootOf } = groupTraceRuns(Object.keys(traceRuns), traceRunParents);
+    const views: TraceGroupView[] = groups.map(g => ({ rootId: g.rootId, segments: g.runIds.map(rid => ({ runId: rid, events: traceRuns[rid] || [] })) }));
+    return { traceGroups: views, traceRootOf: rootOf };
+  }, [traceRuns, traceRunParents]);
+
+  // A turn's Trace button opens its run's lens, landing on the run's last model call.
   const openTrace = useCallback((runId: string) => {
-    onPanelChange({ kind: 'trace' });
+    onPanelChange({ kind: 'run', runId });
     setTraceActiveRun(runId);
   }, [onPanelChange]);
   // The trace opened from a turn lands on that run's last model call.
@@ -701,6 +713,10 @@ export function ChatView({
 
   const isEmpty = loaded && messages.length === 0;
 
+  // The run lens's entry: the exchange holding the run the URL names (a
+  // wake-up run resolves to its root's).
+  const inspectedGroup = panel?.kind === 'run' ? traceGroups.find(g => g.rootId === (traceRootOf[panel.runId] || panel.runId)) : undefined;
+
   // The Inspector's lenses, rendered by the empty branch too: a session that
   // never spoke can still own background work (a workflow started on it) and
   // open the task lens.
@@ -708,17 +724,35 @@ export function ChatView({
     <>
       {panel?.kind === 'trace' && (
         <TraceDrawer
-          traceRuns={traceRuns}
+          groups={traceGroups}
           liveRunId={liveRunId}
-          activeRunId={traceActiveRun}
-          focusSpanId={traceFocusSpan}
           runLabels={runLabels}
           staleRuns={staleRuns}
-          runParents={traceRunParents}
-          onClose={() => onPanelChange(null)}
-          onJumpToRun={jumpToRun}
-          messageRunIds={messageRunIds}
           markers={traceMarkers}
+          // Opened from the list, a run has no span to land on.
+          onOpen={rid => { setTraceActiveRun(null); onPanelChange({ kind: 'run', runId: rid }); }}
+          onClose={() => onPanelChange(null)}
+        />
+      )}
+      {panel?.kind === 'run' && inspectedGroup && (
+        <TraceRunPanel
+          group={inspectedGroup}
+          liveRunId={liveRunId}
+          runLabels={runLabels}
+          staleRuns={staleRuns}
+          markers={traceMarkers}
+          focusSpanId={inspectedGroup.segments.some(s => s.runId === traceActiveRun) ? traceFocusSpan : undefined}
+          onJump={messageRunIds.has(inspectedGroup.rootId) ? () => jumpToRun(inspectedGroup.rootId) : undefined}
+          onBack={() => onPanelChange({ kind: 'trace' })}
+          onClose={() => onPanelChange(null)}
+        />
+      )}
+      {panel?.kind === 'run' && !inspectedGroup && (
+        <TraceRunMissingPanel
+          runId={panel.runId}
+          loading={!tracesLoaded}
+          onBack={() => onPanelChange({ kind: 'trace' })}
+          onClose={() => onPanelChange(null)}
         />
       )}
       {panel?.kind === 'context' && sessionId && (

@@ -65,8 +65,9 @@ the reply moves between the attempts. Drag the sidebar's edge inward past its mi
 and it folds into an icon rail that keeps Workflows and New; drag it back out,
 or click the rail's expand icon, to restore the list. The top
 bar's three icons open the Inspector beside the session: **Traces**
-(every model call, tool call and handoff with tokens and latency — expand a
-generation span to see exactly what the model was sent, and **Replay** it with
+(one row per run; open one for every model call, tool call and handoff with
+tokens and latency — expand a generation span to see exactly what the model
+was sent, and **Replay** it with
 a different prompt or model; a turn's own **Replay…** button opens that
 dialog on the turn's last model call, and a failed turn's card names what
 failed with Retry and the failing span one click away), **Context** (what the

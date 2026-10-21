@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, memo } from 'react';
 import { Button, IconButton, useConfirm } from '@primer/react';
-import { ArrowLeftIcon, StackIcon, CopyIcon, CheckIcon, WorkflowIcon } from '@primer/octicons-react';
+import { ArrowLeftIcon, StackIcon, WorkflowIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
 import { Loading } from '@/components/Loading';
 import { LoadError } from '@/components/LoadError';
@@ -8,7 +8,7 @@ import { ToolCallCard } from '@/features/chat/ToolCallCard';
 import { CHECKLIST_KEY, CHECKLIST_TOOL, latestChecklist } from '@/lib/checklist';
 import { queuedInputMarkers } from '@/lib/queuedInputs';
 import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
-import { TraceRun, type TraceEventData } from '@/features/chat/TracePanel';
+import { TraceDetail, type TraceEventData } from '@/features/chat/TracePanel';
 import { useAsyncMarkdown } from '@/lib/markdown';
 import { fmtDuration, itemDuration, stepRows, type BackgroundItem } from '@/lib/background';
 import type { TaskViewState } from '@/lib/useAgentSocket';
@@ -23,7 +23,7 @@ import { STEP_APPROVAL_TOOL } from '@/lib/protocol';
 import { isLive, statusDot } from '@/lib/status';
 import { requestedBy } from '@/lib/background';
 import { activates } from '@/lib/activation';
-import { useCopy, useNowTicker } from '@/lib/hooks';
+import { useNowTicker } from '@/lib/hooks';
 
 // The panel behind the top bar's Tasks button: spawned tasks and workflow
 // executions in one list, under the one word "Tasks" — invariant 36.
@@ -64,7 +64,7 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
         <div key={g.title} className="task-group">
           <div className="task-group-title">{g.title}</div>
           {g.items.map(it => (
-            <div key={it.id} className="task-row" onClick={() => onOpen(it.id)} role="button" tabIndex={0}
+            <div key={it.id} className="lens-row" onClick={() => onOpen(it.id)} role="button" tabIndex={0}
               onKeyDown={e => { if (activates(e)) { e.preventDefault(); onOpen(it.id); } }}>
               <div className="task-row-head">
                 {statusDot(it.status)}
@@ -138,10 +138,12 @@ interface BackgroundDetailPanelProps {
 export function BackgroundMissingPanel({ taskId, loading, onBack, onClose }: { taskId: string; loading: boolean; onBack: () => void; onClose: () => void }) {
   return (
     <SidePanel icon={StackIcon} title={loading ? 'Task' : 'Task not found'} onClose={onClose} storageKey="inspectorWidth">
-      <div className="task-detail-head">
-        <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" tooltipDirection="se" onClick={onBack} />
-        <div className="task-detail-spacer" />
-        <span className="task-detail-id"><span className="task-detail-id-text">{taskId}</span></span>
+      <div className="lens-chrome">
+        <div className="lens-head">
+          <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" tooltipDirection="se" onClick={onBack} />
+          <div className="lens-head-spacer" />
+          <span className="lens-head-id" title={taskId}><span className="lens-head-id-text">{taskId}</span></span>
+        </div>
       </div>
       {loading
         ? <Loading kind="inline" />
@@ -173,8 +175,6 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
   // A workflow opens on its steps: how far it got and what each cost is the
   // question a sequence gets asked; a task's only shape is its transcript.
   const [tab, setTab] = useState<'steps' | 'transcript' | 'trace'>(item.kind === 'workflow' ? 'steps' : 'transcript');
-  const [traceExpanded, setTraceExpanded] = useState(true);
-  const { copied, copy } = useCopy();
   const { held, decide } = useDecisionHold();
   const live = isLive(item.status);
   // One trace segment per run (a retry, a workflow step), oldest first, labelled
@@ -212,16 +212,16 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
 
   return (
     <SidePanel icon={item.kind === 'workflow' ? WorkflowIcon : StackIcon} title={item.label} onClose={onClose} storageKey="inspectorWidth">
-      <div className="task-detail-head">
+      {/* The head and the tabs stay put while the transcript or trace scrolls. */}
+      <div className="lens-chrome">
+      <div className="lens-head">
         <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" tooltipDirection="se" onClick={onBack} />
         {statusDot(item.status)}
         {item.activity && <span className="task-row-activity">{item.activity}</span>}
-        <div className="task-detail-spacer" />
+        <div className="lens-head-spacer" />
         {/* Full id, right-aligned; only the action buttons (live work) may
             compress it — then the text ellipsizes, never the buttons. */}
-        <button className="task-detail-id" title="Copy id" aria-label="Copy id" onClick={() => copy(item.id)}>
-          <span className="task-detail-id-text">{item.id}</span> {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-        </button>
+        <span className="lens-head-id" title={item.id}><span className="lens-head-id-text">{item.id}</span></span>
         {item.status === 'input_required' && item.pendingCallId && onApprove && onReject && (
           <>
             <Button size="small" variant="primary" disabled={held(item.pendingCallId)} onClick={() => decide(item.pendingCallId!, () => onApprove(item.pendingCallId!))}>Approve</Button>
@@ -244,6 +244,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
         <button className={tab === 'trace' ? 'active' : ''} onClick={() => setTab('trace')}>
           Trace{spanTotal > 0 ? ` (${spanTotal})` : ''}
         </button>
+      </div>
       </div>
 
       {tab === 'steps' ? (
@@ -339,20 +340,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
         </div>
       ) : (
         <div className="task-view">
-          {spanTotal === 0 ? (
-            <div className="trace-empty">No trace events yet.</div>
-          ) : (
-            <TraceRun
-              runId={item.id}
-              segments={traceSegments}
-              label={item.label}
-              isLive={live}
-              isExpanded={traceExpanded}
-              onToggle={() => setTraceExpanded(v => !v)}
-              payloadSessionId={view?.childSessionId}
-              markers={taskMarkers}
-            />
-          )}
+          <TraceDetail segments={traceSegments} isLive={live} payloadSessionId={view?.childSessionId} markers={taskMarkers} />
         </div>
       )}
     </SidePanel>
