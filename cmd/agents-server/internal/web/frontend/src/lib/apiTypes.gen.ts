@@ -1958,7 +1958,7 @@ export interface paths {
         put?: never;
         /**
          * Create MCP server
-         * @description config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP); endpoint must be an absolute http(s) URL. Header values and oauth_client_secret are write-only (******** mask semantics).
+         * @description config is {endpoint, headers, auth_mode, oauth_*, protocol_version, …} (streamable HTTP); endpoint must be an absolute http(s) URL; protocol_version pins the MCP protocol version (empty = latest). Header values and oauth_client_secret are write-only (******** mask semantics).
          */
         post: {
             parameters: {

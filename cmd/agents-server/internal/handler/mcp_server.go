@@ -8,6 +8,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
+	"github.com/zzir/agents-go/mcp"
 )
 
 // McpServerHandler serves CRUD and connection endpoints for MCP servers.
@@ -156,13 +158,16 @@ func (r *mcpServerReq) validate() string {
 	if hc.RetryBackoffMs < 0 {
 		return "config.retry_backoff_ms cannot be negative"
 	}
+	if v := hc.ProtocolVersion; v != "" && !slices.Contains(mcp.ProtocolVersions(), v) {
+		return "config.protocol_version must be one of " + strings.Join(mcp.ProtocolVersions(), ", ")
+	}
 	return ""
 }
 
 // Create persists a new MCP server configuration from the request body.
 //
 //	@Summary		Create MCP server
-//	@Description	config is {endpoint, headers, auth_mode, oauth_*} (streamable HTTP); endpoint must be an absolute http(s) URL. Header values and oauth_client_secret are write-only (******** mask semantics).
+//	@Description	config is {endpoint, headers, auth_mode, oauth_*, protocol_version, …} (streamable HTTP); endpoint must be an absolute http(s) URL; protocol_version pins the MCP protocol version (empty = latest). Header values and oauth_client_secret are write-only (******** mask semantics).
 //	@Tags			mcp-servers
 //	@Accept			json
 //	@Produce		json

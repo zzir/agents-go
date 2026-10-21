@@ -52,6 +52,15 @@ describe('plan-mode allowance of an MCP server', () => {
     expect(pack({ ...form, read_only_tools: [] }).config).not.toHaveProperty('read_only_tools');
   });
 
+  // The pin travels as a plain string and stays out of the config when unset,
+  // so a server left on the default keeps following the SDK's latest.
+  it('round-trips protocol_version and keeps the key out when unpinned', () => {
+    const form = flatten({ name: 's', config: { endpoint: 'http://x', protocol_version: '2025-11-25' } });
+    expect(form.protocol_version).toBe('2025-11-25');
+    expect(pack(form).config?.protocol_version).toBe('2025-11-25');
+    expect(pack({ ...form, protocol_version: '' }).config).not.toHaveProperty('protocol_version');
+  });
+
   it("adopts the server's read-only hints only on the explicit button", () => {
     expect(readOnlyHinted([
       { name: 'd__search', original_name: 'search', read_only_hint: true },

@@ -407,13 +407,16 @@ where the key lives ([providers](#providers--apiv1providers)).
 
 The one transport is streamable HTTP (decisions §5.25), so `config` is
 `{endpoint, headers, auth_mode, oauth_*, max_retry_attempts, retry_backoff_ms,
-use_structured_content}` with `auth_mode` `header` or `oauth` — a raw JSON
+use_structured_content, protocol_version}` with `auth_mode` `header` or `oauth` — a raw JSON
 blob the OpenAPI document cannot expand. `max_retry_attempts` retries a failed
 `list_tools`/`call_tool` (`0` never, `-1` without limit; a `call_tool` is
 retried only when the connection could not be made), `retry_backoff_ms`
 is the base of its exponential backoff (`0` the SDK's 1s), and
 `use_structured_content` takes a result's `structuredContent` alone, for a
-server that fills only that field. A local stdio-only MCP server can join
+server that fills only that field. `protocol_version` pins the MCP protocol
+version spoken to the server (one the client implements, e.g. `2025-11-25`;
+empty is the latest), for a server that drops the 2026-07-28 subscription
+stream (decisions §5.90). A local stdio-only MCP server can join
 through a stdio→HTTP proxy such as `mcp-proxy`.
 Enabled servers are connected automatically on startup and after
 create/update; `POST /mcp-servers/:id/connect` is the manual connect (the

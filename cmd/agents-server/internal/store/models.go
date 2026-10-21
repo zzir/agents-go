@@ -227,6 +227,9 @@ type HTTPMcpConfig struct {
 	// UseStructuredContent takes a tool result's structuredContent alone, for
 	// servers that fill only that field.
 	UseStructuredContent bool `json:"use_structured_content,omitempty"`
+	// ProtocolVersion pins the MCP protocol version spoken to this server (one the
+	// client implements, e.g. 2025-11-25); empty is the client's latest.
+	ProtocolVersion string `json:"protocol_version,omitempty"`
 	// ReadOnlyTools are the tools of this server plan mode lets the model call
 	// while planning, by the server's own name.
 	ReadOnlyTools []string `json:"read_only_tools,omitempty"`

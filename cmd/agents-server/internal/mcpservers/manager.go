@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -118,7 +119,7 @@ func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error
 		return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 	}
 	transport := m.httpTransport(&hc, nil)
-	opts := buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent)
+	opts := buildMcpOptions(cfg.Name, &hc, logging.Ctx(m.rootCtx))
 	// Redial makes the connection self-healing (spec §2.16), on the manager's
 	// own context.
 	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {
@@ -258,7 +259,7 @@ func (m *Manager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServer
 	}
 
 	transport := m.httpTransport(hc, oauthHandler)
-	opts := buildMcpOptions(cfg.Name, hc.McpRetryConfig, hc.UseStructuredContent)
+	opts := buildMcpOptions(cfg.Name, hc, logging.Ctx(m.rootCtx))
 	// The same handler on the re-dial: a healed connection re-authorizes through
 	// the handler that holds the persisting token source (invariant 11).
 	hcCopy := *hc
@@ -278,17 +279,20 @@ func (m *Manager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServer
 func ToolPrefix(serverName string) string { return serverName + "__" }
 
 // buildMcpOptions is the one place every connection's mcp.Options is assembled,
-// so a new option cannot be missed on the OAuth path.
-func buildMcpOptions(name string, retry store.McpRetryConfig, useStructuredContent bool) mcp.Options {
+// so a new option cannot be missed on the OAuth path. log is the manager's own,
+// not a request's: the connection outlives the request that opened it.
+func buildMcpOptions(name string, hc *store.HTTPMcpConfig, log *slog.Logger) mcp.Options {
 	opts := mcp.Options{
 		ToolNamePrefix:       ToolPrefix(name),
-		MaxRetryAttempts:     retry.MaxRetryAttempts,
-		UseStructuredContent: useStructuredContent,
+		MaxRetryAttempts:     hc.MaxRetryAttempts,
+		UseStructuredContent: hc.UseStructuredContent,
+		ProtocolVersion:      hc.ProtocolVersion,
 		// Tools are listed every turn; one fetch, then memory until list_changed.
 		CacheToolsList: true,
+		Logger:         log,
 	}
-	if retry.RetryBackoffMs > 0 {
-		opts.RetryBackoffBase = time.Duration(retry.RetryBackoffMs) * time.Millisecond
+	if hc.RetryBackoffMs > 0 {
+		opts.RetryBackoffBase = time.Duration(hc.RetryBackoffMs) * time.Millisecond
 	}
 	return opts
 }

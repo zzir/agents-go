@@ -27,6 +27,15 @@ const AUTH_MODES = [
   { value: 'oauth', label: 'OAuth' },
 ] as const;
 
+// The MCP protocol versions the connection can be pinned to (the go-sdk's
+// list; the API refuses any other value). Empty is the SDK's latest.
+const PROTOCOL_VERSIONS = [
+  { value: '', label: 'Latest (2026-07-28)' },
+  { value: '2025-11-25', label: '2025-11-25' },
+  { value: '2025-06-18', label: '2025-06-18' },
+  { value: '2025-03-26', label: '2025-03-26' },
+] as const;
+
 interface McpServerConfig {
   endpoint?: string;
   headers?: Record<string, string>;
@@ -37,6 +46,7 @@ interface McpServerConfig {
   max_retry_attempts?: number;
   retry_backoff_ms?: number;
   use_structured_content?: boolean;
+  protocol_version?: string;
   // The server's tools plan mode may call while planning, by their own names.
   read_only_tools?: string[];
 }
@@ -72,6 +82,7 @@ interface McpFormData {
   max_retry_attempts: string;
   retry_backoff_ms: string;
   use_structured_content: boolean;
+  protocol_version: string;
   read_only_tools: string[];
 }
 
@@ -97,6 +108,7 @@ export function flatten(s: Partial<McpServer>): McpFormData {
     max_retry_attempts: numberDraft(c.max_retry_attempts),
     retry_backoff_ms: numberDraft(c.retry_backoff_ms),
     use_structured_content: c.use_structured_content || false,
+    protocol_version: c.protocol_version || '',
     read_only_tools: c.read_only_tools || [],
   };
 }
@@ -123,6 +135,7 @@ export function pack(form: McpFormData): Partial<McpServer> {
   if (retries) config.max_retry_attempts = retries;
   if (backoff) config.retry_backoff_ms = backoff;
   if (form.use_structured_content) config.use_structured_content = true;
+  if (form.protocol_version) config.protocol_version = form.protocol_version;
   if (form.read_only_tools.length > 0) config.read_only_tools = form.read_only_tools;
   return { ...base, config };
 }
@@ -192,6 +205,12 @@ export function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAu
       )}
       {fc('Max retry attempts', <TextInput block type="number" min={-1} value={form.max_retry_attempts} placeholder="0" onChange={e => set('max_retry_attempts', e.target.value)} />, '0 = no retries, -1 = retry indefinitely; a call_tool is retried only when the connection could not be made')}
       {Number(form.max_retry_attempts.trim() || 0) !== 0 && fc('Retry backoff (ms)', <TextInput block type="number" min={0} value={form.retry_backoff_ms} placeholder="0" onChange={e => set('retry_backoff_ms', e.target.value)} />, 'Base delay for exponential backoff (0 = default 1000ms)')}
+      {fc('Protocol version',
+        <Select value={form.protocol_version} onChange={e => set('protocol_version', e.target.value)}>
+          {PROTOCOL_VERSIONS.map(v => <Select.Option key={v.value} value={v.value}>{v.label}</Select.Option>)}
+        </Select>,
+        'Pin an older version for a server that drops the 2026-07-28 subscription stream (its tools fail with "session not found")',
+      )}
       <ToggleRow label="Use structured content" checked={form.use_structured_content} onChange={v => set('use_structured_content', v)}
         description="Use a tool result's structuredContent field exclusively (for servers that only populate it)" />
       {/* Plan mode admits an MCP tool only by name (invariant 89): the names

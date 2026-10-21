@@ -251,7 +251,7 @@ func TestReconcileLogsFailedReconnect(t *testing.T) {
 // buildMcpOptions is the single assembly point for an MCP connection's options:
 // it sets the per-server tool-name prefix and maps the stored retry policy.
 func TestBuildMcpOptions(t *testing.T) {
-	opts := buildMcpOptions("github", store.McpRetryConfig{MaxRetryAttempts: 3, RetryBackoffMs: 500}, true)
+	opts := buildMcpOptions("github", &store.HTTPMcpConfig{McpRetryConfig: store.McpRetryConfig{MaxRetryAttempts: 3, RetryBackoffMs: 500}, UseStructuredContent: true, ProtocolVersion: "2025-11-25"}, nil)
 	if opts.ToolNamePrefix != "github__" {
 		t.Errorf("prefix = %q, want github__", opts.ToolNamePrefix)
 	}
@@ -264,10 +264,13 @@ func TestBuildMcpOptions(t *testing.T) {
 	if !opts.UseStructuredContent {
 		t.Error("UseStructuredContent = false, want true")
 	}
+	if opts.ProtocolVersion != "2025-11-25" {
+		t.Errorf("ProtocolVersion = %q, want the stored pin", opts.ProtocolVersion)
+	}
 
 	// Defaults: no retries, no backoff override, content blocks.
-	def := buildMcpOptions("x", store.McpRetryConfig{}, false)
-	if def.MaxRetryAttempts != 0 || def.RetryBackoffBase != 0 {
-		t.Errorf("default opts = %+v, want zero retry/backoff", def)
+	def := buildMcpOptions("x", &store.HTTPMcpConfig{}, nil)
+	if def.MaxRetryAttempts != 0 || def.RetryBackoffBase != 0 || def.ProtocolVersion != "" {
+		t.Errorf("default opts = %+v, want zero retry/backoff and no protocol pin", def)
 	}
 }
