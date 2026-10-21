@@ -392,7 +392,9 @@ throttled heal: the death is being repaired, and a run failed on a stale error
 costs more than three seconds. The cooldown backs off while connections keep
 dying young, because a server that accepts and drops is a dial loop at any
 fixed rate. The death and every redial's outcome are logged, because the error
-a caller sees is the connection's death, never why healing failed.
+a caller sees is the connection's death, never why healing failed. The wait is
+the caller's and the dial the connection's (§5.20): a caller whose context ends
+leaves, and the dial completes for whoever asks next.
 
 **Rejected.** Reconnecting without `Redial` — only the configuration's owner
 can rebuild a transport (an `*exec.Cmd` is spent once; an endpoint needs its

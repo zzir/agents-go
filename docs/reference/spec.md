@@ -1908,6 +1908,9 @@ runs, their background tasks, other conversations.
   throttle skipped is retried once after the cooldown; a `tools/list` that
   finds the line dead inside a base-length cooldown waits it out and asks
   once more before reporting the death.
+- **No caller waits for a heal past its own context.** The dial runs on the
+  connection's context and finishes for whoever asks next; a `tools/call`
+  that finds the line dead starts the heal and reports, never waits.
 - **A death, a redial and a redial's failure are logged on `Options.Logger`**
   (`component=mcp`, the server's name as `mcp`); nil is silent.
 - **The handshake speaks the go-sdk's latest protocol version unless

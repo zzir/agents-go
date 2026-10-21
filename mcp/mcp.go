@@ -326,14 +326,37 @@ func (s *Server) dead(err error) bool {
 	return err != nil && !s.closed.Load() && errors.Is(err, mcpsdk.ErrConnectionClosed)
 }
 
+// redialWithin runs redial, waiting for its outcome only while ctx lives; the
+// dial itself continues on the connection's context, for whoever asks next
+// (spec §2.16). A caller that left is told of no heal.
+func (s *Server) redialWithin(ctx context.Context, failed *mcpsdk.ClientSession) (healed bool, retryAfter time.Duration) {
+	type outcome struct {
+		healed     bool
+		retryAfter time.Duration
+	}
+	// Buffered, so the dial never blocks on a caller that left.
+	ch := make(chan outcome, 1)
+	go func() {
+		h, ra := s.redial(failed)
+		ch <- outcome{h, ra}
+	}()
+	select {
+	case o := <-ch:
+		return o.healed, o.retryAfter
+	case <-ctx.Done():
+		return false, 0
+	}
+}
+
 // healed reports whether err means the connection is gone and a fresh one
-// replaced it. A heal the throttle skipped is waited for — the watcher dials
-// once the cooldown ends — rather than reported as a death (spec §2.16).
+// replaced it, waiting no longer than ctx. A heal the throttle skipped is
+// waited for — the watcher dials once the cooldown ends — rather than reported
+// as a death (spec §2.16).
 func (s *Server) healed(ctx context.Context, err error, failed *mcpsdk.ClientSession) bool {
 	if !s.dead(err) {
 		return false
 	}
-	healed, retryAfter := s.redial(failed)
+	healed, retryAfter := s.redialWithin(ctx, failed)
 	// Worth a wait only at the base cooldown: a line in backoff is reported,
 	// not waited minutes for.
 	if healed || retryAfter == 0 || retryAfter > redialCooldown {
@@ -346,7 +369,7 @@ func (s *Server) healed(ctx context.Context, err error, failed *mcpsdk.ClientSes
 	case <-s.rpcCtx.Done():
 		return false
 	}
-	healed, _ = s.redial(failed)
+	healed, _ = s.redialWithin(ctx, failed)
 	return healed
 }
 
@@ -723,10 +746,10 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 				})
 				return e
 			}); err != nil {
-				// Repair the connection but do NOT repeat the call (decisions §5.21);
-				// a throttled heal is the watcher's to finish, not waited for here.
+				// Repair the connection but neither repeat the call nor wait for the
+				// heal (decisions §5.21): the dial finishes for whoever asks next.
 				if s.dead(err) {
-					s.redial(session)
+					go s.redial(session)
 				}
 				span.SetError(err.Error(), nil)
 				return agents.ToolResult{}, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp tool %q call failed: %w", originalName, err))

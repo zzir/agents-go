@@ -505,3 +505,86 @@ func TestThrottledCallerGivesUpInBackoff(t *testing.T) {
 		t.Errorf("the caller waited %v on a line in backoff", waited)
 	}
 }
+
+// gateHandler holds every request until released, then serves h: a server
+// that accepts the connection and takes its time over the handshake.
+type gateHandler struct {
+	release chan struct{}
+	h       http.Handler
+}
+
+func (g *gateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	select {
+	case <-g.release:
+	case <-r.Context().Done():
+		return
+	}
+	g.h.ServeHTTP(w, r)
+}
+
+// TestCallerWaitsForAHealOnlyAsLongAsItsContext locks the wait's bound: a
+// tools/list that finds the line dead leaves when its own context ends, and
+// the dial it left behind still heals the connection for the next caller
+// (spec §2.16).
+func TestCallerWaitsForAHealOnlyAsLongAsItsContext(t *testing.T) {
+	swap := &swapHandler{h: mcpHandlerWith("ping")}
+	endpoint := httptest.NewServer(swap)
+	t.Cleanup(endpoint.Close)
+	// The redial lands on a server that answers nothing until released.
+	gate := &gateHandler{release: make(chan struct{}), h: mcpHandlerWith("pong")}
+	slow := httptest.NewServer(gate)
+	t.Cleanup(slow.Close)
+
+	var dials atomic.Int32
+	server, err := NewWithTransport(context.Background(), "healer",
+		&mcpsdk.StreamableClientTransport{Endpoint: endpoint.URL},
+		Options{Redial: func(context.Context) (mcpsdk.Transport, error) {
+			dials.Add(1)
+			return &mcpsdk.StreamableClientTransport{Endpoint: slow.URL}, nil
+		}})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	rc := agents.NewRunContext(nil)
+	agent := &agents.Agent{Name: "a"}
+	if _, err := server.ListTools(context.Background(), rc, agent); err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	first := server.session.Load()
+	swap.set(mcpHandlerWith("other"))
+	killSession(t, first)
+
+	// The caller finds the line dead; the heal is stuck behind the gate, so
+	// the caller's own deadline is what ends its wait.
+	server.InvalidateToolsCache()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := server.ListTools(ctx, rc, agent); err == nil {
+		t.Fatal("list tools answered through a dial that cannot have finished")
+	}
+	if waited := time.Since(start); waited > 2*time.Second {
+		t.Fatalf("the caller waited %v for a heal past its own context", waited)
+	}
+
+	// Released, the dial nobody waited for completes the heal.
+	close(gate.release)
+	for deadline := time.Now().Add(10 * time.Second); server.session.Load() == first; {
+		if time.Now().After(deadline) {
+			t.Fatal("the dial the caller left behind never healed the connection")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	tools, err := server.ListTools(context.Background(), rc, agent)
+	if err != nil {
+		t.Fatalf("list tools after the heal: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Name != "pong" {
+		t.Fatalf("healed onto the wrong server: %v", toolNames(tools))
+	}
+	if n := dials.Load(); n != 1 {
+		t.Errorf("dials = %d, want exactly one between the watcher and the caller", n)
+	}
+}
