@@ -284,8 +284,10 @@ func (c *OAuthCoordinator) ConnectWithOAuth(
 		go func() {
 			timer := time.NewTimer(oauthPendingTimeout)
 			defer timer.Stop()
+			// Ended either way (the goroutine above logged how): the pending
+			// entry is stale.
 			select {
-			case <-errCh:
+			case <-attempt.done:
 			case <-timer.C:
 			}
 			c.mu.Lock()

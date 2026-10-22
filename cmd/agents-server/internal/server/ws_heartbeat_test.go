@@ -53,7 +53,8 @@ func TestWSHeartbeatDropsUnresponsivePeer(t *testing.T) {
 	defer conn.Close()
 	// Never read: pings go unprocessed, so no pongs are sent.
 	select {
-	case <-closed:
+	case err := <-closed:
+		t.Logf("dropped: %v", err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("server kept an unresponsive connection past the pong deadline")
 	}

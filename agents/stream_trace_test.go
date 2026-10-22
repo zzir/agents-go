@@ -33,7 +33,10 @@ func TestTrace_ClosedWhenConsumerAbandonsStream(t *testing.T) {
 
 		stream, _ := Run(context.Background(), newAgent(), "go", opts)
 		seen := 0
-		for range stream {
+		for _, err := range stream {
+			if err != nil {
+				t.Fatalf("stream: %v", err)
+			}
 			seen++
 			if stop(seen) {
 				break

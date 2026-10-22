@@ -412,7 +412,10 @@ func TestFallbackModel_StreamNoDiagnosticWhenConsumerStopsMidFlush(t *testing.T)
 	}}
 	sink := &DiagnosticSink{}
 	ctx := WithDiagnostics(context.Background(), sink)
-	for range NewFallbackModel(primary, backup).StreamResponse(ctx, ModelRequest{}) {
+	for _, err := range NewFallbackModel(primary, backup).StreamResponse(ctx, ModelRequest{}) {
+		if err != nil {
+			t.Fatalf("first event: %v, want the backup's", err)
+		}
 		break
 	}
 	if ds, _ := sink.TakeSince(0); len(ds) != 0 {

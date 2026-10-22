@@ -206,7 +206,12 @@ func TestAbandonedStreamDoesNotWaitForRacingGuardrail(t *testing.T) {
 	go func() {
 		defer close(done)
 		stream, _ := Run(context.Background(), agent, "hi", RunOptions{})
-		for range stream {
+		// One event, then walk away: the guardrail has not resolved yet, so
+		// the first yield is the model's, never an error.
+		for _, err := range stream {
+			if err != nil {
+				t.Errorf("first event: %v, want an event", err)
+			}
 			break
 		}
 	}()
