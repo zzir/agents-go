@@ -19,7 +19,7 @@ vi.mock('@primer/react/experimental', () => {
   Blankslate.Description = ({ children }: { children?: ReactNode }) => <p>{children}</p>;
   return { Blankslate };
 });
-vi.mock('@primer/octicons-react', () => ({ MeterIcon: () => null }));
+vi.mock('@primer/octicons-react', () => ({ MeterIcon: () => null, XIcon: () => null, ChevronRightIcon: () => null }));
 vi.mock('@/layout/SidePanel', () => ({ SidePanel: ({ children }: { children?: ReactNode }) => <div>{children}</div> }));
 vi.mock('@/components/Loading', () => ({ Loading: () => <div>loading</div> }));
 vi.mock('@/lib/api', () => ({
@@ -80,14 +80,22 @@ describe('ContextPanel', () => {
     unmount();
   });
 
-  // Every layer the build sends is a row: the three the panel once left out
-  // included.
-  it('lists the guidance, plan preamble and background layers', async () => {
+  // Every layer the build sends is a row under its group: the three the panel
+  // once left out included. The group opens on click; closed, its layers stay
+  // in the list, hidden.
+  it('lists the guidance, plan preamble and background layers under Prompt', async () => {
     const { host, unmount } = await mount();
     const text = host.textContent || '';
     for (const label of ['Context guidance', 'Plan mode preamble', 'Background suffix']) {
       expect(text).toContain(label);
     }
+    const layers = host.querySelectorAll('.ctx-row-sub');
+    expect(layers).toHaveLength(4);
+    expect([...layers].every(l => l.hasAttribute('hidden'))).toBe(true);
+    const group = host.querySelector('.ctx-row-group') as HTMLElement;
+    expect(group.textContent).toContain('Prompt');
+    await act(async () => { group.click(); });
+    expect([...host.querySelectorAll('.ctx-row-sub')].some(l => l.hasAttribute('hidden'))).toBe(false);
     unmount();
   });
 

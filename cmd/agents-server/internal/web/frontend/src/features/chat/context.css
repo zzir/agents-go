@@ -1,8 +1,9 @@
 /* Context panel (right panel) — the drawer chrome is the generic .side-panel*
-   in globals.css; bars, labels and the Blankslate are Primer. This file styles
-   only what neither provides: the section rhythm and the item rows. */
+   in globals.css. Three blocks, numbers and bars with one line of words each:
+   the overview (meter, sparkline, totals), the window's composition as grouped
+   rows, the session memory. */
 .ctx-body {
-  padding: 0 var(--base-size-12) var(--base-size-12);
+  padding: var(--base-size-4) var(--base-size-8) var(--base-size-12);
   font-size: var(--base-text-size-xs);
 }
 .ctx-sec {
@@ -12,76 +13,56 @@
 .ctx-sec:last-child {
   border-bottom: 0;
 }
-.ctx-sec-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--base-size-8);
-  margin-bottom: var(--base-size-8);
-  color: var(--fgColor-muted);
-  font-size: var(--base-text-size-xs);
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-}
-/* Values inside an uppercased heading are data, not a heading. */
-.ctx-sec-head .ctx-mono {
-  text-transform: none;
-  letter-spacing: 0;
-}
-
 .ctx-mono {
   font-family: var(--fontStack-monospace);
   font-variant-numeric: tabular-nums;
   font-size: var(--base-text-size-xs);
 }
 .ctx-muted { color: var(--fgColor-muted); }
-.ctx-ok { color: var(--fgColor-success); }
 
+/* A section's one line of words: the caption, and a figure at the far end. */
+.ctx-cap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--base-size-8);
+  margin-bottom: var(--base-size-8);
+  font-weight: var(--base-text-weight-medium);
+  color: var(--fgColor-muted);
+}
+.ctx-cap .ctx-mono { font-weight: var(--base-text-weight-normal); }
+
+/* The headline: the last call's input over the window, the model and the
+   compaction control at the far end. */
 .ctx-big {
   display: flex;
   align-items: baseline;
-  gap: var(--base-size-8);
+  gap: var(--base-size-6);
   margin-bottom: var(--base-size-8);
 }
 .ctx-num {
-  font-size: var(--base-text-size-lg);
+  font-size: 20px;
   font-weight: var(--base-text-weight-semibold);
   letter-spacing: -0.01em;
+  line-height: 1.2;
 }
-.ctx-slash { color: var(--fgColor-muted); }
-
-.ctx-legend {
-  display: flex;
+.ctx-of { color: var(--fgColor-muted); }
+.ctx-big-end {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
   align-items: center;
-  gap: var(--base-size-12);
-  margin-top: var(--base-size-8);
-  color: var(--fgColor-muted);
-  font-size: var(--base-text-size-xs);
-}
-/* The source chip sits at the far end of whichever legend it labels. */
-.ctx-legend > [data-component='Label'] { margin-left: auto; }
-.ctx-legend-end { margin-left: auto; }
-
-.ctx-note {
-  margin-top: var(--base-size-8);
-  color: var(--fgColor-muted);
-  font-size: var(--base-text-size-xs);
-  line-height: 1.5;
-  opacity: 0.85;
-}
-/* "Compact now" — a quiet inline control beside the sub-head label, sized to
-   its 11px type. */
-.ctx-compact-btn {
+  gap: var(--base-size-8);
   flex-shrink: 0;
+}
+.ctx-compact-btn {
   white-space: nowrap;
   border: 1px solid var(--borderColor-default);
   border-radius: var(--borderRadius-small);
   background: none;
   padding: 0 var(--base-size-6);
   font-size: var(--base-text-size-xs);
-  line-height: 16px;
-  letter-spacing: 0;
-  text-transform: none;
+  line-height: 18px;
   color: var(--fgColor-muted);
   cursor: pointer;
 }
@@ -93,18 +74,34 @@
   opacity: 0.5;
   cursor: default;
 }
-/* On the big-number row: pushed to the far end, centered on the line rather
-   than sitting on the digits' baseline. */
-.ctx-compact-btn--end {
-  margin-left: auto;
-  align-self: center;
-}
 
-/* The window bar with the compaction tick on it: one track, two stories. The
-   tick is a hairline the fill passes under; its title carries the numbers. */
-.ctx-track {
+/* The meter: fill and track from one ramp. The cached share is the solid
+   part, the fresh remainder lighter behind a surface gap; the fold point is a
+   tick the fill passes under, its figures in the title. */
+.ctx-meter {
   position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bgColor-accent-muted);
 }
+.ctx-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+  background: var(--bgColor-accent-emphasis);
+}
+.ctx-meter-fresh {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--bgColor-accent-emphasis);
+  opacity: 0.45;
+  border-radius: 0 4px 4px 0;
+  border-left: 2px solid var(--bgColor-default);
+}
+/* No window declared: the compaction meter is the only scale there is. */
+.ctx-meter-fold { background: var(--bgColor-attention-muted); }
+.ctx-meter-fold .ctx-meter-fill { background: var(--bgColor-attention-emphasis); }
 .ctx-tick {
   position: absolute;
   top: -2px;
@@ -115,70 +112,144 @@
   background: var(--fgColor-attention);
 }
 
+/* A line of figures under a mark; the last one sits at the far end. */
+.ctx-line {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-12);
+  margin-top: var(--base-size-6);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+}
+.ctx-line-end { margin-left: auto; }
+.ctx-sw {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--bgColor-accent-emphasis);
+  margin-right: var(--base-size-4);
+  vertical-align: -1px;
+}
+.ctx-sw-fresh { opacity: 0.45; }
+
+/* The sparkline: a 2px line over a 10% wash, the latest call an 8px dot with
+   a surface ring. */
 .ctx-spark {
   width: 100%;
-  height: 46px;
+  height: 40px;
   display: block;
+  margin-top: var(--base-size-8);
 }
-.ctx-spark-area { fill: var(--bgColor-accent-muted); }
+.ctx-spark-area { fill: var(--fgColor-accent); fill-opacity: 0.1; }
 .ctx-spark-line {
   fill: none;
   stroke: var(--fgColor-accent);
-  stroke-width: 1.6;
+  stroke-width: 2;
   stroke-linejoin: round;
+  stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
-.ctx-spark-dot { fill: var(--fgColor-accent); }
+.ctx-spark-dot {
+  fill: var(--fgColor-accent);
+  stroke: var(--bgColor-default);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
 
+/* Composition rows: label | bar | share, one line each. A group row opens
+   its layers under it, indented and lighter. */
 .ctx-rows {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--base-size-4);
+  gap: var(--base-size-2);
 }
-.ctx-row-top {
-  display: flex;
+.ctx-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 44px;
   align-items: center;
   gap: var(--base-size-8);
-  margin-bottom: var(--base-size-4);
+  padding: 3px var(--base-size-2);
+  border-radius: var(--borderRadius-small);
 }
+.ctx-row[hidden] { display: none; }
+.ctx-row:hover { background: var(--bgColor-muted); }
+.ctx-row-group { cursor: pointer; }
 .ctx-row-name {
-  flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ctx-row-tok {
-  flex-shrink: 0;
-  min-width: 34px;
-  text-align: right;
-  color: var(--fgColor-default);
+.ctx-chev {
+  display: inline-flex;
+  color: var(--fgColor-muted);
+  transition: transform var(--base-duration-100) var(--base-easing-ease);
 }
-.ctx-row-track {
-  display: block;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--bgColor-neutral-muted);
+.ctx-row-open .ctx-chev { transform: rotate(90deg); }
+.ctx-row-sub { padding-left: 18px; color: var(--fgColor-muted); }
+.ctx-row-sub .ctx-row-fill { opacity: 0.45; }
+.ctx-row-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bgColor-accent-muted);
   overflow: hidden;
 }
 .ctx-row-fill {
-  display: block;
-  height: 100%;
-  background: var(--fgColor-accent);
-  opacity: 0.6;
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: var(--bgColor-accent-emphasis);
 }
+.ctx-row-pct { text-align: right; }
 
-/* Composition rows carry no interaction, so they are plain list items. */
-.ctx-rows-plain > li {
-  padding: var(--base-size-4) var(--base-size-6);
+/* Session memory: key, size, delete on one line; a key opens its text under it. */
+.ctx-mem {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-8);
+  padding: 3px var(--base-size-2);
+  border-radius: var(--borderRadius-small);
 }
-
-/* Session memory: a key expands in place to its text; the owner may delete one. */
-.ctx-mem-key { background: none; border: 0; padding: 0; color: inherit; cursor: pointer; text-align: left; font: inherit; }
-.ctx-mem-key:hover .ctx-row-name { text-decoration: underline; }
-.ctx-mem-del { background: none; border: 0; color: var(--fgColor-muted); cursor: pointer; padding: 0 var(--base-size-4); font: inherit; }
+.ctx-mem:hover { background: var(--bgColor-muted); }
+.ctx-mem-key {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctx-mem-key:hover { text-decoration: underline; }
+.ctx-mem-del {
+  display: inline-flex;
+  background: none;
+  border: 0;
+  padding: 0 var(--base-size-2);
+  color: var(--fgColor-muted);
+  cursor: pointer;
+}
 .ctx-mem-del:hover { color: var(--fgColor-danger); }
-.ctx-mem-text { margin: var(--base-size-4) 0 0; white-space: pre-wrap; word-break: break-word; font-size: var(--base-text-size-xs); max-height: 240px; overflow: auto; }
+.ctx-mem-text {
+  margin: var(--base-size-2) 0 var(--base-size-6);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--base-text-size-xs);
+  max-height: 240px;
+  overflow: auto;
+}
