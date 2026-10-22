@@ -1,7 +1,7 @@
 // Markdown pipeline core shared by the main thread (lite, for streaming) and
 // the worker (full, with hljs + KaTeX). This module must stay free of heavy
 // imports — no highlight.js, no katex — so the main bundle stays lean.
-import { Marked, type Tokens, type TokenizerExtension, type RendererExtension } from 'marked';
+import { Marked, Renderer, type Tokens, type TokenizerExtension, type RendererExtension } from 'marked';
 
 // Inline SVGs for HTML-string templates: the octicon copy-16 and check-16 paths,
 // usable inside the worker where React isn't.
@@ -11,6 +11,19 @@ export const CHECK_ICON = '<svg viewBox="0 0 16 16" fill="currentColor" width="1
 // Code blocks longer than this render collapsed (CSS-clipped, not scrollable)
 // with a "Show all N lines" button — content budget, Claude-Code style.
 const CODE_COLLAPSE_LINES = 40;
+
+// Table cells up to this display width keep to one line, so a wide table
+// scrolls instead of breaking short cells a character at a time.
+const TABLE_NOWRAP_WIDTH = 24;
+
+const WIDE_CHAR = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1faff}]/gu;
+
+// Visible width of rendered cell HTML in half-width columns (CJK, fullwidth
+// and emoji count 2).
+function cellDisplayWidth(html: string): number {
+  const text = html.replace(/<[^>]*>/g, '').replace(/&[#\w]+;/g, '.').trim();
+  return [...text.replace(WIDE_CHAR, '..')].length;
+}
 
 export function escapeHTML(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -76,6 +89,14 @@ export function createMarked(hooks: RenderHooks): Marked {
       },
       html({ text }: { text: string }) {
         return escapeHTML(text);
+      },
+      table(token: Tokens.Table) {
+        return `<div class="md-table">${Renderer.prototype.table.call(this, token)}</div>`;
+      },
+      tablecell(token: Tokens.TableCell) {
+        const cell = Renderer.prototype.tablecell.call(this, token);
+        if (cellDisplayWidth(cell) > TABLE_NOWRAP_WIDTH) return cell;
+        return cell.replace(/^<(t[dh])/, '<$1 class="md-nowrap"');
       },
     },
     breaks: true,

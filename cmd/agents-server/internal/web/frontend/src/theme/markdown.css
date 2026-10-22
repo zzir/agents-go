@@ -5,8 +5,13 @@
 .markdown-body h1, .markdown-body h2 { border-bottom: none; padding-bottom: 0; }
 .markdown-body h1 { font-size: 1.2em; }
 .markdown-body h2 { font-size: 1.1em; }
-.markdown-body table { display: table; width: 100%; }
+/* A wide table scrolls inside its .md-table wrapper, never the chat column;
+   short cells (.md-nowrap, set by the renderer) keep to one line. */
+.markdown-body .md-table { overflow-x: auto; margin-bottom: var(--base-size-16); }
+.markdown-body table { display: table; width: 100%; max-width: none; overflow: visible; margin-bottom: 0; }
 .markdown-body thead th { background: var(--bgColor-muted); }
+.markdown-body .md-nowrap,
+.markdown-body .md-nowrap code { white-space: nowrap; }
 .markdown-body hr { height: 1px; border: none; background: var(--borderColor-muted); }
 
 /* Code blocks */
