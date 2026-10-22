@@ -71,11 +71,12 @@ export function taskItem(t: TaskState): BackgroundItem {
   };
 }
 
-// fmtDuration renders a millisecond span as a compact duration (12s, 4m32s, 1h03m).
+// fmtDuration renders a millisecond span as a compact duration (0.9s, 12.3s,
+// 4m32s, 1h03m); under a minute it keeps a decimal.
 export function fmtDuration(ms: number): string {
   if (!isFinite(ms) || ms < 0) return '';
+  if (ms < 59_950) return (ms / 1000).toFixed(1) + 's';
   const s = Math.floor(ms / 1000);
-  if (s < 60) return s + 's';
   const m = Math.floor(s / 60);
   if (m < 60) return m + 'm' + String(s % 60).padStart(2, '0') + 's';
   return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0') + 'm';
