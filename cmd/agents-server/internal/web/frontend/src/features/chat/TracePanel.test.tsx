@@ -72,7 +72,7 @@ describe('TraceDrawer', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].querySelector('.trace-row-label')!.textContent).toBe('hello');
     expect(rows[0].querySelector('.trace-row-tokens')!.textContent).toBe('32 tok');
-    expect(rows[0].querySelector('.trace-tab-live')).not.toBeNull(); // live through its wake-up run
+    expect(rows[0].querySelector('.task-status-dot-working')).not.toBeNull(); // live through its wake-up run
     expect(rows[1].querySelector('.trace-ev-tag-error')).not.toBeNull();
     expect(rows[1].querySelector('.trace-run-stale')).not.toBeNull();
     expect(m.container.querySelector('.disclosure')).toBeNull(); // rows open a lens, nothing expands in place
@@ -83,15 +83,16 @@ describe('TraceDrawer', () => {
 });
 
 describe('TraceRunPanel', () => {
-  // The lens is titled by the run's label and counted by its spans; its head
-  // leads back, shows what the run cost and jumps to the message; the run id
-  // is plain text on the meta line, and nothing in the waterfall is a chevron.
-  it('shows the run under a head with back, cost and jump', () => {
+  // The panel header stays the list's; the lens's own head is one row — back,
+  // the run id as plain text, the jump to the message — with no label (the
+  // message is in the transcript) and no figure (the Traces row has it). The
+  // waterfall below has no meta line of its own, and nothing in it is a chevron.
+  it('shows the run under a one-row head with back and jump', () => {
     let backs = 0, jumps = 0;
-    const m = mount(<TraceRunPanel group={GROUPS[0]} liveRunId={null} runLabels={LABELS} onJump={() => { jumps++; }} onBack={() => { backs++; }} onClose={noop} />);
-    expect(m.container.querySelector('h2')!.textContent).toBe('hello (2)');
-    expect(m.container.querySelector('.trace-head-tokens')!.textContent).toBe('32 tok');
-    expect(m.container.querySelector('.trace-meta-id')!.textContent).toBe('r1');
+    const m = mount(<TraceRunPanel group={GROUPS[0]} total={2} liveRunId={null} onJump={() => { jumps++; }} onBack={() => { backs++; }} onClose={noop} />);
+    expect(m.container.querySelector('h2')!.textContent).toBe('Traces (2)');
+    expect(m.container.querySelector('.lens-head-id')!.textContent).toBe('r1');
+    expect(m.container.querySelector('.lens-head-fig')).toBeNull();
     expect(m.container.querySelector('[aria-label="Copy id"]')).toBeNull();
     expect(m.container.querySelector('.trace-span-chevron')).toBeNull();
     expect(m.container.querySelectorAll('.trace-run-segment')).toHaveLength(2);
@@ -102,22 +103,22 @@ describe('TraceRunPanel', () => {
   });
 
   it('offers no jump for a run without a message', () => {
-    const m = mount(<TraceRunPanel group={GROUPS[1]} liveRunId={null} runLabels={LABELS} onBack={noop} onClose={noop} />);
+    const m = mount(<TraceRunPanel group={GROUPS[1]} total={2} liveRunId={null} onBack={noop} onClose={noop} />);
     expect(m.container.querySelector('[aria-label="Jump to message"]')).toBeNull();
-    expect(m.container.querySelector('.trace-meta .trace-ev-tag-error')).not.toBeNull();
+    expect(m.container.querySelector('.lens-head .trace-ev-tag-error')).not.toBeNull();
     m.unmount();
   });
 });
 
 describe('TraceRunMissingPanel', () => {
   it('waits while traces load, then says the run is not here', () => {
-    const m = mount(<TraceRunMissingPanel runId="r9" loading onBack={noop} onClose={noop} />);
-    expect(m.container.querySelector('h2')!.textContent).toBe('Trace');
-    expect(m.container.textContent).not.toContain('not found');
+    const m = mount(<TraceRunMissingPanel runId="r9" total={2} loading onBack={noop} onClose={noop} />);
+    expect(m.container.querySelector('h2')!.textContent).toBe('Traces (2)');
+    expect(m.container.querySelector('.lens-head-id')!.textContent).toBe('r9');
+    expect(m.container.textContent).not.toContain('no trace in this session');
     m.unmount();
-    const m2 = mount(<TraceRunMissingPanel runId="r9" loading={false} onBack={noop} onClose={noop} />);
-    expect(m2.container.querySelector('h2')!.textContent).toBe('Run not found');
-    expect(m2.container.querySelector('.lens-head-id-text')!.textContent).toBe('r9');
+    const m2 = mount(<TraceRunMissingPanel runId="r9" total={2} loading={false} onBack={noop} onClose={noop} />);
+    expect(m2.container.textContent).toContain('no trace in this session');
     m2.unmount();
   });
 });

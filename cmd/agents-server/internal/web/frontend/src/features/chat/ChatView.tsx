@@ -737,8 +737,8 @@ export function ChatView({
       {panel?.kind === 'run' && inspectedGroup && (
         <TraceRunPanel
           group={inspectedGroup}
+          total={traceGroups.length}
           liveRunId={liveRunId}
-          runLabels={runLabels}
           staleRuns={staleRuns}
           markers={traceMarkers}
           focusSpanId={inspectedGroup.segments.some(s => s.runId === traceActiveRun) ? traceFocusSpan : undefined}
@@ -750,6 +750,7 @@ export function ChatView({
       {panel?.kind === 'run' && !inspectedGroup && (
         <TraceRunMissingPanel
           runId={panel.runId}
+          total={traceGroups.length}
           loading={!tracesLoaded}
           onBack={() => onPanelChange({ kind: 'trace' })}
           onClose={() => onPanelChange(null)}

@@ -178,8 +178,8 @@ describe('TraceDetail', () => {
       { kind: 'span', name: 'a', type: 'agent', span_id: 'a2', started_at: t(134), ended_at: t(137), error: 'boom' },
     ];
     act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
-    // The meta line's tag, and the failed row's.
-    expect(container.querySelectorAll('.trace-ev-tag-error')).toHaveLength(2);
+    // The failed row's tag; the run's own is the lens head's, not the waterfall's.
+    expect(container.querySelectorAll('.trace-ev-tag-error')).toHaveLength(1);
     expect(container.querySelector('[title="awaiting approval: exec_command"]')?.textContent).toBe('paused');
     const segs = container.querySelectorAll('.trace-run-segment');
     expect(segs).toHaveLength(2);
@@ -225,7 +225,8 @@ describe('TraceDetail', () => {
   });
 
   // A queued input the run read mid-way is a row between the spans it fell
-  // between, its tick where it landed on the time axis, and the header counts it.
+  // between, its tick where it landed on the time axis; the lens head, not the
+  // waterfall, counts it.
   it('places a queued input between the spans it was read between', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -238,7 +239,6 @@ describe('TraceDetail', () => {
       { kind: 'span', name: 'a', type: 'generation', span_id: 'g2', parent_id: 'p', started_at: t(60), ended_at: t(70) },
     ];
     act(() => { root.render(<Harness events={events} loadSpan={resolve} markers={[{ at: at(50), label: 'also add a test', text: 'also add a test' }]} />); });
-    expect(container.textContent).toContain('1 queued');
     const rows = Array.from(container.querySelectorAll('.trace-span')) as HTMLElement[];
     const names = rows.map(r => r.querySelector('.trace-span-name')?.textContent);
     // Under the agent root, between the generation it followed and the one

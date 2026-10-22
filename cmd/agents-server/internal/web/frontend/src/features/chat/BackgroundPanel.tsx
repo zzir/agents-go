@@ -1,7 +1,8 @@
-import { useEffect, useState, useMemo, memo } from 'react';
-import { Button, IconButton, useConfirm } from '@primer/react';
-import { ArrowLeftIcon, StackIcon, WorkflowIcon } from '@primer/octicons-react';
+import { Fragment, useEffect, useState, useMemo, memo } from 'react';
+import { Button, useConfirm } from '@primer/react';
+import { StackIcon, WorkflowIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
+import { LensHead } from '@/layout/LensHead';
 import { Loading } from '@/components/Loading';
 import { LoadError } from '@/components/LoadError';
 import { ToolCallCard } from '@/features/chat/ToolCallCard';
@@ -136,15 +137,10 @@ interface BackgroundDetailPanelProps {
 // is not in the session's list (still loading, removed with its session, or
 // never carried by a fork's copy): it says so and leads back to the list.
 export function BackgroundMissingPanel({ taskId, loading, onBack, onClose }: { taskId: string; loading: boolean; onBack: () => void; onClose: () => void }) {
+  const count = useChatBackground().length;
   return (
-    <SidePanel icon={StackIcon} title={loading ? 'Task' : 'Task not found'} onClose={onClose} storageKey="inspectorWidth">
-      <div className="lens-chrome">
-        <div className="lens-head">
-          <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" tooltipDirection="se" onClick={onBack} />
-          <div className="lens-head-spacer" />
-          <span className="lens-head-id" title={taskId}><span className="lens-head-id-text">{taskId}</span></span>
-        </div>
-      </div>
+    <SidePanel icon={StackIcon} title="Tasks" count={count} onClose={onClose} storageKey="inspectorWidth">
+      <LensHead onBack={onBack} backLabel="Back to tasks" id={taskId} />
       {loading
         ? <Loading kind="inline" />
         : <div className="trace-empty">This task is not in the session's list — it may have been removed, belong to another session, or the list could not be loaded (open Tasks to retry).</div>}
@@ -177,6 +173,9 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
   const [tab, setTab] = useState<'steps' | 'transcript' | 'trace'>(item.kind === 'workflow' ? 'steps' : 'transcript');
   const { held, decide } = useDecisionHold();
   const live = isLive(item.status);
+  const items = useChatBackground();
+  // The duration ticks while the work is live, as it does on the list row.
+  const now = useNowTicker(live);
   // One trace segment per run (a retry, a workflow step), oldest first, labelled
   // only when several; "run N" not "attempt N" — a span-less attempt leaves no segment.
   const { traceSegments, spanTotal } = useMemo(() => {
@@ -210,42 +209,42 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
     return () => { alive = false; };
   }, [childSessionId, transcriptLen, item.status]);
 
+  // The title row's buttons: the decision while one is asked, Stop while
+  // live, and the ways to run again — a retry resumes the transcript below.
+  const actions = [
+    item.status === 'input_required' && item.pendingCallId && onApprove && onReject && (
+      <Fragment key="decide">
+        <Button size="small" variant="primary" disabled={held(item.pendingCallId)} onClick={() => decide(item.pendingCallId!, () => onApprove(item.pendingCallId!))}>Approve</Button>
+        <RejectButton kind={item.pendingToolName === STEP_APPROVAL_TOOL ? 'step' : undefined} disabled={held(item.pendingCallId)} onReject={reason => decide(item.pendingCallId!, () => onReject(item.pendingCallId!, reason))} />
+      </Fragment>
+    ),
+    live && <Button key="stop" size="small" onClick={() => stopTask(item.id)}>Stop</Button>,
+    item.retryable && <Button key="retry" size="small" onClick={() => retryTask(item.id)}>Retry</Button>,
+    rerunnable && <Button key="again" size="small" onClick={runAgain}>Run again</Button>,
+  ].filter(Boolean);
   return (
-    <SidePanel icon={item.kind === 'workflow' ? WorkflowIcon : StackIcon} title={item.label} onClose={onClose} storageKey="inspectorWidth">
-      {/* The head and the tabs stay put while the transcript or trace scrolls. */}
-      <div className="lens-chrome">
-      <div className="lens-head">
-        <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to tasks" tooltipDirection="se" onClick={onBack} />
-        {statusDot(item.status)}
-        {item.activity && <span className="task-row-activity">{item.activity}</span>}
-        <div className="lens-head-spacer" />
-        {/* Full id, right-aligned; only the action buttons (live work) may
-            compress it — then the text ellipsizes, never the buttons. */}
-        <span className="lens-head-id" title={item.id}><span className="lens-head-id-text">{item.id}</span></span>
-        {item.status === 'input_required' && item.pendingCallId && onApprove && onReject && (
-          <>
-            <Button size="small" variant="primary" disabled={held(item.pendingCallId)} onClick={() => decide(item.pendingCallId!, () => onApprove(item.pendingCallId!))}>Approve</Button>
-            <RejectButton kind={item.pendingToolName === STEP_APPROVAL_TOOL ? 'step' : undefined} disabled={held(item.pendingCallId)} onReject={reason => decide(item.pendingCallId!, () => onReject(item.pendingCallId!, reason))} />
-          </>
-        )}
-        {live && <Button size="small" onClick={() => stopTask(item.id)}>Stop</Button>}
-        {/* The transcript below is what a retry resumes from, so the action
-            belongs beside it. */}
-        {item.retryable && <Button size="small" onClick={() => retryTask(item.id)}>Retry</Button>}
-        {rerunnable && <Button size="small" onClick={runAgain}>Run again</Button>}
-      </div>
-      <div className="task-detail-tabs">
-        {item.kind === 'workflow' && (
-          <button className={tab === 'steps' ? 'active' : ''} onClick={() => setTab('steps')}>
-            Steps{steps.length > 0 ? ` (${steps.length})` : ''}
+    <SidePanel icon={StackIcon} title="Tasks" count={items.length} onClose={onClose} storageKey="inspectorWidth">
+      <LensHead
+        onBack={onBack}
+        backLabel="Back to tasks"
+        marks={<>{statusDot(item.status)}{item.kind === 'workflow' && <WorkflowIcon size={12} className="task-row-kind" />}</>}
+        id={item.id}
+        activity={item.activity}
+        figures={[itemDuration(item, now)]}
+        actions={actions.length > 0 ? actions : undefined}
+      >
+        <div className="lens-tabs">
+          {item.kind === 'workflow' && (
+            <button className={tab === 'steps' ? 'active' : ''} onClick={() => setTab('steps')}>
+              Steps{steps.length > 0 ? ` (${steps.length})` : ''}
+            </button>
+          )}
+          <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}>Transcript</button>
+          <button className={tab === 'trace' ? 'active' : ''} onClick={() => setTab('trace')}>
+            Trace{spanTotal > 0 ? ` (${spanTotal})` : ''}
           </button>
-        )}
-        <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}>Transcript</button>
-        <button className={tab === 'trace' ? 'active' : ''} onClick={() => setTab('trace')}>
-          Trace{spanTotal > 0 ? ` (${spanTotal})` : ''}
-        </button>
-      </div>
-      </div>
+        </div>
+      </LensHead>
 
       {tab === 'steps' ? (
         <div className="task-view">

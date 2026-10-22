@@ -543,3 +543,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     (`measureMCPTools`, bounded) and a server that did not answer is
     `unavailable`, never zero. What a server exposes now is the MCP settings'
     own listing — see decisions §5.91.
+94. **A lens's chrome has fixed slots.** The panel header is the lens — icon,
+    name, the list's count — never the item. A detail lens's head (`LensHead`)
+    is one row: back, status dot, kind mark, id, tags, activity on the left;
+    figures and the item's buttons on the right; a tab row comes second. The
+    item's label is the list row's and the transcript's, never the head's. A
+    live mark is the 8px status dot, leading, everywhere — see decisions §5.92.

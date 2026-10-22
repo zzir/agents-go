@@ -1,14 +1,15 @@
 import './trace.css';
-import { useState, useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { CounterLabel, IconButton, Link } from '@primer/react';
 import {
   PulseIcon, ToolsIcon, ArrowSwitchIcon, DiamondIcon,
   DependabotIcon, CpuIcon, ShieldCheckIcon,
   CommentIcon, PlugIcon, TerminalIcon, SyncIcon,
-  ArrowLeftIcon,
 } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
+import { LensHead } from '@/layout/LensHead';
+import { statusDot } from '@/lib/status';
 import { Loading } from '@/components/Loading';
 import { activates } from '@/lib/activation';
 import { useChatActions, useChatSession } from '@/features/chat/ChatSessionContext';
@@ -506,6 +507,10 @@ function tokenText(tokens: { input: number; output: number }): string {
   return (tokens.input + tokens.output).toLocaleString() + ' tok';
 }
 
+function spanText(n: number): string {
+  return n + (n === 1 ? ' span' : ' spans');
+}
+
 // TraceTags marks a run: failed, inputs read from its queue, replaced by a
 // regeneration — the same set on a list row and a detail's meta line.
 function TraceTags({ summary, markers, stale }: { summary: TraceSummary; markers?: TraceMarker[]; stale?: boolean }) {
@@ -520,8 +525,6 @@ function TraceTags({ summary, markers, stale }: { summary: TraceSummary; markers
 
 interface TraceDetailProps {
   segments: TraceRunSegment[];
-  // stale marks a run on a branch the session has moved away from.
-  stale?: boolean;
   isLive?: boolean;
   // payloadSessionId is the session whose stored rows hold these spans' payload:
   // the chat's own by default, an inspected task's child session in the task lens.
@@ -531,14 +534,12 @@ interface TraceDetailProps {
   // The inputs the run read from its queue, placed on the waterfall by time
   // (lib/queuedInputs.ts); they are the transcript's, not spans.
   markers?: TraceMarker[];
-  // lead opens the meta line in place of the token figure — the run lens puts
-  // the run id there, having shown the figure in its head.
-  lead?: ReactNode;
 }
 
-// TraceDetail is one run's trace in full: a meta line (what it cost, its tags)
-// over the waterfall of its spans, one timeline per stretch the run ran in.
-export function TraceDetail({ segments, stale, isLive, payloadSessionId, focusSpanId, markers, lead }: TraceDetailProps) {
+// TraceDetail is one run's trace in full: the waterfall of its spans, one
+// timeline per stretch the run ran in. What the run cost and its tags are the
+// lens head's, not the waterfall's.
+export function TraceDetail({ segments, isLive, payloadSessionId, focusSpanId, markers }: TraceDetailProps) {
   const { loadSpan } = useChatActions();
   const { sessionId } = useChatSession();
   const payloadSession = payloadSessionId || sessionId;
@@ -561,15 +562,8 @@ export function TraceDetail({ segments, stale, isLive, payloadSessionId, focusSp
   }), [segments, loadSpan, payloadSession]);
 
   if (summary.spanCount === 0) return <div className="trace-empty">{isLive ? 'No trace events yet.' : 'No trace events.'}</div>;
-  const tagged = summary.failed || !!markers?.length || stale;
   return (
     <div className="trace-detail">
-      {(lead || summary.tokens || tagged) && (
-        <div className="trace-meta">
-          {lead ?? (summary.tokens && <span className="trace-meta-tokens">{tokenText(summary.tokens)}</span>)}
-          <TraceTags summary={summary} markers={markers} stale={stale} />
-        </div>
-      )}
       {parts.map((p, pi) => {
         // The loop's steps are the agent root's children, so a stretch under
         // one agent span hands its markers down to sit among them.
@@ -612,13 +606,13 @@ interface TraceLensContext {
 
 function TraceRow({ group, label, stale, isLive, markers, onOpen }: { group: TraceGroupView; label: string; stale?: boolean; isLive: boolean; markers?: TraceMarker[]; onOpen: (rootId: string) => void }) {
   const summary = useMemo(() => traceSummary(group.segments), [group.segments]);
-  const spanCountText = summary.spanCount + (summary.spanCount === 1 ? ' span' : ' spans');
+  const spanCountText = spanText(summary.spanCount);
   return (
     <div className="lens-row trace-row" role="button" tabIndex={0} onClick={() => onOpen(group.rootId)}
       onKeyDown={e => { if (activates(e)) { e.preventDefault(); onOpen(group.rootId); } }}>
+      {isLive && statusDot('working')}
       <span className="trace-row-label">{label}</span>
       <TraceTags summary={summary} markers={markers} stale={stale} />
-      {isLive && <span className="trace-tab-live" />}
       {summary.tokens && <span className="trace-row-tokens">{tokenText(summary.tokens)}</span>}
       <CounterLabel title={spanCountText} aria-label={spanCountText}>{summary.spanCount}</CounterLabel>
     </div>
@@ -652,8 +646,11 @@ export function TraceDrawer({ groups, liveRunId, runLabels, staleRuns, markers, 
   );
 }
 
-interface TraceRunPanelProps extends TraceLensContext {
+// The run lens shows no label: the message is the transcript's to show.
+interface TraceRunPanelProps extends Omit<TraceLensContext, 'runLabels'> {
   group: TraceGroupView;
+  // The list's count: the panel header stays the Traces lens's.
+  total: number;
   // The span to open and mark: the run's last model call when opened from its turn.
   focusSpanId?: string;
   // onJump scrolls the chat to the run's user message; absent when the
@@ -664,30 +661,29 @@ interface TraceRunPanelProps extends TraceLensContext {
 }
 
 // TraceRunPanel is the Inspector's "run" lens: one exchange's trace under a
-// head — kept in view while the trace scrolls — that leads back to the list,
-// shows what the run cost and jumps to its message; the run id sits on the
-// meta line as plain text.
-export function TraceRunPanel({ group, liveRunId, runLabels, staleRuns, markers, focusSpanId, onJump, onBack, onClose }: TraceRunPanelProps) {
+// one-row head — back, the run id, its tags, the jump to its message. The
+// panel header stays the list's; the run's label (its message) is the
+// transcript's to show, and what it cost is the Traces row's.
+export function TraceRunPanel({ group, total, liveRunId, staleRuns, markers, focusSpanId, onJump, onBack, onClose }: TraceRunPanelProps) {
   const isLive = group.segments.some(s => s.runId === liveRunId);
   const summary = useMemo(() => traceSummary(group.segments), [group.segments]);
+  const stale = staleRuns?.has(group.rootId);
+  const runMarkers = groupMarkers(markers, group);
   return (
-    <SidePanel icon={PulseIcon} title={runLabel(runLabels, group.rootId)} count={summary.spanCount || undefined} onClose={onClose} storageKey="inspectorWidth">
-      <div className="lens-chrome">
-        <div className="lens-head">
-          <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to traces" tooltipDirection="se" onClick={onBack} />
-          {isLive && <span className="trace-tab-live" />}
-          <div className="lens-head-spacer" />
-          {summary.tokens && <span className="trace-head-tokens">{tokenText(summary.tokens)}</span>}
-          {onJump && <IconButton icon={CommentIcon} variant="invisible" size="small" aria-label="Jump to message" tooltipDirection="sw" onClick={onJump} />}
-        </div>
-      </div>
+    <SidePanel icon={PulseIcon} title="Traces" count={total} onClose={onClose} storageKey="inspectorWidth">
+      <LensHead
+        onBack={onBack}
+        backLabel="Back to traces"
+        marks={isLive && statusDot('working')}
+        id={group.rootId}
+        tags={<TraceTags summary={summary} markers={runMarkers} stale={stale} />}
+        actions={onJump && <IconButton icon={CommentIcon} variant="invisible" size="small" aria-label="Jump to message" tooltipDirection="sw" onClick={onJump} />}
+      />
       <TraceDetail
         segments={group.segments}
-        stale={staleRuns?.has(group.rootId)}
         isLive={isLive}
         focusSpanId={focusSpanId}
-        markers={groupMarkers(markers, group)}
-        lead={<span className="trace-meta-id" title={group.rootId}>{group.rootId}</span>}
+        markers={runMarkers}
       />
     </SidePanel>
   );
@@ -696,16 +692,10 @@ export function TraceRunPanel({ group, liveRunId, runLabels, staleRuns, markers,
 // TraceRunMissingPanel stands in for the run lens while a deep-linked run has
 // no trace in the session (still loading, pruned, or another session's): it
 // says so and leads back to the list.
-export function TraceRunMissingPanel({ runId, loading, onBack, onClose }: { runId: string; loading: boolean; onBack: () => void; onClose: () => void }) {
+export function TraceRunMissingPanel({ runId, total, loading, onBack, onClose }: { runId: string; total: number; loading: boolean; onBack: () => void; onClose: () => void }) {
   return (
-    <SidePanel icon={PulseIcon} title={loading ? 'Trace' : 'Run not found'} onClose={onClose} storageKey="inspectorWidth">
-      <div className="lens-chrome">
-        <div className="lens-head">
-          <IconButton icon={ArrowLeftIcon} variant="invisible" size="small" aria-label="Back to traces" tooltipDirection="se" onClick={onBack} />
-          <div className="lens-head-spacer" />
-          <span className="lens-head-id" title={runId}><span className="lens-head-id-text">{runId}</span></span>
-        </div>
-      </div>
+    <SidePanel icon={PulseIcon} title="Traces" count={total} onClose={onClose} storageKey="inspectorWidth">
+      <LensHead onBack={onBack} backLabel="Back to traces" id={runId} />
       {loading
         ? <Loading kind="inline" />
         : <div className="trace-empty">This run has no trace in this session — it may belong to another session, or its trace was removed.</div>}

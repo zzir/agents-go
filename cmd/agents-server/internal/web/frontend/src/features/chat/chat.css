@@ -695,8 +695,8 @@
 }
 
 /* A rejection's reason box (RejectButton): a line of its own under the
-   buttons of whichever wrapping row holds them. A lens head does not
-   wrap (its id gives way instead), so there the box hangs below it. */
+   buttons of whichever wrapping row holds them. A lens head does not wrap
+   (its id gives way instead), so there the box hangs below it. */
 .reject-reason { flex: 1 0 100%; }
 .lens-head .reject-reason { position: absolute; top: 100%; left: 0; right: 0; z-index: 1; }
 
@@ -979,9 +979,8 @@
 /* Stop sits apart on the right — destructive, away from the primary actions. */
 .task-row-stop { margin-left: auto; }
 
-/* Detail-header status dot (compact statusLabel): color + pulse carry the
-   state, the words live in the tooltip/aria-label. pulse-live @keyframes
-   comes from trace.css (same bundle). */
+/* The status dot every list row and lens head leads with: color + pulse
+   carry the state, the words live in the tooltip/aria-label. */
 .task-status-dot {
   width: 8px; height: 8px;
   border-radius: var(--borderRadius-full);
@@ -993,51 +992,9 @@
 .task-status-dot-failed         { background: var(--fgColor-danger); }
 .task-status-dot-cancelled      { background: var(--fgColor-muted); }
 
-/* A detail lens's head (a task, a run): back, state, the id to copy, actions. */
-.lens-head {
-  position: relative;
-  display: flex; align-items: center; gap: var(--base-size-8);
-  padding-bottom: var(--base-size-8);
-  border-bottom: 1px solid var(--borderColor-muted);
-  margin-bottom: var(--base-size-8);
-}
-/* On a narrow panel the id gives way first (the whole of it is in the
-   tooltip), then the activity text; the action buttons stay whole. */
-.lens-head > * { flex-shrink: 0; }
-.lens-head > .task-row-activity { flex-shrink: 1; }
-.lens-head-spacer { flex: 1; }
-.lens-head-id {
-  font-family: var(--fontStack-monospace); font-size: var(--base-text-size-xs);
-  color: var(--fgColor-muted);
-  display: inline-flex; align-items: center;
-  flex-shrink: 100; min-width: 24px; overflow: hidden;
-}
-.lens-head-id-text {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* The lens's chrome — its head, and a task's tab row — stays put while the
-   body scrolls under it; the padding keeps the band below it opaque, and the
-   negative top pulls it through the body's own padding, flush with the header. */
-.lens-chrome {
-  position: sticky; top: calc(-1 * var(--base-size-8)); z-index: 2;
-  background: var(--bgColor-default);
-  padding-bottom: var(--base-size-8);
-}
-.lens-chrome > .lens-head, .lens-chrome > .task-detail-tabs { margin-bottom: 0; }
-.lens-chrome > .lens-head + .task-detail-tabs { margin-top: var(--base-size-8); }
-
-.task-detail-tabs { display: flex; gap: var(--base-size-4); margin-bottom: var(--base-size-8); }
-.task-detail-tabs button {
-  border: none; background: none; cursor: pointer;
-  font-size: var(--base-text-size-xs);
-  color: var(--fgColor-muted);
-  padding: var(--base-size-2) var(--base-size-8);
-  border-radius: var(--borderRadius-medium);
-}
-.task-detail-tabs button.active {
-  color: var(--fgColor-default);
-  background: var(--bgColor-muted);
-  font-weight: var(--base-text-weight-medium);
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .task-view { display: flex; flex-direction: column; gap: var(--base-size-8); }

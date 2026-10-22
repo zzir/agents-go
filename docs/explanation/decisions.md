@@ -1914,3 +1914,26 @@ server reconfigured since reads stale until the next run. What a server
 exposes now is the MCP settings' own listing.
 
 Rules: invariant 93.
+
+### 5.92 The Inspector's header is the lens, not the item
+
+Decided 2026-10-22.
+
+**Decision.** Every lens keeps the panel header as the lens: icon, name, the
+list's count. A detail lens adds `LensHead` under it: one row with identity
+on the left (back, status dot, kind mark, id, tags, activity) and figures and
+buttons on the right (a task's duration and decisions, a run's jump); a tab
+row comes second. The item's label is not repeated: the list row and the
+transcript show it. Neither the run lens nor the waterfall carries a token
+figure: what a trace cost is read where it was opened from — the Traces row,
+the task's card. One live mark everywhere: the 8px status dot, leading.
+
+**Rejected.** The item's label as the panel title with back in the header,
+and a breadcrumb (`Tasks / label`) in the header — both change the header per
+item, for a label the person just clicked. A title row of the label over a
+meta line (this decision's first cut) — a row of chrome for the same label.
+
+**Cost accepted.** On a narrow panel the head's id and activity give way to
+its buttons; the whole id stays in the tooltip.
+
+Rules: invariant 94.

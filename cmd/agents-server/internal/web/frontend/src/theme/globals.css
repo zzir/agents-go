@@ -407,6 +407,79 @@ a:hover {
     padding: var(--base-size-8);
 }
 
+/* A detail lens's chrome (LensHead): one row — back, marks, id, tags,
+   activity, figures, buttons — and a tab row when the lens has views. Sticky
+   while the body scrolls: the padding keeps the band below it opaque, and the
+   negative top pulls it through the body's padding, flush with the header. */
+.lens-chrome {
+    position: sticky;
+    top: calc(-1 * var(--base-size-8));
+    z-index: 2;
+    background: var(--bgColor-default);
+    padding-bottom: var(--base-size-8);
+}
+.lens-head {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-8);
+    min-width: 0;
+    padding-bottom: var(--base-size-8);
+    border-bottom: 1px solid var(--borderColor-muted);
+    font-size: var(--base-text-size-xs);
+    color: var(--fgColor-muted);
+}
+/* The id gives way first (the whole of it is in the tooltip), then the
+   activity; marks, figures and buttons stay whole. */
+.lens-head > * { flex-shrink: 0; }
+.lens-head-id {
+    font-family: var(--fontStack-monospace);
+    flex-shrink: 100;
+    min-width: 24px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.lens-head-activity {
+    font-family: var(--fontStack-monospace);
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.lens-head-spacer { flex: 1; min-width: 0; }
+.lens-head-fig {
+    font-family: var(--fontStack-monospace);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.lens-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--base-size-4);
+}
+
+.lens-tabs {
+    display: flex;
+    gap: var(--base-size-4);
+    margin-top: var(--base-size-8);
+}
+.lens-tabs button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: var(--base-text-size-xs);
+    color: var(--fgColor-muted);
+    padding: var(--base-size-2) var(--base-size-8);
+    border-radius: var(--borderRadius-medium);
+}
+.lens-tabs button.active {
+    color: var(--fgColor-default);
+    background: var(--bgColor-muted);
+    font-weight: var(--base-text-weight-medium);
+}
+
 @media (max-width: 767px) {
     .side-panel {
         position: fixed;
