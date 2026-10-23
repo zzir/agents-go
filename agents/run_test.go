@@ -433,7 +433,10 @@ func TestRun_MaxTurnsUnlimited(t *testing.T) {
 	model := &fakeModel{responses: responses}
 	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{MaxTurns: MaxTurnsUnlimited}})
+	// The repeat valve would see the identical calls; this test is the budget's.
+	res, err := RunSync(context.Background(), agent, "go", RunOptions{Exec: ExecOptions{
+		MaxTurns: MaxTurnsUnlimited, ToolLoop: ToolLoopPolicy{MaxRepeatedCalls: -1},
+	}})
 	if err != nil {
 		t.Fatalf("unlimited run should not hit a turn cap: %v", err)
 	}

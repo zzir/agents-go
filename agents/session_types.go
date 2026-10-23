@@ -58,4 +58,5 @@ const (
 	DiagContextOverflow     = session.DiagContextOverflow
 	DiagContextResetIgnored = session.DiagContextResetIgnored
 	DiagResponseTruncated   = session.DiagResponseTruncated
+	DiagToolLoop            = session.DiagToolLoop
 )

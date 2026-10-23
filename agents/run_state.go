@@ -15,7 +15,7 @@ import (
 
 // RunStateSchemaVersion is the version stamped into serialized RunState;
 // decoding accepts the same major, minor within the window — see decisions §5.18.
-const RunStateSchemaVersion = "1.8"
+const RunStateSchemaVersion = "1.9"
 
 // runStateOldestDecodableMinor is the oldest minor this decoder accepts — see
 // decisions §5.18.
@@ -90,6 +90,9 @@ type RunState struct {
 	// usagePending records whether the interrupted response's usage was still
 	// unattributed at the pause — see spec §2.7f.
 	usagePending bool
+
+	// toolLoop is what the tool-loop valves had counted at the pause.
+	toolLoop toolLoopState
 }
 
 // Approve records approval for a pending tool call; always approves every
@@ -219,6 +222,8 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *run
 		}
 		r.disclosed[name] = true
 	}
+	// A copy, so a second resume of the same state counts from the pause.
+	r.toolLoop = state.toolLoop.carried()
 	// First-turn input guardrails are not re-run on resume; this is their only source.
 	r.guardrailResults = state.GuardrailResults
 	// tool_choice stays reset for every agent that had used tools before the pause.
@@ -302,6 +307,9 @@ type serialRunState struct {
 	// UsagePending records an unattributed interrupted-response usage (see
 	// RunState.usagePending); a pointer so absent decodes as re-arm.
 	UsagePending *bool `json:"usage_pending,omitempty"`
+	// ToolLoop is the tool-loop valves' count (schema ≥ 1.9); absent starts
+	// it from zero.
+	ToolLoop *serialToolLoop `json:"tool_loop,omitempty"`
 
 	// Guardrail results accumulated before the pause (schema ≥ 1.3), serialized
 	// lossily as name + output payload — the live guardrail func is not restored.
@@ -322,6 +330,14 @@ type serialServerCursor struct {
 	ResponseID         string `json:"response_id,omitempty"`
 	ItemCount          int    `json:"item_count,omitempty"`
 	ConversationActive bool   `json:"conversation_active,omitempty"`
+}
+
+// serialToolLoop is the persisted form of toolLoopState.
+type serialToolLoop struct {
+	Turns       int                       `json:"turns,omitempty"`
+	Seen        map[string]toolLoopRepeat `json:"seen,omitempty"`
+	FailedTurns int                       `json:"failed_turns,omitempty"`
+	NoticedAt   int                       `json:"noticed_at,omitempty"`
 }
 
 // serialGuardrailResult is the persisted form of a guardrail result: name,
@@ -440,6 +456,9 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 	}
 	if s.CurrentAgent != nil {
 		out.CurrentAgent = s.CurrentAgent.Name
+	}
+	if tl := s.toolLoop; tl.turns > 0 {
+		out.ToolLoop = &serialToolLoop{Turns: tl.turns, Seen: tl.seen, FailedTurns: tl.failedTurns, NoticedAt: tl.noticedAt}
 	}
 	if s.cursor != (serverCursor{}) {
 		out.ServerCursor = &serialServerCursor{
@@ -665,6 +684,9 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 	}
 	if st.Usage == nil {
 		st.Usage = NewUsage()
+	}
+	if in.ToolLoop != nil {
+		st.toolLoop = toolLoopState{turns: in.ToolLoop.Turns, seen: in.ToolLoop.Seen, failedTurns: in.ToolLoop.FailedTurns, noticedAt: in.ToolLoop.NoticedAt}
 	}
 	if in.ServerCursor != nil {
 		st.cursor = serverCursor{

@@ -8881,7 +8881,7 @@ export interface components {
             unsupported?: string[];
         };
         /** @enum {string} */
-        "session.DiagnosticType": "model_retry" | "model_fallback" | "stream_error" | "tool_panic" | "tool_timeout" | "compaction_failed" | "response_truncated" | "context_overflow" | "context_reset_ignored";
+        "session.DiagnosticType": "model_retry" | "model_fallback" | "stream_error" | "tool_panic" | "tool_timeout" | "compaction_failed" | "response_truncated" | "context_overflow" | "context_reset_ignored" | "tool_loop";
         /**
          * @description Code classifies the underlying error, when there was one.
          * @enum {string}

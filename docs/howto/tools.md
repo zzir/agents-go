@@ -65,6 +65,12 @@ t.FailureErrorFunction = func(ctx context.Context, tc *agents.ToolContext, err e
 t.FailureErrorFunction = nil // a tool error now aborts the whole run
 ```
 
+Return an error when the tool could not do its job (a crash, a timeout, an
+unreachable backend). When it did its job and the answer is a failure (no such
+record, an upstream 4xx), return a `ToolResult` with `IsError` set: turns of
+nothing but errors trip the [tool-loop valve](running_agents.md#tool-loop-safety-valves),
+reported failures do not.
+
 ### Timeouts
 
 `Timeout` bounds one invocation; on expiry the call fails with `*agents.ToolTimeoutError` immediately (fed back to the model via `FailureErrorFunction` when set, fatal otherwise). The deadline is enforced by the runner rather than by the tool's cooperation: a tool that ignores its context cannot stall the run — its goroutine keeps running in the background until it returns on its own and its late result is discarded. Tools should still honor `ctx` cancellation to release resources promptly:

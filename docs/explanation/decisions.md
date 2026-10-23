@@ -1937,3 +1937,34 @@ meta line (this decision's first cut) — a row of chrome for the same label.
 its buttons; the whole id stays in the tooltip.
 
 Rules: invariant 94.
+
+### 5.93 A tool loop is judged by progress, and closes out before it fails
+
+Decided 2026-10-23.
+
+**Decision.** A valve trips on a call returning the same output again within
+a short window, or on turns in which nothing ran; a result a tool reports is
+progress, `IsError` or not. The first trip tells the model, a second within the
+window withdraws the tools for one closing turn, and the run ends on the
+model's own account; `Abort` keeps the old fatal stop.
+
+**Rejected.** Counting turns where every result had `IsError` — a model working
+through alternatives against a failing upstream (three ID formats, a second
+post, another provider) is making progress, and the flag is a renderer hint
+(spec §2.7b). Failing the run on a trip — the model's findings never reach the
+user, and "continue" starts a fresh count, so it saved no spend. Judging repeats
+by tool and arguments alone — re-running tests after an edit, or polling a job,
+repeats the call with a new answer. Counting repeats over the whole run — a
+coding agent re-reads an unchanged file across forty turns, and a notice heeded
+twenty turns ago would turn an unrelated repeat into the closing turn.
+Withdrawing the tools from the request — Anthropic refuses a history with tool
+calls and no tool definitions, and the prompt-cache prefix changes. Putting the
+notice in the item a renderer shows — a `json` or `table` output stops parsing.
+
+**Cost accepted.** Up to two more model calls than the old abort. Outputs that
+embed a fresh request id or timestamp never repeat, and a loop that alternates
+calls more than the window apart is not seen, so such loops run to the turn
+budget. What the model read of a tripping output differs from what the session
+displays; the `tool_loop` diagnostic is where a person sees the notice.
+
+Rules: spec §2.7d.

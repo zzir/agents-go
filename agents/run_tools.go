@@ -20,7 +20,7 @@ type functionToolResult struct {
 	tool                *Tool
 	outputItem          *RunItem
 	output              any
-	callID              string
+	call                functionCall
 	nestedInterruptions []*ToolApprovalItem
 	nestedState         *RunState
 	// usage is what the tool spent on model calls of its own (an agent-as-tool's
@@ -31,6 +31,8 @@ type functionToolResult struct {
 	terminate bool
 	// addedTools are deferred tools this result discloses.
 	addedTools []string
+	// failed marks a call that did not run to a result — see spec §2.7d.
+	failed bool
 }
 
 // toolPanicError is a panic recovered from user tool code. Error() is one line
@@ -160,7 +162,7 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 			tool:       run.Tool,
 			outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
 			output:     msg,
-			callID:     run.Call.CallID,
+			call:       run.Call,
 		}, nil
 	}
 
@@ -180,13 +182,14 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 	// sandbox exec — via the context.
 	result, err := invokeTool(tracing.WithSpan(ctx, span), run.Tool, tc, run.Call.Arguments)
 	out := result.ModelOutput()
+	failed := false
 	if err != nil {
 		// A nested run paused for approval is not a failure: record the
 		// interruptions and paused state (no output item) so the parent pauses.
 		if ni, ok := errors.AsType[*nestedRunInterrupt](err); ok {
 			return functionToolResult{
 				tool:                run.Tool,
-				callID:              run.Call.CallID,
+				call:                run.Call,
 				nestedInterruptions: ni.interruptions,
 				nestedState:         ni.state,
 			}, nil
@@ -230,6 +233,7 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 		// the model sees the message either way.
 		result = TextResult(stringifyToolOutput(out))
 		result.IsError = true
+		failed = true
 	} else if logToolData {
 		span.Set("output", stringifyToolOutput(out))
 	}
@@ -257,13 +261,14 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 	outputItem.IsError = result.IsError
 	outputItem.NestedUsage = result.Usage
 	return functionToolResult{
-		callID:     run.Call.CallID,
+		call:       run.Call,
 		tool:       run.Tool,
 		outputItem: outputItem,
 		output:     out,
 		usage:      result.Usage,
 		terminate:  result.Terminate,
 		addedTools: result.AddedTools,
+		failed:     failed,
 	}, nil
 }
 
@@ -283,7 +288,7 @@ func (r *runner) partitionByApproval(ctx context.Context, agent *Agent, runs []t
 			tool:       run.Tool,
 			outputItem: newFunctionCallOutputItem(agent, run.Call.CallID, msg),
 			output:     msg,
-			callID:     run.Call.CallID,
+			call:       run.Call,
 		}
 	}
 	store := r.rc.Approvals

@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,30 +12,37 @@ import (
 
 func failingTool(t *testing.T, name string) *Tool {
 	t.Helper()
-	return NewTool(name, "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	return NewTool(name, "", func(context.Context, *ToolContext, struct{ N int }) (string, error) {
 		return "", errors.New("still broken")
 	})
 }
 
-// A model stuck calling a broken tool must not burn the whole turn budget
-// rediscovering that it is broken — and bill for it.
-func TestToolLoop_AbortsOnConsecutiveAllFailedTurns(t *testing.T) {
-	responses := make([]*ModelResponse, 8)
-	for i := range responses {
-		responses[i] = modelResp(functionCallOutput(t, "broken", "c1", `{}`))
+// failingTurns scripts n turns calling the named tool with fresh arguments
+// each time, so only the failed-turns valve can see a loop.
+func failingTurns(t *testing.T, name string, n int) []*ModelResponse {
+	t.Helper()
+	out := make([]*ModelResponse, n)
+	for i := range out {
+		out[i] = modelResp(functionCallOutput(t, name, fmt.Sprintf("c%d", i), fmt.Sprintf(`{"N":%d}`, i)))
 	}
-	model := &fakeModel{responses: responses}
+	return out
+}
+
+// Under Abort a trip is the old fatal valve: the run stops on the first one,
+// before spending the rest of its turn budget.
+func TestToolLoop_AbortFailsOnTheFirstTrip(t *testing.T) {
+	model := &fakeModel{responses: failingTurns(t, "broken", 8)}
 	agent := &Agent{Name: "a", Tools: []*Tool{failingTool(t, "broken")}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{
-		Exec: ExecOptions{MaxTurns: 20, ToolLoop: ToolLoopPolicy{MaxConsecutiveErrorTurns: 3}},
+		Exec: ExecOptions{MaxTurns: 20, ToolLoop: ToolLoopPolicy{Abort: true}},
 	})
 	var tle *ToolLoopError
 	if !errors.As(err, &tle) {
 		t.Fatalf("err = %v, want *ToolLoopError", err)
 	}
-	if tle.Turns != 3 {
-		t.Errorf("turns = %d, want 3", tle.Turns)
+	if tle.FailedTurns != 3 || tle.Repeats != 0 {
+		t.Errorf("trip = %+v, want 3 failed turns", tle)
 	}
 	if CodeOf(err) != CodeToolLoop {
 		t.Errorf("code = %q, want %q", CodeOf(err), CodeToolLoop)
@@ -62,7 +70,7 @@ func TestToolLoop_ASuccessClearsTheCounter(t *testing.T) {
 	agent := &Agent{Name: "a", Tools: []*Tool{flaky}, ModelImpl: &fakeModel{responses: responses}}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
-		Exec: ExecOptions{MaxTurns: 20, ToolLoop: ToolLoopPolicy{MaxConsecutiveErrorTurns: 2}},
+		Exec: ExecOptions{MaxTurns: 20, ToolLoop: ToolLoopPolicy{MaxConsecutiveFailedTurns: 2, MaxRepeatedCalls: -1, Abort: true}},
 	})
 	if err != nil {
 		t.Fatalf("an alternating tool tripped the loop valve: %v", err)
@@ -78,28 +86,31 @@ func TestToolLoop_ATurnWithoutToolsIsNotCounted(t *testing.T) {
 		modelResp(messageOutput(t, "just talking")),
 	}}}
 	if _, err := RunSync(context.Background(), agent, "go", RunOptions{
-		Exec: ExecOptions{ToolLoop: ToolLoopPolicy{MaxConsecutiveErrorTurns: 1}},
+		Exec: ExecOptions{ToolLoop: ToolLoopPolicy{MaxConsecutiveFailedTurns: 1, Abort: true}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestToolLoop_NegativeLimitDisablesTheValve(t *testing.T) {
-	responses := make([]*ModelResponse, 4)
-	for i := range responses[:3] {
+func TestToolLoop_NegativeLimitsDisableTheValves(t *testing.T) {
+	responses := make([]*ModelResponse, 5)
+	for i := range responses[:4] {
 		responses[i] = modelResp(functionCallOutput(t, "broken", "c1", `{}`))
 	}
-	responses[3] = modelResp(messageOutput(t, "gave up"))
+	responses[4] = modelResp(messageOutput(t, "gave up"))
 	agent := &Agent{Name: "a", Tools: []*Tool{failingTool(t, "broken")}, ModelImpl: &fakeModel{responses: responses}}
 
 	res, err := RunSync(context.Background(), agent, "go", RunOptions{
-		Exec: ExecOptions{MaxTurns: 10, ToolLoop: ToolLoopPolicy{MaxConsecutiveErrorTurns: -1}},
+		Exec: ExecOptions{MaxTurns: 10, ToolLoop: ToolLoopPolicy{MaxConsecutiveFailedTurns: -1, MaxRepeatedCalls: -1, Abort: true}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.FinalOutputString() != "gave up" {
 		t.Errorf("final = %q", res.FinalOutputString())
+	}
+	if len(res.Diagnostics) != 0 {
+		t.Errorf("diagnostics = %+v, want none from a disabled valve", res.Diagnostics)
 	}
 }
 
@@ -127,8 +138,13 @@ func TestToolLoop_FinalTurnWithoutTools(t *testing.T) {
 	if res.FinalOutputString() != "here is what I found" {
 		t.Errorf("final = %q", res.FinalOutputString())
 	}
-	if len(model.lastReq.Tools) != 0 {
-		t.Errorf("the final turn offered %d tools, want none", len(model.lastReq.Tools))
+	// The tools stay defined, uncallable: a provider may refuse calls in the
+	// history without their definitions.
+	if len(model.lastReq.Tools) != 1 {
+		t.Errorf("the final turn sent %d tools, want the agent's 1", len(model.lastReq.Tools))
+	}
+	if s := model.lastReq.Settings; s == nil || s.ToolChoice != ToolChoiceNone {
+		t.Errorf("final turn settings = %+v, want tool_choice none", s)
 	}
 }
 
@@ -275,24 +291,20 @@ func TestSequentialTool_AbsentMeansParallel(t *testing.T) {
 
 // A panic is a failure like any other: with the default FailureErrorFunction it
 // becomes an IsError output that passes through the same tail and counts
-// toward the consecutive-error valve (spec §2.7d).
+// toward the failed-turns valve (spec §2.7d).
 func TestToolLoop_PanicsCountAsFailedTurns(t *testing.T) {
-	panicking := NewTool("boom", "", func(context.Context, *ToolContext, struct{}) (string, error) {
+	panicking := NewTool("boom", "", func(context.Context, *ToolContext, struct{ N int }) (string, error) {
 		panic("kaboom")
 	})
-	responses := make([]*ModelResponse, 8)
-	for i := range responses {
-		responses[i] = modelResp(functionCallOutput(t, "boom", "c1", `{}`))
-	}
-	model := &fakeModel{responses: responses}
+	model := &fakeModel{responses: failingTurns(t, "boom", 8)}
 	agent := &Agent{Name: "a", Tools: []*Tool{panicking}, ModelImpl: model}
 
 	_, err := RunSync(context.Background(), agent, "go", RunOptions{
-		Exec: ExecOptions{MaxTurns: 20, ToolLoop: ToolLoopPolicy{MaxConsecutiveErrorTurns: 3}},
+		Exec: ExecOptions{MaxTurns: 20, ToolLoop: ToolLoopPolicy{Abort: true}},
 	})
 	var tle *ToolLoopError
-	if !errors.As(err, &tle) {
-		t.Fatalf("err = %v, want *ToolLoopError — a panicking tool never tripped the valve", err)
+	if !errors.As(err, &tle) || tle.FailedTurns != 3 {
+		t.Fatalf("err = %v, want a failed-turns *ToolLoopError — a panicking tool never tripped the valve", err)
 	}
 	if model.calls != 3 {
 		t.Errorf("model calls = %d, want 3", model.calls)

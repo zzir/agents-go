@@ -265,10 +265,6 @@ func (r *runner) executeToolsAndSideEffects(
 	}
 	functionResults := orderToolResults(pr.CallIDs, executed, rejected, refusedHandoffs, unknownCallResults(agent, unknown))
 
-	// The consecutive-error valve — see spec §2.7d.
-	if err := r.noteToolTurn(functionResults); err != nil {
-		return nil, err
-	}
 	r.discloseTools(functionResults)
 
 	var nestedInterruptions []*ToolApprovalItem
@@ -282,7 +278,7 @@ func (r *runner) executeToolsAndSideEffects(
 				if nestedStates == nil {
 					nestedStates = map[string]*RunState{}
 				}
-				nestedStates[fr.callID] = fr.nestedState
+				nestedStates[fr.call.CallID] = fr.nestedState
 			}
 			continue
 		}
@@ -300,6 +296,11 @@ func (r *runner) executeToolsAndSideEffects(
 			Interruptions: nestedInterruptions,
 			NestedStates:  nestedStates,
 		}, nil
+	}
+
+	// The tool-loop valves see a turn that did not pause — see spec §2.7d.
+	if err := r.noteToolTurn(ctx, functionResults); err != nil {
+		return nil, err
 	}
 
 	// Handoffs take precedence: switch to the first requested target agent.
@@ -412,7 +413,7 @@ func orderToolResults(callIDs []string, groups ...[]functionToolResult) []functi
 	byCallID := make(map[string]functionToolResult, len(callIDs))
 	for _, g := range groups {
 		for _, r := range g {
-			byCallID[r.callID] = r
+			byCallID[r.call.CallID] = r
 		}
 	}
 	out := make([]functionToolResult, 0, len(byCallID))

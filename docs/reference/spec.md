@@ -71,7 +71,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7](#27-tools) | Tools | Return values, execution, and the approval partition |
 | [§2.7b](#27b-tool-results) | Tool results | `ToolResult` separates what the model sees from what the host sees |
 | [§2.7c](#27c-tool-capabilities-are-fields) | Tool capabilities are fields | A tool's capabilities are fields on `*Tool`, not interfaces |
-| [§2.7d](#27d-tool-loop-safety-valves) | Tool-loop safety valves | The loop's own failure modes, and the valves that bound them |
+| [§2.7d](#27d-tool-loop-safety-valves) | Tool-loop safety valves | A loop that stops making progress: a notice, then a closing turn, or `Abort` |
 | [§2.7e](#27e-truncated-responses) | Truncated responses | A provider-truncated response, and what the run does with it |
 | [§2.7f](#27f-usage-attribution) | Usage attribution | Exactly one entry per response carries that response's `Usage` |
 | [§2.7h](#27h-schema-validation) | Schema validation | Where arguments, handoff input and structured output are validated |
@@ -881,7 +881,7 @@ An empty result with no error is a **success with no output**, not a failure.
   own recover is a net, not the tool's failure.
 - Malformed argument JSON gets dedicated wording that prompts the model to resend
   valid JSON.
-- Consecutive all-failed turns abort the run — see
+- Turns in which every call failed to run trip the tool-loop valve — see
   [§2.7d](#27d-tool-loop-safety-valves).
 
 #### Approval
@@ -920,7 +920,8 @@ A tool returns a `ToolResult`, not a bare value; a plain value (string, struct,
 - **`Terminate` requires unanimity.** The run stops after a batch only when
   every tool in it asks.
 - **`IsError` marks a failure for renderers; the content still reaches the
-  model.** A tool error handled by `FailureErrorFunction` sets it automatically.
+  model.** A tool error handled by `FailureErrorFunction` sets it automatically;
+  a result returned with it set still counts as one the tool ran to ([§2.7d](#27d-tool-loop-safety-valves)).
 - **A text part past `ExecOptions.ToolOutputLimit` reaches the model elided**:
   its head and tail around an `[omitted N bytes]` marker, after the output
   guardrails; image and file parts are untouched, and a negative limit disables
@@ -958,18 +959,40 @@ is a **field** on it: `OnInvoke`, `Description`, `ParamsJSONSchema`, `Strict`,
 
 ### 2.7d Tool-loop safety valves
 
-The loop's own failure modes, where an agent keeps going and gets nowhere:
+The loop's own failure mode, where an agent keeps calling tools and gets nowhere:
 
-- **Consecutive all-failed turns abort the run.**
-  `ToolLoop.MaxConsecutiveErrorTurns` ([§4](#4-reference-behavior-you-can-rely-on))
-  counts TURNS in which *every* tool call failed; any success clears it, and a
-  turn with no tool calls is neither counted nor cleared. A negative value disables it.
-- **A call naming no tool is a failed call under this valve**
-  ([§2.2](#22-ordering-within-a-turn) step 7): its not-found output is an
-  error output, so a turn of only such calls counts.
+- **The valves watch progress, not failure.** A result a tool reports, `IsError`
+  included (an MCP `isError`, an upstream 4xx), answered the call and moves no
+  valve by itself — see [decisions §5.93](../explanation/decisions.md#593-a-tool-loop-is-judged-by-progress-and-closes-out-before-it-fails).
+- **A repeated result trips.** `ToolLoop.MaxRepeatedCalls` counts how often one
+  call (same tool, same arguments compared as parsed JSON) returned the same
+  output; reaching the limit trips, and so does every repeat after it.
+- **A repeat is recent or it is nothing.** A result not seen again within
+  `toolLoopWindow` tool turns starts its count over; a batch that ends the run
+  (`Terminate`) is not counted.
+- **So does a run of turns in which nothing ran.** `ToolLoop.MaxConsecutiveFailedTurns`
+  counts TURNS in which every call failed to run: errored, panicked, timed out,
+  named no tool, or was refused unrun ([§2.7e](#27e-truncated-responses)).
+- **Any call that ran to a result clears the failed-turns count**; a turn with
+  no tool calls is neither counted nor cleared. A negative limit disables a valve.
+- **The first trip is a notice, the second within the window a closing turn.**
+  The notice is appended to what the model reads of the output that tripped (a
+  failed turn's last) and to nothing a renderer shows; a trip within
+  `toolLoopWindow` tool turns of a notice appends the closing notice instead
+  and makes the next turn tool-free.
+- **A trip records a `tool_loop` `Diagnostic`, and a closed-out run ends
+  normally** with the closing turn's answer as its final output.
+- **`ToolLoop.Abort` makes the first trip fatal** with `*ToolLoopError`.
+- **A closing turn runs nothing it returns**: a tool call there fails the run
+  with the `*ToolLoopError` of the trip that closed it.
+- **A tool-free turn keeps the tools on the wire under `tool_choice: none`**,
+  and it spends turn budget like any other.
 - **`ToolLoop.FinalTurnWithoutTools` is opt-in.** With it, an exhausted turn
-  budget buys one more model call **with no tools and no handoffs**, so the
-  model closes out in prose.
+  budget buys one more tool-free model call, so the model closes out in prose.
+- **The count rides the `RunState`; a new run starts from zero.** A turn that
+  pauses is counted on resume, over the calls that ran after the pause.
+- **Queued input that continues a closed-out run gets the tools back**
+  ([§2.11b](#211b-run-control)); the counts carry on.
 - **One `Sequential` tool serializes the whole batch.**
 
 ### 2.7e Truncated responses
@@ -1389,8 +1412,9 @@ are open — see [§6.3](#63-token-and-deadline-budgets).
   finish through the same tail as a model-produced answer (`finishRun`):
   agent-end hook, output guardrails, persistence. There is no side door to
   "finished".
-- **`ToolLoopError` has no handler.** A tripped tool-loop valve is always
-  fatal.
+- **A tripped tool-loop valve recovers by itself, and `ToolLoopError` has no
+  handler.** It arises only under `ToolLoop.Abort` or from a closing turn that
+  still calls a tool ([§2.7d](#27d-tool-loop-safety-valves)).
 - **An empty final turn retries before it fails.** With no `InvalidFinalOutput`
   handler (or one that declines), a structured-output turn that produced no
   text calls the model again.
@@ -1399,7 +1423,7 @@ are open — see [§6.3](#63-token-and-deadline-budgets).
   of `finishRun`; `MaxTurns` still bounds the continued run.
 - Overflow retries spend no turn budget and move the tool-loop valve neither
   way ([§2.5g](#25g-context-overflow)); only tool-calling turns count toward
-  `MaxConsecutiveErrorTurns` ([§2.7d](#27d-tool-loop-safety-valves));
+  `MaxConsecutiveFailedTurns` ([§2.7d](#27d-tool-loop-safety-valves));
   `ShouldStopAfterTurn` is asked before `PrepareNextTurn`
   ([§2.3a](#23a-the-save-point)).
 
@@ -1976,7 +2000,10 @@ Defaults that callers may depend on:
 | Handoff input schemas | strict | `Handoff.NonStrictSchema: true` opts out; the zero value is the strict default |
 | Tool errors | fed back to the model | `DefaultToolErrorFunction`; set the field to `nil` to make them fatal |
 | Tool concurrency | unlimited | Bound with `MaxToolConcurrency` |
-| `ToolLoop.MaxConsecutiveErrorTurns` | 3 | Turns in which every tool call failed; a negative value disables it ([§2.7d](#27d-tool-loop-safety-valves)) |
+| `ToolLoop.MaxRepeatedCalls` | 3 | Times one call returned the same output in a run; a negative value disables it ([§2.7d](#27d-tool-loop-safety-valves)) |
+| `ToolLoop.MaxConsecutiveFailedTurns` | 3 | Turns in which every tool call failed to run; a negative value disables it ([§2.7d](#27d-tool-loop-safety-valves)) |
+| Tool-loop trip | notice, then a closing turn | `ToolLoop.Abort` makes the first trip a `*ToolLoopError` ([§2.7d](#27d-tool-loop-safety-valves)) |
+| `toolLoopWindow` | 3 tool turns | How long a repeat's count and a notice stay live ([§2.7d](#27d-tool-loop-safety-valves)) |
 | `Overflow.MaxRetries` | 0 | An overflow is reported, never retried, unless set ([§2.5g](#25g-context-overflow)) |
 | Background tasks | depth 1, 6 concurrent per parent, 300-rune summaries, 120s `task_status` wait, 3 attempts, 50 continuations | `tasks.DefaultMaxDepth`, `DefaultMaxConcurrentPerParent`, `DefaultSummaryLimit`, `DefaultMaxStatusWait`, `DefaultMaxAttemptsPerTask`, `DefaultMaxContinuations` ([§2.13](#213-background-tasks)) |
 | `ToolOutputLimit` | 64 KiB per text part | `DefaultToolOutputLimit`; `-1` disables; applies to every tool, a sandbox tool's own cap included ([§2.7b](#27b-tool-results)) |

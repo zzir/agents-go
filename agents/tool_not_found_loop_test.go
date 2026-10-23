@@ -14,13 +14,13 @@ func toolNotFoundOptions(limit int) agents.RunOptions {
 	return agents.RunOptions{Exec: agents.ExecOptions{
 		MaxTurns:             20,
 		ToolNotFoundBehavior: agents.ToolNotFoundReturnToModel,
-		ToolLoop:             agents.ToolLoopPolicy{MaxConsecutiveErrorTurns: limit},
+		ToolLoop:             agents.ToolLoopPolicy{MaxConsecutiveFailedTurns: limit, MaxRepeatedCalls: -1, Abort: true},
 	}}
 }
 
 // A model that keeps calling a tool that does not exist is looping like one
 // calling a broken tool: the not-found output is a failed call, and the
-// consecutive-error valve stops the run (spec §2.7d).
+// failed-turns valve trips (spec §2.7d).
 func TestUnknownToolTurnsTripTheLoopValve(t *testing.T) {
 	model := agentstest.NewResponseBuilder().
 		FunctionCall("ghost", "c1", `{}`).NewTurn().
@@ -36,8 +36,8 @@ func TestUnknownToolTurnsTripTheLoopValve(t *testing.T) {
 	if !ok {
 		t.Fatalf("err = %v, want *agents.ToolLoopError", err)
 	}
-	if tle.Turns != 3 {
-		t.Errorf("turns = %d, want 3", tle.Turns)
+	if tle.FailedTurns != 3 {
+		t.Errorf("failed turns = %d, want 3", tle.FailedTurns)
 	}
 	agentstest.AssertModelCalls(t, model, 3)
 }

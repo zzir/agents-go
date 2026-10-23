@@ -1531,6 +1531,7 @@ components:
       - response_truncated
       - context_overflow
       - context_reset_ignored
+      - tool_loop
       type: string
       x-enum-varnames:
       - DiagModelRetry
@@ -1542,6 +1543,7 @@ components:
       - DiagResponseTruncated
       - DiagContextOverflow
       - DiagContextResetIgnored
+      - DiagToolLoop
     session.ErrorCode:
       description: Code classifies the underlying error, when there was one.
       enum:

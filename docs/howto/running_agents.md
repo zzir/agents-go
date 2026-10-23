@@ -78,21 +78,26 @@ Per-tool timeouts are a [tool-level setting](tools.md#timeouts).
 
 ## Tool-loop safety valves
 
-`ExecOptions.ToolLoop` bounds the ways a run can keep going without getting
-anywhere:
+`ExecOptions.ToolLoop` bounds a run whose tool calls stop getting anywhere:
 
 ```go
 opts.Exec.ToolLoop = agents.ToolLoopPolicy{
-	MaxConsecutiveErrorTurns: 3,    // default; -1 disables
-	FinalTurnWithoutTools:    true, // off by default
+	MaxRepeatedCalls:          3,    // default; -1 disables
+	MaxConsecutiveFailedTurns: 3,    // default; -1 disables
+	Abort:                     true, // off by default
+	FinalTurnWithoutTools:     true, // off by default
 }
 ```
 
-`MaxConsecutiveErrorTurns` aborts with a `*ToolLoopError` after N turns in which
-*every* tool call failed; `FinalTurnWithoutTools` gives an exhausted turn budget
-one more model call with no tools and no handoffs, so the model closes out in
-prose instead of the run failing with `*MaxTurnsError`. What counts as a failed
-turn, and why the last turn is tool-free and opt-in, is
+A valve trips when one call returns the same output for the third time within
+a few tool turns, or after three turns in which no call ran at all. A result
+your tool returns with `IsError` set is not a failure to run: it answered the
+call. By default the first trip appends a notice to what the model reads of
+that output, a second trip soon after gives the model one tool-free turn to
+tell the user where it got to, and the run ends normally with a `tool_loop`
+diagnostic. `Abort` fails the run with a `*ToolLoopError` on the
+first trip instead. `FinalTurnWithoutTools` gives an exhausted turn budget the
+same tool-free turn instead of `*MaxTurnsError`. The rules are
 [spec §2.7d](../reference/spec.md#27d-tool-loop-safety-valves). A tool with
 `Sequential: true` makes its **whole batch** run one call at a time; see
 [Tools](tools.md#adapting-a-tool-you-did-not-build).

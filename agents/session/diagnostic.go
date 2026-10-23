@@ -28,6 +28,9 @@ const (
 	// DiagContextResetIgnored is a model-requested context reset the run could
 	// not perform.
 	DiagContextResetIgnored DiagnosticType = "context_reset_ignored"
+	// DiagToolLoop is a tool loop that stopped making progress; the run told
+	// the model, or withdrew its tools for a closing turn.
+	DiagToolLoop DiagnosticType = "tool_loop"
 )
 
 // Diagnostic records trouble a run survived: what never reaches an error return.

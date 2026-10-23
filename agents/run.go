@@ -230,9 +230,8 @@ type runner struct {
 	// RunState.
 	disclosed map[string]bool
 
-	// consecutiveErrorTurns counts turns in a row where every tool call failed
-	// — see spec §2.7d.
-	consecutiveErrorTurns int
+	// toolLoop is the tool-loop valves' count — see spec §2.7d.
+	toolLoop toolLoopState
 
 	// toolsUsedBy tracks which agents have called tools (tool_choice reset), by name.
 	toolsUsedBy map[string]bool
@@ -421,8 +420,14 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 		st.pending = nil
 	}
 	tools, handoffs := snapshot.Tools, snapshot.Handoffs
+	settings := snapshot.Settings
 	modelInput := snapshot.Input
 	if st.finalTurn {
+		// Tools stay on the wire, uncallable; nothing the turn returns runs —
+		// see spec §2.7d.
+		if len(tools)+len(handoffs) > 0 {
+			settings = toolFreeSettings(settings)
+		}
 		tools, handoffs = nil, nil
 	}
 	// What the model is sent; refreshed if InputFilter edits it — see spec §2.2.
@@ -454,10 +459,10 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 		out := r.callModelOnce(ctx, turn, snapshot, ModelRequest{
 			SystemInstructions: snapshot.Instructions,
 			Input:              modelInput,
-			Settings:           snapshot.Settings,
-			Tools:              tools,
+			Settings:           settings,
+			Tools:              snapshot.Tools,
 			OutputSchema:       snapshot.OutputSchema,
-			Handoffs:           handoffs,
+			Handoffs:           snapshot.Handoffs,
 			PreviousResponseID: prevID,
 			ConversationID:     r.opts.Conversation.ConversationID,
 		})
@@ -493,9 +498,17 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 		r.usagePending = true
 	}
 
-	processed, err := processModelResponse(st.agent, tools, handoffs, resp, r.opts.Exec.ToolNotFoundBehavior)
+	notFound := r.opts.Exec.ToolNotFoundBehavior
+	if r.toolLoop.closing != nil {
+		notFound = ToolNotFoundReturnToModel
+	}
+	processed, err := processModelResponse(st.agent, tools, handoffs, resp, notFound)
 	if err != nil {
 		return nil, false, r.fail(err)
+	}
+	// A closing turn runs nothing it returns — see spec §2.7d.
+	if r.toolLoop.closing != nil && processed.hasToolsToRun() {
+		return nil, false, r.fail(r.toolLoop.closing)
 	}
 	// A resumed turn's items were emitted before the pause.
 	if !resumed && !r.emitItems(processed.NewItems) {
@@ -536,6 +549,8 @@ func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *sin
 		}
 	}
 	if len(extra) > 0 {
+		// New input gets the tools back — see spec §2.7d.
+		st.finalTurn, r.toolLoop.closing = false, nil
 		// Appended before the closing write, which commits the take.
 		injected := injectedInput(st.agent, extra)
 		r.appendInjected(injected)
@@ -796,5 +811,6 @@ func (r *runner) buildPauseState(turn int, resp *ModelResponse, step *singleStep
 		GuardrailResults: r.snapshotGuardrailResults(),
 		nestedToolStates: mergeNestedStates(carriedNested, step.NestedStates),
 		usagePending:     r.usagePending,
+		toolLoop:         r.toolLoop.carried(),
 	}
 }

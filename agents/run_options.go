@@ -141,8 +141,8 @@ type ExecOptions struct {
 	// completion with a fallback output; the zero value leaves them fatal.
 	ErrorHandlers RunErrorHandlers
 
-	// ToolLoop bounds the tool loop: consecutive all-failed turns and what
-	// happens when the turn budget runs out.
+	// ToolLoop bounds a tool loop that stops making progress, and what happens
+	// when the turn budget runs out.
 	ToolLoop ToolLoopPolicy
 
 	// Overflow decides what a context-overflow model error does; the zero
