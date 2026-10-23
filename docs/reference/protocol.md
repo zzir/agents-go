@@ -1023,7 +1023,7 @@ not know renders as a generic error.
 | `model_refusal` | SDK | The model refused to answer |
 | `user_error` | SDK | A configuration or usage error the caller made |
 | `tool_timeout` | SDK | A tool ran past its timeout |
-| `tool_loop` | SDK | A tool was called in a loop past the SDK's bound |
+| `tool_loop` | SDK | The tool loop stopped making progress and the agent's `tool_loop` is `abort`, or its closing turn still called a tool; a recovered loop is a `tool_loop` diagnostic instead |
 | `tool_panic` | SDK | A tool panicked |
 | `sandbox_exec` | SDK | A sandbox command failed as infrastructure (daemon down, image missing), not as a non-zero exit |
 | `mcp` | SDK | An MCP server call failed |

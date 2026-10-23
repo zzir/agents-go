@@ -9041,6 +9041,11 @@ export interface components {
             thinking_mode?: string;
             /** @description ToolChoiceReset resets a pinned tool_choice after a tool runs; nil/true = on. */
             tool_choice_reset?: boolean;
+            /**
+             * @description ToolLoop is what a stalled tool loop does: "" warns the model, then gives
+             *     it one closing turn without tools; "abort" ends the run; "off" runs on.
+             */
+            tool_loop?: string;
             tool_not_found_behavior?: string;
             /** @description Vision admits image attachments on this agent's runs; off by default. */
             vision?: boolean;

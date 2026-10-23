@@ -30,7 +30,7 @@ import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/provid
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 export const CONFIG_GROUPS: Record<string, string[]> = {
-  behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'reasoning_item_id_policy', 'workflow_authoring', 'checklist', 'subagents', 'vision', 'override_system_prompt', 'thinking_mode', 'thinking_binding'],
+  behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'tool_loop', 'reasoning_item_id_policy', 'workflow_authoring', 'checklist', 'subagents', 'vision', 'override_system_prompt', 'thinking_mode', 'thinking_binding'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['history_limit'],
@@ -196,6 +196,7 @@ interface AgentFormData {
   handoff_input_filter: string;
   max_tool_concurrency: string;
   tool_not_found_behavior: string;
+  tool_loop: string;
   reasoning_item_id_policy: string;
   thinking_mode: string;
   thinking_binding: boolean;
@@ -302,7 +303,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
       // New agents default to a bounded fan-out; an existing agent keeps its
       // stored value (0 = unlimited) via the spread below.
       handoff_input_filter: '', max_tool_concurrency: initial ? '' : '8',
-      tool_not_found_behavior: '', reasoning_item_id_policy: '', thinking_mode: '', thinking_binding: true, workflow_authoring: false, checklist: false, subagents: true, vision: false, override_system_prompt: false,
+      tool_not_found_behavior: '', tool_loop: '', reasoning_item_id_policy: '', thinking_mode: '', thinking_binding: true, workflow_authoring: false, checklist: false, subagents: true, vision: false, override_system_prompt: false,
       compaction_enabled: false, compaction_threshold_tokens: '',
       compaction_window: '', compaction_model: '', compaction_prompt: '', compaction_mode: '',
       memory_tools: false, memory_agent_write: false, history_tools: false,
@@ -695,6 +696,8 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
                 alias); it is the default now, so those read as the unset button. */}
             {seg('Tool not found behavior', RETURN_TO_MODEL.has(form.tool_not_found_behavior || '') ? '' : form.tool_not_found_behavior, [['', 'Return to model (default)'], ['error', 'End the run']], v => set('tool_not_found_behavior', v),
               'What happens when the model calls a tool it does not have — a name it invented, or a handoff plan mode hides')}
+            {seg('Tool loop', form.tool_loop || '', [['', 'Wrap up (default)'], ['abort', 'End the run'], ['off', 'Off']], v => set('tool_loop', v),
+              'When calls repeat the same result or keep failing to run: warn the model, then let it answer without tools')}
             {seg('Reasoning item ID policy', form.reasoning_item_id_policy || '', [['', 'Preserve (default)'], ['omit', 'Omit']], v => set('reasoning_item_id_policy', v),
               'Whether reasoning-item ids are kept when prior items are re-sent to the model on later turns')}
             <ToggleRow label="Reset tool choice after use" checked={form.tool_choice_reset !== false} onChange={v => set('tool_choice_reset', v)}

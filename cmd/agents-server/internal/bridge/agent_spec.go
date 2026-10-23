@@ -147,6 +147,11 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 	default:
 		return nil, fmt.Errorf("tool_not_found_behavior %q: use return_to_model, error, or leave it unset", ac.Behavior.ToolNotFoundBehavior)
 	}
+	switch ac.Behavior.ToolLoop {
+	case "", "abort", "off":
+	default:
+		return nil, fmt.Errorf("tool_loop %q: use abort, off, or leave it unset", ac.Behavior.ToolLoop)
+	}
 	switch ac.Behavior.ReasoningItemIDPolicy {
 	case "", "preserve", "omit":
 	default:

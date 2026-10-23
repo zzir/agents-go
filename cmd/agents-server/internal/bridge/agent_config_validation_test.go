@@ -43,6 +43,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 			a.Resilience.RetryPolicy = "{bad"
 		}, "retry_policy"},
 		{"unknown thinking_mode", func(a *store.AgentConfig) { a.Behavior.ThinkingMode = "manual" }, "thinking_mode"},
+		{"unknown tool_loop", func(a *store.AgentConfig) { a.Behavior.ToolLoop = "retry" }, "tool_loop"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

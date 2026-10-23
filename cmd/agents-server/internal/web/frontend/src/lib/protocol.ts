@@ -224,4 +224,5 @@ export const DIAGNOSTIC_LABELS: Record<string, string> = {
   compaction_failed: 'compaction failed',
   response_truncated: 'response truncated',
   context_overflow: 'context overflowed',
+  tool_loop: 'tool loop stopped',
 };

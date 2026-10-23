@@ -24,6 +24,9 @@ type BehaviorGroup struct {
 	HandoffInputFilter   string `json:"handoff_input_filter,omitempty"`
 	MaxToolConcurrency   int    `json:"max_tool_concurrency,omitempty"`
 	ToolNotFoundBehavior string `json:"tool_not_found_behavior,omitempty"`
+	// ToolLoop is what a stalled tool loop does: "" warns the model, then gives
+	// it one closing turn without tools; "abort" ends the run; "off" runs on.
+	ToolLoop string `json:"tool_loop,omitempty"`
 	// ReasoningItemIDPolicy is "" / "preserve" (keep reasoning-item ids across
 	// turns) or "omit".
 	ReasoningItemIDPolicy string `json:"reasoning_item_id_policy,omitempty"`

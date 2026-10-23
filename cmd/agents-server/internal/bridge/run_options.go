@@ -50,6 +50,7 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 			ErrorHandlers:         built.ErrorHandlers,
 			ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
 			ToolNotFoundBehavior:  toolNotFoundBehavior(built.Behavior.ToolNotFoundBehavior),
+			ToolLoop:              toolLoopPolicy(built.Behavior.ToolLoop),
 			ShouldStopAfterTurn:   stopAtTools(built.StopAtTools),
 			// Overflow → forced compaction → retry, on a compaction-aware
 			// session (spec §2.5g).
@@ -106,6 +107,17 @@ func toolNotFoundBehavior(s string) agents.ToolNotFoundBehavior {
 		return agents.ToolNotFoundReturnToModel
 	}
 	return agents.ParseToolNotFoundBehavior(s)
+}
+
+// toolLoopPolicy maps the agent's tool_loop setting; unset is the SDK default.
+func toolLoopPolicy(s string) agents.ToolLoopPolicy {
+	switch s {
+	case "abort":
+		return agents.ToolLoopPolicy{Abort: true}
+	case "off":
+		return agents.ToolLoopPolicy{MaxRepeatedCalls: -1, MaxConsecutiveFailedTurns: -1}
+	}
+	return agents.ToolLoopPolicy{}
 }
 
 // wrapCompaction wraps sa with the compaction adapter when the config enables

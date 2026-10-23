@@ -41,7 +41,7 @@ export const ERROR_TITLES: Record<string, string> = {
   [ERR.configError]: 'The agent could not be built from its configuration',
   [ERR.maxTurns]: 'The run hit its turn limit',
   [ERR.modelRefusal]: 'The model refused to answer',
-  [ERR.toolLoop]: 'A tool was called in a loop',
+  [ERR.toolLoop]: 'The tool calls stopped making progress',
   [ERR.toolTimeout]: 'A tool ran out of time',
   [ERR.sandboxExec]: 'The sandbox could not run the command',
   [ERR.mcp]: 'An MCP server call failed',
