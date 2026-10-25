@@ -39,8 +39,10 @@ export const ChatToc = memo(function ChatToc({ items, scrollElRef, onJump }: Cha
       rafId = 0;
       const list = itemsRef.current;
       const top = el.getBoundingClientRect().top;
-      // Active = last prompt above the upper third of the viewport.
-      const threshold = top + el.clientHeight / 3;
+      // Active = last prompt above the upper third of the viewport the dock
+      // leaves (its height is the scroller's scroll-padding-bottom).
+      const visible = el.clientHeight - (parseFloat(getComputedStyle(el).scrollPaddingBottom) || 0);
+      const threshold = top + visible / 3;
       let cur = 0;
       for (let k = 0; k < list.length; k++) {
         const node = el.querySelector(`[data-msg-idx="${list[k].idx}"]`);

@@ -1,11 +1,10 @@
-/* A background sequence, seen from the conversation that asked for it: sized to
-   the composer, since that is what it sits above. */
+/* A background sequence, seen from the conversation that asked for it: as wide
+   as the composer it sits above (the dock's column, or the greeting's). */
 .wf-bar {
   display: flex;
   align-items: center;
   gap: var(--base-size-8);
-  width: calc(100% - 2 * var(--base-size-16));
-  max-width: var(--composer-max-width);
+  width: 100%;
   margin: 0 auto var(--base-size-4);
   padding: var(--base-size-4) var(--base-size-8);
   border: 1px solid var(--borderColor-muted);
@@ -25,10 +24,7 @@
   margin-left: auto;
   flex-shrink: 0;
 }
-.chat-content-centered .wf-bar {
-  width: 100%;
-  max-width: var(--content-max-width);
-}
+.chat-content-centered .wf-bar { max-width: var(--content-max-width); }
 .wf-bar-name {
   font-weight: var(--base-text-weight-semibold);
   color: var(--fgColor-default);

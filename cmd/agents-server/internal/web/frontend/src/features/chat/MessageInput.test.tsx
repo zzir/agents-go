@@ -152,6 +152,28 @@ describe('MessageInput keys', () => {
   });
 });
 
+describe('MessageInput folded', () => {
+  // Folded is a look, not another box: the draft's textarea stays, so a
+  // keystroke while reading back lands in it.
+  it('keeps the textarea and its keys', () => {
+    const m = mount({ compact: true });
+    expect(m.host.querySelector('.chat-input-container.is-compact')).not.toBeNull();
+    m.type('from history');
+    m.key('Enter');
+    expect(m.onSend).toHaveBeenCalledWith('from history', undefined);
+    m.unmount();
+  });
+
+  // The send cell is the box's own grid cell, not part of the tools a fold
+  // hides, so folding leaves it where it is.
+  it('keeps the send cell out of the tools', () => {
+    const m = mount();
+    expect(m.host.querySelector('.chat-input-box > .chat-input-toolbar-send')).not.toBeNull();
+    expect(m.host.querySelector('.chat-input-toolbar .chat-input-toolbar-send')).toBeNull();
+    m.unmount();
+  });
+});
+
 describe('MessageInput while a run is live', () => {
   const live = (extra: Partial<Parameters<typeof MessageInput>[0]> = {}) => {
     const onQueue = vi.fn(() => true);

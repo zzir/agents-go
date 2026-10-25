@@ -1968,3 +1968,32 @@ budget. What the model read of a tripping output differs from what the session
 displays; the `tool_loop` diagnostic is where a person sees the notice.
 
 Rules: spec §2.7d.
+
+### 5.94 The composer dock floats over the transcript
+
+Decided 2026-10-23.
+
+**Decision.** The bottom of a loaded transcript — workflow bars, queued
+messages, the composer — is one dock positioned over the scroller, which keeps
+room for it at its unfolded height. Reading back starts once a third of the
+visible transcript lies below the view and holds until the transcript follows
+again; it shows Jump (an arrow, or the turn's dots while a run goes on) and
+folds the composer to one line, which opens on typing, a paste, a press or
+keyboard focus in it, until a press in the transcript or reading back ends.
+The checklist chip shows only with the composer unfolded. A fold only takes
+away — the send cell is a grid cell of its own — and the box's height eases
+between the two layouts from its bottom edge.
+
+**Rejected.** The dock in the flex column, folding by its height — the fold
+resizes the scroller and, near the bottom, jumps the view and unfolds again.
+A `position: sticky` dock in the scroller — keys, wheels and selections in the
+draft would reach `useScrollToBottom` as the log's (invariant 18). Folding on
+any departure from the bottom — a nudge to reread the last lines folded the
+box. Focus as the hold — it stays in the textarea after a send. A folded box
+laid out as its own row — its send buttons moved on every fold.
+
+**Cost accepted.** Jump appears a third of a view after following stops. While
+folded the dock's height is not tracked: a bar that appears during a read-back
+overlaps the transcript until the composer opens.
+
+Rules: invariant 95.

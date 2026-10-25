@@ -153,9 +153,10 @@
   cursor: pointer;
 }
 
-/* Scroll area wrapper — positions the "jump to latest" button. isolation
-   keeps the button's z-index scoped here, so it never paints above overlays
-   portaled to <body> (e.g. Primer Dialog, whose backdrop has no z-index). */
+/* Scroll area wrapper — the transcript fills it and the composer dock floats
+   over its bottom. isolation keeps the dock's z-index scoped here, so it never
+   paints above overlays portaled to <body> (e.g. Primer Dialog, whose backdrop
+   has no z-index). */
 .chat-messages-area {
   position: relative;
   flex: 1;
@@ -179,30 +180,90 @@
      over fractional-height content (KaTeX/SVG); content only appends at the bottom anyway. */
   overflow-anchor: none;
   padding: var(--base-size-16) var(--base-size-24);
+  /* Scrolling into view keeps clear of the dock (--dock-h, set by ComposerDock). */
+  scroll-padding-bottom: var(--dock-h, 0px);
   contain: layout style;
 }
+/* Room under the last message for the dock at its resting height. In the
+   log, not the scroller's padding: the log is the deeper of the two the
+   scroll pin observes, so the room's growth reaches it in the same frame as
+   the dock's. */
+.chat-log::after {
+  content: '';
+  display: block;
+  height: var(--dock-h, 0px);
+}
 
-/* Jump to latest / Responding... floating button (Primer Button) */
-.scroll-to-bottom {
-  position: absolute !important;
-  bottom: 12px;
+/* The composer dock floats over the transcript's bottom; folding the composer
+   is visual only, never layout (invariant 95). Transparent outside its column,
+   so the scrollbar in the gutter stays visible and draggable. */
+.composer-dock {
+  position: absolute;
   left: 0;
   right: 0;
-  width: fit-content;
-  margin: 0 auto;
+  bottom: 0;
   z-index: var(--zIndex-float);
+  pointer-events: none;
+}
+/* Sized to the composer, and opaque: the transcript scrolls out of sight
+   under it, through a short fade rather than a hard cut. */
+.composer-dock-col {
+  position: relative;
+  width: calc(100% - 2 * var(--base-size-16));
+  max-width: var(--composer-max-width);
+  margin: 0 auto;
+  background: var(--bgColor-default);
+  pointer-events: auto;
+}
+.composer-dock-col::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: var(--base-size-16);
+  background: linear-gradient(to bottom, transparent, var(--bgColor-default));
+  pointer-events: none;
+}
+/* The chips above the dock: the checklist at the composer's left edge, Jump
+   to latest centred, over the column's fade. Presses between them reach the
+   transcript. */
+.composer-dock-float {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  z-index: 1;
+  width: calc(100% - 2 * var(--base-size-16));
+  max-width: var(--composer-max-width);
+  margin: 0 auto;
+  padding-bottom: var(--base-size-8);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: end;
+}
+.composer-dock-start { min-width: 0; }
+/* A chip enters with the state it belongs to. */
+.dock-chip {
+  pointer-events: auto;
   border-radius: var(--borderRadius-full) !important;
   box-shadow: var(--shadow-floating-small);
   animation: msg-in var(--base-duration-200) var(--base-easing-easeOut) both;
 }
+.dock-jump {
+  grid-column: 2;
+  --dot-size: 4px;
+  --dot-gap: 3px;
+}
 
 /* Conversation TOC rail — one bar per user prompt, vertically centered in
-   the left gutter. Hover/focus shows the prompt via Primer Tooltip; the
-   pointed bar and its neighbours magnify (--toc-w, set by ChatToc). */
+   the left gutter of what the dock leaves visible. Hover/focus shows the
+   prompt via Primer Tooltip; the pointed bar and its neighbours magnify
+   (--toc-w, set by ChatToc). */
 .chat-toc {
   position: absolute;
   left: var(--base-size-8);
-  top: 50%;
+  top: calc((100% - var(--dock-h, 0px)) / 2);
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
@@ -461,23 +522,25 @@
 }
 .process-timeline .ToolCallCard { margin: 0; }
 
-/* Thinking indicator */
+/* Thinking indicator: the dots (ThinkingDots) in a bubble of their own. */
 .thinking-indicator {
   margin: var(--base-size-4) 0;
 }
-.thinking-dots {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--base-size-4);
+.thinking-indicator .thinking-dots {
   padding: var(--base-size-8) var(--base-size-12);
   background: var(--bgColor-muted);
   border: 1px solid var(--borderColor-muted);
   border-radius: var(--borderRadius-large);
   box-shadow: var(--shadow-resting-xsmall);
 }
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dot-gap, var(--base-size-4));
+}
 .thinking-dots span {
-  width: 6px;
-  height: 6px;
+  width: var(--dot-size, 6px);
+  height: var(--dot-size, 6px);
   border-radius: var(--borderRadius-full);
   background: var(--fgColor-muted);
   animation: thinking-bounce 1.4s infinite ease-in-out both;
@@ -496,17 +559,22 @@
   background: var(--bgColor-default);
   flex-shrink: 0;
 }
-/* Loaded chat view: flush against the message list, no gap above the input. */
-.chat-messages-area + .chat-input-container {
-  padding-top: 0;
+/* In the dock the column sets the width, so the input needs no gutter. */
+.composer-dock .chat-input-container {
+  padding: 0 0 var(--base-size-8);
+  background: none;
 }
 .chat-input-box {
   /* The slash popup is positioned off this box. */
   position: relative;
   max-width: var(--composer-max-width);
   margin: 0 auto;
-  display: flex;
-  flex-direction: column;
+  /* The send cell sits in the bottom-right corner in every state, and the
+     rows on the bottom edge while a fold eases the height (ComposerDock). */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "att att" "text text" "tools send";
+  align-content: unsafe end;
   border: 1px solid var(--borderColor-default);
   border-radius: 16px;
   background: var(--bgColor-default);
@@ -539,11 +607,13 @@
 .slash-popup .slash-cmd {
   white-space: nowrap;
 }
+.chat-input-box.is-folding { overflow: clip; }
 .chat-input-box:focus-within {
   border-color: var(--fgColor-accent);
   box-shadow: inset 0 0 0 1px var(--fgColor-accent);
 }
 .chat-input-box textarea {
+  grid-area: text;
   width: 100%;
   border: none;
   outline: none;
@@ -561,11 +631,13 @@
 }
 .chat-input-box textarea::placeholder { color: var(--fgColor-muted); }
 
-/* Toolbar row inside the input box */
+/* Toolbar row inside the input box: the tools, then the send cell. */
 .chat-input-toolbar {
+  grid-area: tools;
+  min-width: 0;
   display: flex;
   align-items: center;
-  padding: var(--base-size-4) var(--base-size-6) var(--base-size-6);
+  padding: var(--base-size-4) var(--base-size-4) var(--base-size-6) var(--base-size-6);
   gap: var(--base-size-4);
 }
 .chat-input-toolbar-right {
@@ -575,8 +647,11 @@
   margin-left: auto;
 }
 .chat-input-toolbar-send {
+  grid-area: send;
+  align-self: end;
   display: flex;
   align-items: center;
+  padding: var(--base-size-4) var(--base-size-6) var(--base-size-6) 0;
 }
 .chat-input-divider {
   width: 1px;
@@ -589,6 +664,22 @@
   font-size: var(--base-text-size-xs);
   color: var(--fgColor-danger);
   padding: 0 var(--base-size-8);
+}
+
+/* Folded to one line while the person reads back (ComposerDock): the same
+   textarea, so a keystroke lands in the draft, takes the tools' place beside
+   the send cell. The fold only takes away; the send cell keeps its row and
+   so does not move. */
+.chat-input-container.is-compact .chat-input-box { grid-template-areas: "text send"; }
+.is-compact .chat-attachment-strip,
+.is-compact .chat-input-toolbar,
+.is-compact .chat-input-divider { display: none; }
+/* As tall as the send cell, the line centred on its 32px buttons. */
+.is-compact .chat-input-box textarea {
+  min-height: 0;
+  max-height: calc(var(--base-size-4) + 32px + var(--base-size-6));
+  padding-block: calc(var(--base-size-4) + (32px - 1.5em) / 2) calc(var(--base-size-6) + (32px - 1.5em) / 2);
+  overflow: hidden;
 }
 
 /* Chat layout with trace drawer */
@@ -672,12 +763,10 @@
 }
 
 /* Messages queued on the live run, above the composer they were typed in:
-   quiet, sized to it, one line each. */
+   quiet, one line each; the dock's column sizes them. */
 .chat-queued {
   display: flex; flex-direction: column; gap: var(--base-size-4);
-  width: calc(100% - 2 * var(--base-size-16));
-  max-width: var(--composer-max-width);
-  margin: 0 auto var(--base-size-4);
+  margin-bottom: var(--base-size-4);
 }
 .chat-queued:empty { margin-bottom: 0; }
 .chat-queued-item {
@@ -922,6 +1011,7 @@
 @media (max-width: 767px) {
   .chat-messages { padding: var(--base-size-8) var(--base-size-16); }
   .chat-input-container { padding: var(--base-size-8) var(--base-size-16) var(--base-size-4); }
+  .composer-dock .chat-input-container { padding: 0 0 var(--base-size-4); }
 }
 
 /* State groups: a small muted header per non-empty state bucket. */
@@ -1067,6 +1157,7 @@
 
 /* Composer strip: thumbnails of images queued for the next message. */
 .chat-attachment-strip {
+  grid-area: att;
   display: flex;
   flex-wrap: wrap;
   gap: var(--base-size-8);
@@ -1133,23 +1224,21 @@
 .ToolCallCard-memory-op { border: 1px solid var(--borderColor-default); border-radius: var(--borderRadius-small); padding: 0 var(--base-size-4); }
 .ToolCallCard-memory-text { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--base-text-size-xs); }
 
-/* The checklist chip above the composer, and the list it opens. */
+/* The checklist chip in the dock's float row, and the list it opens upward
+   over the transcript. */
 .checklist-chip {
   position: relative;
-  width: calc(100% - 2 * var(--base-size-16));
-  max-width: var(--composer-max-width);
-  margin: 0 auto var(--base-size-4);
-  display: flex;
-  justify-content: flex-start;
+  display: inline-flex;
+  max-width: 100%;
 }
-.chat-content-centered .checklist-chip { width: 100%; }
 .checklist-chip-pop {
   position: absolute;
   bottom: 100%;
   left: 0;
   z-index: 2;
+  width: max-content;
   min-width: 240px;
-  max-width: 100%;
+  max-width: min(560px, calc(100cqw - 2 * var(--base-size-16)));
   max-height: 40vh;
   overflow: auto;
   margin-bottom: var(--base-size-4);
@@ -1158,6 +1247,11 @@
   border-radius: var(--borderRadius-medium);
   background: var(--overlay-bgColor, var(--bgColor-default));
   box-shadow: var(--shadow-floating-small);
+  pointer-events: auto;
+}
+/* Narrow enough that the chip would meet the centred Jump: count only. */
+@container (max-width: 480px) {
+  .checklist-chip-word { display: none; }
 }
 
 /* A task's checklist, above its transcript. */

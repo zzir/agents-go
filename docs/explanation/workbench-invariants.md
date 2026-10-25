@@ -549,3 +549,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     figures and the item's buttons on the right; a tab row comes second. The
     item's label is the list row's and the transcript's, never the head's. A
     live mark is the 8px status dot, leading, everywhere — see decisions §5.92.
+95. **The composer dock floats over the transcript; a fold is a look, never
+    layout.** Bars, queued messages and the composer sit in `ComposerDock` over
+    the scroller, which keeps room for them at their unfolded height
+    (`--dock-h`). Reading back — a third of the view below, held until
+    following — shows Jump and folds the composer unless the person works in it;
+    the checklist shows only unfolded; the send cell never moves — see decisions §5.94.

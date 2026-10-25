@@ -50,4 +50,20 @@ describe('ChecklistChip', () => {
     expect(m.host.querySelector('[role=region]')).toBeNull();
     m.unmount();
   });
+
+  // The open list lies over the transcript: Escape or a press elsewhere closes it.
+  it('closes like a popover', () => {
+    const items = [{ content: 'read it', status: 'pending' }];
+    const m = mount({ sessionId: 's1', running: true, compacting: false, agentAvatars: {}, checklist: { callId: 'c9', items, done: 0 } });
+    const button = m.host.querySelector('button')!;
+    act(() => button.click());
+    act(() => { m.host.querySelector('[role=region]')!.dispatchEvent(new Event('pointerdown', { bubbles: true })); });
+    expect(m.host.querySelector('[role=region]')).not.toBeNull();
+    act(() => { document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })); });
+    expect(m.host.querySelector('[role=region]')).toBeNull();
+    act(() => button.click());
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+    expect(m.host.querySelector('[role=region]')).toBeNull();
+    m.unmount();
+  });
 });

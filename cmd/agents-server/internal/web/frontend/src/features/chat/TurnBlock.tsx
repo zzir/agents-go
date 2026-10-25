@@ -9,6 +9,7 @@ import { StreamingMarkdown } from '@/features/chat/StreamingMarkdown';
 import { TextContent } from '@/features/chat/TextContent';
 import { ProcessTimeline } from '@/features/chat/ProcessTimeline';
 import { useChatSession, useChatActions } from '@/features/chat/ChatSessionContext';
+import { ThinkingDots } from '@/features/chat/ThinkingDots';
 
 // STAGE_NOTES says what a trip at each stage stopped: a guardrail runs at four
 // of them, and "blocked before the model ran" misdescribes a tool-result trip.
@@ -218,16 +219,12 @@ export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, 
       ))}
       {isLive && isEmpty && !compacting && (
         <div className="thinking-indicator">
-          <div className="thinking-dots">
-            <span /><span /><span />
-          </div>
+          <ThinkingDots />
         </div>
       )}
       {isLive && compacting && activeIdx === -1 && !liveTail && (
         <div className="thinking-indicator">
-          <div className="thinking-dots">
-            <span /><span /><span />
-          </div>
+          <ThinkingDots />
           <span className="thinking-agent">Compacting context…</span>
         </div>
       )}

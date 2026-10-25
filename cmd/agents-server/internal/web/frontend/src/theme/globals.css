@@ -76,7 +76,7 @@ a:hover {
     /* App-level layering, lowest to highest. A new layer slots in here —
        never as a bare number in a rule. Component-local stacking (resize
        handles, in-card buttons) stays a literal 1/2 in its own context. */
-    --zIndex-float: 10;     /* scroll-to-bottom chip */
+    --zIndex-float: 10;     /* composer dock */
     --zIndex-popup: 20;     /* slash-command menu */
     --zIndex-topbar: 30;    /* mobile header */
     --zIndex-panel: 40;     /* side panel (mobile) */

@@ -1,6 +1,6 @@
 import './chat.css';
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
-import { Button, ActionMenu, ActionList, Link } from '@primer/react';
+import { ActionMenu, ActionList, Link } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
@@ -30,7 +30,7 @@ import { ChatToc } from '@/features/chat/ChatToc';
 import { MessageInput } from '@/features/chat/MessageInput';
 import type { AttachmentMeta } from '@/lib/attachments';
 import { WorkflowStrip } from '@/features/chat/WorkflowStrip';
-import { ChecklistChip } from '@/features/chat/ChecklistChip';
+import { ComposerDock } from '@/features/chat/ComposerDock';
 import { latestChecklist } from '@/lib/checklist';
 import { TraceDrawer, TraceRunPanel, TraceRunMissingPanel, lastGenerationSpan, type TraceGroupView } from '@/features/chat/TracePanel';
 import { groupTraceRuns } from '@/lib/traceGroups';
@@ -38,7 +38,7 @@ import { ReplayDialog } from '@/features/chat/ReplayDialog';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
 import { NewProjectDialog, useProjectMenu } from '@/features/chat/ProjectControls';
-import { ArrowDownIcon, FileDirectoryIcon } from '@primer/octicons-react';
+import { FileDirectoryIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
 // `run` is the detail lens over ONE exchange's trace — runId is any run of it,
@@ -848,44 +848,48 @@ export function ChatView({
       <div className="chat-content">
         {topBar}
         <div className="chat-messages-area">
-        <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
-          {/* One child, so useScrollToBottom can watch the log's height. */}
-          <div className="chat-log">{messages.map(renderMessage)}</div>
+          <div ref={composedScrollRef} className="chat-messages" onClick={handleCopyClick}>
+            {/* One child, so useScrollToBottom can watch the log's height. */}
+            <div className="chat-log">{messages.map(renderMessage)}</div>
+          </div>
+          <ChatToc items={tocItems} scrollElRef={chatElRef} onJump={jumpToMsg} />
+          <ComposerDock
+            following={isSticky}
+            transcriptRef={chatElRef}
+            responding={running}
+            onJump={scrollToBottom}
+            rows={<>
+              <WorkflowStrip />
+              {/* Mounted empty: a live region announces what is added to it,
+                  not what it arrives holding. */}
+              <div className="chat-queued" aria-live="polite">
+                {queued.map(q => (
+                  <div key={q.clientMsgId} className="chat-queued-item">
+                    <span className="chat-queued-note">{q.queue === 'follow_up' ? 'Queued · sent when this run finishes' : 'Queued · read after the current step'}</span>
+                    <span className="chat-queued-text">{q.text}</span>
+                  </div>
+                ))}
+              </div>
+            </>}
+            composer={compact => (
+              <MessageInput
+                key={`input-${sessionId}`}
+                sessionId={sessionId}
+                onSend={handleSend}
+                onCancel={handleCancel}
+                disabled={running || !agentConfigId}
+                blocked={gate.blocked}
+                hint={ownPending ? PENDING_HINT : undefined}
+                running={running}
+                onQueue={liveRunId && onInject ? handleQueue : undefined}
+                allowAttachments={allowAttachments}
+                toolbar={inputToolbar}
+                plusItems={plusItems}
+                compact={compact}
+              />
+            )}
+          />
         </div>
-
-        {!isSticky && (
-          <Button size="small" leadingVisual={ArrowDownIcon} className="scroll-to-bottom" onClick={scrollToBottom}>
-            {streaming ? 'Responding…' : 'Jump to latest'}
-          </Button>
-        )}
-        <ChatToc items={tocItems} scrollElRef={chatElRef} onJump={jumpToMsg} />
-        </div>
-        <WorkflowStrip />
-        <ChecklistChip />
-        {/* Mounted empty: a live region announces what is added to it, not
-            what it arrives holding. */}
-        <div className="chat-queued" aria-live="polite">
-          {queued.map(q => (
-            <div key={q.clientMsgId} className="chat-queued-item">
-              <span className="chat-queued-note">{q.queue === 'follow_up' ? 'Queued · sent when this run finishes' : 'Queued · read after the current step'}</span>
-              <span className="chat-queued-text">{q.text}</span>
-            </div>
-          ))}
-        </div>
-        <MessageInput
-          key={`input-${sessionId}`}
-          sessionId={sessionId}
-          onSend={handleSend}
-          onCancel={handleCancel}
-          disabled={running || !agentConfigId}
-          blocked={gate.blocked}
-          hint={ownPending ? PENDING_HINT : undefined}
-          running={running}
-          onQueue={liveRunId && onInject ? handleQueue : undefined}
-          allowAttachments={allowAttachments}
-          toolbar={inputToolbar}
-          plusItems={plusItems}
-        />
       </div>
 
       {sidePanels}

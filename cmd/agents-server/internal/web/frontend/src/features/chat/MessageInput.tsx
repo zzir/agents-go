@@ -31,6 +31,8 @@ interface MessageInputProps {
   // plusItems is what the "+" menu offers after Image — the Project submenu while
   // unbound, null once bound; the button renders only when the menu has something.
   plusItems?: ReactNode;
+  // compact folds the box to one line (ComposerDock, while the person reads back).
+  compact?: boolean;
 }
 
 // One image in the composer strip: uploading (localUrl preview), ready
@@ -49,7 +51,7 @@ let draftKey = 0;
 // cannot ride on one that is already going.
 const NEW_RUN_COMMAND = /^\/(plan|workflow)\b/;
 
-export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, hint, running, onQueue, allowAttachments, toolbar, plusItems }: MessageInputProps) {
+export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, hint, running, onQueue, allowAttachments, toolbar, plusItems, compact }: MessageInputProps) {
   const [text, setText] = useState(() => loadDraft(sessionId));
   const [atts, setAtts] = useState<AttachmentDraft[]>([]);
   const [attCfg, setAttCfg] = useState<AttachmentConfig | null>(null);
@@ -77,6 +79,11 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
     el.setSelectionRange(el.value.length, el.value.length);
     el.scrollTop = el.scrollHeight;
   }, []);
+
+  // Folded, the one visible line is the draft's first.
+  useEffect(() => {
+    if (compact && textareaRef.current) textareaRef.current.scrollTop = 0;
+  }, [compact]);
 
   const syncAttDraft = useCallback((list: AttachmentDraft[]) => {
     saveAttachmentDraft(sessionId, list.filter(a => a.status === 'ready' && a.meta).map(a => a.meta!));
@@ -247,7 +254,7 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
   };
 
   return (
-    <div className="chat-input-container">
+    <div className={'chat-input-container' + (compact ? ' is-compact' : '')}>
       <form onSubmit={handleSubmit} className="chat-input-box">
         <SlashCommandPopup open={popupOpen} commands={offered} activeIndex={activeIndex} onPick={pick} />
         {atts.length > 0 && (
@@ -309,65 +316,66 @@ export function MessageInput({ sessionId, onSend, onCancel, disabled, blocked, h
             </ActionMenu>
           )}
           {toolbar}
-          <div className="chat-input-toolbar-send">
-            <span className="chat-input-divider" />
-            {running ? (
-              <>
-                {queueing && (
-                  <IconButton
-                    icon={PaperAirplaneIcon}
-                    variant="invisible"
-                    aria-label="Send now"
-                    type="submit"
-                    disabled={!text.trim()}
-                  />
-                )}
+        </div>
+        {/* A grid cell of its own, so a fold never moves it (chat.css). */}
+        <div className="chat-input-toolbar-send">
+          <span className="chat-input-divider" />
+          {running ? (
+            <>
+              {queueing && (
                 <IconButton
-                  icon={SquareCircleIcon}
+                  icon={PaperAirplaneIcon}
                   variant="invisible"
-                  aria-label="Stop now (Shift-click to finish the current turn first)"
-                  onClick={(e) => { e.preventDefault(); onCancel(e.shiftKey); }}
-                  style={{ color: 'var(--fgColor-danger)' }}
+                  aria-label="Send now"
+                  type="submit"
+                  disabled={!text.trim()}
                 />
-                {/* The graceful stop and the follow-up, reachable without a
-                    modifier key: a touch or keyboard user opens this menu. */}
-                <ActionMenu>
-                  <ActionMenu.Anchor>
-                    <IconButton icon={TriangleDownIcon} size="small" variant="invisible" aria-label="More actions for this run" />
-                  </ActionMenu.Anchor>
-                  <ActionMenu.Overlay>
-                    <ActionList>
-                      <ActionList.Item variant="danger" onSelect={() => onCancel(false)}>
-                        Stop now
-                        <ActionList.Description variant="block">Cancels the run where it is.</ActionList.Description>
-                      </ActionList.Item>
-                      <ActionList.Item onSelect={() => onCancel(true)}>
-                        Finish this turn, then stop
-                        <ActionList.Description variant="block">The current step completes; no further turn starts.</ActionList.Description>
-                      </ActionList.Item>
-                      {queueing && (
-                        <>
-                          <ActionList.Divider />
-                          <ActionList.Item disabled={!text.trim()} onSelect={() => queueAs('follow_up')}>
-                            Send after this run
-                            <ActionList.Description variant="block">What is typed waits until this run finishes, then gets its own answer.</ActionList.Description>
-                          </ActionList.Item>
-                        </>
-                      )}
-                    </ActionList>
-                  </ActionMenu.Overlay>
-                </ActionMenu>
-              </>
-            ) : (
+              )}
               <IconButton
-                icon={PaperAirplaneIcon}
+                icon={SquareCircleIcon}
                 variant="invisible"
-                aria-label="Send"
-                type="submit"
-                disabled={disabled || uploading || (!text.trim() && readyAtts.length === 0)}
+                aria-label="Stop now (Shift-click to finish the current turn first)"
+                onClick={(e) => { e.preventDefault(); onCancel(e.shiftKey); }}
+                style={{ color: 'var(--fgColor-danger)' }}
               />
-            )}
-          </div>
+              {/* The graceful stop and the follow-up, reachable without a
+                  modifier key: a touch or keyboard user opens this menu. */}
+              <ActionMenu>
+                <ActionMenu.Anchor>
+                  <IconButton icon={TriangleDownIcon} size="small" variant="invisible" aria-label="More actions for this run" />
+                </ActionMenu.Anchor>
+                <ActionMenu.Overlay>
+                  <ActionList>
+                    <ActionList.Item variant="danger" onSelect={() => onCancel(false)}>
+                      Stop now
+                      <ActionList.Description variant="block">Cancels the run where it is.</ActionList.Description>
+                    </ActionList.Item>
+                    <ActionList.Item onSelect={() => onCancel(true)}>
+                      Finish this turn, then stop
+                      <ActionList.Description variant="block">The current step completes; no further turn starts.</ActionList.Description>
+                    </ActionList.Item>
+                    {queueing && (
+                      <>
+                        <ActionList.Divider />
+                        <ActionList.Item disabled={!text.trim()} onSelect={() => queueAs('follow_up')}>
+                          Send after this run
+                          <ActionList.Description variant="block">What is typed waits until this run finishes, then gets its own answer.</ActionList.Description>
+                        </ActionList.Item>
+                      </>
+                    )}
+                  </ActionList>
+                </ActionMenu.Overlay>
+              </ActionMenu>
+            </>
+          ) : (
+            <IconButton
+              icon={PaperAirplaneIcon}
+              variant="invisible"
+              aria-label="Send"
+              type="submit"
+              disabled={disabled || uploading || (!text.trim() && readyAtts.length === 0)}
+            />
+          )}
         </div>
       </form>
     </div>
