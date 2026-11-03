@@ -88,6 +88,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7s](#27s-apply_patch-locates-hunks-by-whole-lines) | apply_patch locates hunks by whole lines | Context can never bind inside a longer line |
 | [§2.7t](#27t-sandbox-file-tools-share-execs-path-view) | Sandbox file tools share exec's path view | Relative under the working directory, absolute as-is; bind-mount confines to `WorkDir` |
 | [§2.7u](#27u-an-e2b-compatible-service-is-addressed-by-its-responses) | An E2B-compatible service is addressed by its responses | A returned domain wins; the lease extends through `connect` alone |
+| [§2.7v](#27v-exec-output-past-the-cap) | Exec output past the cap | The tail is the real tail; the total is the real total |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets ❓ | `MaxTurns` is the one budget dimension; token and deadline budgets are open (§6.3) |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -1353,6 +1354,17 @@ what a row configures and what a response carries are kept apart.
 - **`Status` believes a `paused` record and a 404, and confirms a `running`
   one through the daemon**: a `/health` the sandbox's gateway answers with a
   5xx is stopped — see decisions §5.71.
+
+### 2.7v Exec output past the cap
+
+`exec_command` captures at most `ExecRequest.MaxOutputBytes` of each stream
+(1 MiB by default) and shows the model at most `CodeToolConfig.MaxOutputBytes`
+of it, head and tail.
+
+- **The capture keeps the head and the tail and counts every byte.** The tail
+  the model sees is the stream's real tail, and the marker's total is what the
+  command wrote, not what was kept; the one-shot path and a persistent shell
+  agree on this.
 
 ### 2.8 Nested agent-as-tool attribution
 

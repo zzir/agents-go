@@ -42,7 +42,9 @@ type ShellSession struct {
 	// lastLine is what was written for the command in flight; trimEcho strips its echo.
 	lastLine string
 	buf      []byte
-	closed   bool
+	// dropped counts the bytes capBuf cut out of the command in flight.
+	dropped int64
+	closed  bool
 }
 
 // OpenShellSession starts a persistent shell in the sandbox, which must
@@ -126,10 +128,17 @@ func (s *ShellSession) settle(ctx context.Context) error {
 
 // Run executes one command and returns its output and exit status.
 func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duration) (output string, exitCode int, err error) {
+	out, code, err := s.runCaptured(ctx, cmd, timeout)
+	return out.Head + out.Tail, code, err
+}
+
+// runCaptured is Run keeping the capture's shape: a middle capBuf dropped is a
+// hole between Head and Tail, not a seam (spec §2.7v).
+func (s *ShellSession) runCaptured(ctx context.Context, cmd string, timeout time.Duration) (captured, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return "", -1, errors.New("sandbox: shell session is closed")
+		return captured{}, -1, errors.New("sandbox: shell session is closed")
 	}
 	if timeout <= 0 {
 		timeout = DefaultTimeout
@@ -139,8 +148,9 @@ func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duratio
 	// heredoc or a trailing backslash cannot swallow the sentinel.
 	line := cmd + "\nprintf '%s%s %d\\n' '" + s.head + "' '" + s.tail + "' $?\n"
 	s.lastLine = line
+	s.dropped = 0
 	if _, err := io.WriteString(s.term, line); err != nil {
-		return "", -1, fmt.Errorf("sandbox: writing to shell session: %w", err)
+		return captured{}, -1, fmt.Errorf("sandbox: writing to shell session: %w", err)
 	}
 
 	out, code, err := s.readUntilSentinel(ctx, timeout)
@@ -156,10 +166,13 @@ func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duratio
 // flooding command drops its middle, keeping the head and the live tail.
 const sessionBufCap = int(DefaultMaxOutputBytes)
 
+// sessionHeadKeep is the head capBuf keeps once the middle goes.
+const sessionHeadKeep = sessionBufCap * 3 / 5 // truncateWithInfo's head/tail split
+
 // readUntilSentinel reads until the token appears, returning the output before
 // it and the exit status after it; every failure carries the partial output.
-func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Duration) (string, int, error) {
-	partial := func() string { return trimEcho(string(s.buf), s.lastLine) }
+func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Duration) (captured, int, error) {
+	partial := func() captured { return s.capture(s.buf) }
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	scanFrom := 0 // settled bytes are never rescanned; new chunks extend the window
@@ -169,10 +182,10 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 			// The exit status follows the token on the same line.
 			rest := s.buf[idx+len(s.sentinel):]
 			if before, after, ok := bytes.Cut(rest, []byte{'\n'}); ok {
-				out := string(s.buf[:idx])
+				out := s.capture(s.buf[:idx])
 				code, _ := strconv.Atoi(strings.TrimSpace(string(before)))
 				s.buf = append([]byte(nil), after...)
-				return trimEcho(out, s.lastLine), code, nil
+				return out, code, nil
 			}
 			scanFrom = idx // status line incomplete; keep the token in the window
 		} else {
@@ -203,13 +216,24 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 // capBuf drops the middle of s.buf once it doubles sessionBufCap and returns
 // scanFrom remapped; the cut stays below the scan window (spec §2.7k).
 func (s *ShellSession) capBuf(scanFrom int) int {
-	headKeep := sessionBufCap * 3 / 5 // truncateWithInfo's head/tail split
-	cut := len(s.buf) - (sessionBufCap - headKeep)
+	cut := len(s.buf) - (sessionBufCap - sessionHeadKeep)
 	if len(s.buf) <= 2*sessionBufCap || cut > scanFrom {
 		return scanFrom
 	}
-	s.buf = append(s.buf[:headKeep], s.buf[cut:]...)
-	return scanFrom - (cut - headKeep)
+	s.buf = append(s.buf[:sessionHeadKeep], s.buf[cut:]...)
+	s.dropped += int64(cut - sessionHeadKeep)
+	return scanFrom - (cut - sessionHeadKeep)
+}
+
+// capture echo-strips raw and, when capBuf cut a middle out of it, splits it
+// where the cut was; the echo came off the front, so the boundary moves by as much.
+func (s *ShellSession) capture(raw []byte) captured {
+	out := trimEcho(string(raw), s.lastLine)
+	if s.dropped == 0 {
+		return whole(out)
+	}
+	split := min(len(out), max(0, sessionHeadKeep-(len(raw)-len(out))))
+	return captured{Head: out[:split], Tail: out[split:], Total: int64(len(out)) + s.dropped}
 }
 
 // trimEcho removes the PTY's echo of what was written as an exact line-by-line
@@ -276,13 +300,13 @@ func newSessionPool() *sessionPool {
 
 // run executes cmd in the named session, opening it on first use. A session
 // that failed is dropped rather than reused (spec §2.7k).
-func (p *sessionPool) run(ctx context.Context, sb Sandbox, name, cmd string, timeout time.Duration) (string, int, error) {
+func (p *sessionPool) run(ctx context.Context, sb Sandbox, name, cmd string, timeout time.Duration) (captured, int, error) {
 	s, err := p.session(ctx, sb, name)
 	if err != nil {
-		return "", -1, err
+		return captured{}, -1, err
 	}
 
-	out, code, err := s.Run(ctx, cmd, timeout)
+	out, code, err := s.runCaptured(ctx, cmd, timeout)
 	if err != nil {
 		p.mu.Lock()
 		if p.sessions[name] == s {
@@ -347,12 +371,12 @@ func (p *sessionPool) Close() error {
 
 // formatSessionResult renders a session command's outcome like formatResult;
 // a PTY gives one interleaved stream, not separate stdout and stderr.
-func formatSessionResult(out string, code, limit int) string {
+func formatSessionResult(out captured, code, limit int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "exit_code: %d\n", code)
-	if trimmed := strings.TrimRight(out, "\n"); trimmed != "" {
+	if out = out.trimRight("\n"); out.Total > 0 {
 		b.WriteString("output:\n")
-		b.WriteString(truncateWithInfo(trimmed, limit))
+		b.WriteString(out.render(limit))
 		b.WriteString("\n")
 	}
 	return b.String()

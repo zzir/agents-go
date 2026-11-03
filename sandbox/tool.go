@@ -212,22 +212,23 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 
 			req := ExecRequest{Cmd: []string{"bash", "-c", cmd}, Timeout: timeout}
 			var res *ExecResult
+			var stdout, stderr captured
 			var err error
 			if streamer, ok := sb.(ExecStreamer); ok && tc != nil {
 				// Streamed as progress events; the model still gets only the
-				// final result, built from the capped buffers below.
-				maxOut := req.EffectiveMaxOutputBytes()
-				outBuf := &CappedBuffer{Max: maxOut}
-				errBuf := &CappedBuffer{Max: maxOut}
+				// final result, built from the head-and-tail capture (spec §2.7v).
+				maxOut := int(req.EffectiveMaxOutputBytes())
+				outBuf, errBuf := newHeadTail(maxOut), newHeadTail(maxOut)
 				w := &progressWriter{tc: tc, cmd: cmd}
 				res, err = streamer.ExecStream(ctx,
 					req, io.MultiWriter(outBuf, w), io.MultiWriter(errBuf, w))
 				w.flush()
-				if res != nil {
-					res.Stdout, res.Stderr = outBuf.String(), errBuf.String()
-				}
+				stdout, stderr = outBuf.captured(), errBuf.captured()
 			} else {
 				res, err = sb.Exec(ctx, req)
+				if res != nil {
+					stdout, stderr = whole(res.Stdout), whole(res.Stderr)
+				}
 			}
 			if err != nil {
 				span.SetError(err.Error(), nil)
@@ -235,8 +236,10 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			}
 			span.Set("exit_code", res.ExitCode)
 			span.Set("timed_out", res.TimedOut)
+			span.Set("stdout_bytes", stdout.Total)
+			span.Set("stderr_bytes", stderr.Total)
 			// Details carry the exit code too, so a UI need not parse the text.
-			return agents.TextResult(formatResult(res, cfg.MaxOutputBytes)).
+			return agents.TextResult(formatResult(res, stdout, stderr, cfg.MaxOutputBytes)).
 				WithDisplay("terminal").
 				WithDetails(map[string]any{
 					"command":   cmd,
@@ -247,21 +250,21 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 	}
 }
 
-// formatResult renders an ExecResult as the string sent back to the model.
-func formatResult(res *ExecResult, limit int) string {
+// formatResult renders an exec's outcome as the string sent back to the model.
+func formatResult(res *ExecResult, stdout, stderr captured, limit int) string {
 	var b strings.Builder
 	if res.TimedOut {
 		b.WriteString("[timed out]\n")
 	}
 	fmt.Fprintf(&b, "exit_code: %d\n", res.ExitCode)
-	if res.Stdout != "" {
+	if stdout.Total > 0 {
 		b.WriteString("stdout:\n")
-		b.WriteString(truncateWithInfo(res.Stdout, limit))
+		b.WriteString(stdout.render(limit))
 		b.WriteString("\n")
 	}
-	if res.Stderr != "" {
+	if stderr.Total > 0 {
 		b.WriteString("stderr:\n")
-		b.WriteString(truncateWithInfo(res.Stderr, limit))
+		b.WriteString(stderr.render(limit))
 		b.WriteString("\n")
 	}
 	return b.String()

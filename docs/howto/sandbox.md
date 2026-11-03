@@ -83,7 +83,7 @@ The optional string arguments (`workdir`, `session_id`) accept the zero-value se
 
 ## CodeTool configuration
 
-`CodeTool` exposes one tool that runs a shell command (`bash -c <cmd>`) in the sandbox; the model picks the command, an optional `timeout_seconds` (capped at `MaxTimeout`) and an optional `workdir`.
+`CodeTool` exposes one tool that runs a shell command (`bash -c <cmd>`) in the sandbox; the model picks the command, an optional `timeout_seconds` (capped at `MaxTimeout`) and an optional `workdir`. Output past `MaxOutputBytes` reaches the model as its head and its real tail around a marker counting the bytes the command wrote ([spec §2.7v](../reference/spec.md#27v-exec-output-past-the-cap)).
 
 ```go
 sandbox.CodeToolConfig{
