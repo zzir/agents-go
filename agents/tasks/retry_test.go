@@ -884,3 +884,44 @@ func TestRetryable_IsAboutTheTaskNotTheParentsCapacity(t *testing.T) {
 		t.Errorf("MaxAttempts = %d, want the configured ceiling", h.m.MaxAttempts())
 	}
 }
+
+// A host can set the ceiling per task: a kind that cannot be resumed is refused
+// before any claim, so no run starts, no attempt is spent and nothing is reported.
+func TestRetry_CeilingCanDependOnTheTask(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, func(c *Config) {
+		c.MaxAttemptsFor = func(t *Task) int {
+			if t.Kind == "once" {
+				return 1
+			}
+			return 0 // the default ceiling
+		}
+	})
+	once, err := h.m.Spawn(ctx, SpawnRequest{ParentSessionID: "parent", AgentName: "worker", Input: "run", Kind: "once"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.fail(t, once.TaskID, "exit 1")
+	before := h.get(t, once.TaskID)
+	launches, finished := len(h.launcher.all()), len(h.reportedFinished())
+
+	_, err = h.m.Retry(ctx, once.TaskID)
+	var limit ErrRetryLimit
+	if !errors.As(err, &limit) || limit.Limit != 1 {
+		t.Fatalf("err = %v, want ErrRetryLimit{1}", err)
+	}
+	after := h.get(t, once.TaskID)
+	if after.Status != StatusFailed || after.RunID != before.RunID || after.Result != before.Result || after.AttemptNo() != 1 {
+		t.Errorf("a refused retry touched the row: %+v", after)
+	}
+	if len(h.launcher.all()) != launches || len(h.reportedFinished()) != finished {
+		t.Error("a refused retry launched a run or reported a finish")
+	}
+
+	// Every other kind keeps the default ceiling.
+	plain := h.spawn(t)
+	h.fail(t, plain.TaskID, "boom")
+	if _, err := h.m.Retry(ctx, plain.TaskID); err != nil {
+		t.Fatalf("a task under the default ceiling was refused: %v", err)
+	}
+}

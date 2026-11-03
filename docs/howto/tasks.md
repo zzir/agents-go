@@ -148,7 +148,9 @@ graph is refused with the targets listed
 continues from the progress the failed attempt made. Only a **failed** task can
 be resumed, and only up to `MaxAttemptsPerTask` (default 3, counting the
 original run) — the parent deciding, with the failure in front of it, that the
-work is worth resuming.
+work is worth resuming. `Config.MaxAttemptsFor` sets the ceiling per task: a
+kind that cannot be resumed returns 1, and `task_retry` refuses it before any
+claim.
 
 `task_status(wait_seconds:)` blocks server-side for up to `MaxStatusWait`
 (default 120s) — one blocked goroutine instead of a polling loop — and returns

@@ -1746,6 +1746,9 @@ A task is a sub-agent that outlives the turn that started it
   ceiling, and every consumer derives the offer from the status and attempt it
   already tracks. Capacity is excluded: it arrives as `ErrTaskLimit` at call
   time; a lost claim is `ErrRetryConflict`, a conflict to retry.
+- **The ceiling may depend on the task.** `Config.MaxAttemptsFor` answers for
+  one task, `MaxAttemptsPerTask` for the rest; a refusal by it comes before the
+  claim, so no attempt is spent and nothing is reported.
 
 **Multi-run jobs**
 

@@ -91,6 +91,9 @@ type Config struct {
 	// MaxAttemptsPerTask bounds a task's runs, the original included; zero uses
 	// DefaultMaxAttemptsPerTask, 1 disables retrying.
 	MaxAttemptsPerTask int
+	// MaxAttemptsFor, when set, is one task's ceiling instead; a result <= 0
+	// falls back to MaxAttemptsPerTask — see spec §2.13.
+	MaxAttemptsFor func(t *Task) int
 	// MaxContinuations bounds the runs Continue may chain since the spawn or the
 	// last retry; zero uses DefaultMaxContinuations — see spec §2.13.
 	MaxContinuations int
@@ -413,7 +416,7 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	// Read before the claim clears the failure: it is the next attempt's reason.
 	prompt := retryPrompt(t, m.cfg.SummaryLimit)
 	runID := m.cfg.NewID()
-	won, err := m.cfg.Store.RetryClaim(ctx, taskID, runID, m.cfg.MaxAttemptsPerTask)
+	won, err := m.cfg.Store.RetryClaim(ctx, taskID, runID, m.maxAttemptsFor(t))
 	if err != nil {
 		return nil, err
 	}
@@ -449,16 +452,27 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	return infoFrom(updated, ""), nil
 }
 
-// MaxAttempts is the configured ceiling on a task's runs.
+// MaxAttempts is the configured ceiling on a task's runs; MaxAttemptsFor may
+// lower or raise it for one task.
 func (m *Manager) MaxAttempts() int { return m.cfg.MaxAttemptsPerTask }
+
+// maxAttemptsFor is t's ceiling: the host's per-task answer, else the default.
+func (m *Manager) maxAttemptsFor(t *Task) int {
+	if m.cfg.MaxAttemptsFor != nil {
+		if n := m.cfg.MaxAttemptsFor(t); n > 0 {
+			return n
+		}
+	}
+	return m.cfg.MaxAttemptsPerTask
+}
 
 // notRetryable explains why a task cannot be retried, or returns nil.
 func (m *Manager) notRetryable(t *Task) error {
 	if t.Status != StatusFailed {
 		return ErrNotRetryable{Status: t.Status}
 	}
-	if t.AttemptNo() >= m.cfg.MaxAttemptsPerTask {
-		return ErrRetryLimit{Limit: m.cfg.MaxAttemptsPerTask}
+	if limit := m.maxAttemptsFor(t); t.AttemptNo() >= limit {
+		return ErrRetryLimit{Limit: limit}
 	}
 	return nil
 }
