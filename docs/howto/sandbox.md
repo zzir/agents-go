@@ -52,6 +52,37 @@ shells belong to is [spec §2.7k](../reference/spec.md#27k-persistent-shells).
 Requires a backend with interactive terminal support (persistent Docker,
 e2b); off by default, because a held-open shell is a resource with a lifetime.
 
+## Background commands
+
+A build or a test suite that takes minutes should not hold the turn. With
+`Background` set, the model may pass `background: true` (an argument that
+exists only then): the call returns at once with whatever the host answers — a
+handle to follow — and the host runs the `Command` it was handed when it likes:
+
+```go
+sandbox.CodeTool(sb, sandbox.CodeToolConfig{
+	SpillDir: ".agents/exec", // required: the command's output lands here
+	Background: func(ctx context.Context, tc *agents.ToolContext, cmd *sandbox.Command) (agents.ToolResult, error) {
+		go func() {
+			res, err := cmd.Run(context.Background(), sb) // blocks until the command ends
+			_, _ = res, err                              // hand it to the model in a later turn
+		}()
+		return agents.TextResult("started; you will be told when it ends"), nil
+	},
+})
+```
+
+`Command.Run` redirects stdout and stderr to files under `SpillDir` inside the
+sandbox — nothing streams through the host, and `tail -f` on the file is the
+live view — and returns a result shaped like a foreground call's, with a
+verdict line first (exit code or timeout, duration, bytes per stream, the
+files). A non-zero exit and a timeout are results, not errors.
+`BackgroundMaxTimeout` (60 minutes) caps the run; `timeout_seconds: 0` means
+that cap. The pairing with `agents/tasks` — a task kind whose launcher calls
+`Run` and whose ending wakes the parent — is
+[examples/exec_background](../../examples/exec_background/main.go); the rules
+are [spec §2.7w](../reference/spec.md#27w-background-commands).
+
 ## Quickstart
 
 ```go

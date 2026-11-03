@@ -2023,3 +2023,31 @@ is nothing more to read.
 The spill is one more exec per truncated call.
 
 Rules: spec §2.7v.
+
+### 5.96 A background command is the host's run, redirected inside the sandbox
+
+Decided 2026-11-03.
+
+**Decision.** `exec_command` gains `background: true` only where the host set
+`CodeToolConfig.Background`: the tool decodes, policy-checks and lets the
+approval gate run as for any call, then hands the host a `Command` and returns
+whatever the host answers. `Command.Run` is the one way to run it: `exec` to
+two files under `SpillDir` inside the sandbox, read back by size afterwards, a
+verdict line first so a 300-rune summary carries the outcome. A non-zero exit
+and a timeout are results. The workbench runs it as a task of kind `command`
+(§5.97).
+
+**Rejected.** Streaming through the host and writing the file after — the
+host buffers minutes of output, nothing is readable until the end, and a host
+restart loses it; the sandbox's own file is complete at every moment and
+`tail -f`-able. `nohup … &` by the model — no handle, no end signal, no
+verdict. A background flag on `spawn_task` — the command would become an
+agent task with a model in the loop. Offering `background` unconditionally
+and refusing — the model learns a parameter it cannot use.
+
+**Cost accepted.** No live output to the UI; the terminal is the live view.
+The run is not traced: it has no run and so no trace to hang a span on. A
+model may ask for `background` on a backend whose `exec` is slow to start
+(e2b) and wait on the hand-off longer than on a short foreground command.
+
+Rules: spec §2.7w.

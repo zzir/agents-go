@@ -53,11 +53,13 @@ func (c *headTail) captured() captured {
 
 // captured is one output stream as kept for the model: Head and Tail are
 // contiguous when Total is their length, and bracket a hole otherwise. Saved
-// names the file the stream was spilled to, once it was.
+// names the file the stream was spilled to, once it was, and SavedHole counts
+// the bytes that file lacks.
 type captured struct {
 	Head, Tail string
 	Total      int64
 	Saved      string
+	SavedHole  int64
 }
 
 // whole is a stream kept in full.
@@ -103,8 +105,8 @@ func (c captured) render(limit int) string {
 	}
 	switch {
 	case c.Saved == "":
-	case hole > 0:
-		fmt.Fprintf(&b, " — saved to %s, %d bytes of its middle not captured", c.Saved, hole)
+	case c.SavedHole > 0:
+		fmt.Fprintf(&b, " — saved to %s, %d bytes of its middle not captured", c.Saved, c.SavedHole)
 	default:
 		fmt.Fprintf(&b, " — full output: %s", c.Saved)
 	}

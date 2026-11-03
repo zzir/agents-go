@@ -56,7 +56,7 @@ func (cfg CodeToolConfig) spill(ctx context.Context, sb Sandbox, span *tracing.S
 	saved := make([]string, 0, len(files))
 	for i, s := range streams {
 		if names[i] != "" {
-			s.c.Saved = names[i]
+			s.c.Saved, s.c.SavedHole = names[i], s.c.hole()
 			saved = append(saved, names[i])
 		}
 	}

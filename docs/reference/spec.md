@@ -89,6 +89,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7t](#27t-sandbox-file-tools-share-execs-path-view) | Sandbox file tools share exec's path view | Relative under the working directory, absolute as-is; bind-mount confines to `WorkDir` |
 | [§2.7u](#27u-an-e2b-compatible-service-is-addressed-by-its-responses) | An E2B-compatible service is addressed by its responses | A returned domain wins; the lease extends through `connect` alone |
 | [§2.7v](#27v-exec-output-past-the-cap) | Exec output past the cap | The tail is the real tail, the total the real total; a truncated stream is saved under `SpillDir` |
+| [§2.7w](#27w-background-commands) | Background commands | `background: true` hands the approved command to the host; the run redirects inside the sandbox |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets ❓ | `MaxTurns` is the one budget dimension; token and deadline budgets are open (§6.3) |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -1380,6 +1381,31 @@ of it, head and tail.
   `FileToolConfig` truncation.
 
 — see [decisions §5.95](../explanation/decisions.md#595-truncated-exec-output-is-saved-in-the-sandbox)
+
+### 2.7w Background commands
+
+`exec_command` optionally runs a command in the background: the host owns the
+run, and the model gets its handle at once.
+
+- **The schema offers `background` only when the host set `Background`**, as
+  it offers `session_id` only with Sessions ([§2.7k](#27k-persistent-shells));
+  a `background: true` sent anyway is refused as text, never run in the
+  foreground instead. `Background` requires `SpillDir`.
+- **A background call is decoded, policy-checked and approved like any other**,
+  then handed over as a `Command` instead of run; one naming a `session_id` is
+  refused as text. The approval sees the same arguments, so a trust granted in
+  the foreground holds in the background.
+- **`Command.Run` redirects inside the sandbox**: `exec` to two files under
+  `SpillDir` before the line's own `cd`, so the output never crosses the host;
+  a redirection that fails exits 125 with the line unrun. The result is read
+  back from the files — whole under the cap, else head and tail by size.
+- **The result's first line is the verdict**: exit or timeout, duration, bytes
+  per stream, the files; the rest has the foreground's shape. A non-zero exit
+  and a timeout are results, not errors, as in the foreground.
+- **The timeout is `BackgroundMaxTimeout`** (60 minutes) when the call names
+  none, else the smaller of the two.
+
+— see [decisions §5.96](../explanation/decisions.md#596-a-background-command-is-the-hosts-run-redirected-inside-the-sandbox)
 
 ### 2.8 Nested agent-as-tool attribution
 

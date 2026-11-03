@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,13 @@ type CodeToolConfig struct {
 	// Sessions enables the session_id argument: a named shell held open between
 	// calls, pooled per TOOL (spec §2.7k). Needs a terminal backend and RegisterCloser.
 	Sessions bool
+	// Background, when set, enables the background argument: a call asking for
+	// it is handed here after decoding, the policy and the approval, and what it
+	// returns is the call's result (spec §2.7w). Requires SpillDir.
+	Background func(ctx context.Context, tc *agents.ToolContext, cmd *Command) (agents.ToolResult, error)
+	// BackgroundMaxTimeout caps a background command; zero means 60 minutes. A
+	// call whose timeout_seconds is 0 gets the cap.
+	BackgroundMaxTimeout time.Duration
 	// Policy filters commands before the approval gate (spec §2.7j).
 	Policy Policy
 	// NeedsApprovalFunc, when set, is the tool's per-call approval gate, given
@@ -54,7 +62,10 @@ type CodeToolConfig struct {
 	RegisterCloser func(io.Closer)
 }
 
-const defaultMaxTimeout = 10 * time.Minute
+const (
+	defaultMaxTimeout           = 10 * time.Minute
+	defaultBackgroundMaxTimeout = 60 * time.Minute
+)
 
 // DefaultDescription is what an empty Description falls back to.
 func (CodeToolConfig) DefaultDescription() string {
@@ -74,6 +85,9 @@ func (c CodeToolConfig) withDefaults() CodeToolConfig {
 	}
 	if c.MaxTimeout <= 0 {
 		c.MaxTimeout = defaultMaxTimeout
+	}
+	if c.BackgroundMaxTimeout <= 0 {
+		c.BackgroundMaxTimeout = defaultBackgroundMaxTimeout
 	}
 	return c
 }
@@ -97,19 +111,44 @@ func (s *lenientString) UnmarshalJSON(data []byte) error {
 	}
 }
 
-// codeToolArgsNoSession is the schema advertised when Sessions is off: the
-// model is never offered a session_id the tool would ignore.
-type codeToolArgsNoSession struct {
+// lenientBool decodes null and 0 as false and 1 as true besides the booleans;
+// anything else is rejected and fed back as text (spec §2.7l).
+type lenientBool bool
+
+func (b *lenientBool) UnmarshalJSON(data []byte) error {
+	switch lit := string(bytes.TrimSpace(data)); lit {
+	case "true", "1":
+		*b = true
+	case "false", "0", "null":
+		*b = false
+	default:
+		return fmt.Errorf("cannot decode %s as a boolean", lit)
+	}
+	return nil
+}
+
+// codeToolArgs is the full argument set and always the decode target; the
+// schema drops session_id and background when the tool does not offer them,
+// and one sent anyway (non-strict backend) is gated in OnInvoke.
+type codeToolArgs struct {
 	Cmd            string        `json:"cmd"             jsonschema:"the shell command to execute (passed to bash -c)"`
 	TimeoutSeconds int           `json:"timeout_seconds" jsonschema:"execution timeout in seconds; 0 uses the default"`
 	Workdir        lenientString `json:"workdir"         jsonschema:"working directory for the command; empty uses the sandbox default"`
+	SessionID      lenientString `json:"session_id"      jsonschema:"reuse a persistent shell by name, so cd, exported variables and an activated environment survive between calls; empty runs in a fresh shell"`
+	Background     lenientBool   `json:"background"      jsonschema:"run in the background: returns at once with a handle while the command keeps running, its output saved to files, and the result reaches you in a later turn — so finish your reply and end your turn. For commands that take minutes (builds, test suites, downloads). Not combined with session_id; timeout_seconds 0 means the background cap"`
 }
 
-// codeToolArgs is always the decode target: a session_id sent anyway
-// (non-strict backend) decodes and is gated on cfg.Sessions in OnInvoke.
-type codeToolArgs struct {
-	codeToolArgsNoSession
-	SessionID lenientString `json:"session_id" jsonschema:"reuse a persistent shell by name, so cd, exported variables and an activated environment survive between calls; empty runs in a fresh shell"`
+// dropArg removes one property an object schema offers, and its required entry.
+func dropArg(schema map[string]any, name string) {
+	if props, ok := schema["properties"].(map[string]any); ok {
+		delete(props, name)
+	}
+	switch req := schema["required"].(type) {
+	case []any:
+		schema["required"] = slices.DeleteFunc(req, func(v any) bool { return v == name })
+	case []string:
+		schema["required"] = slices.DeleteFunc(req, func(v string) bool { return v == name })
+	}
 }
 
 // CodeTool wraps a Sandbox as a function tool: the model's shell command runs
@@ -125,18 +164,20 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			cfg.RegisterCloser(sessions)
 		}
 	}
-	// The schema advertises session_id only when Sessions is on — see spec §2.7k.
-	var schema map[string]any
-	var err error
-	if cfg.Sessions {
-		schema, err = agents.SchemaFor[codeToolArgs](true)
-	} else {
-		schema, err = agents.SchemaFor[codeToolArgsNoSession](true)
-	}
+	schema, err := agents.SchemaFor[codeToolArgs](true)
 	if err != nil {
-		// A deterministic programmer error (both argument types are fixed at
+		// A deterministic programmer error (the argument type is fixed at
 		// compile time), surfaced at construction like NewTool's.
 		panic(fmt.Sprintf("sandbox: CodeTool(%q): schema generation failed: %v", cfg.Name, err))
+	}
+	// The schema offers only what the tool does — see spec §2.7k, §2.7w.
+	if !cfg.Sessions {
+		dropArg(schema, "session_id")
+	}
+	if cfg.Background == nil {
+		dropArg(schema, "background")
+	} else if cfg.SpillDir == "" {
+		panic(fmt.Sprintf("sandbox: CodeTool(%q): Background requires SpillDir", cfg.Name))
 	}
 	if cfg.SpillDir != "" {
 		// ExecRequest.Files lands under the working directory on every backend.
@@ -198,15 +239,18 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			if args.Workdir != "" {
 				cmd = "cd " + ShellQuote(string(args.Workdir)) + " && " + cmd
 			}
+			var callID string
+			if tc != nil {
+				callID = tc.ToolCallID
+			}
+			if args.Background {
+				return cfg.background(ctx, tc, args, cmd, callID)
+			}
 
 			// Instrumented here, the one place every backend is reached through.
 			span, ctx := tracing.StartSpanFrom(ctx, "sandbox.exec", tracing.SpanTypeSandbox,
 				map[string]any{"tool": cfg.Name, "timeout_ms": timeout.Milliseconds()})
 			defer span.Finish()
-			var callID string
-			if tc != nil {
-				callID = tc.ToolCallID
-			}
 
 			// A named session runs in a shell held open from the last call
 			// (spec §2.7k).
@@ -271,6 +315,28 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 				}), nil
 		},
 	}
+}
+
+// background hands a background call to the host, or refuses it as text; a
+// refusal never runs the command in the foreground instead (spec §2.7w).
+func (c CodeToolConfig) background(ctx context.Context, tc *agents.ToolContext, args codeToolArgs, line, callID string) (agents.ToolResult, error) {
+	refuse := func(msg string) (agents.ToolResult, error) {
+		res := agents.TextResult(msg).WithDisplay("terminal").
+			WithDetails(map[string]any{"command": line, "refused": true})
+		res.IsError = true
+		return res, nil
+	}
+	switch {
+	case c.Background == nil:
+		return refuse("background is not available here; run the command in the foreground")
+	case c.Sessions && args.SessionID != "":
+		return refuse("background runs in a fresh shell; drop session_id")
+	}
+	timeout := c.BackgroundMaxTimeout
+	if args.TimeoutSeconds > 0 {
+		timeout = min(time.Duration(args.TimeoutSeconds)*time.Second, timeout)
+	}
+	return c.Background(ctx, tc, &Command{Line: line, Timeout: timeout, CallID: callID, cfg: c})
 }
 
 // formatResult renders an exec's outcome as the string sent back to the model.
