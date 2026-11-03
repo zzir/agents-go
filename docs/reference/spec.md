@@ -88,7 +88,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7s](#27s-apply_patch-locates-hunks-by-whole-lines) | apply_patch locates hunks by whole lines | Context can never bind inside a longer line |
 | [§2.7t](#27t-sandbox-file-tools-share-execs-path-view) | Sandbox file tools share exec's path view | Relative under the working directory, absolute as-is; bind-mount confines to `WorkDir` |
 | [§2.7u](#27u-an-e2b-compatible-service-is-addressed-by-its-responses) | An E2B-compatible service is addressed by its responses | A returned domain wins; the lease extends through `connect` alone |
-| [§2.7v](#27v-exec-output-past-the-cap) | Exec output past the cap | The tail is the real tail; the total is the real total |
+| [§2.7v](#27v-exec-output-past-the-cap) | Exec output past the cap | The tail is the real tail, the total the real total; a truncated stream is saved under `SpillDir` |
 | [§2.8](#28-nested-agent-as-tool-attribution) | Nested agent-as-tool attribution | How usage, spans and errors attribute across a nested agent-as-tool |
 | [§2.9](#29-budgets-) | Budgets ❓ | `MaxTurns` is the one budget dimension; token and deadline budgets are open (§6.3) |
 | [§2.10](#210-errors-and-recovery) | Errors and recovery | Stable `ErrorCode`s, and which errors a run can recover from |
@@ -1364,7 +1364,22 @@ of it, head and tail.
 - **The capture keeps the head and the tail and counts every byte.** The tail
   the model sees is the stream's real tail, and the marker's total is what the
   command wrote, not what was kept; the one-shot path and a persistent shell
-  agree on this.
+  agree on this. A backend that cannot stream keeps its own cap's worth, and
+  that is the total reported.
+- **A stream the model's view truncates is saved when `SpillDir` is set**:
+  under the working directory, in the one exec that also prunes files past
+  `SpillRetention` (7 days by default; negative keeps them) and drops a
+  `.gitignore` there. The marker names the file; a stream that fits writes
+  nothing.
+- **The file is what was captured.** Past the capture cap it holds the head, a
+  line counting the bytes not captured, and the tail — and the marker says so
+  rather than calling it the full output.
+- **A spill that fails leaves the marker bare and the result intact.** It is
+  recorded on the `sandbox.exec` span, never returned as the tool's error.
+- **Only `exec_command` spills.** `list_files` and `read_file` keep their
+  `FileToolConfig` truncation.
+
+— see [decisions §5.95](../explanation/decisions.md#595-truncated-exec-output-is-saved-in-the-sandbox)
 
 ### 2.8 Nested agent-as-tool attribution
 

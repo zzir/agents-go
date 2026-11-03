@@ -52,10 +52,12 @@ func (c *headTail) captured() captured {
 }
 
 // captured is one output stream as kept for the model: Head and Tail are
-// contiguous when Total is their length, and bracket a hole otherwise.
+// contiguous when Total is their length, and bracket a hole otherwise. Saved
+// names the file the stream was spilled to, once it was.
 type captured struct {
 	Head, Tail string
 	Total      int64
+	Saved      string
 }
 
 // whole is a stream kept in full.
@@ -64,23 +66,63 @@ func whole(s string) captured { return captured{Head: s, Total: int64(len(s))} }
 // hole is how many bytes between Head and Tail were not kept.
 func (c captured) hole() int64 { return c.Total - int64(len(c.Head)+len(c.Tail)) }
 
-// render cuts the stream to limit bytes for the model, truncateWithInfo's way;
-// the elision counts bytes written, the hole included.
+// truncated reports whether render(limit) will elide anything.
+func (c captured) truncated(limit int) bool {
+	return c.hole() > 0 || (limit > 0 && len(c.Head)+len(c.Tail) > limit)
+}
+
+// render cuts the stream to limit bytes for the model — the head's first 60%,
+// the tail's last 40% — around a marker counting the bytes written in between,
+// the hole included, and naming the file the stream was saved to.
 func (c captured) render(limit int) string {
-	if c.hole() <= 0 {
-		return truncateWithInfo(c.Head+c.Tail, limit)
+	hole := c.hole()
+	if hole <= 0 && (limit <= 0 || len(c.Head)+len(c.Tail) <= limit) {
+		return c.Head + c.Tail
 	}
 	headLimit, tailLimit := len(c.Head), len(c.Tail)
 	if limit > 0 {
-		headLimit = min(headLimit, limit*3/5)
-		tailLimit = min(tailLimit, limit-limit*3/5)
+		headLimit, tailLimit = limit*3/5, limit-limit*3/5
 	}
-	head := trimIncompleteRune(c.Head[:backToRuneStart(c.Head, headLimit)])
-	tail := skipContinuationBytes(c.Tail[forwardToRuneStart(c.Tail, len(c.Tail)-tailLimit):])
+	var head, tail string
+	if hole > 0 {
+		head = trimIncompleteRune(c.Head[:backToRuneStart(c.Head, min(headLimit, len(c.Head)))])
+		tail = skipContinuationBytes(c.Tail[forwardToRuneStart(c.Tail, max(0, len(c.Tail)-tailLimit)):])
+	} else {
+		s := c.Head + c.Tail
+		head = s[:backToRuneStart(s, headLimit)]
+		tail = s[forwardToRuneStart(s, len(s)-tailLimit):]
+		if len(head)+len(tail) >= len(s) {
+			return s
+		}
+	}
+	var b strings.Builder
 	if head == "" && tail == "" {
-		return fmt.Sprintf("…[truncated, showing 0 of %d bytes]", c.Total)
+		fmt.Fprintf(&b, "…[truncated, showing 0 of %d bytes", c.Total)
+	} else {
+		fmt.Fprintf(&b, "%s\n…[%d of %d bytes elided", head, c.Total-int64(len(head)+len(tail)), c.Total)
 	}
-	return fmt.Sprintf("%s\n…[%d of %d bytes elided]\n%s", head, c.Total-int64(len(head)+len(tail)), c.Total, tail)
+	switch {
+	case c.Saved == "":
+	case hole > 0:
+		fmt.Fprintf(&b, " — saved to %s, %d bytes of its middle not captured", c.Saved, hole)
+	default:
+		fmt.Fprintf(&b, " — full output: %s", c.Saved)
+	}
+	b.WriteString("]")
+	if head != "" || tail != "" {
+		b.WriteString("\n")
+		b.WriteString(tail)
+	}
+	return b.String()
+}
+
+// file is the stream as spilled: what was captured, with a line counting the
+// bytes a hole took.
+func (c captured) file() string {
+	if hole := c.hole(); hole > 0 {
+		return fmt.Sprintf("%s\n…[%d bytes not captured]\n%s", c.Head, hole, c.Tail)
+	}
+	return c.Head + c.Tail
 }
 
 // trimRight drops trailing cutset bytes from the stream's end, for display.

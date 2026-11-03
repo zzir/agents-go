@@ -92,8 +92,12 @@ sandbox.CodeToolConfig{
 	Timeout:        30 * time.Second,   // default per execution (sandbox.DefaultTimeout)
 	MaxTimeout:     10 * time.Minute,   // cap for model-requested timeout_seconds
 	MaxOutputBytes: 8192,               // per-stream truncation toward the model
+	SpillDir:       ".agents/exec",     // save a truncated stream here, under the working directory
+	SpillRetention: 7 * 24 * time.Hour, // prune older files on the next spill; negative keeps them
 }
 ```
+
+With `SpillDir` set, a truncated stream is saved whole and the marker reads `…[N of Y bytes elided — full output: .agents/exec/<time>-<call id>.stdout]`, so the model can `read_file` or `grep` the rest instead of rerunning the command. Only a truncated call writes anything; the directory gets a `.gitignore` so git never sees it. Output past the 1 MiB capture cap is saved with a line marking the bytes that were not captured, and the marker says so. A spill that fails is logged on the `sandbox.exec` span and the result comes back as it would have without one. The workbench sets `.agents/exec` on every project sandbox.
 
 ## Backends
 

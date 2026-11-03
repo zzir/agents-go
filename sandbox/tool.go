@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,13 @@ type CodeToolConfig struct {
 	// MaxOutputBytes truncates each of stdout and stderr sent to the model, on
 	// a rune boundary. Defaults to 8192.
 	MaxOutputBytes int
+	// SpillDir, when set, is where a stream the model's view truncates is saved
+	// whole: a relative path under the sandbox's working directory, made on
+	// first use (spec §2.7v). Empty keeps the output in the result alone.
+	SpillDir string
+	// SpillRetention is how long a spilled file is kept; zero means 7 days, a
+	// negative value never deletes.
+	SpillRetention time.Duration
 	// Sessions enables the session_id argument: a named shell held open between
 	// calls, pooled per TOOL (spec §2.7k). Needs a terminal backend and RegisterCloser.
 	Sessions bool
@@ -130,6 +138,14 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 		// compile time), surfaced at construction like NewTool's.
 		panic(fmt.Sprintf("sandbox: CodeTool(%q): schema generation failed: %v", cfg.Name, err))
 	}
+	if cfg.SpillDir != "" {
+		// ExecRequest.Files lands under the working directory on every backend.
+		clean := path.Clean(cfg.SpillDir)
+		if path.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+			panic(fmt.Sprintf("sandbox: CodeTool(%q): SpillDir %q is not a relative path under the working directory", cfg.Name, cfg.SpillDir))
+		}
+		cfg.SpillDir = clean
+	}
 	// Compiled once and shared read-only by both closures: the runner runs a
 	// turn's tool calls in parallel. The zero Policy refuses nothing.
 	compiled, policyErr := cfg.Policy.compile()
@@ -187,11 +203,17 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			span, ctx := tracing.StartSpanFrom(ctx, "sandbox.exec", tracing.SpanTypeSandbox,
 				map[string]any{"tool": cfg.Name, "timeout_ms": timeout.Milliseconds()})
 			defer span.Finish()
+			var callID string
+			if tc != nil {
+				callID = tc.ToolCallID
+			}
 
 			// A named session runs in a shell held open from the last call
 			// (spec §2.7k).
 			if session := string(args.SessionID); cfg.Sessions && session != "" {
 				out, code, err := sessions.run(ctx, sb, session, cmd, timeout)
+				out = out.trimRight("\n")
+				cfg.spill(ctx, sb, span, callID, spillStream{".out", &out})
 				if err != nil {
 					// The partial output still reaches the model (spec §2.7k).
 					span.SetError(err.Error(), nil)
@@ -238,6 +260,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 			span.Set("timed_out", res.TimedOut)
 			span.Set("stdout_bytes", stdout.Total)
 			span.Set("stderr_bytes", stderr.Total)
+			cfg.spill(ctx, sb, span, callID, spillStream{".stdout", &stdout}, spillStream{".stderr", &stderr})
 			// Details carry the exit code too, so a UI need not parse the text.
 			return agents.TextResult(formatResult(res, stdout, stderr, cfg.MaxOutputBytes)).
 				WithDisplay("terminal").
@@ -272,26 +295,7 @@ func formatResult(res *ExecResult, stdout, stderr captured, limit int) string {
 
 // truncateWithInfo cuts s to at most limit bytes, keeping the head (60%) and
 // the tail (40%) — progress first, failure summary last — on rune boundaries.
-func truncateWithInfo(s string, limit int) string {
-	if limit <= 0 || len(s) <= limit {
-		return s
-	}
-
-	headLimit := limit * 3 / 5
-	tailLimit := limit - headLimit
-
-	head := s[:backToRuneStart(s, headLimit)]
-	tail := s[forwardToRuneStart(s, len(s)-tailLimit):]
-
-	dropped := len(s) - len(head) - len(tail)
-	if dropped <= 0 {
-		return s
-	}
-	if head == "" && tail == "" {
-		return fmt.Sprintf("…[truncated, showing 0 of %d bytes]", len(s))
-	}
-	return fmt.Sprintf("%s\n…[%d of %d bytes elided]\n%s", head, dropped, len(s), tail)
-}
+func truncateWithInfo(s string, limit int) string { return whole(s).render(limit) }
 
 // backToRuneStart moves i back to the nearest rune boundary at or before it.
 func backToRuneStart(s string, i int) int {

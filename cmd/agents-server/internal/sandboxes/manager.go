@@ -520,6 +520,9 @@ func (m *Manager) CloseAll() {
 const (
 	fileToolMaxOutputBytes = 65536
 	execToolMaxOutputBytes = 32768
+	// execSpillDir is where exec_command saves output past its cap, under the
+	// project's working directory (spec §2.7v).
+	execSpillDir = ".agents/exec"
 )
 
 // SandboxTools returns exec_command, read_file, write_file, list_files and
@@ -531,7 +534,7 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool,
 	if err != nil {
 		return nil, nil, err
 	}
-	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes}
+	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes, SpillDir: execSpillDir}
 	var pools []io.Closer
 	// session_id is advertised only on a backend that can hold a shell open —
 	// spec §2.7k.

@@ -1997,3 +1997,29 @@ folded the dock's height is not tracked: a bar that appears during a read-back
 overlaps the transcript until the composer opens.
 
 Rules: invariant 95.
+
+### 5.95 Truncated exec output is saved in the sandbox
+
+Decided 2026-11-03.
+
+**Decision.** When `CodeToolConfig.SpillDir` is set, a stream the model's view
+truncates is written to a file under the sandbox's working directory and the
+elision marker names it; the model reads the rest with `read_file` or a shell
+command instead of rerunning the command. The file is what was captured — the
+head, a line counting the bytes a hole took, the tail — and the marker says
+when it is not the full output. One exec writes the files, prunes the
+directory past the retention and keeps git out of it, and only when something
+was truncated. The workbench sets `.agents/exec`.
+
+**Rejected.** `/tmp` — in docker's bind-mount mode `read_file` cannot reach it
+(spec §2.7t), so the pointer would work on some backends and not others. A
+host-side blob store with a lookup tool — one more tool on every call and a
+second place output lives; the transcript stays the record. A history tool
+reading back the transcript — the transcript holds the truncated text, so there
+is nothing more to read.
+
+**Cost accepted.** The agent's output lands in the user's workspace (git-blind,
+`find`-visible); a secret a command echoed sits on disk for the retention.
+The spill is one more exec per truncated call.
+
+Rules: spec §2.7v.
