@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig, Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -17,6 +18,10 @@ function katexWoff2Only(): Plugin {
 
 export default defineConfig({
   plugins: [react(), katexWoff2Only()],
+  test: {
+    // Node 25+ defines its own localStorage global, which hides jsdom's.
+    execArgv: ['--no-experimental-webstorage'],
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
