@@ -40,6 +40,12 @@ describe('flattenConfig / nestConfig', () => {
     expect(nestConfig({ name: 'x', checklist: true }).behavior).toEqual({ checklist: true });
   });
 
+  // So is the background-commands switch.
+  it('reads and writes the background-commands switch as behavior.background_commands', () => {
+    expect(flattenConfig({ name: 'x', behavior: { background_commands: true } }).background_commands).toBe(true);
+    expect(nestConfig({ name: 'x', background_commands: true }).behavior).toEqual({ background_commands: true });
+  });
+
   // A group the server omitted, or a key it never set, reads as unset — never
   // as a thrown error or a stray empty group on the form.
   it('tolerates a missing group and an undefined key', () => {

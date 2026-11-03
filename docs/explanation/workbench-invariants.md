@@ -562,3 +562,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     ending wakes the parent; its retry ceiling is one. The flag is offered only
     on a chat run of an agent with `behavior.background_commands` on, and a
     sandbox stop ends the project's commands first — see decisions §5.97.
+97. **The card that started a task is its anchor.** A card whose display
+    carries a `task_id` — `spawn_task`'s, or `exec_command`'s run in the
+    background — offers Inspect, wears the task's status and its result from
+    the same projection (invariant 21), and offers Retry only under the ceiling
+    the server sends (one for a command: never). A background `exec_command`
+    is tagged `background` on its approval card and after; the task lens of a
+    command is the line and its verdict, with no transcript or trace tab.

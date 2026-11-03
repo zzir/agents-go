@@ -67,6 +67,17 @@ function primaryArg(toolName: string, args: string): ArgBody {
   }
 }
 
+// backgroundArg reads exec_command's background flag as the tool does: true or
+// 1 is on, anything else off.
+function backgroundArg(args: string): boolean {
+  try {
+    const b = (JSON.parse(args) as { background?: unknown }).background;
+    return b === true || b === 1;
+  } catch {
+    return false;
+  }
+}
+
 // patchFiles lists the paths a patch touches, for the card header.
 function patchFiles(patch: string): string[] {
   const files: string[] = [];
@@ -162,12 +173,16 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale
   const liveTaskStatus = liveTaskStatusByCallId[tool_call_id];
   const liveTaskLabel = liveTaskLabelByCallId[tool_call_id];
 
-  // A spawn_task card is the task's anchor: the task id comes from the call's
+  // The card that started a task is its anchor — spawn_task, or exec_command
+  // in the background (invariant 97): the task id comes from the call's
   // display projection (invariant 21), or the result's Details bag before that lands.
   let inspectTaskId = task?.id || '';
-  if (!inspectTaskId && tool_name === 'spawn_task' && typeof toolCall.extra?.task_id === 'string') {
+  if (!inspectTaskId && typeof toolCall.extra?.task_id === 'string') {
     inspectTaskId = toolCall.extra.task_id;
   }
+  // A command asked for in the background: tagged on the approval card, since
+  // that is what the decision is about, and on the card after.
+  const background = tool_name === 'exec_command' && backgroundArg(args);
 
   const sepIdx = tool_name.indexOf('__');
   const mcpServer = sepIdx > 0 ? tool_name.substring(0, sepIdx) : null;
@@ -195,7 +210,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale
   // One-line header title: the spawn label, else the result summary, else the
   // patched file(s), else an arg summary, else a task_status/task_stop's target.
   let headerSummary: { text: string; mono: boolean } | null = null;
-  if (taskTitle) headerSummary = { text: taskTitle, mono: false };
+  if (taskTitle) headerSummary = { text: taskTitle, mono: tool_name === 'exec_command' };
   else if (resultSummary) headerSummary = { text: resultSummary, mono: false };
   else if (fileHint) headerSummary = { text: fileHint, mono: true };
   else if (mcpServer) headerSummary = mcpArgSummary(args);
@@ -284,6 +299,7 @@ export function ToolCallCard({ toolCall, live, onInspectTask, onRetryTask, stale
           approval status) to the right edge, on every card. */}
       <span className="ToolCallCard-spacer" />
       {mcpServer && <Label>{mcpServer}</Label>}
+      {background && <Label variant="secondary">background</Label>}
       {task?.status && <StatusLabel status={task.status} prefix="task" />}
       {!task?.status && liveTaskStatus && <StatusLabel status={liveTaskStatus} prefix="task" />}
       {(task?.attempt ?? 0) > 1 && <Label variant="secondary">{'attempt ' + task!.attempt}</Label>}

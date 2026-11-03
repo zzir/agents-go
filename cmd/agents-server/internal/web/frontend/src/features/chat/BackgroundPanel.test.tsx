@@ -14,7 +14,7 @@ vi.mock('@primer/react', () => ({
   useConfirm: () => async () => false,
 }));
 vi.mock('@primer/octicons-react', () => Object.fromEntries(
-  ['ArrowLeftIcon', 'StackIcon', 'CopyIcon', 'CheckIcon', 'WorkflowIcon', 'DotFillIcon', 'CircleIcon', 'ChecklistIcon'].map(n => [n, () => null]),
+  ['ArrowLeftIcon', 'StackIcon', 'CopyIcon', 'CheckIcon', 'WorkflowIcon', 'TerminalIcon', 'DotFillIcon', 'CircleIcon', 'ChecklistIcon'].map(n => [n, () => null]),
 ));
 vi.mock('@/layout/SidePanel', () => ({ SidePanel: ({ children }: { children?: ReactNode }) => <div>{children}</div> }));
 vi.mock('@/components/Loading', () => ({ Loading: () => <div>loading</div> }));
@@ -44,14 +44,14 @@ const actions: ChatActions = { openTrace: noop, inspectTask: noop, retryTask: re
 const item: BackgroundItem = { kind: 'task', id: 't1', label: 'fix it', status: 'working', childSessionId: 'child1', retryable: false };
 const view: TaskViewState = { taskId: 't1', childSessionId: 'child1', messages: [], streaming: '', reasoning: '', traceRuns: {}, loaded: true };
 
-async function mount() {
+async function mount(it: BackgroundItem = item) {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
   await act(async () => {
     root.render(
       <ChatSessionProvider session={SESSION} actions={actions} tasks={deriveChatTasks({})}>
-        <BackgroundDetailPanel item={item} view={view} onBack={noop} onClose={noop} />
+        <BackgroundDetailPanel item={it} view={view} onBack={noop} onClose={noop} />
       </ChatSessionProvider>,
     );
   });
@@ -76,6 +76,19 @@ describe('BackgroundDetailPanel checklist', () => {
     const m = await mount();
     expect(m.host.querySelector('.task-view-checklist')).toBeNull();
     expect(m.host.textContent).toContain('No transcript yet.');
+    m.unmount();
+  });
+});
+
+describe('BackgroundDetailPanel command', () => {
+  // A command has no transcript and no trace: the lens is the line it ran and
+  // its verdict, with no tabs to an empty view.
+  it('shows the verdict instead of the tabs', async () => {
+    memoryKey.mockRejectedValue(new Error('404'));
+    const m = await mount({ kind: 'command', id: 't2', label: 'make test', status: 'failed', retryable: false, summary: 'exit 2 · 4.0s · stdout 1 KB · stderr 0 B' });
+    expect(m.host.querySelector('.task-view-command')?.textContent).toBe('make test');
+    expect(m.host.querySelector('.task-view-result')?.textContent).toContain('exit 2');
+    expect(m.host.querySelector('.lens-tabs')).toBeNull();
     m.unmount();
   });
 });

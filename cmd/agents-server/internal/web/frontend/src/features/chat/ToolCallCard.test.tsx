@@ -40,7 +40,7 @@ const SESSION: ChatSessionState = { sessionId: 's1', running: true, compacting: 
 const noop = () => {};
 const resolve = async () => {};
 
-function mount(toolCall: ToolCall, stale?: boolean) {
+function mount(toolCall: ToolCall, stale?: boolean, onInspectTask?: (taskId: string) => void) {
   const approve = vi.fn();
   const reject = vi.fn();
   const actions: ChatActions = { approve, reject, openTrace: noop, inspectTask: noop, retryTask: resolve, stopTask: resolve, dismissTask: resolve };
@@ -50,7 +50,7 @@ function mount(toolCall: ToolCall, stale?: boolean) {
   act(() => {
     root.render(
       <ChatSessionProvider session={SESSION} actions={actions} tasks={deriveChatTasks({})}>
-        <ToolCallCard toolCall={toolCall} live stale={stale} />
+        <ToolCallCard toolCall={toolCall} live stale={stale} onInspectTask={onInspectTask} />
       </ChatSessionProvider>,
     );
   });
@@ -226,5 +226,31 @@ describe('ToolCallCard checklist', () => {
     expect(old.host.querySelector('.disclosure-header')?.getAttribute('aria-expanded')).toBe('false');
     expect(old.host.textContent).toContain('1/2 done');
     old.unmount();
+  });
+});
+
+describe('ToolCallCard background command', () => {
+  // The approval card says what is being approved: a run in the background.
+  it('tags a background exec_command and leaves a foreground one plain', () => {
+    const bg = mount(pending('exec_command', { cmd: 'make test', background: true }));
+    expect(bg.host.querySelector('.disclosure-header')?.textContent).toContain('background');
+    bg.unmount();
+    const fg = mount(pending('exec_command', { cmd: 'make test' }));
+    expect(fg.host.querySelector('.disclosure-header')?.textContent).not.toContain('background');
+    fg.unmount();
+  });
+
+  // The exec_command card is its task's anchor, as a spawn_task card is
+  // (invariant 97): Inspect opens the task its result named.
+  it('offers Inspect for the task its result named', () => {
+    const inspect = vi.fn();
+    const card: ToolCall = {
+      tool_call_id: 'c1', tool_name: 'exec_command', status: 'completed', output: 'task_id: t9',
+      arguments: JSON.stringify({ cmd: 'make test', background: true }), extra: { task_id: 't9' },
+    } as ToolCall;
+    const m = mount(card, undefined, inspect);
+    act(() => m.host.querySelector<HTMLButtonElement>('button[aria-label="Inspect task"]')!.click());
+    expect(inspect).toHaveBeenCalledWith('t9');
+    m.unmount();
   });
 });

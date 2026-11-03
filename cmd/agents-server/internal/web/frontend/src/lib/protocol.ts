@@ -152,6 +152,9 @@ export type TaskStatus = 'working' | 'input_required' | 'completed' | 'failed' |
 
 // TaskKindWorkflow is the task kind of a workflow execution (store.TaskKindWorkflow).
 export const TASK_KIND_WORKFLOW = 'workflow';
+// TaskKindCommand is the task kind of a shell command exec_command runs in the
+// background (store.TaskKindCommand): no agent, one attempt.
+export const TASK_KIND_COMMAND = 'command';
 // The "tool" a workflow step waiting for a go-ahead pauses on
 // (store.StepApprovalToolName): approving starts the step, rejecting cancels
 // the execution.

@@ -30,7 +30,7 @@ import { providerMeta, providerFacts, type ProviderTypeInfo } from '@/lib/provid
 // objects. The form state stays flat, so flattenConfig lifts a loaded config's
 // group keys to the top level and nestConfig folds them back before saving.
 export const CONFIG_GROUPS: Record<string, string[]> = {
-  behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'tool_loop', 'reasoning_item_id_policy', 'workflow_authoring', 'checklist', 'subagents', 'vision', 'override_system_prompt', 'thinking_mode', 'thinking_binding'],
+  behavior: ['max_turns', 'handoff_description', 'tool_choice_reset', 'stop_at_tools', 'handoff_input_filter', 'max_tool_concurrency', 'tool_not_found_behavior', 'tool_loop', 'reasoning_item_id_policy', 'workflow_authoring', 'checklist', 'background_commands', 'subagents', 'vision', 'override_system_prompt', 'thinking_mode', 'thinking_binding'],
   resilience: ['retry_enabled', 'retry_policy', 'fallback_models'],
   guardrails: ['guardrails', 'output_schema'],
   session: ['history_limit'],
@@ -202,6 +202,7 @@ interface AgentFormData {
   thinking_binding: boolean;
   workflow_authoring: boolean;
   checklist: boolean;
+  background_commands: boolean;
   subagents: boolean;
   vision: boolean;
   override_system_prompt: boolean;
@@ -303,7 +304,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
       // New agents default to a bounded fan-out; an existing agent keeps its
       // stored value (0 = unlimited) via the spread below.
       handoff_input_filter: '', max_tool_concurrency: initial ? '' : '8',
-      tool_not_found_behavior: '', tool_loop: '', reasoning_item_id_policy: '', thinking_mode: '', thinking_binding: true, workflow_authoring: false, checklist: false, subagents: true, vision: false, override_system_prompt: false,
+      tool_not_found_behavior: '', tool_loop: '', reasoning_item_id_policy: '', thinking_mode: '', thinking_binding: true, workflow_authoring: false, checklist: false, background_commands: false, subagents: true, vision: false, override_system_prompt: false,
       compaction_enabled: false, compaction_threshold_tokens: '',
       compaction_window: '', compaction_model: '', compaction_prompt: '', compaction_mode: '',
       memory_tools: false, memory_agent_write: false, history_tools: false,
@@ -636,6 +637,14 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         <div className="form-group-title">Checklist</div>
         <ToggleRow label="Keep a checklist" checked={form.checklist || false} onChange={v => set('checklist', v)}
           description="The todo_write tool: the agent lists its steps and ticks them off. Refused while planning." />
+      </div>
+
+      {/* Opt-in (decisions §5.82): the parameter rides on every exec_command
+          schema, and only an agent that runs long commands needs it. */}
+      <div className="form-group">
+        <div className="form-group-title">Background commands</div>
+        <ToggleRow label="Run long commands in the background" checked={form.background_commands || false} onChange={v => set('background_commands', v)}
+          description="exec_command may take background: true — the command runs as a task and its result arrives in a later turn." />
       </div>
 
       <div className="form-group">

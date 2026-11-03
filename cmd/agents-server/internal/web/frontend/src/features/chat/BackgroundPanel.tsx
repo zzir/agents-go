@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useMemo, memo } from 'react';
 import { Button, useConfirm } from '@primer/react';
-import { StackIcon, WorkflowIcon } from '@primer/octicons-react';
+import { StackIcon, TerminalIcon, WorkflowIcon } from '@primer/octicons-react';
 import { SidePanel } from '@/layout/SidePanel';
 import { LensHead } from '@/layout/LensHead';
 import { Loading } from '@/components/Loading';
@@ -69,8 +69,9 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
               onKeyDown={e => { if (activates(e)) { e.preventDefault(); onOpen(it.id); } }}>
               <div className="task-row-head">
                 {statusDot(it.status)}
-                {/* A sequence is marked; a task is the unmarked default. */}
+                {/* A sequence and a command are marked; a task is the unmarked default. */}
                 {it.kind === 'workflow' && <WorkflowIcon size={12} className="task-row-kind" />}
+                {it.kind === 'command' && <TerminalIcon size={12} className="task-row-kind" />}
                 <span className="task-row-label">{it.label}</span>
                 {itemDuration(it, now) && <span className="task-row-duration">{itemDuration(it, now)}</span>}
               </div>
@@ -227,26 +228,36 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
       <LensHead
         onBack={onBack}
         backLabel="Back to tasks"
-        marks={<>{statusDot(item.status)}{item.kind === 'workflow' && <WorkflowIcon size={12} className="task-row-kind" />}</>}
+        marks={<>{statusDot(item.status)}{item.kind === 'workflow' && <WorkflowIcon size={12} className="task-row-kind" />}{item.kind === 'command' && <TerminalIcon size={12} className="task-row-kind" />}</>}
         id={item.id}
         activity={item.activity}
         figures={[itemDuration(item, now)]}
         actions={actions.length > 0 ? actions : undefined}
       >
-        <div className="lens-tabs">
-          {item.kind === 'workflow' && (
-            <button className={tab === 'steps' ? 'active' : ''} onClick={() => setTab('steps')}>
-              Steps{steps.length > 0 ? ` (${steps.length})` : ''}
+        {/* A command has no transcript and no trace: its verdict is the body. */}
+        {item.kind !== 'command' && (
+          <div className="lens-tabs">
+            {item.kind === 'workflow' && (
+              <button className={tab === 'steps' ? 'active' : ''} onClick={() => setTab('steps')}>
+                Steps{steps.length > 0 ? ` (${steps.length})` : ''}
+              </button>
+            )}
+            <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}>Transcript</button>
+            <button className={tab === 'trace' ? 'active' : ''} onClick={() => setTab('trace')}>
+              Trace{spanTotal > 0 ? ` (${spanTotal})` : ''}
             </button>
-          )}
-          <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}>Transcript</button>
-          <button className={tab === 'trace' ? 'active' : ''} onClick={() => setTab('trace')}>
-            Trace{spanTotal > 0 ? ` (${spanTotal})` : ''}
-          </button>
-        </div>
+          </div>
+        )}
       </LensHead>
 
-      {tab === 'steps' ? (
+      {item.kind === 'command' ? (
+        <div className="task-view">
+          <pre className="task-view-command">{item.label}</pre>
+          {item.summary
+            ? <pre className="task-view-result">{item.summary}</pre>
+            : <div className="trace-empty">{live ? 'Running — the output is in the sandbox, under .agents/exec.' : 'No output was recorded.'}</div>}
+        </div>
+      ) : tab === 'steps' ? (
         <div className="task-view">
           {steps.length === 0 ? (
             <div className="trace-empty">No step has started yet.</div>

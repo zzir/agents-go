@@ -1088,6 +1088,17 @@
 }
 
 .task-view { display: flex; flex-direction: column; gap: var(--base-size-8); }
+/* A command's lens: the line it ran, then the verdict and the head of its output. */
+.task-view-command, .task-view-result {
+  margin: 0;
+  padding: var(--base-size-8);
+  border-radius: var(--borderRadius-medium);
+  background: var(--bgColor-muted);
+  font-family: var(--fontStack-monospace);
+  font-size: var(--base-text-size-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .task-view-user {
   align-self: flex-end;
   background: var(--bgColor-accent-muted);

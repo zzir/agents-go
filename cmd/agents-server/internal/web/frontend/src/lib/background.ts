@@ -1,11 +1,11 @@
-import { TASK_KIND_WORKFLOW, type TaskStatus, type WorkflowState } from '@/lib/protocol';
+import { TASK_KIND_COMMAND, TASK_KIND_WORKFLOW, type TaskStatus, type WorkflowState } from '@/lib/protocol';
 import { taskRetryable, type TaskState } from '@/lib/useAgentSocket';
 
 // BackgroundItem is one piece of background work as the panel shows it: a
-// spawned task or a workflow execution, both tasks to the server; `kind`
-// survives only for what the strip renders differently.
+// spawned task, a workflow execution or a background command, all tasks to
+// the server; `kind` survives only for what the strip renders differently.
 export interface BackgroundItem {
-  kind: 'task' | 'workflow';
+  kind: 'task' | 'workflow' | 'command';
   id: string;
   label: string;
   status: TaskStatus;
@@ -16,6 +16,9 @@ export interface BackgroundItem {
   // current step for a workflow.
   activity?: string;
   error?: string;
+  // Command only: the verdict line and the head of the output, the detail
+  // lens's whole body (a command has no transcript).
+  summary?: string;
   // How far a countable sequence has got, 0..1; absent for a task.
   progress?: number;
   attempt?: number;
@@ -48,9 +51,10 @@ export function stepProgress(state?: WorkflowState): { activity?: string; progre
 
 export function taskItem(t: TaskState): BackgroundItem {
   const workflow = t.kind === TASK_KIND_WORKFLOW;
+  const command = t.kind === TASK_KIND_COMMAND;
   const live = t.status === 'working' || t.status === 'input_required';
   return {
-    kind: workflow ? 'workflow' : 'task',
+    kind: workflow ? 'workflow' : command ? 'command' : 'task',
     id: t.taskId,
     label: t.label || t.taskId.slice(0, 8),
     status: t.status,
@@ -61,6 +65,7 @@ export function taskItem(t: TaskState): BackgroundItem {
       ? (live ? stepProgress(t.state) : {})
       : { activity: t.status === 'working' ? t.lastTool : undefined }),
     error: t.status === 'failed' ? t.summary : undefined,
+    summary: command ? t.summary : undefined,
     attempt: t.attempt,
     pendingCallId: t.pendingCallId,
     pendingToolName: t.pendingToolName,
