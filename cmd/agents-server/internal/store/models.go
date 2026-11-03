@@ -35,15 +35,17 @@ type Session struct {
 }
 
 // Task is one piece of background work spawned from a chat session: a
-// sub-agent task, or a workflow execution (Kind TaskKindWorkflow). Its
-// transcript is a hidden child session; the linkage and outcome live here.
+// sub-agent task, a workflow execution (Kind TaskKindWorkflow) or a shell
+// command (Kind TaskKindCommand). Its transcript is a hidden child session;
+// the linkage and outcome live here.
 type Task struct {
 	bun.BaseModel `bun:"table:tasks,alias:t"`
 
 	ID string `bun:"id,pk,type:uuid"      json:"task_id"`
 	// RunID is the task's current run; a retry and each workflow step replace it.
 	RunID string `bun:"run_id,nullzero,type:uuid" json:"run_id,omitempty"`
-	// Kind is "" for a sub-agent task, TaskKindWorkflow for a workflow execution.
+	// Kind is "" for a sub-agent task, TaskKindWorkflow for a workflow
+	// execution, TaskKindCommand for a background shell command.
 	Kind string `bun:"kind" json:"kind,omitempty"`
 	// State is the SDK's opaque per-job record; a workflow's is its encoded
 	// WorkflowState.
@@ -84,6 +86,10 @@ type Task struct {
 
 // TaskKindWorkflow is the Task.Kind of a workflow execution.
 const TaskKindWorkflow = "workflow"
+
+// TaskKindCommand is the Task.Kind of a shell command exec_command runs in the
+// background; it has no agent and one attempt.
+const TaskKindCommand = "command"
 
 // AgentConfig is the persisted definition of an agent: model, instructions,
 // tools, handoffs, guardrails, and the various run-level behavior settings.

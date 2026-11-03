@@ -529,12 +529,12 @@ const (
 // apply_patch for the project over one Sandbox, holding a reference the
 // returned release drops (with any named shells); commandApproval gates
 // exec_command per call.
-func (m *Manager) SandboxTools(spec Spec, commandApproval bool) ([]*agents.Tool, func(), error) {
+func (m *Manager) SandboxTools(spec Spec, commandApproval bool, background BackgroundCommand) ([]*agents.Tool, func(), error) {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
 		return nil, nil, err
 	}
-	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes, SpillDir: execSpillDir}
+	codeCfg := sandbox.CodeToolConfig{MaxOutputBytes: execToolMaxOutputBytes, SpillDir: execSpillDir, Background: background}
 	var pools []io.Closer
 	// session_id is advertised only on a backend that can hold a shell open —
 	// spec §2.7k.

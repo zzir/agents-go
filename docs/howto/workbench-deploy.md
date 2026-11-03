@@ -183,7 +183,7 @@ Tables are created automatically on startup:
 | `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage; payload referenced from `trace_blobs`; pruned in batches by `trace_retention_days` |
 | `trace_blobs`       | Payload elements of a session's spans (input items, replies, tool definitions, instructions): one row per distinct element per session, gzip-compressed when smaller; dropped with the session's last event or by `trace_payload_retention_days` |
 | `pending_approvals` | Runs paused for human-in-the-loop tool approval (persisted so they survive restart) |
-| `tasks`             | Background tasks — sub-agents spawned via `spawn_task` and workflow executions (`kind`, `state`) — durable identity and status |
+| `tasks`             | Background tasks — sub-agents spawned via `spawn_task`, workflow executions and background commands (`kind`, `state`) — durable identity and status |
 | `providers`         | Model-API endpoints and their credentials; agents reference one |
 | `workflows`         | Fixed step sequences (each step: agent + prompt, with a stable id); an execution is a `tasks` row |
 | `audit_events`      | Who did what, to what, when — see [Audit log](workbench-auth.md#audit-log)                          |

@@ -1761,6 +1761,11 @@ components:
         The run-level settings, one JSON column per category
         (agent_config_groups.go); each a nested object in the API.
       properties:
+        background_commands:
+          description: |-
+            BackgroundCommands lets exec_command run a command in the background,
+            as a task of kind command, on the agent's chat runs; off by default.
+          type: boolean
         checklist:
           description: |-
             Checklist gives the agent's chat runs the todo_write checklist tool; off
@@ -2388,8 +2393,9 @@ components:
             retry clears it.
           type: boolean
         kind:
-          description: Kind is "" for a sub-agent task, TaskKindWorkflow for a workflow
-            execution.
+          description: |-
+            Kind is "" for a sub-agent task, TaskKindWorkflow for a workflow
+            execution, TaskKindCommand for a background shell command.
           type: string
         label:
           type: string

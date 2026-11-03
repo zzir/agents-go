@@ -555,3 +555,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     (`--dock-h`). Reading back — a third of the view below, held until
     following — shows Jump and folds the composer unless the person works in it;
     the checklist shows only unfolded; the send cell never moves — see decisions §5.94.
+96. **A background command is a task of kind `command` on the exec_command
+    call's card.** `exec_command` with `background: true` spawns the row
+    (`Kind` command, `ToolCallID` the call's); the launcher runs it on the
+    parent's project sandbox with no agent and no hub run; a stop kills it; its
+    ending wakes the parent; its retry ceiling is one. The flag is offered only
+    on a chat run of an agent with `behavior.background_commands` on, and a
+    sandbox stop ends the project's commands first — see decisions §5.97.

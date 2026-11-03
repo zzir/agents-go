@@ -346,18 +346,24 @@ A task is one piece of background work started from a session through the ONE
 tool that starts any: `spawn_task` — a sub-agent on a prompt (the asking agent
 itself, or one of its handoff targets by `agent_name`), or, told a
 `workflow` name, a workflow execution (`kind: "workflow"`, see
-[Workflows](#workflows--apiv1workflows)). Each runs on its own hidden session
-and reports back by injecting a notification into the parent session (the
-SDK's [background tasks](../howto/tasks.md)). Status uses the MCP Tasks
+[Workflows](#workflows--apiv1workflows)) — and `exec_command` with
+`background: true`, which makes the command a task (`kind: "command"`,
+[invariant 96](../explanation/workbench-invariants.md)): no agent, one
+attempt, its result the verdict line (exit code, duration, output sizes, the
+files in the sandbox holding the full output) above the head and tail of what
+it printed; a non-zero exit is a `failed` task. Each runs on its own hidden
+session and reports back by injecting a notification into the parent session
+(the SDK's [background tasks](../howto/tasks.md)). Status uses the MCP Tasks
 five-state vocabulary, read live from the hub for a running task and from the
 store after it ends.
 
 A `retry` counts against the session's live-task cap
 (`max_tasks_per_session`) like a spawn and queues behind it the same way; a
-task that used every attempt (3 by default) is `409`. `GET /sessions/:id/tasks`
-is one session's, newest first; `GET /tasks` pages every live session's, each
-row with its session's name — `?live=true` is the `working` /
-`input_required` rows, `?kind=workflow` the executions.
+task that used every attempt (3 by default, 1 for a command) is `409`.
+`GET /sessions/:id/tasks` is one session's, newest first; `GET /tasks` pages
+every live session's, each row with its session's name — `?live=true` is the
+`working` / `input_required` rows, `?kind=workflow` the executions,
+`?kind=command` the commands.
 
 ### Agents — `/api/v1/agents`
 
@@ -392,7 +398,10 @@ the run's session memory `checklist.md`
 ([decisions §5.82](../explanation/decisions.md#582-a-checklist-belongs-to-whoever-renders-it),
 [invariant 91](../explanation/workbench-invariants.md));
 so is workflow authoring, `behavior.workflow_authoring`, off by default
-([invariant 39](../explanation/workbench-invariants.md)).
+([invariant 39](../explanation/workbench-invariants.md)), and so are
+background commands, `behavior.background_commands`, off by default — on,
+`exec_command` takes `background: true` on the agent's chat runs
+([invariant 96](../explanation/workbench-invariants.md)).
 `behavior.override_system_prompt` sends the agent's `instructions` alone —
 the `system_prompt` setting is not prepended, even when they are empty
 ([invariant 67](../explanation/workbench-invariants.md)).

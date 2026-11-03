@@ -27,12 +27,15 @@ type ProjectHandler struct {
 	Audit protocol.AuditFunc
 	// Notes, when set, lets a rebuild leave its note on the session it was
 	// asked from. Wired at bootstrap.
-	Notes     *RebuildNoteDeps
-	store     *store.ProjectStore
-	sandboxes *store.SandboxStore
-	manager   *sandboxes.Manager
-	terminals *TerminalHandler
-	settings  *settings.Reader
+	Notes *RebuildNoteDeps
+	// StopCommands, when set, ends the project's background commands before
+	// its compute stops. Wired at bootstrap.
+	StopCommands func(ctx context.Context, projectID string)
+	store        *store.ProjectStore
+	sandboxes    *store.SandboxStore
+	manager      *sandboxes.Manager
+	terminals    *TerminalHandler
+	settings     *settings.Reader
 }
 
 // NewProjectHandler returns a handler over the project store; m reclaims a
@@ -557,6 +560,10 @@ func (h *ProjectHandler) SandboxStop(c *gin.Context) {
 	spec, ok := h.spec(c)
 	if !ok {
 		return
+	}
+	// A command still running would hold the compute: it is ended first.
+	if h.StopCommands != nil {
+		h.StopCommands(c.Request.Context(), spec.Project.ID)
 	}
 	stopped, err := h.manager.Stop(c.Request.Context(), spec)
 	if err != nil {

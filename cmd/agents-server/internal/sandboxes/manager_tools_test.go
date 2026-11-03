@@ -45,7 +45,7 @@ func TestSandboxToolsSessionSchemaByCapability(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewManager()
 			m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return tc.sb, nil }
-			tools, release, err := m.SandboxTools(testSpec("p"), false)
+			tools, release, err := m.SandboxTools(testSpec("p"), false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,7 +69,7 @@ func TestSandboxToolsReleaseClosesSessionPool(t *testing.T) {
 	m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
 		return &terminalSandbox{}, nil
 	}
-	tools, release, err := m.SandboxTools(testSpec("p"), false)
+	tools, release, err := m.SandboxTools(testSpec("p"), false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

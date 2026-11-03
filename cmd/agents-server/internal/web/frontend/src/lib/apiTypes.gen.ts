@@ -9003,6 +9003,11 @@ export interface components {
          */
         "store.BehaviorGroup": {
             /**
+             * @description BackgroundCommands lets exec_command run a command in the background,
+             *     as a task of kind command, on the agent's chat runs; off by default.
+             */
+            background_commands?: boolean;
+            /**
              * @description Checklist gives the agent's chat runs the todo_write checklist tool; off
              *     by default.
              */
@@ -9448,7 +9453,10 @@ export interface components {
              *     retry clears it.
              */
             dismissed?: boolean;
-            /** @description Kind is "" for a sub-agent task, TaskKindWorkflow for a workflow execution. */
+            /**
+             * @description Kind is "" for a sub-agent task, TaskKindWorkflow for a workflow
+             *     execution, TaskKindCommand for a background shell command.
+             */
             kind?: string;
             label?: string;
             /**

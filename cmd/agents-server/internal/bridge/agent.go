@@ -76,6 +76,10 @@ type AgentDeps struct {
 	// KeepChecklist is set by NewRunner and keeps a run's checklist under its
 	// own session's checklist.md (invariant 91).
 	KeepChecklist func(ctx context.Context, sessionID, ownerID, markdown string) error
+	// BackgroundCommand is set by NewRunner and runs an exec_command background
+	// call as a task of kind command; offered on chat runs whose agent opts in
+	// (behavior.background_commands) — invariant 96.
+	BackgroundCommand sandboxes.BackgroundCommand
 }
 
 // BuildResult contains the built agent and its resolved model provider.
@@ -189,10 +193,11 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, project
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
 	bc := &agentBuildCtx{
-		stack:     make(map[string]bool),
-		cache:     make(map[string]*BuildResult),
-		projectID: projectID,
-		ownerID:   ownerID,
+		stack:      make(map[string]bool),
+		cache:      make(map[string]*BuildResult),
+		projectID:  projectID,
+		ownerID:    ownerID,
+		background: background,
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, bc)
 	if err == nil {
@@ -378,6 +383,9 @@ type agentBuildCtx struct {
 	// releases collects every sandbox reference the recursion acquired, on the
 	// CONTEXT: only the top-level BuildResult reaches the caller.
 	releases []func()
+	// background is a run nobody is watching (a task's, a workflow step's): it
+	// offers no background hand-off to exec_command.
+	background bool
 }
 
 // errHandoffCycle marks a back-edge in the handoff graph — recoverable: the
@@ -471,7 +479,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 
 	// Sandbox tools — "" means none; a build failure fails the run. Also appends
 	// the sandbox's own prompt (after memories, before the skills index).
-	if err := attachSandboxTools(ctx, deps, bc, agent, approveCommands, &result.Profile); err != nil {
+	if err := attachSandboxTools(ctx, deps, bc, agent, approveCommands, ac.Behavior.BackgroundCommands, &result.Profile); err != nil {
 		return nil, err
 	}
 	mark = bucketToolsSince(agent, mark, store.ToolSourceSandbox, &result.Profile)
@@ -608,7 +616,7 @@ func planReadOnlyNames(servers []attachedMCP) []string {
 
 // attachSandboxTools attaches the bound project's sandbox tools; no project,
 // no sandbox tools (invariant 27). A build failure fails the run.
-func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, approveCommands bool, prof *store.PromptProfile) error {
+func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, approveCommands, backgroundCommands bool, prof *store.PromptProfile) error {
 	if bc.projectID == "" {
 		return nil
 	}
@@ -623,7 +631,11 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 	if err != nil {
 		return err
 	}
-	tools, release, err := deps.SandboxManager.SandboxTools(spec, approveCommands)
+	var background sandboxes.BackgroundCommand
+	if backgroundCommands && !bc.background {
+		background = deps.BackgroundCommand
+	}
+	tools, release, err := deps.SandboxManager.SandboxTools(spec, approveCommands, background)
 	if err != nil {
 		return fmt.Errorf("project %q: building tools: %w", proj.Name, err)
 	}

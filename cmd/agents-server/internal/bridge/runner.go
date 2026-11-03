@@ -32,6 +32,8 @@ type Runner struct {
 	// tasks owns the background-task lifecycle; nil without a task store. It
 	// keeps no wake-up state: the debt lives in wakeups (see Waker).
 	tasks *tasks.Manager
+	// commands holds the background commands this process runs (invariant 96).
+	commands commandRuns
 
 	// OnRunAttach, when set, runs with the run id right after a run registers,
 	// before any publish (invariant 14). Wired once at bootstrap, read unsynchronized.
@@ -71,6 +73,8 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 			MaxConcurrentPerParent: r.hub.maxTasks,
 			OnTaskUpdate:           r.onTaskUpdate,
 			NewID:                  store.NewID,
+			// A command cannot resume from where it stopped: one attempt.
+			MaxAttemptsFor: maxAttemptsFor,
 			// A workflow execution is a task of several runs; this is what
 			// moves it from step to step.
 			Continue: r.continueTask,
@@ -86,6 +90,7 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	deps.HistoryTools = r.historyTools
 	deps.MemoryTools = r.memoryTools
 	deps.KeepChecklist = r.keepChecklist
+	deps.BackgroundCommand = r.backgroundCommand
 	return r
 }
 

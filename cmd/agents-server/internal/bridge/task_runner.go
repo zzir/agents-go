@@ -135,7 +135,7 @@ func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, err
 		ToolCallID:      task.ToolCallID,
 		Label:           task.Label,
 		Attempt:         attempt,
-		MaxAttempts:     r.MaxTaskAttempts(),
+		MaxAttempts:     r.MaxTaskAttempts(task.Kind),
 	}, nil
 }
 
@@ -191,10 +191,14 @@ func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 	return r.taskInfoFrom(info), nil
 }
 
-// MaxTaskAttempts is the ceiling a task's attempt count is measured against.
-func (r *Runner) MaxTaskAttempts() int {
+// MaxTaskAttempts is the ceiling a task of kind's attempt count is measured
+// against: one for a command, the manager's for the rest.
+func (r *Runner) MaxTaskAttempts(kind string) int {
 	if r.tasks == nil {
 		return 0
+	}
+	if kind == store.TaskKindCommand {
+		return commandAttempts
 	}
 	return r.tasks.MaxAttempts()
 }

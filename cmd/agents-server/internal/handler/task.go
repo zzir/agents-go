@@ -143,7 +143,7 @@ func (h *TaskHandler) Dismiss(c *gin.Context) {
 	if won {
 		h.runner.AnnounceTask(ctx, id)
 	}
-	t.MaxAttempts = h.runner.MaxTaskAttempts()
+	t.MaxAttempts = h.runner.MaxTaskAttempts(t.Kind)
 	c.JSON(http.StatusOK, t)
 }
 
@@ -220,7 +220,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 // overlay stamps a row with the hub's live status (keyed by run id) and the
 // retry ceiling. Terminal states stay the row's: the hub finishes before the row lands.
 func (h *TaskHandler) overlay(t *store.Task) {
-	t.MaxAttempts = h.runner.MaxTaskAttempts()
+	t.MaxAttempts = h.runner.MaxTaskAttempts(t.Kind)
 	if bridge.IsTerminalTaskStatus(t.Status) {
 		return
 	}

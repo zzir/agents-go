@@ -36,6 +36,9 @@ type BehaviorGroup struct {
 	// Checklist gives the agent's chat runs the todo_write checklist tool; off
 	// by default.
 	Checklist bool `json:"checklist,omitempty"`
+	// BackgroundCommands lets exec_command run a command in the background,
+	// as a task of kind command, on the agent's chat runs; off by default.
+	BackgroundCommands bool `json:"background_commands,omitempty"`
 	// Subagents grants the agent's chat runs the task tools; nil/true = on.
 	Subagents *bool `json:"subagents,omitempty"`
 	// Vision admits image attachments on this agent's runs; off by default.

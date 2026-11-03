@@ -13,7 +13,8 @@ import (
 )
 
 // The model's whole background surface is the SDK's four verbs — spawn, status,
-// retry, stop; a workflow is what spawn_task starts when told a name (invariant 30).
+// retry, stop; a workflow is what spawn_task starts when told a name (invariant
+// 30), a command what exec_command starts when told background (invariant 96).
 
 // SpawnToolName is the model's one way to start background work.
 const SpawnToolName = "spawn_task"

@@ -64,6 +64,10 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 	if req.Kind == store.TaskKindWorkflow {
 		return t.r.launchWorkflowStep(ctx, req)
 	}
+	// A command's run is the command itself, on no agent — invariant 96.
+	if req.Kind == store.TaskKindCommand {
+		return t.r.launchCommand(ctx, req)
+	}
 	in := store.DecodeInherit(req.Inherit)
 	// The task's own run shares the parent's project, and thereby its command-
 	// trust scope; the child's first run CAS-binds its hidden session with it.
@@ -81,6 +85,10 @@ const taskStopSettleTimeout = approvalSettleTimeout
 // Stop implements tasks.Stopper. A task paused on an approval has no run to
 // cancel: the approval is discarded and every client told.
 func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tasks.StopOutcome, error) {
+	// A command has no turn to finish: graceful or not, it is killed.
+	if t.r.commands.cancel(runID) {
+		return tasks.StopCancelled, nil
+	}
 	info, live := t.r.hub.Info(runID)
 	if live && info.Status == RunRunning {
 		if graceful && t.r.hub.StopAfterTurn(runID) {
@@ -190,7 +198,7 @@ func (r *Runner) publishTaskUpdated(ctx context.Context, t *tasks.Task) {
 		Label:           t.Label,
 		Status:          string(t.Status),
 		Attempt:         t.AttemptNo(),
-		MaxAttempts:     r.MaxTaskAttempts(),
+		MaxAttempts:     r.MaxTaskAttempts(t.Kind),
 		Summary:         t.Summary,
 		State:           t.State,
 		UpdatedAt:       t.UpdatedAt,
@@ -234,7 +242,7 @@ func (r *Runner) taskInfoFrom(i *tasks.Info) *TaskInfo {
 		Agent:       i.Agent,
 		Status:      string(i.Status),
 		Attempt:     i.Attempt,
-		MaxAttempts: r.MaxTaskAttempts(),
+		MaxAttempts: r.MaxTaskAttempts(i.Kind),
 		Summary:     i.Summary,
 		Result:      i.Result,
 	}

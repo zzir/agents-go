@@ -2051,3 +2051,32 @@ model may ask for `background` on a backend whose `exec` is slow to start
 (e2b) and wait on the hand-off longer than on a short foreground command.
 
 Rules: spec §2.7w.
+
+### 5.97 A background command is a task of kind `command`
+
+Decided 2026-11-03.
+
+**Decision.** The workbench is `CodeToolConfig.Background`'s host (§5.96): an
+approved `exec_command` call with `background: true` becomes a `tasks` row of
+kind `command` on the call's own card — no agent, one attempt, the command's
+first line as its label. The launcher runs `Command.Run` on the parent's
+project sandbox, on its own goroutine under the hub's root context; a non-zero
+exit or a timeout is a *failed* task whose summary opens with the verdict line;
+its ending wakes the parent like any task's. Offered on a chat run of an agent
+with `behavior.background_commands` on, never on a task's or a workflow step's
+run. A sandbox stop ends the project's commands first.
+
+**Rejected.** A hub run for the command — a run is a model loop over a session,
+and a command has neither. A new entity beside tasks — the strip, the wake-up
+debt, stop and the restart sweep exist for tasks; a kind reuses all of them.
+Retrying a command as a task retry — a retry resumes a run from where it
+stopped, which a shell command cannot; a second run is a second call. Offering
+`background` to task runs — a command under a hidden session wakes nobody a
+person reads; the chat run is what can act on the verdict. Streaming the output
+to the card — the file in the sandbox is the live view (§5.96).
+
+**Cost accepted.** A restart loses a running command: the sweep fails its row
+like any task's, the files stay in the sandbox. The hidden child session every
+task gets is empty for a command. The parent's live-task cap counts commands.
+
+Rules: invariant 96.
