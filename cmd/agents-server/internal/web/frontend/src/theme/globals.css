@@ -1032,6 +1032,10 @@ textarea.textarea-grow.textarea-rows-4 {
     gap: var(--base-size-4);
     margin-top: var(--base-size-4);
 }
+/* Lets a clipped skill description shrink to the column instead of widening it. */
+.checkbox-group-body [class*="LabelContainer"] {
+    min-width: 0;
+}
 
 /* Cards — visual treatment borrowed from Primer React Card component */
 .Box {

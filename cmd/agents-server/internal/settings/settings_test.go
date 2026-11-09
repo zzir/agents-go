@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -53,6 +54,22 @@ func TestDefsListEachGroupInOneRun(t *testing.T) {
 			t.Errorf("%s: group %q is listed again after %q", d.Key, d.Group, runs[len(runs)-1])
 		}
 		runs = append(runs, d.Group)
+	}
+}
+
+// A description is one line of the panel on desktop (invariant 99). Runes
+// stand in for pixels: ~132 fit the 768px caption column, ~105 a switch row.
+func TestDescriptionsFitOneLine(t *testing.T) {
+	for _, d := range settings.Defs() {
+		caption, limit := d.Description, 132
+		if d.Kind == settings.KindBool {
+			limit = 105
+		} else if d.Default != "" {
+			caption += " Default: " + d.Default + "."
+		}
+		if n := utf8.RuneCountInString(caption); n > limit {
+			t.Errorf("%s: caption is %d runes, over the %d that fit one line", d.Key, n, limit)
+		}
 	}
 }
 

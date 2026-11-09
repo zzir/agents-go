@@ -573,3 +573,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     string holding the array is decoded once more before the item checks; a
     string holding anything else is refused with the array shape named
     (`bridge/checklist_tool.go`) — decisions §5.99.
+99. **A Settings item's description is one line on desktop.** A field caption
+    or switch-row description fits its column at desktop width; detail past
+    that line belongs in the docs, not under the field. Text a server or a
+    person supplies (an MCP tool's, a skill's) is clipped to one line, whole on
+    hover. `TestDescriptionsFitOneLine` holds the settings registry to it.

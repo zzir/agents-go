@@ -87,7 +87,7 @@ var defs = []Def{{
 	Group:       GroupPrompt,
 	Label:       "System prompt",
 	Placeholder: "Optional instructions prepended to all agents",
-	Description: "Prepended to every agent, whether or not it binds a sandbox; an agent opts out under its own Instructions. Keep it tool-agnostic: file and shell tools mount only when a session binds a sandbox, so put machine- and tool-specific instructions in that sandbox's own Prompt, not here.",
+	Description: "Prepended to every agent unless it overrides it. Keep it tool-agnostic; machine-specific instructions go in a sandbox's Prompt.",
 }, {
 	// Defaulted: "keep everything" is a choice, not the absence of one.
 	Key:         KeyTraceRetentionDays,
@@ -95,7 +95,7 @@ var defs = []Def{{
 	Group:       GroupTracing,
 	Label:       "Trace retention (days)",
 	Placeholder: "e.g. 30 — 0 keeps everything",
-	Description: "Trace events older than this many days are pruned daily, and a session left with none loses its stored payloads too. 0 keeps everything.",
+	Description: "Trace events older than this are pruned daily; a session left with none loses its payloads too. 0 keeps everything.",
 	Default:     "30",
 	Min:         0,
 }, {
@@ -104,7 +104,7 @@ var defs = []Def{{
 	Group:       GroupTracing,
 	Label:       "Trace payload retention (days)",
 	Placeholder: "e.g. 7 — unset keeps payloads as long as their spans",
-	Description: "A session whose newest trace span is older than this many days loses its stored model requests, replies and tool payloads daily. The spans stay with their timing, usage and errors, so the trace panel reads as before; only Replay has nothing to seed from. Unset or 0 keeps payloads as long as their spans.",
+	Description: "Days after its newest span that a session's request, reply and tool payloads are kept; spans stay. 0 keeps them with the spans.",
 	Min:         0,
 }, {
 	// Passed explicitly as Observe.IncludeSensitiveData; the SDK reads no env
@@ -121,7 +121,7 @@ var defs = []Def{{
 	Group:       GroupTracing,
 	Label:       "Stored payload element (KB)",
 	Placeholder: "e.g. 1024",
-	Description: "How much of one stored payload element is kept — an input item, a reply item, a tool's arguments or result, the system prompt. Past it that element alone is replaced with a marker (the rest of the span stays) and a Replay of that call goes without it — raise it if you replay turns with very large items. Live updates to the browser are capped separately at 256KB per span; what they drop is still in the trace. Applies to new runs.",
+	Description: "Cap on one stored payload element (an item, tool arguments or result); past it that element becomes a marker.",
 	Default:     "1024",
 	Min:         1,
 }, {
@@ -137,7 +137,7 @@ var defs = []Def{{
 	Group:       GroupLimits,
 	Label:       "Approval timeout (minutes)",
 	Placeholder: "e.g. 1440 — 0 disables expiry",
-	Description: "How long a run may sit awaiting tool approval before it is expired and the wait is recorded in the transcript. 0 disables expiry.",
+	Description: "How long a run may await tool approval before it expires, the wait noted in the transcript. 0 disables expiry.",
 	Default:     "1440",
 	Min:         0,
 }, {
@@ -145,7 +145,7 @@ var defs = []Def{{
 	Kind:        KindInt,
 	Group:       GroupLimits,
 	Label:       "Background tasks per session",
-	Description: "Concurrent live background tasks one session may have — a fat-finger guard against a runaway fan-out, not a scheduler. Read at each spawn, so a change applies to the next one.",
+	Description: "Live background tasks one session may run at once — a guard against runaway fan-out, read at each spawn.",
 	Default:     "6", // mirrors tasks.DefaultMaxConcurrentPerParent
 	Min:         1,
 }, {
@@ -154,7 +154,7 @@ var defs = []Def{{
 	Group:       GroupLimits,
 	Label:       "Finished task transcripts (days)",
 	Placeholder: "e.g. 30 — 0 keeps them forever",
-	Description: "A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the session it reported to. 0 keeps them forever.",
+	Description: "Days a finished background task keeps its transcript and row; its result stays in the session it reported to. 0 keeps them.",
 	Min:         0,
 }, {
 	Key:         KeyMaxTerminalsPerSandbox,
@@ -172,14 +172,14 @@ var defs = []Def{{
 	Label:       "Sandbox idle stop (minutes)",
 	Default:     "30",
 	Min:         0,
-	Description: "Stop a workspace's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again.",
+	Description: "Stop a workspace's container after this many minutes with no run or terminal; the next run starts it again. 0 disables.",
 }, {
 	Key:         KeyS3Endpoint,
 	Kind:        KindString,
 	Group:       GroupStorage,
 	Label:       "S3 endpoint",
 	Placeholder: "https://<account>.r2.cloudflarestorage.com",
-	Description: "S3-compatible API endpoint image attachments are uploaded to. The section saves as one form: Save probes the bucket end to end and refuses a broken configuration, Clear disables image input.",
+	Description: "S3-compatible API endpoint image attachments are uploaded to. Save probes the bucket first; Clear turns image input off.",
 	Validate:    validateHTTPURL(KeyS3Endpoint),
 }, {
 	Key:         KeyS3Region,
@@ -194,7 +194,7 @@ var defs = []Def{{
 	Kind:        KindString,
 	Group:       GroupStorage,
 	Label:       "S3 bucket",
-	Description: "Bucket the image objects live in. It must allow PUBLIC READS: model providers fetch attachment URLs anonymously, and so does anyone else holding a link.",
+	Description: "Bucket the images live in. It must allow PUBLIC READS — providers fetch them anonymously, as can anyone with a link.",
 }, {
 	Key:   KeyS3AccessKeyID,
 	Kind:  KindString,
@@ -211,7 +211,7 @@ var defs = []Def{{
 	Group:       GroupStorage,
 	Label:       "Public base URL",
 	Placeholder: "https://pub-….r2.dev or a CDN domain",
-	Description: "Public prefix an object's key is appended to — what model providers and browsers fetch. Anyone with a URL can read that image. Changing this (or the bucket) without moving the objects breaks images already in session history.",
+	Description: "Public prefix object keys are appended to. Changing it (or the bucket) without moving objects breaks past sessions' images.",
 	Validate:    validateHTTPURL(KeyS3PublicBaseURL),
 }, {
 	Key:         KeyS3PathStyle,

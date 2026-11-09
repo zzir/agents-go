@@ -89,23 +89,23 @@ entry in the settings registry (invariant 40). Keys by panel group:
 <!-- settings-table:begin — generated from internal/settings/registry.go by `make settings-doc` -->
 | Key | Group | Default | Meaning |
 |---|---|---|---|
-| `system_prompt` | prompt | — | Prepended to every agent, whether or not it binds a sandbox; an agent opts out under its own Instructions. Keep it tool-agnostic: file and shell tools mount only when a session binds a sandbox, so put machine- and tool-specific instructions in that sandbox's own Prompt, not here. |
-| `trace_retention_days` | tracing | `30` | Trace events older than this many days are pruned daily, and a session left with none loses its stored payloads too. 0 keeps everything. |
-| `trace_payload_retention_days` | tracing | — | A session whose newest trace span is older than this many days loses its stored model requests, replies and tool payloads daily. The spans stay with their timing, usage and errors, so the trace panel reads as before; only Replay has nothing to seed from. Unset or 0 keeps payloads as long as their spans. |
+| `system_prompt` | prompt | — | Prepended to every agent unless it overrides it. Keep it tool-agnostic; machine-specific instructions go in a sandbox's Prompt. |
+| `trace_retention_days` | tracing | `30` | Trace events older than this are pruned daily; a session left with none loses its payloads too. 0 keeps everything. |
+| `trace_payload_retention_days` | tracing | — | Days after its newest span that a session's request, reply and tool payloads are kept; spans stay. 0 keeps them with the spans. |
 | `trace_include_sensitive_data` | tracing | `true` | Record prompts, outputs and tool arguments in new runs' traces; off keeps timing and usage only. |
-| `trace_span_data_kb` | tracing | `1024` | How much of one stored payload element is kept — an input item, a reply item, a tool's arguments or result, the system prompt. Past it that element alone is replaced with a marker (the rest of the span stays) and a Replay of that call goes without it — raise it if you replay turns with very large items. Live updates to the browser are capped separately at 256KB per span; what they drop is still in the trace. Applies to new runs. |
+| `trace_span_data_kb` | tracing | `1024` | Cap on one stored payload element (an item, tool arguments or result); past it that element becomes a marker. |
 | `log_sensitive_data` | logging | `false` | Include prompts, tool arguments and model output in SDK log records, shown at --log-level debug. |
-| `approval_ttl_minutes` | limits | `1440` | How long a run may sit awaiting tool approval before it is expired and the wait is recorded in the transcript. 0 disables expiry. |
-| `max_tasks_per_session` | limits | `6` | Concurrent live background tasks one session may have — a fat-finger guard against a runaway fan-out, not a scheduler. Read at each spawn, so a change applies to the next one. |
-| `task_session_retention_days` | limits | — | A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the session it reported to. 0 keeps them forever. |
+| `approval_ttl_minutes` | limits | `1440` | How long a run may await tool approval before it expires, the wait noted in the transcript. 0 disables expiry. |
+| `max_tasks_per_session` | limits | `6` | Live background tasks one session may run at once — a guard against runaway fan-out, read at each spawn. |
+| `task_session_retention_days` | limits | — | Days a finished background task keeps its transcript and row; its result stays in the session it reported to. 0 keeps them. |
 | `max_terminals_per_sandbox` | limits | `4` (max `32`) | Concurrent interactive terminals allowed on one sandbox — a fat-finger guard, not a scheduler. |
-| `sandbox_idle_minutes` | limits | `30` | Stop a workspace's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again. |
-| `s3_endpoint` | storage | — | S3-compatible API endpoint image attachments are uploaded to. The section saves as one form: Save probes the bucket end to end and refuses a broken configuration, Clear disables image input. |
+| `sandbox_idle_minutes` | limits | `30` | Stop a workspace's container after this many minutes with no run or terminal; the next run starts it again. 0 disables. |
+| `s3_endpoint` | storage | — | S3-compatible API endpoint image attachments are uploaded to. Save probes the bucket first; Clear turns image input off. |
 | `s3_region` | storage | `auto` | Signing region. R2 and MinIO accept "auto"; AWS needs the bucket's real region. |
-| `s3_bucket` | storage | — | Bucket the image objects live in. It must allow PUBLIC READS: model providers fetch attachment URLs anonymously, and so does anyone else holding a link. |
+| `s3_bucket` | storage | — | Bucket the images live in. It must allow PUBLIC READS — providers fetch them anonymously, as can anyone with a link. |
 | `s3_access_key_id` | storage | — | S3 access key ID |
 | `s3_secret_access_key` | storage | — | S3 secret access key (**secret**: masked on read) |
-| `s3_public_base_url` | storage | — | Public prefix an object's key is appended to — what model providers and browsers fetch. Anyone with a URL can read that image. Changing this (or the bucket) without moving the objects breaks images already in session history. |
+| `s3_public_base_url` | storage | — | Public prefix object keys are appended to. Changing it (or the bucket) without moving objects breaks past sessions' images. |
 | `s3_path_style` | storage | `false` | On puts the bucket in the URL path (MinIO); off uses virtual-hosted addressing (AWS, R2). |
 <!-- settings-table:end -->
 
@@ -114,6 +114,15 @@ entry in the settings registry (invariant 40). Keys by panel group:
 `task_session_retention_days` is
 [invariant 72](../explanation/workbench-invariants.md); `max_tasks_per_session`
 backs the SDK's `tasks.Config.MaxConcurrentPerParent` resolver.
+
+The two payload limits decide what Replay can seed from. An element past
+`trace_span_data_kb` (an input or reply item, a tool's arguments or result,
+the system prompt) is stored as a marker, the rest of its span intact, and a
+Replay of that call goes without it; the limit applies to new runs, and the
+browser's live 256KB cap per span is separate
+([`trace.span`](protocol.md#server--client)). A session past
+`trace_payload_retention_days` keeps its spans' timing, usage and errors, so
+the trace panel reads as before, but has no payloads to replay.
 
 The seven `storage` keys are **admin-only to read** (a member's
 `GET /settings` leaves them out, `GET /settings/:key` is `403`) and are written

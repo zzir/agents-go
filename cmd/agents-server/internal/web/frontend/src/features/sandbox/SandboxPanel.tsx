@@ -214,7 +214,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
   const set = (k: keyof FormState, v: unknown) => setForm(prev => ({ ...prev, [k]: v }));
   const remote = form.type === 'docker' && form.host.startsWith('ssh://');
   const frozen = !!initial && !!inUse;
-  const frozenNote = frozen ? ' Frozen while workspaces live on it.' : ' Freezes once a workspace lives on it.';
+  const frozenNote = frozen ? ' Frozen while a workspace uses it.' : ' Frozen once a workspace uses it.';
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const insertAgreement = () => {
     const el = promptRef.current;
@@ -235,7 +235,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
 
       {form.type === 'docker' && fc('Daemon',
         <TextInput block value={form.host} disabled={frozen} onChange={e => set('host', e.target.value)} placeholder="ssh://user@host — empty for the local daemon" />,
-        'Where the containers run: empty = this machine\'s Docker daemon; ssh://user@host reaches a remote daemon over SSH; tcp://host:port a TCP-exposed one.' + frozenNote,
+        'Empty = this machine\'s Docker; ssh://user@host or tcp://host:port reaches a remote daemon.' + frozenNote,
       )}
       {remote && fc('SSH private key file',
         <TextInput block value={form.ssh_key_file} onChange={e => set('ssh_key_file', e.target.value)} placeholder="~/.ssh/id_ed25519" />,
@@ -253,11 +253,11 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
 
       {form.type === 'e2b' && fc('API URL',
         <TextInput block value={form.api_url} disabled={frozen} onChange={e => set('api_url', e.target.value)} placeholder="https://api.e2b.app" />,
-        'The control plane. Empty uses E2B\'s own; a compatible service (Alibaba Cloud Function Compute, a self-hosted E2B) has its own.' + frozenNote,
+        'Empty = E2B\'s own; a compatible service (Alibaba Cloud FC, self-hosted E2B) has its own.' + frozenNote,
       )}
       {form.type === 'e2b' && fc('Sandbox domain',
         <TextInput block value={form.domain} disabled={frozen} onChange={e => set('domain', e.target.value)} placeholder="e2b.app" />,
-        'The suffix a sandbox\'s public hosts are built from: <port>-<sandbox id>.<domain>. Empty uses the one the service returns, or E2B\'s own. Changing it on a saved sandbox means re-entering the API key and headers.' + frozenNote,
+        'Hosts are <port>-<id>.<domain>; empty = the service\'s. Re-enter the secrets after a change.' + frozenNote,
       )}
       {form.type === 'e2b' && fc('API key',
         <SecretInput block value={form.api_key} onChange={e => set('api_key', e.target.value)} placeholder="e2b_…" />,
@@ -270,7 +270,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
           <Select.Option value="api_key">API key</Select.Option>
           <Select.Option value="none">None</Select.Option>
         </Select>
-      ), 'What the in-sandbox daemon is authenticated with. Automatic uses the token the service mints, and the API key when it mints none — which is what a compatible service without token support needs.')}
+      ), 'How the in-sandbox daemon authenticates. Automatic: the token the service mints, else the API key (for services without tokens).')}
 
       {form.type === 'docker' && fc('Image',
         <TextInput block value={form.image} onChange={e => set('image', e.target.value)} placeholder="ghcr.io/zzir/sandbox:latest" />,
@@ -281,11 +281,11 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
       )}
       {form.type === 'docker' && fc('User',
         <TextInput block value={form.user} onChange={e => set('user', e.target.value)} placeholder="root" />,
-        'user[:group] the container runs as. Empty runs as root, so the agent can install packages into its own container; the working tree lives in a volume nobody else mounts.',
+        'user[:group] the container runs as. Empty = root, so the agent can install packages; the working tree is a volume of its own.',
       )}
       {form.type === 'docker' && fc('Network',
         <TextInput block value={form.network} onChange={e => set('network', e.target.value)} placeholder="(none)" />,
-        'The Docker network the container joins. Empty = no network at all. "bridge" gives ordinary networking; a user-defined network name puts it where the server can reach it.',
+        'Docker network to join. Empty = none; "bridge" = ordinary networking; a user-defined one puts it where the server can reach it.',
       )}
       {form.type === 'docker' && fc('Memory limit (MB)',
         <TextInput block type="text" inputMode="numeric" value={form.memory_mb} onChange={e => set('memory_mb', e.target.value)} placeholder="4096 (default)" />,
@@ -298,7 +298,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
 
       {form.type === 'e2b' && fc('Template id',
         <TextInput block value={form.template_id} disabled={frozen} onChange={e => set('template_id', e.target.value)} placeholder="base" />,
-        'A template that already exists on the service — the workbench builds none. Its console or CLI is where they are made.' + frozenNote,
+        'A template that already exists on the service — the workbench builds none.' + frozenNote,
       )}
       {form.type === 'e2b' && fc('User',
         <TextInput block value={form.user} onChange={e => set('user', e.target.value)} placeholder="user (default)" />,
@@ -310,7 +310,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
       )}
       {form.type === 'e2b' && (
         <ToggleRow label="Pause on expiry instead of killing" checked={form.auto_pause} disabled={frozen} onChange={v => set('auto_pause', v)}
-          description={'Off means expiry destroys the working tree; services without snapshots (Alibaba Cloud) need it off.' + frozenNote} />
+          description={'Off: expiry destroys the working tree. Alibaba Cloud needs it off.' + frozenNote} />
       )}
       {form.type === 'e2b' && <ToggleRow label="Allow outbound network access" checked={form.allow_internet} disabled={frozen} onChange={v => set('allow_internet', v)} description={frozenNote.trim()} />}
       {fc('Prompt', <>
@@ -318,7 +318,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
           placeholder="e.g. Python 3.12 and Node 20 are installed. No outbound network; use the vendored packages." />
         <div className="form-field-action"><Button size="small" onClick={insertAgreement}>Insert working agreement</Button></div>
       </>,
-        'Appended to the agent\'s instructions for any session working on this sandbox — what the image has, how to use it. Edits reach the next run without replacing the container. The agreement is a starting point to edit: read AGENTS.md first, read before changing, test before reporting.',
+        'Appended to agent instructions in any session on this sandbox — what the image has, how to use it. Edits apply from the next run.',
       )}
       {fc('Max read_file bytes',
         <TextInput block type="text" inputMode="numeric" value={form.max_read_file_bytes} onChange={e => set('max_read_file_bytes', e.target.value)} placeholder="8388608" />,

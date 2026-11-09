@@ -349,7 +349,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
     [form.provider_id], form.provider_id ? 'provider-models:' + form.provider_id : undefined);
   const unsupported = providerFacts(providerTypes, selectedProvider?.type)?.unsupported ?? [];
   const providerHint = unsupported.length > 0
-    ? `Fails loudly on this backend — leave unset: ${unsupported.slice(0, 6).join(', ')}${unsupported.length > 6 ? ` +${unsupported.length - 6} more` : ''}`
+    ? `Fails loudly on this backend — leave unset: ${unsupported.slice(0, 4).join(', ')}${unsupported.length > 4 ? ` +${unsupported.length - 4} more` : ''}`
     : 'Endpoints and their API keys are managed under Providers';
   // Every picker offers only what this agent may reference (decisions §5.29); a
   // create (blank or fork seed) lands private and the caller's, an edit keeps
@@ -539,7 +539,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             );
           })}
         </div>
-        <div className="FormControl-caption">Which MCP servers this agent can use. One not connected right now is still selectable — its tools appear once it connects; a disabled one is not.</div>
+        <div className="FormControl-caption">MCP servers this agent can use — a disconnected one is still selectable, a disabled one is not.</div>
       </div>}
 
       {(visibleSkills.length > 0 || danglingSkills.length > 0) && <div className="form-group">
@@ -565,7 +565,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
                       <FormControl key={sk.id}>
                         <Checkbox checked={effectiveSkills.includes(sk.id)} onChange={() => toggleSkill(sk.id)} />
                         <FormControl.Label>{qualifiedName(sk)}</FormControl.Label>
-                        {sk.description && <FormControl.Caption>{sk.description}</FormControl.Caption>}
+                        {sk.description && <FormControl.Caption><span className="list-clip" title={sk.description}>{sk.description}</span></FormControl.Caption>}
                       </FormControl>
                     ))}
                   </div>
@@ -628,7 +628,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
       <div className="form-group">
         <div className="form-group-title">Workflows</div>
         <ToggleRow label="Author workflows from a session" checked={form.workflow_authoring || false} onChange={v => set('workflow_authoring', v)}
-          description="get_workflow and save_workflow; each save waits for your approval. /workflow runs one whether or not subagents are on." />
+          description="get_workflow and save_workflow; each save waits for your approval. /workflow works with subagents off too." />
       </div>
 
       {/* Opt-in for the same reason: the tool rides on every request, and a
@@ -644,7 +644,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
       <div className="form-group">
         <div className="form-group-title">Background commands</div>
         <ToggleRow label="Run long commands in the background" checked={form.background_commands || false} onChange={v => set('background_commands', v)}
-          description="exec_command may take background: true — the command runs as a task and its result arrives in a later turn." />
+          description="exec_command may take background: true — it runs as a task and the result arrives in a later turn." />
       </div>
 
       <div className="form-group">
@@ -672,13 +672,13 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
         {/* A reset mode implies both tool sets (bridge/agent.go), so the
             switches show that rather than an Off the run ignores. */}
         <ToggleRow label="Memory tools" checked={resetImplied || form.memory_tools || false} disabled={resetImplied} onChange={v => set('memory_tools', v)}
-          description={(resetImplied ? 'On while compaction is in reset or hybrid mode. ' : '') + 'memory_write and friends: working notes that survive compaction, shown in the Context panel.'} />
+          description={(resetImplied ? 'On in reset or hybrid mode. ' : '') + 'memory_write and friends: notes that survive compaction, in the Context panel.'} />
         {(resetImplied || form.memory_tools) && (
           <ToggleRow label="Model may propose agent memory" checked={form.memory_agent_write || false} onChange={v => set('memory_agent_write', v)}
             description="Each such write waits for your approval, then reaches every session with this agent." />
         )}
         <ToggleRow label="History tools" checked={resetImplied || form.history_tools || false} disabled={resetImplied} onChange={v => set('history_tools', v)}
-          description={(resetImplied ? 'On while compaction is in reset or hybrid mode. ' : '') + 'history_search and history_read find turns that compaction folded out of the context.'} />
+          description={(resetImplied ? 'On in reset or hybrid mode. ' : '') + 'history_search and history_read find turns compaction folded away.'} />
       </div>
 
       <div className="form-group">
@@ -742,7 +742,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
                   <Button size="small" onClick={() => set('fallback_models', [...fallbacks, { provider_id: '' }])}>Add fallback</Button>
                 </div>
               </Stack>
-              <FormControl.Caption>Tried in order when the endpoint fails. An entry saved before endpoints were rows shows the endpoint that now matches it; one that matches none cannot run and is dropped on save — add the endpoint under Providers first.</FormControl.Caption>
+              <FormControl.Caption>Tried in order when the endpoint fails. An entry no Providers endpoint matches cannot run and is dropped on save.</FormControl.Caption>
             </FormControl>
           </div>
 
@@ -750,7 +750,7 @@ function AgentForm({ initial, onSave, onCancel, onDelete, saving, mcpServers, sk
             <div className="form-group-title">Guardrails &amp; output</div>
             <JsonField label="Guardrails (JSON)" value={form.guardrails || ''} onChange={v => set('guardrails', v)} placeholder='["content_filter","max_output_length"]' caption="JSON array of guardrail names. Each guardrail carries the stages it inspects, so it is named once." />
             <JsonField label="Output schema (JSON Schema)" value={form.output_schema || ''} onChange={v => set('output_schema', v)} placeholder='{"type":"object","properties":{...},"required":[...]}' caption="Structured output JSON Schema — leave empty for plain text" multiline rows={3} />
-            <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption='Fallback final outputs keyed by error kind (max_turns / model_refusal / invalid_final_output) — the run completes with the fallback instead of failing. Values must be a JSON string for plain-text agents, or match the output schema. Optional per-kind "exclude_from_history": true keeps the fallback out of the history.' multiline rows={3} />
+            <JsonField label="Error handlers (JSON)" value={form.error_handlers || ''} onChange={v => set('error_handlers', v)} placeholder='{"max_turns":{"final_output":"Ran out of turns — please narrow the request."},"invalid_final_output":{"final_output":{...}}}' caption="Per error kind (max_turns, model_refusal, invalid_final_output): a final output the run completes with instead of failing." multiline rows={3} />
           </div>
 
           <div className="form-group">

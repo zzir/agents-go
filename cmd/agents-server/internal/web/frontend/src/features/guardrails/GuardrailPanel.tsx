@@ -104,7 +104,7 @@ function GuardrailForm({ initial, onSave, onCancel, onDelete, saving }: Guardrai
             </FormControl>
           ))}
         </Stack>,
-        'Where this guardrail runs. One guardrail can cover several stages — a content scanner that should see the input, the tool arguments and the final output is one definition, not three.',
+        'Where this guardrail runs. One definition can cover several stages — input, tool arguments and final output alike.',
       )}
       {fc('Mode',
         <SegmentedControl aria-label="Guardrail mode" size="small">

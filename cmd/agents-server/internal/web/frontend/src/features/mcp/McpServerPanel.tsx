@@ -224,11 +224,15 @@ export function McpForm({ initial, onSave, onCancel, onDelete, saving, onClearAu
           {connected && tools && tools.length > 0 && (
             <>
               <div className="form-checkbox-group">
-                {tools.map(t => (
-                  <ToggleRow key={t.original_name} label={t.original_name} checked={form.read_only_tools.includes(t.original_name)}
-                    onChange={v => toggleReadOnly(t.original_name, v)}
-                    description={(t.read_only_hint ? 'Marked read-only by the server. ' : '') + (t.description || '')} />
-                ))}
+                {tools.map(t => {
+                  // The server's text, often paragraphs: one line, the rest on hover.
+                  const desc = (t.read_only_hint ? 'Marked read-only by the server. ' : '') + (t.description || '');
+                  return (
+                    <ToggleRow key={t.original_name} label={t.original_name} checked={form.read_only_tools.includes(t.original_name)}
+                      onChange={v => toggleReadOnly(t.original_name, v)}
+                      description={desc && <span className="list-clip" title={desc}>{desc}</span>} />
+                  );
+                })}
               </div>
               <Button size="small" onClick={() => set('read_only_tools', readOnlyHinted(tools))} disabled={readOnlyHinted(tools).length === 0}>
                 Select the ones the server marks read-only
