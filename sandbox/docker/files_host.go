@@ -12,8 +12,8 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// The host side of the file operations (Options.WorkDir bind-mounted): these
-// run on the HOST, so every path goes through an os.Root on WorkDir (decisions §5.14).
+// The host side of the file operations (Options.HostDir bind-mounted): these
+// run on the HOST, so every path goes through an os.Root on HostDir (decisions §5.14).
 
 // hostRoot opens the os.Root guarding the bind-mounted working directory and
 // resolves p to a name relative to it. The caller closes the root.
@@ -22,7 +22,7 @@ func (s *Sandbox) hostRoot(p string) (*os.Root, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	root, err := os.OpenRoot(s.opts.WorkDir)
+	root, err := os.OpenRoot(s.opts.HostDir)
 	if err != nil {
 		return nil, "", err
 	}
@@ -95,7 +95,7 @@ func (s *Sandbox) removeFileHost(p string) error {
 
 func (s *Sandbox) renameHost(oldPath, newPath string) error {
 	// Both names are validated before the root is opened, so a bad destination
-	// is rejected the same way whether or not WorkDir can be opened.
+	// is rejected the same way whether or not HostDir can be opened.
 	from, err := s.rootRel(oldPath)
 	if err != nil {
 		return err
@@ -104,7 +104,7 @@ func (s *Sandbox) renameHost(oldPath, newPath string) error {
 	if err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(s.opts.WorkDir)
+	root, err := os.OpenRoot(s.opts.HostDir)
 	if err != nil {
 		return err
 	}

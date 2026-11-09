@@ -630,8 +630,8 @@ func TestDaemonAndBuildOptions(t *testing.T) {
 	if !full.Persistent || full.ContainerName != ContainerName("proj") || full.VolumeName != ProjectVolumeName("proj") {
 		t.Errorf("build options miss the project's container or volume: %+v", full)
 	}
-	if full.WorkDir != "" {
-		t.Errorf("build options carry a host bind mount: %q", full.WorkDir)
+	if full.HostDir != "" {
+		t.Errorf("build options carry a host bind mount: %q", full.HostDir)
 	}
 	spec.Sandbox = &store.Sandbox{ID: "sb", Type: "docker", Config: []byte(`{}`)}
 	if _, err := BuildOptions(spec); err == nil {

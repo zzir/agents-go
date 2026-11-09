@@ -86,7 +86,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7p](#27p-stop-keeps-the-filesystem-and-promises-nothing-else) | Stop keeps the filesystem and promises nothing else | `Lifecycle.Stop` guarantees the tree, never the processes |
 | [§2.7q](#27q-a-sandbox-makes-its-working-directory) | A sandbox makes its working directory | A stock image need not ship one |
 | [§2.7s](#27s-apply_patch-locates-hunks-by-whole-lines) | apply_patch locates hunks by whole lines | Context can never bind inside a longer line |
-| [§2.7t](#27t-sandbox-file-tools-share-execs-path-view) | Sandbox file tools share exec's path view | Relative under the working directory, absolute as-is; bind-mount confines to `WorkDir` |
+| [§2.7t](#27t-sandbox-file-tools-share-execs-path-view) | Sandbox file tools share exec's path view | Relative under the working directory, absolute as-is; bind-mount confines to `HostDir` |
 | [§2.7u](#27u-an-e2b-compatible-service-is-addressed-by-its-responses) | An E2B-compatible service is addressed by its responses | A returned domain wins; the lease extends through `connect` alone |
 | [§2.7v](#27v-exec-output-past-the-cap) | Exec output past the cap | The tail is the real tail, the total the real total; a truncated stream is saved under `SpillDir` |
 | [§2.7w](#27w-background-commands) | Background commands | `background: true` hands the approved command to the host; the run redirects inside the sandbox |
@@ -1323,7 +1323,7 @@ does.
   base64 round-trip over `sh -c` (`wc -c` size-guarded on read, an
   `ExecRequest.Files` stage-and-move on write) keeps one view.
 - **Docker bind-mount mode is the one exception**: file operations run on the
-  host side of the mount and are confined to `WorkDir` via `os.Root` (which
+  host side of the mount and are confined to `HostDir` via `os.Root` (which
   polices `..` and symlink escapes). An absolute path must lie under the
   in-container mount point (`/workspace`) and is translated to its host-side
   name; anything else fails with `sandbox.ErrOutsideWorkDir`, never a silent

@@ -6,12 +6,12 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// ReadFile implements sandbox.Sandbox: a bind-mounted WorkDir reads on the
+// ReadFile implements sandbox.Sandbox: a bind-mounted HostDir reads on the
 // host (files_host.go), Persistent through exec (files_container.go); a file
 // over Options.MaxReadFileBytes fails with sandbox.ErrReadLimitExceeded.
 func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 	switch {
-	case s.opts.WorkDir != "":
+	case s.opts.HostDir != "":
 		return s.readFileHost(p)
 	case s.opts.Persistent:
 		return s.readFileContainer(ctx, p)
@@ -23,7 +23,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 // WriteFile implements sandbox.Sandbox.
 func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error {
 	switch {
-	case s.opts.WorkDir != "":
+	case s.opts.HostDir != "":
 		return s.writeFileHost(p, content)
 	case s.opts.Persistent:
 		return s.writeFileContainer(ctx, p, content)
@@ -37,7 +37,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, p string, content []byte) error
 // target) in persistent mode. Parent directories are created first.
 func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte) error {
 	switch {
-	case s.opts.WorkDir != "":
+	case s.opts.HostDir != "":
 		return s.createExclusiveHost(p, content)
 	case s.opts.Persistent:
 		return s.createExclusiveContainer(ctx, p, content)
@@ -49,7 +49,7 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 // RemoveFile implements sandbox.Sandbox.
 func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
 	switch {
-	case s.opts.WorkDir != "":
+	case s.opts.HostDir != "":
 		return s.removeFileHost(p)
 	case s.opts.Persistent:
 		return s.removeFileContainer(ctx, p)
@@ -61,7 +61,7 @@ func (s *Sandbox) RemoveFile(ctx context.Context, p string) error {
 // Rename implements sandbox.Sandbox.
 func (s *Sandbox) Rename(ctx context.Context, oldPath, newPath string) error {
 	switch {
-	case s.opts.WorkDir != "":
+	case s.opts.HostDir != "":
 		return s.renameHost(oldPath, newPath)
 	case s.opts.Persistent:
 		return s.renameContainer(ctx, oldPath, newPath)
@@ -73,7 +73,7 @@ func (s *Sandbox) Rename(ctx context.Context, oldPath, newPath string) error {
 // ListDir implements sandbox.Sandbox.
 func (s *Sandbox) ListDir(ctx context.Context, p string) ([]sandbox.DirEntry, error) {
 	switch {
-	case s.opts.WorkDir != "":
+	case s.opts.HostDir != "":
 		return s.listDirHost(p)
 	case s.opts.Persistent:
 		return s.listDirContainer(ctx, p)

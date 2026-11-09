@@ -15,7 +15,7 @@ import (
 )
 
 // in bind-mount mode the docker sandbox performs file operations on the
-// host WorkDir; they must be confined to it via os.Root. A symlink created
+// host HostDir; they must be confined to it via os.Root. A symlink created
 // inside the container (i.e. under the bind-mounted host directory) that points
 // outside must not be followed to read or write host files. This exercises the
 // host side directly, so it needs no Docker daemon.
@@ -31,7 +31,7 @@ func TestBindMount_SymlinkEscapeRejected(t *testing.T) {
 		t.Skipf("symlinks unsupported here: %v", err)
 	}
 
-	s := &Sandbox{opts: Options{WorkDir: work}}
+	s := &Sandbox{opts: Options{HostDir: work}}
 
 	if data, err := s.ReadFile(ctx, "escape"); err == nil {
 		t.Fatalf("ReadFile followed the symlink onto the host: got %q", data)
@@ -59,7 +59,7 @@ func TestBindMount_SymlinkEscapeRejected(t *testing.T) {
 func TestBindMount_NormalOps(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
-	s := &Sandbox{opts: Options{WorkDir: work}}
+	s := &Sandbox{opts: Options{HostDir: work}}
 
 	if err := s.WriteFile(ctx, "sub/a.txt", []byte("hello")); err != nil {
 		t.Fatalf("write: %v", err)
@@ -127,7 +127,7 @@ func TestParseFindEntries_Empty(t *testing.T) {
 // resolving every in-container path to an absolute one (leading "/").
 func TestBindMount_LeadingDashName(t *testing.T) {
 	work := t.TempDir()
-	s := &Sandbox{opts: Options{WorkDir: work}}
+	s := &Sandbox{opts: Options{HostDir: work}}
 	ctx := context.Background()
 	if err := s.CreateExclusive(ctx, "-f", []byte("hi")); err != nil {
 		t.Fatalf("CreateExclusive -f: %v", err)
@@ -199,7 +199,7 @@ func TestRootRel(t *testing.T) {
 func TestBindMount_AbsolutePathsUnderMountPoint(t *testing.T) {
 	ctx := context.Background()
 	work := t.TempDir()
-	s := &Sandbox{opts: Options{WorkDir: work}}
+	s := &Sandbox{opts: Options{HostDir: work}}
 
 	if err := s.WriteFile(ctx, "/workspace/sub/a.txt", []byte("hi")); err != nil {
 		t.Fatalf("WriteFile(/workspace/...): %v", err)

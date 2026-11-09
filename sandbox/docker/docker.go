@@ -52,9 +52,10 @@ func (s *Sandbox) configFingerprint() string {
 		pids = 128
 	}
 	h := sha256.New()
+	// HostDir keeps the "workdir=" key: renaming it would replace every persistent container.
 	fmt.Fprintf(h, "image=%s\nruntime=%s\nuser=%s\nnetwork=%s\nworkdir=%s\nvolume=%s\ntmpfs=%s\nmemory=%d\ncpus=%v\npids=%d\n",
 		s.opts.Image, s.opts.Runtime, s.opts.User, s.opts.Network,
-		filepath.Clean(s.opts.WorkDir), s.opts.VolumeName, s.tmpfsSize(),
+		filepath.Clean(s.opts.HostDir), s.opts.VolumeName, s.tmpfsSize(),
 		s.opts.Limits.MemoryBytes, s.opts.Limits.CPUs, pids)
 	// Written only when set: an unconditional line would change every
 	// existing container's fingerprint and force a fleet-wide replace.
@@ -97,11 +98,11 @@ type Options struct {
 	// ContainerName sets the container name in persistent mode; empty takes the
 	// daemon's random name. Ignored in ephemeral mode.
 	ContainerName string
-	// WorkDir is a host directory bind-mounted at /workspace in place of the
+	// HostDir is a host directory bind-mounted at /workspace in place of the
 	// anonymous volume, so the container works on the host files directly.
-	WorkDir string
+	HostDir string
 	// VolumeName mounts the named Docker volume at /workspace — durable storage
-	// on a remote daemon. Ignored when WorkDir is set.
+	// on a remote daemon. Ignored when HostDir is set.
 	VolumeName string
 	// TmpfsSize is the /tmp tmpfs size (e.g. "1g"); empty = "64m". RAM-backed.
 	TmpfsSize string
@@ -146,10 +147,10 @@ func New(opts Options) (*Sandbox, error) {
 	if opts.Image == "" {
 		return nil, fmt.Errorf("docker sandbox: Image is required")
 	}
-	// A WorkDir bind is resolved by the DAEMON's filesystem while the file tools
+	// A HostDir bind is resolved by the DAEMON's filesystem while the file tools
 	// run on THIS host; with a remote daemon the two diverge. Use VolumeName.
-	if opts.WorkDir != "" && opts.Host != "" {
-		return nil, fmt.Errorf("docker sandbox: WorkDir needs the local daemon; use VolumeName with Host %q", opts.Host)
+	if opts.HostDir != "" && opts.Host != "" {
+		return nil, fmt.Errorf("docker sandbox: HostDir needs the local daemon; use VolumeName with Host %q", opts.Host)
 	}
 	// API-version negotiation is on by default in the moby client.
 	clientOpts := []client.Opt{client.FromEnv}
@@ -256,11 +257,11 @@ func (s *Sandbox) lookupRunning(ctx context.Context) (string, error) {
 // createContainer creates, seeds and starts the persistent container. It must
 // be called with s.mu held; on success s.containerID is the new ID.
 func (s *Sandbox) createContainer(ctx context.Context) (string, error) {
-	if s.opts.WorkDir != "" {
+	if s.opts.HostDir != "" {
 		// Linux dockerd auto-creates a missing bind source; Docker Desktop refuses.
 		// Create it up front so behavior does not depend on the platform.
-		if err := os.MkdirAll(s.opts.WorkDir, 0o755); err != nil {
-			return "", fmt.Errorf("docker sandbox: creating bind source %s: %w", s.opts.WorkDir, err)
+		if err := os.MkdirAll(s.opts.HostDir, 0o755); err != nil {
+			return "", fmt.Errorf("docker sandbox: creating bind source %s: %w", s.opts.HostDir, err)
 		}
 	}
 	cfg, hostCfg := s.buildPersistentConfig()
@@ -341,7 +342,7 @@ func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 	if c.Config.Image != s.opts.Image {
 		return c.ID, errStaleOurs
 	}
-	if s.opts.WorkDir != "" {
+	if s.opts.HostDir != "" {
 		src := ""
 		for _, m := range c.Mounts {
 			if m.Destination == workDir {
@@ -349,7 +350,7 @@ func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 				break
 			}
 		}
-		if filepath.Clean(src) != filepath.Clean(s.opts.WorkDir) {
+		if filepath.Clean(src) != filepath.Clean(s.opts.HostDir) {
 			return c.ID, errStaleOurs
 		}
 	}
@@ -673,8 +674,8 @@ func (s *Sandbox) buildHostConfig(persistent bool) *container.HostConfig {
 	}
 	var mounts []mount.Mount
 	switch {
-	case s.opts.WorkDir != "":
-		mounts = []mount.Mount{{Type: mount.TypeBind, Source: s.opts.WorkDir, Target: workDir}}
+	case s.opts.HostDir != "":
+		mounts = []mount.Mount{{Type: mount.TypeBind, Source: s.opts.HostDir, Target: workDir}}
 	case s.opts.VolumeName != "":
 		mounts = []mount.Mount{{Type: mount.TypeVolume, Source: s.opts.VolumeName, Target: workDir}}
 	default:

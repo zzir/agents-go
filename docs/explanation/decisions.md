@@ -266,7 +266,7 @@ backend's three file dispatches — never chosen dynamically, it would hide
 which one runs without removing a branch.
 
 **Cost accepted.** Docker bind-mount mode is the one exception: its file
-operations run on the host side of the mount, confined to `WorkDir` via
+operations run on the host side of the mount, confined to `HostDir` via
 `os.Root` (spec §2.7t).
 
 Rules: spec §2.7t.

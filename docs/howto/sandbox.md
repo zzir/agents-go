@@ -196,7 +196,7 @@ sb, err := docker.New(docker.Options{
 })
 ```
 
-`Host: "ssh://…"` reaches a remote daemon's unix socket through SSH, in pure Go: every docker API request opens a `direct-streamlocal` channel on one shared SSH connection — no `ssh` binary locally, no docker CLI on the remote. The remote needs sshd with streamlocal forwarding allowed (the OpenSSH default) and the SSH user able to reach `/var/run/docker.sock` (typically the `docker` group). A severed SSH connection is re-established on the next request. The containers, images and volumes all live on the remote host; everything else about the backend is unchanged — except `WorkDir`, which `New` rejects with any non-local `Host`: a bind source resolves on the daemon's filesystem while the file tools run here, so remote daemons use `VolumeName`.
+`Host: "ssh://…"` reaches a remote daemon's unix socket through SSH, in pure Go: every docker API request opens a `direct-streamlocal` channel on one shared SSH connection — no `ssh` binary locally, no docker CLI on the remote. The remote needs sshd with streamlocal forwarding allowed (the OpenSSH default) and the SSH user able to reach `/var/run/docker.sock` (typically the `docker` group). A severed SSH connection is re-established on the next request. The containers, images and volumes all live on the remote host; everything else about the backend is unchanged — except `HostDir`, which `New` rejects with any non-local `Host`: a bind source resolves on the daemon's filesystem while the file tools run here, so remote daemons use `VolumeName`.
 
 Authentication methods are tried in order — SSH agent (`UseAgent`), private key (`KeyFile`/`KeyBytes`, optionally `Passphrase`), then `Password`. Host keys are verified against `~/.ssh/known_hosts` by default; `InsecureIgnoreHostKey` disables this (dev/test only), and `KnownHostsFile` customizes it.
 
@@ -209,9 +209,9 @@ sandbox.FileToolConfig{
 }
 ```
 
-File operations require a **persistent working directory** (`WorkDir`). Backends without one (bare `sandbox.NewLocal()`, ephemeral Docker without `WorkDir`) return `sandbox.ErrNoWorkDir`.
+File operations require a **persistent working directory**. Backends without one (bare `sandbox.NewLocal()`, ephemeral Docker without `HostDir`) return `sandbox.ErrNoWorkDir`.
 
-**Path resolution follows shell semantics, the same view `exec_command` has**: a relative path resolves under the working directory, an absolute path is used as-is, so the paths the model learns from `pwd`/`ls` reach the same file either way. Docker bind-mount mode is the one exception — file operations run on the host side of the mount, confined to `WorkDir`, and a path outside it fails with `sandbox.ErrOutsideWorkDir` ([spec §2.7t](../reference/spec.md#27t-sandbox-file-tools-share-execs-path-view), which also fixes what every backend answers for a missing path, a directory read and the order of `list_files`).
+**Path resolution follows shell semantics, the same view `exec_command` has**: a relative path resolves under the working directory, an absolute path is used as-is, so the paths the model learns from `pwd`/`ls` reach the same file either way. Docker bind-mount mode is the one exception — file operations run on the host side of the mount, confined to `HostDir`, and a path outside it fails with `sandbox.ErrOutsideWorkDir` ([spec §2.7t](../reference/spec.md#27t-sandbox-file-tools-share-execs-path-view), which also fixes what every backend answers for a missing path, a directory read and the order of `list_files`).
 
 `ReadFile` is size-capped on every backend: files larger than the backend's `MaxReadFileBytes` option (0 = `sandbox.DefaultMaxReadFileBytes`, 8 MiB) fail with `sandbox.ErrReadLimitExceeded` instead of being read into memory — model code cannot OOM the host by creating a huge file and reading it back; `apply_patch` can still delete such a file ([spec §2.7s](../reference/spec.md#27s-apply_patch-locates-hunks-by-whole-lines)). Errors returned to the model contain only the requested relative path and the error kind, never host or remote absolute paths.
 

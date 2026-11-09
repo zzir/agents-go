@@ -31,14 +31,14 @@ func TestBuildHostConfig_LogCapped(t *testing.T) {
 // security-relevant option changes it — that is what stops adoptNamed taking
 // over a same-named container created under a laxer policy.
 func TestConfigFingerprint(t *testing.T) {
-	base := Options{Image: "img", User: "65534:65534", WorkDir: "/srv/data"}
+	base := Options{Image: "img", User: "65534:65534", HostDir: "/srv/data"}
 	fp := func(o Options) string { return (&Sandbox{opts: o}).configFingerprint() }
 
 	// Equivalent spellings of the bind source hash alike.
 	same := base
-	same.WorkDir = "/srv/data/"
+	same.HostDir = "/srv/data/"
 	if fp(same) != fp(base) {
-		t.Error("equivalent WorkDir spellings produced different fingerprints")
+		t.Error("equivalent HostDir spellings produced different fingerprints")
 	}
 	// The explicit PIDs default and the implicit one are the same container.
 	same = base
@@ -83,7 +83,7 @@ func TestConfigFingerprint(t *testing.T) {
 	o.Runtime = "runsc"
 	diff["runtime"] = o
 	o = base
-	o.WorkDir = "/elsewhere"
+	o.HostDir = "/elsewhere"
 	diff["workdir"] = o
 	o = base
 	o.Limits.MemoryBytes = 1 << 30
@@ -95,7 +95,7 @@ func TestConfigFingerprint(t *testing.T) {
 	o.Limits.PIDs = 64
 	diff["pids"] = o
 	o = base
-	o.WorkDir = ""
+	o.HostDir = ""
 	o.VolumeName = "proj-vol"
 	diff["volumeName"] = o
 	o = base
@@ -197,7 +197,7 @@ func (r *failAfterReader) Read(p []byte) (int, error) {
 // an option to configFingerprint must leave this value alone.
 func TestConfigFingerprintWithoutEnv(t *testing.T) {
 	const golden = "5698357ac43dfd5d15202737a6f8afba"
-	s := &Sandbox{opts: Options{Image: "img", User: "65534:65534", WorkDir: "/srv/data"}}
+	s := &Sandbox{opts: Options{Image: "img", User: "65534:65534", HostDir: "/srv/data"}}
 	if got := s.configFingerprint(); got != golden {
 		t.Errorf("fingerprint = %s, want %s — every existing container would be replaced", got, golden)
 	}
