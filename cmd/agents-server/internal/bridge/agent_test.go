@@ -346,3 +346,18 @@ func TestChecklistStatusIsAnEnum(t *testing.T) {
 		t.Errorf("empty list: %q", out)
 	}
 }
+
+// A list sent JSON-encoded, as some models do, is read as the list it holds;
+// a string that holds no list is refused — see decisions §5.99.
+func TestChecklistReadsAJSONEncodedList(t *testing.T) {
+	tool := checklistTool(nil)
+	encoded := `{"todos":"[{\"content\":\"ship\",\"status\":\"in_progress\"},{\"content\":\"test\",\"status\":\"pending\"}]"}`
+	if out := invokeText(t, tool, encoded); out != "Checklist updated: 2 items (0 completed, 1 in progress, 1 pending)." {
+		t.Errorf("encoded list: %q", out)
+	}
+	for _, bad := range []string{`{"todos":"ship it"}`, `{"todos":"{\"content\":\"ship\"}"}`, `{"todos":3}`} {
+		if _, err := tool.OnInvoke(context.Background(), &agents.ToolContext{}, bad); err == nil || !strings.Contains(err.Error(), "todos must be an array") {
+			t.Errorf("%s: err = %v, want the array shape named", bad, err)
+		}
+	}
+}

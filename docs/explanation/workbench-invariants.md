@@ -569,3 +569,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     the server sends (one for a command: never). A background `exec_command`
     is tagged `background` on its approval card and after; the task lens of a
     command is the line and its verdict, with no transcript or trace tab.
+98. **`todo_write` reads a JSON-encoded list as the list.** `todos` sent as a
+    string holding the array is decoded once more before the item checks; a
+    string holding anything else is refused with the array shape named
+    (`bridge/checklist_tool.go`) — decisions §5.99.

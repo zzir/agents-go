@@ -2106,3 +2106,27 @@ side of the mount. Getting code into a workspace is the agent's or the
 terminal's work; a clone needs the sandbox's network.
 
 Rules: invariant 27.
+
+### 5.99 Tool arguments are shaped for models that do not decode strictly
+
+Decided 2026-11-09.
+
+**Decision.** A tool whose arguments are optional by meaning is built
+non-strict, so its schema says which are required: `history_search` requires
+none, `history_read` only `id`. The workbench's `todo_write` reads `todos` sent
+as a string holding the array as that array.
+
+**Rejected.** Keeping the history tools strict — strict makes every field
+required, and a model not held to the schema while decoding (Claude, through
+the Anthropic adapter) omits the ones the descriptions call optional: both
+first calls in a real session were refused. Forwarding `strict` to the
+Messages API — it caps strict tools (20), optional parameters (24) and union
+types (16) per request, below what the workbench sends. Repairing either shape
+in the SDK for every tool — one tool each in the logs, and a change to how
+§2.7h validates all of them.
+
+**Cost accepted.** On OpenAI the history tools lose constrained decoding; their
+arguments are flat strings and integers. Other strict tools with fields
+optional by meaning stay strict until a log shows the same refusal.
+
+Rules: spec §2.5i, invariant 98.

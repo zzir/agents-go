@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -26,6 +27,23 @@ var checklistStatuses = []string{"pending", "in_progress", "completed"}
 type checklistItem struct {
 	Content string `json:"content"`
 	Status  string `json:"status"`
+}
+
+// decodeChecklist reads todos as an array, or as a string holding one (some
+// models send it JSON-encoded) — see decisions §5.99. Absent is the empty list.
+func decodeChecklist(raw json.RawMessage) ([]checklistItem, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var encoded string
+	if json.Unmarshal(raw, &encoded) == nil {
+		raw = json.RawMessage(encoded)
+	}
+	var todos []checklistItem
+	if err := json.Unmarshal(raw, &todos); err != nil {
+		return nil, errors.New(`todos must be an array of {"content", "status"} objects`)
+	}
+	return todos, nil
 }
 
 // checklistMarkdown renders the list as a task list: [x] done, [ ] pending,
@@ -69,13 +87,17 @@ func checklistTool(keep func(ctx context.Context, markdown string)) *agents.Tool
 	tool, err := agents.NewRawTool(ChecklistToolName, checklistDescription, schema,
 		func(ctx context.Context, _ *agents.ToolContext, argsJSON string) (agents.ToolResult, error) {
 			var args struct {
-				Todos []checklistItem `json:"todos"`
+				Todos json.RawMessage `json:"todos"`
 			}
 			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 				return agents.ToolResult{}, fmt.Errorf("invalid arguments: %w", err)
 			}
+			todos, err := decodeChecklist(args.Todos)
+			if err != nil {
+				return agents.ToolResult{}, err
+			}
 			counts := map[string]int{}
-			for i, it := range args.Todos {
+			for i, it := range todos {
 				if strings.TrimSpace(it.Content) == "" {
 					return agents.ToolResult{}, fmt.Errorf("item %d has empty content", i)
 				}
@@ -85,11 +107,11 @@ func checklistTool(keep func(ctx context.Context, markdown string)) *agents.Tool
 				counts[it.Status]++
 			}
 			if keep != nil {
-				keep(ctx, checklistMarkdown(args.Todos))
+				keep(ctx, checklistMarkdown(todos))
 			}
 			return agents.ToolResult{Content: []agents.ToolOutputContent{agents.ToolOutputText{Text: fmt.Sprintf(
 				"Checklist updated: %d items (%d completed, %d in progress, %d pending).",
-				len(args.Todos), counts["completed"], counts["in_progress"], counts["pending"])}}}, nil
+				len(todos), counts["completed"], counts["in_progress"], counts["pending"])}}}, nil
 		})
 	if err != nil {
 		// The schema is this file's own: one strict mode refuses is a bug here.

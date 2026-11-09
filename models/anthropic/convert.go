@@ -407,7 +407,7 @@ func parseDataURL(url string) (mediaType, data string, ok bool) {
 }
 
 // convertTools translates tools and handoffs into Messages tool params — all
-// locally executed function tools; strict has no equivalent and passes through.
+// locally executed function tools; strict is not forwarded — see decisions §5.99.
 func convertTools(tools []*agents.Tool, handoffs []agents.Handoff) []ant.ToolUnionParam {
 	out := make([]ant.ToolUnionParam, 0, len(tools)+len(handoffs))
 	for _, t := range tools {

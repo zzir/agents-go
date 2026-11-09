@@ -50,29 +50,30 @@ type Options struct {
 	ScopeHint string
 }
 
+// The arguments are optional, so the tools are non-strict — see decisions §5.99.
 type searchArgs struct {
-	Query    string `json:"query" jsonschema:"Case-insensitive literal text to find in messages, tool calls and tool outputs; empty lists the newest items"`
-	Role     string `json:"role" jsonschema:"Keep one role: user, assistant or tool; empty keeps all"`
-	ToolName string `json:"tool_name" jsonschema:"Keep the calls of this tool and their outputs; empty keeps all"`
-	Limit    int    `json:"limit" jsonschema:"Items to return, at most 20; 0 means 20"`
-	Before   string `json:"before" jsonschema:"An id from a previous result: only items older than it, to page further back; empty starts at the newest"`
-	Scope    string `json:"scope" jsonschema:"Empty for this conversation; the tool description says what else it may name"`
+	Query    string `json:"query,omitempty" jsonschema:"Case-insensitive literal text to find in messages, tool calls and tool outputs; omit to list the newest items"`
+	Role     string `json:"role,omitempty" jsonschema:"Keep one role: user, assistant or tool; omit to keep all"`
+	ToolName string `json:"tool_name,omitempty" jsonschema:"Keep the calls of this tool and their outputs; omit to keep all"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"Items to return, at most 20; omit for 20"`
+	Before   string `json:"before,omitempty" jsonschema:"An id from a previous result: only items older than it, to page further back; omit to start at the newest"`
+	Scope    string `json:"scope,omitempty" jsonschema:"Omit for this conversation; the tool description says what else it may name"`
 }
 
 type readArgs struct {
 	ID     string `json:"id" jsonschema:"The item id shown by history_search"`
-	Offset int    `json:"offset" jsonschema:"Character offset to start at; 0 for the beginning"`
-	Limit  int    `json:"limit" jsonschema:"Characters to return, at most 20000; 0 means 20000"`
-	Scope  string `json:"scope" jsonschema:"Empty for this conversation; the tool description says what else it may name"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Character offset to start at; omit for the beginning"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Characters to return, at most 20000; omit for 20000"`
+	Scope  string `json:"scope,omitempty" jsonschema:"Omit for this conversation; the tool description says what else it may name"`
 }
 
 // Tools returns history_search and history_read over what resolve opens.
 func Tools(resolve Resolver, opts Options) []*agents.Tool {
-	scope := "The scope argument is unsupported here; leave it empty."
+	scope := "The scope argument is unsupported here; omit it."
 	if opts.ScopeHint != "" {
 		scope = opts.ScopeHint
 	}
-	search := agents.NewTool("history_search",
+	search := agents.NewToolNonStrict("history_search",
 		"Search this conversation's whole history, including turns that compaction folded out of your context. "+
 			"Case-insensitive literal substring over messages, tool calls and tool outputs; an empty query lists the newest items. "+
 			"Results come newest first, at most 20 per call, each ending with [id: ...] for history_read; pass before=<id> to page further back. "+
@@ -81,7 +82,7 @@ func Tools(resolve Resolver, opts Options) []*agents.Tool {
 			return runSearch(ctx, tc, resolve, a)
 		})
 	search.ReadOnly = true
-	read := agents.NewTool("history_read",
+	read := agents.NewToolNonStrict("history_read",
 		"Read one history item in full by the id history_search showed, as a character window (offset, limit). "+scope,
 		func(ctx context.Context, tc *agents.ToolContext, a readArgs) (string, error) {
 			return runRead(ctx, tc, resolve, a)

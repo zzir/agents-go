@@ -772,6 +772,8 @@ model may do about it. The first lever is the budget notice.
 - **The history tools read the log, never the projection.** `history_search`
   and `history_read` answer from the active branch's item entries, folded ones
   included, newest first; the turn in progress is not visible until it ends.
+- **Only `history_read`'s `id` is required.** Every other argument of the two
+  tools may be omitted and reads as its empty value — see decisions §5.99.
 - **A storage may answer the search itself** (`session.HistorySearcher`); one
   that leaves folded entries out of `Entries` must, or the folded history is
   unsearchable. Either way one predicate decides a hit, `MatchesHistory`.

@@ -2,6 +2,7 @@ package history_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -59,7 +60,7 @@ func TestHistoryToolsReadWhatCompactionFolded(t *testing.T) {
 	seed(t, sess)
 
 	model := agentstest.NewResponseBuilder().
-		FunctionCall("history_search", "c1", `{"query":"parser","role":"","tool_name":"","limit":0,"before":"","scope":""}`).
+		FunctionCall("history_search", "c1", `{"query":"parser"}`).
 		NewTurn().
 		Text("Ada.").
 		Build()
@@ -104,9 +105,9 @@ func TestHistoryReadWindowsOneItem(t *testing.T) {
 	model := agentstest.NewResponseBuilder().
 		FunctionCall("history_read", "c1", `{"id":"`+answer+`","offset":4,"limit":5,"scope":""}`).
 		NewTurn().
-		FunctionCall("history_read", "c2", `{"id":"nope","offset":0,"limit":0,"scope":""}`).
+		FunctionCall("history_read", "c2", `{"id":"nope"}`).
 		NewTurn().
-		FunctionCall("history_search", "c3", `{"query":"","role":"","tool_name":"","limit":0,"before":"","scope":"task-1"}`).
+		FunctionCall("history_search", "c3", `{"scope":"task-1"}`).
 		NewTurn().
 		Text("done").
 		Build()
@@ -140,6 +141,18 @@ func TestHistoryToolsAreReadOnly(t *testing.T) {
 		}
 		if !strings.Contains(tool.Description, "scope: a task id") {
 			t.Fatalf("%s description lacks the scope hint", tool.Name)
+		}
+	}
+}
+
+// Only history_read's id is required: a model that omits the optional
+// arguments is not refused — see decisions §5.99.
+func TestHistoryToolsRequireOnlyTheReadID(t *testing.T) {
+	want := map[string]string{"history_search": "null", "history_read": `["id"]`}
+	for _, tool := range history.Tools(history.For(session.NewInMemorySession()), history.Options{}) {
+		req, _ := json.Marshal(tool.ParamsJSONSchema["required"])
+		if tool.Strict || string(req) != want[tool.Name] {
+			t.Errorf("%s: strict %v, required %s; want non-strict, required %s", tool.Name, tool.Strict, req, want[tool.Name])
 		}
 	}
 }
