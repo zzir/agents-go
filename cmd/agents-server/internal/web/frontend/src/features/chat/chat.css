@@ -334,7 +334,7 @@
 .message-user .message-body {
   max-width: 75%;
   font-size: var(--base-text-size-sm);
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--fgColor-default);
   white-space: pre-wrap;
   word-break: break-word;
@@ -363,7 +363,7 @@
   flex: 1;
   min-width: 0;
   font-size: var(--base-text-size-sm);
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--fgColor-default);
 }
 
@@ -441,7 +441,7 @@
 }
 .turn-text {
   font-size: var(--base-text-size-sm);
-  line-height: 1.6;
+  line-height: 1.5;
   color: var(--fgColor-default);
 }
 .turn-text + .process-group,
