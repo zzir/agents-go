@@ -172,7 +172,7 @@ var defs = []Def{{
 	Label:       "Sandbox idle stop (minutes)",
 	Default:     "30",
 	Min:         0,
-	Description: "Stop a project's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again.",
+	Description: "Stop a workspace's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again.",
 }, {
 	Key:         KeyS3Endpoint,
 	Kind:        KindString,

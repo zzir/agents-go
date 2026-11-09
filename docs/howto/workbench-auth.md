@@ -176,7 +176,7 @@ the Settings hub's Sessions panel — where they can be reassigned
   |-----------------|-----------------------------------------|-------------------|---------------------------------|
   | `ws.run.create` | the connection's user                   | session id        |                                 |
   | `ws.approval`   | the connection's user                   | tool call id      | verdict, scope, tool            |
-  | `terminal.open` | the connection's user                   | sandbox id        | `project <id> (owner <id>)`     |
+  | `terminal.open` | the connection's user                   | sandbox id        | `workspace <id> (owner <id>)`   |
   | `workflow.save` | the session's owner (who approved it)   | workflow id       | `tool=save_workflow created`    |
   | `trigger.fire`  | the owner of the session it fired into  | trigger id        | `source=cron\|webhook started=` |
 

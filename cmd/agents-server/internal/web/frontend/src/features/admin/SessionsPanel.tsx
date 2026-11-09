@@ -25,10 +25,10 @@ const listSessions = async (): Promise<SessionRow[]> =>
 export function SessionsPanel() {
   const { data: sessions, error, reload } = useApi<SessionRow[]>(listSessions, [], 'admin:sessions');
   useLoadError(error, 'sessions');
-  // The Project column's id→name map; a failure leaves ids unnamed rather
+  // The Workspace column's id→name map; a failure leaves ids unnamed rather
   // than failing the listing.
-  const { data: projects } = useApi(() => api.projects.listAll(), [], 'admin:projects');
-  const projectNames = useMemo(() => Object.fromEntries((projects ?? []).map(p => [p.id || '', p.name || ''])), [projects]);
+  const { data: workspaces } = useApi(() => api.workspaces.listAll(), [], 'admin:workspaces');
+  const workspaceNames = useMemo(() => Object.fromEntries((workspaces ?? []).map(p => [p.id || '', p.name || ''])), [workspaces]);
   const [reassigning, setReassigning] = useState<SessionRow | null>(null);
   const confirm = useConfirm();
   const { me } = useMe();
@@ -54,14 +54,14 @@ export function SessionsPanel() {
     }
   }, [confirm, reload, labelFor]);
 
-  // A bound project always resolves (its delete is refused while sessions
+  // A bound workspace always resolves (its delete is refused while sessions
   // bind it); the raw id is the honest fallback for a map that failed to load.
-  const projectOf = useCallback((s: SessionRow) => s.project_id ? (projectNames[s.project_id] ?? s.project_id) : '', [projectNames]);
+  const workspaceOf = useCallback((s: SessionRow) => s.workspace_id ? (workspaceNames[s.workspace_id] ?? s.workspace_id) : '', [workspaceNames]);
 
   const columns = useMemo<Column<SessionRow>[]>(() => [
     { header: 'Session', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 160, renderCell: s => <span className="list-clip" title={s.name}>{s.name}</span> },
     { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 120, maxWidth: 260, renderCell: s => <OwnerCell ownerId={s.owner_id} ownerOf={ownerOf} labelFor={labelFor} /> },
-    { header: 'Project', id: 'project', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: s => <span className="list-clip" title={projectOf(s)}>{projectOf(s)}</span> },
+    { header: 'Workspace', id: 'workspace', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: s => <span className="list-clip" title={workspaceOf(s)}>{workspaceOf(s)}</span> },
     { header: 'Updated', id: 'updated', width: 'auto', minWidth: 130, renderCell: s => <span className="list-nowrap">{s.updated_at ? formatTime(s.updated_at) : ''}</span> },
     actionsColumn<SessionRow>(s => (
       <RowMenu label={`Actions for ${s.name}`}>
@@ -69,7 +69,7 @@ export function SessionsPanel() {
         <ActionList.Item variant="danger" onSelect={() => { void remove(s); }}>Delete</ActionList.Item>
       </RowMenu>
     )),
-  ], [remove, ownerOf, labelFor, projectOf]);
+  ], [remove, ownerOf, labelFor, workspaceOf]);
 
   return (
     <Stack gap="normal">
@@ -87,7 +87,7 @@ export function SessionsPanel() {
         rows={sessions ?? []}
         columns={columns}
         loading={sessions === null}
-        search={{ placeholder: 'Search sessions', match: (s, q) => `${s.name || ''} ${ownerLabel(labelFor, s.owner_id)} ${projectOf(s)}`.toLowerCase().includes(q) }}
+        search={{ placeholder: 'Search sessions', match: (s, q) => `${s.name || ''} ${ownerLabel(labelFor, s.owner_id)} ${workspaceOf(s)}`.toLowerCase().includes(q) }}
         empty={(
           <Blankslate>
             <Blankslate.Visual><CommentDiscussionIcon size={24} /></Blankslate.Visual>

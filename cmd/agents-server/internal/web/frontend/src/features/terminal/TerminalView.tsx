@@ -43,9 +43,9 @@ export interface TerminalViewHandle {
 }
 
 interface TerminalViewProps {
-  // The project whose container this shell opens into —
+  // The workspace whose container this shell opens into —
   // required by terminal.open; a bound session's terminal follows its binding.
-  projectId: string;
+  workspaceId: string;
   // Hidden tabs stay mounted so their session (xterm buffer + WebSocket)
   // survives tab switches; only the active tab is displayed.
   hidden: boolean;
@@ -56,7 +56,7 @@ interface TerminalViewProps {
 // TerminalView hosts one interactive sandbox terminal over /ws/terminal; the
 // shell's lifetime is the component's (invariant 81).
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView(
-  { projectId, hidden, onStatus, onSelection }: TerminalViewProps,
+  { workspaceId, hidden, onStatus, onSelection }: TerminalViewProps,
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -145,7 +145,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         case EV.authOk:
           ws.send(JSON.stringify({
             type: EV.terminalOpen,
-            payload: { project_id: projectId, cols: term.cols, rows: term.rows },
+            payload: { workspace_id: workspaceId, cols: term.cols, rows: term.rows },
           }));
           break;
         case EV.terminalReady:
@@ -213,7 +213,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       webglRef.current = null;
       term.dispose(); // disposes loaded addons (fit, webgl) with it
     };
-  }, [projectId]);
+  }, [workspaceId]);
 
   // WebGL renderer attached ONLY to the visible tab: a second live webgl addon
   // corrupts the shared glyph-atlas cell measurement (a 2-column terminal), and
@@ -238,7 +238,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     } catch {
       webglRef.current = null;
     }
-  }, [hidden, projectId]);
+  }, [hidden, workspaceId]);
 
   return <div ref={mountRef} className="terminal-view" style={hidden ? { display: 'none' } : undefined} />;
 });

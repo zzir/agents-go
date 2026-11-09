@@ -831,13 +831,13 @@ const DisplayContainerRebuilt = "container_rebuilt"
 
 // ContainerRebuilt is that note's data.
 type ContainerRebuilt struct {
-	ProjectID   string `json:"project_id"`
-	ProjectName string `json:"project_name"`
+	WorkspaceID   string `json:"workspace_id"`
+	WorkspaceName string `json:"workspace_name"`
 }
 
 // Text is the note as a line, for a renderer that knows no better.
 func (n ContainerRebuilt) Text() string {
-	return fmt.Sprintf("Container rebuilt for %q: processes and anything outside /workspace are gone", n.ProjectName)
+	return fmt.Sprintf("Container rebuilt for %q: processes and anything outside /workspace are gone", n.WorkspaceName)
 }
 
 // AppendContainerRebuilt records a container rebuild on the session; for a

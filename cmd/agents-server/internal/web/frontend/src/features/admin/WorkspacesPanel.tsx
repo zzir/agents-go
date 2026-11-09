@@ -11,15 +11,15 @@ import { toast } from '@/lib/toast';
 import { OwnerCell, ownerLabel } from '@/features/admin/OwnerCell';
 import { useLoadError } from '@/features/admin/useLoadError';
 
-type ProjectRow = Omit<ApiSchemas['store.Project'], 'id'> & { id: string; sandbox: string; rebuildable: boolean };
+type WorkspaceRow = Omit<ApiSchemas['store.Workspace'], 'id'> & { id: string; sandbox: string; rebuildable: boolean };
 
 // The Storage column shows only the docker volume name (empty where the sandbox
 // IS the storage); the full hint still backs the delete confirmation.
 const volumeOf = (hint?: string) => hint?.match(/^docker volume (\S+) on /)?.[1] ?? '';
 
-// Every owner's projects joined with the sandbox each runs on.
-const listProjects = async (): Promise<ProjectRow[]> => {
-  const [sandboxes, rows] = await Promise.all([api.sandboxes.list(), api.projects.listAll()]);
+// Every owner's workspaces joined with the sandbox each runs on.
+const listWorkspaces = async (): Promise<WorkspaceRow[]> => {
+  const [sandboxes, rows] = await Promise.all([api.sandboxes.list(), api.workspaces.listAll()]);
   const of = (id?: string) => (sandboxes ?? []).find(sb => sb.id === id);
   return (rows ?? []).map(p => ({
     ...p,
@@ -29,18 +29,18 @@ const listProjects = async (): Promise<ProjectRow[]> => {
   }));
 };
 
-// ProjectsPanel: every owner's working trees and where their files live, newest
+// WorkspacesPanel: every owner's working trees and where their files live, newest
 // first. Stop and rebuild (where the backend has one) sit beside delete;
 // reading a tree (preview, export) is offered nowhere here.
-export function ProjectsPanel() {
-  const { data: projects, error, reload } = useApi<ProjectRow[]>(listProjects, [], 'admin:projects:joined');
-  useLoadError(error, 'projects');
+export function WorkspacesPanel() {
+  const { data: workspaces, error, reload } = useApi<WorkspaceRow[]>(listWorkspaces, [], 'admin:workspaces:joined');
+  useLoadError(error, 'workspaces');
   const confirm = useConfirm();
   const { ownerOf, labelFor } = useOwnerLabels();
 
   // Stop and rebuild answer, or an upstream error worth reading. Rebuild
   // discards the container, so it confirms first (invariant 41).
-  const act = useCallback(async (p: ProjectRow, what: 'stop' | 'rebuild') => {
+  const act = useCallback(async (p: WorkspaceRow, what: 'stop' | 'rebuild') => {
     if (what === 'rebuild' && !(await confirm({
       title: `Rebuild the container for “${p.name}”?`,
       content: 'The container is discarded and created again from the image. Files in the working tree survive; anything installed into the container does not, and commands running in it right now will fail.',
@@ -49,10 +49,10 @@ export function ProjectsPanel() {
     }))) return;
     try {
       if (what === 'stop') {
-        const res = await api.projects.sandboxStop(p.id);
+        const res = await api.workspaces.sandboxStop(p.id);
         toast.success(res.stopped ? `Sandbox for “${p.name}” stopped` : `Sandbox for “${p.name}” will stop when the work using it finishes`);
       } else {
-        await api.projects.rebuildContainer(p.id);
+        await api.workspaces.rebuildContainer(p.id);
         toast.success(`Container for “${p.name}” rebuilt`);
       }
     } catch (e) {
@@ -60,7 +60,7 @@ export function ProjectsPanel() {
     }
   }, [confirm]);
 
-  const remove = useCallback(async (p: ProjectRow) => {
+  const remove = useCallback(async (p: WorkspaceRow) => {
     if (!(await confirm({
       title: `Delete “${p.name}”?`,
       content: p.storage_hint
@@ -70,22 +70,22 @@ export function ProjectsPanel() {
       confirmButtonType: 'danger',
     }))) return;
     try {
-      await api.projects.delete(p.id);
+      await api.workspaces.delete(p.id);
       reload();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete the project.');
+      toast.error(e instanceof Error ? e.message : 'Failed to delete the workspace.');
     }
   }, [confirm, reload]);
 
-  const columns = useMemo<Column<ProjectRow>[]>(() => [
-    { header: 'Project', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 120, renderCell: p => <span className="list-clip" title={p.name}>{p.name}</span> },
+  const columns = useMemo<Column<WorkspaceRow>[]>(() => [
+    { header: 'Workspace', id: 'name', rowHeader: true, width: 'growCollapse', minWidth: 120, renderCell: p => <span className="list-clip" title={p.name}>{p.name}</span> },
     { header: 'Owner', id: 'owner', width: 'growCollapse', minWidth: 100, maxWidth: 220, renderCell: p => <OwnerCell ownerId={p.owner_id} ownerOf={ownerOf} labelFor={labelFor} /> },
     { header: 'Sandbox', id: 'sandbox', width: 'growCollapse', minWidth: 90, maxWidth: 180, renderCell: p => <span className="list-clip" title={p.sandbox}>{p.sandbox}</span> },
     { header: 'Storage', id: 'storage', width: 'growCollapse', minWidth: 140, renderCell: p => <span className="list-clip" title={p.storage_hint}>{volumeOf(p.storage_hint)}</span> },
     { header: 'Sessions', id: 'sessions', width: 'auto', minWidth: 90, renderCell: p => <span className="list-nowrap">{p.session_count ?? 0}</span> },
     // The list is newest first, so the date it sorts on is on the row.
     { header: 'Created', id: 'created', width: 'auto', minWidth: 130, renderCell: p => <span className="list-nowrap">{p.created_at ? formatTime(p.created_at) : ''}</span> },
-    actionsColumn<ProjectRow>(p => (
+    actionsColumn<WorkspaceRow>(p => (
       <RowMenu label={`Actions for ${p.name}`}>
         <ActionList.Item onSelect={() => { void act(p, 'stop'); }}>Stop sandbox</ActionList.Item>
         {/* Rebuild replaces the compute and keeps the tree — offered only
@@ -102,7 +102,7 @@ export function ProjectsPanel() {
     <Stack gap="normal">
       <PageHeader>
         <PageHeader.TitleArea>
-          <PageHeader.Title><span id="admin-projects-title">Projects</span></PageHeader.Title>
+          <PageHeader.Title><span id="admin-workspaces-title">Workspaces</span></PageHeader.Title>
         </PageHeader.TitleArea>
         <PageHeader.Description>
           Every owner&apos;s working trees and where their files live. Deleting
@@ -110,15 +110,15 @@ export function ProjectsPanel() {
         </PageHeader.Description>
       </PageHeader>
       <ListTable
-        labelledBy="admin-projects-title"
-        rows={projects ?? []}
+        labelledBy="admin-workspaces-title"
+        rows={workspaces ?? []}
         columns={columns}
-        loading={projects === null}
-        search={{ placeholder: 'Search projects', match: (p, q) => `${p.name || ''} ${ownerLabel(labelFor, p.owner_id)} ${p.sandbox} ${p.storage_hint || ''}`.toLowerCase().includes(q) }}
+        loading={workspaces === null}
+        search={{ placeholder: 'Search workspaces', match: (p, q) => `${p.name || ''} ${ownerLabel(labelFor, p.owner_id)} ${p.sandbox} ${p.storage_hint || ''}`.toLowerCase().includes(q) }}
         empty={(
           <Blankslate>
             <Blankslate.Visual><FileDirectoryIcon size={24} /></Blankslate.Visual>
-            <Blankslate.Heading>No projects</Blankslate.Heading>
+            <Blankslate.Heading>No workspaces</Blankslate.Heading>
             <Blankslate.Description>Working trees list here as members create them.</Blankslate.Description>
           </Blankslate>
         )}
@@ -127,4 +127,4 @@ export function ProjectsPanel() {
   );
 }
 
-export default ProjectsPanel;
+export default WorkspacesPanel;

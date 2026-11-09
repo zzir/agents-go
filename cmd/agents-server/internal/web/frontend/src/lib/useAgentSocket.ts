@@ -148,7 +148,7 @@ export interface SessionEvents {
   // The conversation on screen: what a reconnect re-reads at once.
   activeSession: () => string | null;
   onTitleUpdated: (sessionId: string, title: string) => void;
-  onProjectBound: (sessionId: string, projectId: string) => void;
+  onWorkspaceBound: (sessionId: string, workspaceId: string) => void;
   // The server's word on a session's status; null drops every one heard so far
   // (the refetched list answers).
   onStatus: (status: SessionStatusEvent | null) => void;
@@ -830,8 +830,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (p?.session_id && typeof p.title === 'string') eventsRef.current.onTitleUpdated(p.session_id, p.title);
     });
 
-    ws.on(EV.sessionProjectBound, (p: { session_id?: string; project_id?: string }) => {
-      if (p?.session_id && p.project_id) eventsRef.current.onProjectBound(p.session_id, p.project_id);
+    ws.on(EV.sessionWorkspaceBound, (p: { session_id?: string; workspace_id?: string }) => {
+      if (p?.session_id && p.workspace_id) eventsRef.current.onWorkspaceBound(p.session_id, p.workspace_id);
     });
 
     ws.on(EV.sessionStatus, (p: SessionStatusEvent) => {

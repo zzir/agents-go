@@ -320,23 +320,23 @@ func (r *Runner) StopSessionTree(sessionID string) {
 const sessionTeardownWait = 5 * time.Second
 
 // ReleaseSessionBinding evicts the cached sandbox instance behind a deleted
-// session's project binding once no session references the project
+// session's workspace binding once no session references the workspace
 // (invariant 27). Called AFTER the delete cascade; on any doubt the instance stays.
-func (r *Runner) ReleaseSessionBinding(projectID string) {
-	if projectID == "" {
+func (r *Runner) ReleaseSessionBinding(workspaceID string) {
+	if workspaceID == "" {
 		return
 	}
 	ctx := r.hub.rootCtx
-	n, err := r.Deps.Sessions.CountProjectRefs(ctx, projectID)
+	n, err := r.Deps.Sessions.CountWorkspaceRefs(ctx, workspaceID)
 	if err != nil {
-		logging.Ctx(ctx).Warn("counting project binding refs", "error", err, "project_id", projectID)
+		logging.Ctx(ctx).Warn("counting workspace binding refs", "error", err, "workspace_id", workspaceID)
 		return
 	}
 	if n > 0 {
 		return
 	}
-	// Eviction only: the project row, its storage and stopped container stay.
-	r.Deps.SandboxManager.EvictProject(projectID)
+	// Eviction only: the workspace row, its storage and stopped container stay.
+	r.Deps.SandboxManager.EvictWorkspace(workspaceID)
 }
 
 // ForgetSessionTrust drops a deleted session's exec_command trust grants,

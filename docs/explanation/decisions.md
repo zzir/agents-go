@@ -529,35 +529,35 @@ backend decision argued here first — gVisor is already reachable via
 `runtime: runsc`. Do not reintroduce a host-exec or raw remote-exec type.
 
 Rules: workbench invariant 45 (only a sandbox's identity freezes); invariant 27
-(a session binds a project);
+(a session binds a workspace);
 [Sandboxes](../reference/protocol.md#sandboxes--apiv1sandboxes).
 
-### 5.28 A project is the unit of working storage, and containers are per project
+### 5.28 A workspace is the unit of working storage, and containers are per workspace
 
-Decided 2026-08-24; revised 2026-08-25 (§5.29), 2026-08-28 (§5.33, §5.36)
-and 2026-08-29 (deletion contracts in SQL).
+Decided 2026-08-24; revised 2026-08-25 (§5.29), 2026-08-28 (§5.33, §5.36),
+2026-08-29 (deletion contracts in SQL) and 2026-11-05 (named workspace, §5.98).
 
-**Decision.** A **project** is one user's working tree on one sandbox, keyed by
-id and never by a typed path, with one persistent container per project —
+**Decision.** A **workspace** is one user's working tree on one sandbox, keyed by
+id and never by a typed path, with one persistent container per workspace —
 derived-named so restarts re-adopt (§5.19), kept stopped so installed packages
 survive idle. The affinity is deliberate: a tree that could "move" between
 daemons would silently be two sets of files.
 
 **Rejected.** A free-form working directory per session — it made "which tree
 did that command touch?" a question with a surprising answer. Cascading a
-sandbox delete onto its projects — a project delete reclaims storage, so the
+sandbox delete onto its workspaces — a workspace delete reclaims storage, so the
 cascade would destroy working trees as a side effect of removing a machine.
-Projects behind the admin gate — they are the first PERSONAL configuration
+Workspaces behind the admin gate — they are the first PERSONAL configuration
 entity, scoped in the handlers; an admin MANAGES the plane (§5.29).
 
 **Cost accepted.** Deletion and binding contracts settle in SQL per dialect —
 single-statement guards on SQLite, parent-row locks on PostgreSQL — two shapes
-to keep equivalent. Sessions, forks and tasks on one project share its tree; a
+to keep equivalent. Sessions, forks and tasks on one workspace share its tree; a
 regenerate or fork rewinds the transcript, not the files.
 
 Rules: workbench invariant 27 (binding, fences, locks); the operational
 surface, the terminal's ownership rule included, is
-[Projects](../reference/protocol.md#projects--apiv1projects).
+[Workspaces](../reference/protocol.md#workspaces--apiv1workspaces).
 
 ---
 
@@ -629,14 +629,14 @@ groups whose qualified names collide and resolve own-over-global.
 
 Rules: [Skills](../reference/protocol.md#skills--apiv1skills) in the wire surface.
 
-### 5.32 A project's environment is write-only, like every other credential here
+### 5.32 A workspace's environment is write-only, like every other credential here
 
 Decided 2026-08-26.
 
-**Decision.** A project's environment is sealed at rest, masked in every
+**Decision.** A workspace's environment is sealed at rest, masked in every
 response, replaceable but never readable back; names stay plaintext so one
 variable can be rewritten alone and the audit log stays answerable, and the
-seal's AAD is the project id, so a ciphertext moved to another project is not a
+seal's AAD is the workspace id, so a ciphertext moved to another workspace is not a
 decryption oracle.
 
 **Rejected.** A per-entry "secret" flag masking only marked values — it would
@@ -657,17 +657,17 @@ Rules: workbench invariant 27 (the environment is content, not identity).
 Decided 2026-08-28. The target/template split this entry introduced was
 reversed the same week — §5.36 holds what replaced it. What stands:
 
-**Decision.** The runtime generation lives only on the PROJECT, bumped by
+**Decision.** The runtime generation lives only on the WORKSPACE, bumped by
 every content change to its sandbox, so the instance cache, the terminal
-fences and `RetireProject` watch one thing; Docker storage is a volume the
-project delete destroys, since a volume nobody has a listing for is an unbounded leak.
+fences and `RetireWorkspace` watch one thing; Docker storage is a volume the
+workspace delete destroys, since a volume nobody has a listing for is an unbounded leak.
 
 **Rejected.** The local daemon's bind mount (`--workspace`, the `DOCKER_HOST`
 guard, the operator uid:gid default) — that default kept the container unable
-to install a package into itself. A per-owner "scratch" project for unbound
+to install a package into itself. A per-owner "scratch" workspace for unbound
 runs — it made "which tree did that command touch?" surprising. A sandbox
-generation beside the project generation — two maps that must not reach each
-other's rows. A second binding column beside `project_id` — a project pins its
+generation beside the workspace generation — two maps that must not reach each
+other's rows. A second binding column beside `workspace_id` — a workspace pins its
 machine, so it could only disagree.
 
 **Cost accepted.** The tree is no longer a directory on the operator's
@@ -677,7 +677,7 @@ container runs as root unless the sandbox names a user (overriding spec
 the isolation boundary.
 
 Rules: workbench invariant 27;
-[Projects](../reference/protocol.md#projects--apiv1projects).
+[Workspaces](../reference/protocol.md#workspaces--apiv1workspaces).
 
 ### 5.34 One E2B-compatible backend, written here, not one backend per cloud
 
@@ -724,14 +724,14 @@ Decided 2026-08-28, reversing §5.33's target/template split the same week it
 landed.
 
 **Decision.** One `sandboxes` row carries where it runs and what runs on it,
-and a project names one; the mutability line is drawn between FIELDS, not
+and a workspace names one; the mutability line is drawn between FIELDS, not
 tables — where it always was: only the type and destination ever froze, while
 the credentials sat in the "frozen" table and were always editable.
 
 **Rejected.** Separate `sandbox_targets` and `sandbox_templates`, justified
 by reuse — for the common case there was nothing to reuse (a local docker
 target's whole config is `{}`), and the split bred its own bug class: a
-target and a template of different types, needing a type check on the project
+target and a template of different types, needing a type check on the workspace
 write, another on the health check, filtered dropdowns in two places, and
 still reaching a screen as `unknown sandbox target type: e2b`.
 
@@ -1453,7 +1453,7 @@ service's policy — a token gate, or a gateway answering every response with
 `curl` and `fetch` and takes a browser page off the table.
 
 Rules: [invariant 53](workbench-invariants.md);
-[protocol.md, Projects](../reference/protocol.md#projects--apiv1projects).
+[protocol.md, Workspaces](../reference/protocol.md#workspaces--apiv1workspaces).
 
 ### 5.71 A running record is confirmed through the daemon
 
@@ -2060,11 +2060,11 @@ Decided 2026-11-03.
 approved `exec_command` call with `background: true` becomes a `tasks` row of
 kind `command` on the call's own card — no agent, one attempt, the command's
 first line as its label. The launcher runs `Command.Run` on the parent's
-project sandbox, on its own goroutine under the hub's root context; a non-zero
+workspace sandbox, on its own goroutine under the hub's root context; a non-zero
 exit or a timeout is a *failed* task whose summary opens with the verdict line;
 its ending wakes the parent like any task's. Offered on a chat run of an agent
 with `behavior.background_commands` on, never on a task's or a workflow step's
-run. A sandbox stop ends the project's commands first.
+run. A sandbox stop ends the workspace's commands first.
 
 **Rejected.** A hub run for the command — a run is a model loop over a session,
 and a command has neither. A new entity beside tasks — the strip, the wake-up
@@ -2080,3 +2080,29 @@ like any task's, the files stay in the sandbox. The hidden child session every
 task gets is empty for a command. The parent's live-task cap counts commands.
 
 Rules: invariant 96.
+
+### 5.98 The working tree is a workspace; a project is only what lives in it
+
+Decided 2026-11-05.
+
+**Decision.** The workbench's unit of working storage is named **workspace** —
+the tree a sandbox mounts at `/workspace`, one container each (§5.28) — the
+word the SDK already used for that mount point. A **project** is not modeled:
+it is whatever a person or an agent puts in the workspace, a cloned repository
+or an unpacked directory, with no row, no API and no picker. A session binds a
+workspace and its commands start at `/workspace`; going into a project is a `cd`.
+
+**Rejected.** Keeping `project` for the storage unit — `workspace` meant the
+mount point in the SDK and the working tree in the workbench: two words for one
+thing. A project entity inside the workspace — a row per directory, bound with
+the session and rooting its tools there — makes a person create directories the
+agent can make itself, and carries a second id through every run, task and
+approval for what a `cd` does.
+
+**Cost accepted.** The rename breaks the database (no migration: export the
+old volumes first), the REST paths and the event and field names, and renames
+the SDK's `docker.Options.WorkDir` to `HostDir` — it always named the host
+side of the mount. Getting code into a workspace is the agent's or the
+terminal's work; a clone needs the sandbox's network.
+
+Rules: invariant 27.

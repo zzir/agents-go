@@ -1,4 +1,4 @@
-/* Pure projection of the composer's project area — kept out of the component
+/* Pure projection of the composer's workspace area — kept out of the component
    so the node-environment vitest suite can cover it. */
 
 /* What a sandbox backend can do, as its API row declares it: a capability is
@@ -19,9 +19,9 @@ export interface SandboxLite {
   supports?: SandboxSupports;
 }
 
-/* A project row as GET /projects returns it: the named working tree a
+/* A workspace row as GET /workspaces returns it: the named working tree a
    sandbox's container mounts. */
-export interface Project {
+export interface Workspace {
   id: string;
   name: string;
   sandbox_id: string;
@@ -34,21 +34,21 @@ export interface Project {
   /* The row's write counter: an update sends back the one it was edited
      against, and a concurrent write answers 409. */
   revision?: number;
-  /* How many sessions bind this project — the confirm step says how many an
+  /* How many sessions bind this workspace — the confirm step says how many an
      environment change reaches. */
   session_count?: number;
 }
 
-/* One environment variable of a project. Values are write-only: the server
+/* One environment variable of a workspace. Values are write-only: the server
    masks every one on the way out (the agent reads the container's environment anyway). */
 export interface EnvVar {
   key: string;
   value: string;
 }
 
-/* GET /projects/:id — the one response that carries an environment, as names
+/* GET /workspaces/:id — the one response that carries an environment, as names
    with masked values. */
-export interface ProjectDetail extends Project {
+export interface WorkspaceDetail extends Workspace {
   env?: EnvVar[];
 }
 
@@ -56,10 +56,10 @@ export interface ProjectDetail extends Project {
    keeps what is stored. */
 export const SECRET_MASK = '********';
 
-/* The session's permanent project binding, or null while unbound. The project
+/* The session's permanent workspace binding, or null while unbound. The workspace
    pins the sandbox, so one id is the whole binding. */
 export interface SessionBinding {
-  projectId: string;
+  workspaceId: string;
 }
 
 export interface ComposerSandboxView {
@@ -69,41 +69,41 @@ export interface ComposerSandboxView {
   title: string;
 }
 
-export function projectLabel(projectName: string, sandboxName: string): string {
-  return `${projectName} @ ${sandboxName}`;
+export function workspaceLabel(workspaceName: string, sandboxName: string): string {
+  return `${workspaceName} @ ${sandboxName}`;
 }
 
-/* The composer picker's rows: newest project first, with its sandbox's name; a
-   project whose sandbox no longer exists is dropped (it cannot start). */
-export function composerProjectRows(
-  projects: Project[] | null,
+/* The composer picker's rows: newest workspace first, with its sandbox's name; a
+   workspace whose sandbox no longer exists is dropped (it cannot start). */
+export function composerWorkspaceRows(
+  workspaces: Workspace[] | null,
   sandboxes: SandboxLite[] | null,
-): Array<{ project: Project; sandboxName: string }> {
-  if (!projects || !sandboxes) return [];
+): Array<{ workspace: Workspace; sandboxName: string }> {
+  if (!workspaces || !sandboxes) return [];
   const names = new Map(sandboxes.map(sb => [sb.id, sb.name]));
-  const created = (p: Project) => (p.created_at ? Date.parse(p.created_at) || 0 : 0);
-  return projects
+  const created = (p: Workspace) => (p.created_at ? Date.parse(p.created_at) || 0 : 0);
+  return workspaces
     .filter(p => names.has(p.sandbox_id))
     .sort((a, b) => created(b) - created(a) || b.id.localeCompare(a.id))
-    .map(p => ({ project: p, sandboxName: names.get(p.sandbox_id)! }));
+    .map(p => ({ workspace: p, sandboxName: names.get(p.sandbox_id)! }));
 }
 
 export function composerSandboxView(
   binding: SessionBinding | null,
-  projects: Project[] | null,
+  workspaces: Workspace[] | null,
   sandboxes: SandboxLite[] | null,
 ): ComposerSandboxView {
-  if (binding && binding.projectId) {
-    const project = projects?.find(p => p.id === binding.projectId);
-    if (!project) {
-      // Either the projects fetch is still in flight or the row is gone; the
+  if (binding && binding.workspaceId) {
+    const workspace = workspaces?.find(p => p.id === binding.workspaceId);
+    if (!workspace) {
+      // Either the workspaces fetch is still in flight or the row is gone; the
       // id is all there is to say.
-      return { bound: true, title: binding.projectId };
+      return { bound: true, title: binding.workspaceId };
     }
-    const sb = sandboxes?.find(s => s.id === project.sandbox_id);
+    const sb = sandboxes?.find(s => s.id === workspace.sandbox_id);
     const title = sb
-      ? projectLabel(project.name, sb.name)
-      : `${project.name} — this project's machine no longer exists; runs fail until it is restored`;
+      ? workspaceLabel(workspace.name, sb.name)
+      : `${workspace.name} — this workspace's machine no longer exists; runs fail until it is restored`;
     return { bound: true, title };
   }
   return { bound: false, title: '' };

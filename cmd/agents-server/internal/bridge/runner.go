@@ -137,7 +137,7 @@ type RunOutcome struct {
 	RunID         string
 	SessionID     string
 	AgentConfigID string
-	ProjectID     string
+	WorkspaceID   string
 	// ErrCode/ErrMessage mirror the run.error event.
 	ErrCode    string
 	ErrMessage string
@@ -155,28 +155,28 @@ type RunOutcome struct {
 // Hub()); onDone, if non-nil, fires once when the run terminates.
 // ErrSessionBusy when a run is live; a run paused for approval is abandoned
 // first — invariant 19.
-func (r *Runner) StartRun(sessionID, agentConfigID, projectID string, input RunInput, plan *bool, onDone func(*RunOutcome)) (string, error) {
+func (r *Runner) StartRun(sessionID, agentConfigID, workspaceID string, input RunInput, plan *bool, onDone func(*RunOutcome)) (string, error) {
 	r.abandonPaused(r.hub.rootCtx, sessionID, protocol.RunCancelSuperseded)
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, input, "", plan, onDone)
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, workspaceID, input, "", plan, onDone)
 }
 
 // StartWakeRun is StartRun for a task notification delivery: same launch, plus
 // the lineage (the run whose spawn started the chain) the trace records.
 // withholdTrust is set for a delivery of work a trigger started.
-func (r *Runner) StartWakeRun(sessionID, agentConfigID, projectID, input, parentRunID string, withholdTrust bool, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, projectID, RunInput{Text: input, WithholdTrust: withholdTrust}, parentRunID, nil, onDone)
+func (r *Runner) StartWakeRun(sessionID, agentConfigID, workspaceID, input, parentRunID string, withholdTrust bool, onDone func(*RunOutcome)) (string, error) {
+	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, workspaceID, RunInput{Text: input, WithholdTrust: withholdTrust}, parentRunID, nil, onDone)
 }
 
 // startRunWithID is StartRun with a caller-chosen run id: a task's row carries
 // its run id before the run launches.
-func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunReserved(runID, sessionID, agentConfigID, projectID, input, wakeParentRunID, planIntent, onDone, nil)
+func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, workspaceID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
+	return r.startRunReserved(runID, sessionID, agentConfigID, workspaceID, input, wakeParentRunID, planIntent, onDone, nil)
 }
 
 // startRunReserved is startRunWithID with a hook run once the session is
 // RESERVED and before the launch; an error from it withdraws the reservation.
-func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func() error) (string, error) {
-	seg, ctx, plan, boundNow, err := r.reserveRun(runID, sessionID, agentConfigID, projectID)
+func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, workspaceID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func() error) (string, error) {
+	seg, ctx, plan, boundNow, err := r.reserveRun(runID, sessionID, agentConfigID, workspaceID)
 	if err != nil {
 		return "", err
 	}
@@ -196,14 +196,14 @@ func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, projectID str
 	}
 	// After register+OnRunAttach: every live connection receives the announcement.
 	if boundNow {
-		if env, err := protocol.NewEnvelope(protocol.EventSessionProjectBound, protocol.SessionProjectBound{
-			SessionID: sessionID, ProjectID: plan.projectID,
+		if env, err := protocol.NewEnvelope(protocol.EventSessionWorkspaceBound, protocol.SessionWorkspaceBound{
+			SessionID: sessionID, WorkspaceID: plan.workspaceID,
 		}); err == nil {
 			r.hub.publish(runID, env)
 		}
 	}
 	r.launchSegment(seg, runID, sessionID, onDone, func() *RunOutcome {
-		return r.runStreamed(ctx, runID, sessionID, agentConfigID, plan.projectID, input, wakeParentRunID)
+		return r.runStreamed(ctx, runID, sessionID, agentConfigID, plan.workspaceID, input, wakeParentRunID)
 	})
 	return runID, nil
 }
@@ -272,7 +272,7 @@ func (r *Runner) panicOutcome(runID, sessionID string, p any) *RunOutcome {
 	}
 	out := &RunOutcome{RunID: runID, SessionID: sessionID, ErrCode: protocol.CodeInternal, ErrMessage: msg}
 	if info, ok := r.hub.Info(runID); ok {
-		out.AgentConfigID, out.ProjectID = info.AgentConfigID, info.ProjectID
+		out.AgentConfigID, out.WorkspaceID = info.AgentConfigID, info.WorkspaceID
 	}
 	return out
 }
@@ -306,7 +306,7 @@ type segmentSpec struct {
 
 // execStreamed executes one run segment — fresh or resumed — to completion,
 // publishing events to the hub, and returns its outcome.
-func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, projectID string, spec segmentSpec) (out *RunOutcome) {
+func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfigID, workspaceID string, spec segmentSpec) (out *RunOutcome) {
 	// Owned from here, whatever the segment does next — a panic included.
 	if spec.built != nil {
 		defer spec.built.Release()
@@ -369,7 +369,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	sendEvent(protocol.EventRunStarted, started)
 
 	mkResult := func() *RunOutcome {
-		return &RunOutcome{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, ProjectID: projectID}
+		return &RunOutcome{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, WorkspaceID: workspaceID}
 	}
 	mkErrResult := func(code, msg string) *RunOutcome {
 		res := mkResult()
@@ -461,7 +461,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	built := spec.built
 	if built == nil {
 		var err error
-		built, err = buildFullAgent(ctx, r.Deps, agentConfigID, projectID, task != nil, ownerID)
+		built, err = buildFullAgent(ctx, r.Deps, agentConfigID, workspaceID, task != nil, ownerID)
 		if err != nil {
 			return failTurn("", protocol.CodeConfigError, err, "", "")
 		}
@@ -543,7 +543,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		return failTurn(agent.Model, spec.failCode, err, streamedReasoning, streamedText)
 	}
 
-	out, err = r.finishResult(res, runID, sessionID, agentConfigID, projectID, sendEvent)
+	out, err = r.finishResult(res, runID, sessionID, agentConfigID, workspaceID, sendEvent)
 	if err != nil {
 		// The pause could not be made durable (invariant 37): the segment
 		// fails, retryable.
@@ -554,8 +554,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 
 // runStreamed executes one fresh run segment to completion, publishing events
 // to the hub, and returns its outcome.
-func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, projectID string, input RunInput, wakeParentRunID string) *RunOutcome {
-	return r.execStreamed(ctx, runID, sessionID, agentConfigID, projectID, segmentSpec{
+func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigID, workspaceID string, input RunInput, wakeParentRunID string) *RunOutcome {
+	return r.execStreamed(ctx, runID, sessionID, agentConfigID, workspaceID, segmentSpec{
 		input:           input.Text,
 		attachmentIDs:   input.AttachmentIDs,
 		wakeParentRunID: wakeParentRunID,
@@ -581,7 +581,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 // onDone fires when the continuation terminates; verify, when non-nil, runs
 // between register and launch, an error withdrawing the run. ErrSessionBusy
 // when a run is live.
-func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, projectID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
+func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, workspaceID string, verify func() error, onDone func(*RunOutcome)) (string, error) {
 	meta, err := r.taskMeta(r.hub.rootCtx, sessionID)
 	if err != nil {
 		return "", err
@@ -590,7 +590,7 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildRes
 	if err != nil {
 		return "", err
 	}
-	seg, ctx, reopened, err := r.hub.resume(runID, sessionID, sess.OwnerID, agentConfigID, projectID, meta)
+	seg, ctx, reopened, err := r.hub.resume(runID, sessionID, sess.OwnerID, agentConfigID, workspaceID, meta)
 	if err != nil {
 		return "", err
 	}
@@ -607,15 +607,15 @@ func (r *Runner) ResumeRun(runID string, state *agents.RunState, built *BuildRes
 		r.OnRunAttach(runID)
 	}
 	r.launchSegment(seg, runID, sessionID, onDone, func() *RunOutcome {
-		return r.resumeStreamed(ctx, runID, state, built, sessionID, agentConfigID, projectID)
+		return r.resumeStreamed(ctx, runID, state, built, sessionID, agentConfigID, workspaceID)
 	})
 	return runID, nil
 }
 
 // resumeStreamed continues an interrupted run under its original run id
 // through execStreamed, so the resumed segment's events go live too.
-func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, projectID string) *RunOutcome {
-	return r.execStreamed(ctx, runID, sessionID, agentConfigID, projectID, segmentSpec{
+func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents.RunState, built *BuildResult, sessionID, agentConfigID, workspaceID string) *RunOutcome {
+	return r.execStreamed(ctx, runID, sessionID, agentConfigID, workspaceID, segmentSpec{
 		input:    session.UserText(state.UserInput),
 		failCode: protocol.CodeResumeError,
 		built:    built,
@@ -627,13 +627,13 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 
 // finishResult turns a finished SDK result into the outcome. A pause is made
 // DURABLE (the approval row) before it is announced; a failed write fails it.
-func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, projectID string, sendEvent func(string, any)) (*RunOutcome, error) {
+func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, workspaceID string, sendEvent func(string, any)) (*RunOutcome, error) {
 	if len(res.Interruptions) > 0 {
 		out := &RunOutcome{
 			RunID:         runID,
 			SessionID:     sessionID,
 			AgentConfigID: agentConfigID,
-			ProjectID:     projectID,
+			WorkspaceID:   workspaceID,
 			Interrupted:   true,
 			Interruptions: res.Interruptions,
 			SDKState:      res.State,
@@ -659,7 +659,7 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 
 	finalText := res.FinalOutputString()
 	sendEvent(protocol.EventRunOutput, protocol.RunOutput{RunID: runID, FinalOutput: finalText})
-	return &RunOutcome{FinalText: finalText, RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, ProjectID: projectID}, nil
+	return &RunOutcome{FinalText: finalText, RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, WorkspaceID: workspaceID}, nil
 }
 
 // StopRunAfterTurn asks the in-flight run to stop after its current turn; a

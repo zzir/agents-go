@@ -26,7 +26,7 @@ func usageEntry(t *testing.T, text string, in, out, cached int64) session.Entry 
 }
 
 // toolOutputEntry is an exec_command result with the display the runner
-// projects, which is where the report reads its label and anchor from.
+// workspaces, which is where the report reads its label and anchor from.
 func toolOutputEntry(t *testing.T, callID, output string) session.Entry {
 	t.Helper()
 	e := rawEntryFrom(t, `{"type":"function_call_output","call_id":`+quoteJSON(callID)+`,"output":`+quoteJSON(output)+`}`,

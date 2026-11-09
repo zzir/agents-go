@@ -54,8 +54,8 @@ function render(props: Partial<Parameters<typeof ChatTopBar>[0]> = {}): HTMLElem
         onPanelChange={noop}
         terminalEnabled
         onTerminalOpen={noop}
-        binding={{ title: 'sb — proj', projectName: 'proj' }}
-        projectMenu={{ busy: false, state: 'running', rebuildable: true, hostable: false, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop }}
+        binding={{ title: 'sb — ws', workspaceName: 'ws' }}
+        workspaceMenu={{ busy: false, state: 'running', rebuildable: true, hostable: false, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop }}
         {...props}
       />,
     );
@@ -72,17 +72,17 @@ describe('ChatTopBar', () => {
 
   // The public address is offered only where the sandbox row declares it.
   it('offers the public URL where the sandbox declares public ports', () => {
-    const host = render({ projectMenu: { busy: false, state: 'running', rebuildable: false, hostable: true, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
+    const host = render({ workspaceMenu: { busy: false, state: 'running', rebuildable: false, hostable: true, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items).toEqual(['Terminal panel', 'Environment…', 'Export as tar…', 'Public URL…', 'Stop sandbox']);
     // Nothing to address yet: the item is withheld rather than opening onto an error.
-    const absent = render({ projectMenu: { busy: false, state: 'absent', rebuildable: false, hostable: true, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
+    const absent = render({ workspaceMenu: { busy: false, state: 'absent', rebuildable: false, hostable: true, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
     expect([...absent.querySelectorAll('li')].map(li => li.textContent)).not.toContain('Public URL…');
   });
 
   // A running sandbox offers Stop; anything else offers Start, and says why.
   it('offers Start when the sandbox is not running', () => {
-    const host = render({ projectMenu: { busy: false, state: 'absent', rebuildable: true, hostable: false, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
+    const host = render({ workspaceMenu: { busy: false, state: 'absent', rebuildable: true, hostable: false, stateLoading: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items[3]).toBe('Start sandbox');
   });
@@ -90,7 +90,7 @@ describe('ChatTopBar', () => {
   // On a backend where the sandbox IS the storage there is nothing to rebuild
   // into: offering it would be offering to delete the working tree.
   it('drops the rebuild on a backend that cannot rebuild', () => {
-    const host = render({ projectMenu: { busy: false, state: 'running', rebuildable: false, stateLoading: false, hostable: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
+    const host = render({ workspaceMenu: { busy: false, state: 'running', rebuildable: false, stateLoading: false, hostable: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items).not.toContain('Rebuild container');
   });
@@ -101,13 +101,13 @@ describe('ChatTopBar', () => {
     expect(variants).toEqual([null, null, null, null, 'danger']);
   });
 
-  /* The terminal left the top bar for the project menu: the three buttons
+  /* The terminal left the top bar for the workspace menu: the three buttons
      there are inspector lenses, and what the terminal opens belongs to the
-     project. A button that comes back would put it in both places. */
+     workspace. A button that comes back would put it in both places. */
   it('keeps the top-bar buttons to the three inspector lenses', () => {
     const host = render();
     const labels = [...host.querySelectorAll('button[aria-label]')].map(b => b.getAttribute('aria-label'));
-    expect(labels).toEqual(['Actions for proj', 'Tasks', 'Traces', 'Context']);
+    expect(labels).toEqual(['Actions for ws', 'Tasks', 'Traces', 'Context']);
   });
 
   it('disables the terminal item when no sandbox can serve one', () => {
@@ -115,16 +115,16 @@ describe('ChatTopBar', () => {
     expect(host.querySelector('li')?.getAttribute('aria-disabled')).toBe('true');
   });
 
-  /* An unbound session has no project, so no menu — and therefore no way to
+  /* An unbound session has no workspace, so no menu — and therefore no way to
      the terminal until its first message binds it. */
   it('shows no menu while the session is unbound', () => {
-    const host = render({ binding: null, projectMenu: null });
+    const host = render({ binding: null, workspaceMenu: null });
     expect(host.querySelectorAll('li')).toHaveLength(0);
   });
 
 // Only the very FIRST read shows "Checking…": state '' with a read in flight.
   it('shows Checking while the first read is in flight', () => {
-    const host = render({ projectMenu: { busy: false, state: '', stateLoading: true, rebuildable: true, hostable: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
+    const host = render({ workspaceMenu: { busy: false, state: '', stateLoading: true, rebuildable: true, hostable: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items).toContain('Checking the sandbox…');
     expect(items).not.toContain('Start sandbox');
@@ -134,7 +134,7 @@ describe('ChatTopBar', () => {
 // A read that FAILED (state '' but no read in flight) falls through to Start —
 // the harmless choice — never a permanent "Checking…".
   it('offers Start after a failed read rather than Checking forever', () => {
-    const host = render({ projectMenu: { busy: false, state: '', stateLoading: false, rebuildable: true, hostable: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
+    const host = render({ workspaceMenu: { busy: false, state: '', stateLoading: false, rebuildable: true, hostable: false, onEnv: noop, onHost: noop, onStart: noop, onStop: noop, onExport: noop, onRebuild: noop, onOpen: noop } });
     const items = [...host.querySelectorAll('li')].map(li => li.textContent);
     expect(items).toContain('Start sandbox');
     expect(items).not.toContain('Checking the sandbox…');

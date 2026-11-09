@@ -107,7 +107,7 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
-	// BindProjectIfEmpty refuses a project with no row (EXISTS).
+	// BindWorkspaceIfEmpty refuses a workspace with no row (EXISTS).
 	sandboxID := mkSandboxRow(t, db)
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
@@ -123,10 +123,10 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &src)
-	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p-1"}); err != nil {
+	if err := store.NewWorkspaceStore(db).Create(t.Context(), &store.Workspace{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if won, err := sessions.BindProjectIfEmpty(t.Context(), src.ID, "p-1"); err != nil || !won {
+	if won, err := sessions.BindWorkspaceIfEmpty(t.Context(), src.ID, "p-1"); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
 
@@ -135,17 +135,17 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 		t.Fatalf("fork: %d %s", w.Code, w.Body.String())
 	}
 	var forked struct {
-		ProjectID string `json:"project_id"`
+		WorkspaceID string `json:"workspace_id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &forked)
-	if forked.ProjectID != "p-1" {
-		t.Fatalf("fork binding = %q, want the source's p-1", forked.ProjectID)
+	if forked.WorkspaceID != "p-1" {
+		t.Fatalf("fork binding = %q, want the source's p-1", forked.WorkspaceID)
 	}
 }
 
-// A session's project_id binding is immutable: PATCH carries
+// A session's workspace_id binding is immutable: PATCH carries
 // no binding fields, so a request naming one changes nothing — switching
-// projects means starting (or forking into) another session.
+// workspaces means starting (or forking into) another session.
 func TestPatchCannotMoveBinding(t *testing.T) {
 	testdb.SkipOnPostgres(t)
 	gin.SetMode(gin.TestMode)
@@ -164,25 +164,25 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &sess)
 
-	if err := store.NewProjectStore(db).Create(t.Context(), &store.Project{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p-1"}); err != nil {
+	if err := store.NewWorkspaceStore(db).Create(t.Context(), &store.Workspace{ID: "p-1", OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if won, err := sessions.BindProjectIfEmpty(t.Context(), sess.ID, "p-1"); err != nil || !won {
+	if won, err := sessions.BindWorkspaceIfEmpty(t.Context(), sess.ID, "p-1"); err != nil || !won {
 		t.Fatalf("bind: won=%v err=%v", won, err)
 	}
-	w = doJSON(t, engine, http.MethodPatch, "/sessions/"+sess.ID, `{"name":"renamed","project_id":"elsewhere"}`)
+	w = doJSON(t, engine, http.MethodPatch, "/sessions/"+sess.ID, `{"name":"renamed","workspace_id":"elsewhere"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("patch: %d %s", w.Code, w.Body.String())
 	}
 	var patched struct {
-		Name      string `json:"name"`
-		ProjectID string `json:"project_id"`
+		Name        string `json:"name"`
+		WorkspaceID string `json:"workspace_id"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &patched)
 	if patched.Name != "renamed" {
 		t.Fatalf("rename lost: %q", patched.Name)
 	}
-	if patched.ProjectID != "p-1" {
-		t.Fatalf("binding moved to %q, want p-1 untouched", patched.ProjectID)
+	if patched.WorkspaceID != "p-1" {
+		t.Fatalf("binding moved to %q, want p-1 untouched", patched.WorkspaceID)
 	}
 }

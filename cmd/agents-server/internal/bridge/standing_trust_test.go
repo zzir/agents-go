@@ -80,7 +80,7 @@ func trustFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *stor
 	ctx := context.Background()
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
 	runner.Deps.Sandboxes = store.NewSandboxStore(runner.db)
-	runner.Deps.Projects = store.NewProjectStore(runner.db)
+	runner.Deps.Workspaces = store.NewWorkspaceStore(runner.db)
 	runner.Deps.SandboxManager = sandboxes.NewManager()
 	workspace := t.TempDir()
 	runner.Deps.SandboxManager.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
@@ -90,8 +90,8 @@ func trustFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *stor
 	if err := runner.Deps.Sandboxes.Create(ctx, tg); err != nil {
 		t.Fatal(err)
 	}
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
-	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
+	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
+	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
 	ac := &store.AgentConfig{
@@ -102,7 +102,7 @@ func trustFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *stor
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", ProjectID: proj.ID}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", WorkspaceID: ws.ID}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}

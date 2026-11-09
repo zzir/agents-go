@@ -11,7 +11,7 @@ import (
 )
 
 // dockerBackend is the Docker implementation: one persistent container per
-// project over a named volume on the target's daemon (decisions §5.33).
+// workspace over a named volume on the target's daemon (decisions §5.33).
 type dockerBackend struct{}
 
 func (dockerBackend) Open(spec Spec) (sandbox.Sandbox, error) {
@@ -30,14 +30,14 @@ func (dockerBackend) Rebuild(ctx context.Context, spec Spec) error {
 	if err != nil {
 		return err
 	}
-	name := ContainerName(spec.Project.ID)
+	name := ContainerName(spec.Workspace.ID)
 	if err := dockersb.RemoveManaged(ctx, opts, name); err != nil && !errors.Is(err, dockersb.ErrContainerNotFound) {
 		return fmt.Errorf("removing container %s: %w", name, err)
 	}
 	return nil
 }
 
-// Check runs the health command in a throw-away EPHEMERAL container, no project tree.
+// Check runs the health command in a throw-away EPHEMERAL container, no workspace tree.
 func (dockerBackend) Check(ctx context.Context, sb *store.Sandbox) error {
 	opts, err := DaemonOptions(sb)
 	if err != nil {
@@ -45,7 +45,7 @@ func (dockerBackend) Check(ctx context.Context, sb *store.Sandbox) error {
 	}
 	// Borrow the image and shape, leave the container, volume and persistence
 	// behind.
-	full, err := BuildOptions(Spec{Sandbox: sb, Project: &store.Project{}})
+	full, err := BuildOptions(Spec{Sandbox: sb, Workspace: &store.Workspace{}})
 	if err != nil {
 		return err
 	}
@@ -66,11 +66,11 @@ func (dockerBackend) Reclaim(ctx context.Context, spec Spec) error {
 	if err != nil {
 		return err
 	}
-	name := ContainerName(spec.Project.ID)
+	name := ContainerName(spec.Workspace.ID)
 	if err := dockersb.RemoveManaged(ctx, opts, name); err != nil && !errors.Is(err, dockersb.ErrContainerNotFound) {
 		return fmt.Errorf("removing container %s: %w", name, err)
 	}
-	vol := ProjectVolumeName(spec.Project.ID)
+	vol := WorkspaceVolumeName(spec.Workspace.ID)
 	if err := dockersb.RemoveManagedVolume(ctx, opts, vol); err != nil && !errors.Is(err, dockersb.ErrVolumeNotFound) {
 		return fmt.Errorf("removing volume %s: %w", vol, err)
 	}

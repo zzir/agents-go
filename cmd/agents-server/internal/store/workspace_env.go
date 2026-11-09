@@ -8,11 +8,11 @@ import (
 	"slices"
 )
 
-// This file is the single home of project ENVIRONMENT semantics: what is
-// storable (NormalizeProjectEnv), what reaches the container (EnvMap), and
+// This file is the single home of workspace ENVIRONMENT semantics: what is
+// storable (NormalizeWorkspaceEnv), what reaches the container (EnvMap), and
 // when two payloads mean the same container (EnvContentEqual).
 
-// EnvVar is one entry of a project's environment. Values are write-only,
+// EnvVar is one entry of a workspace's environment. Values are write-only,
 // sealed at rest and masked in every response (decisions §5.32).
 type EnvVar struct {
 	Key   string `json:"key"`
@@ -29,10 +29,10 @@ const (
 // envKeyPattern is the name a shell can actually export.
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// NormalizeProjectEnv validates vars and returns the canonical payload to
+// NormalizeWorkspaceEnv validates vars and returns the canonical payload to
 // store, sorted by key (one order for storage, the fingerprint — spec §2.7n —
 // and EnvContentEqual). An empty environment stores as "".
-func NormalizeProjectEnv(vars []EnvVar) (string, error) {
+func NormalizeWorkspaceEnv(vars []EnvVar) (string, error) {
 	if len(vars) == 0 {
 		return "", nil
 	}
@@ -63,19 +63,19 @@ func NormalizeProjectEnv(vars []EnvVar) (string, error) {
 	slices.SortFunc(out, func(a, b EnvVar) int { return cmp.Compare(a.Key, b.Key) })
 	b, err := json.Marshal(out)
 	if err != nil {
-		return "", fmt.Errorf("encoding project environment: %w", err)
+		return "", fmt.Errorf("encoding workspace environment: %w", err)
 	}
 	return string(b), nil
 }
 
-// DecodeProjectEnv reads a stored payload; an empty one is no environment.
-func DecodeProjectEnv(raw string) ([]EnvVar, error) {
+// DecodeWorkspaceEnv reads a stored payload; an empty one is no environment.
+func DecodeWorkspaceEnv(raw string) ([]EnvVar, error) {
 	if raw == "" {
 		return nil, nil
 	}
 	var out []EnvVar
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil, fmt.Errorf("decoding project environment: %w", err)
+		return nil, fmt.Errorf("decoding workspace environment: %w", err)
 	}
 	return out, nil
 }
@@ -83,7 +83,7 @@ func DecodeProjectEnv(raw string) ([]EnvVar, error) {
 // EnvMap is the stored payload as the sandbox takes it; an undecodable payload
 // is an error.
 func EnvMap(raw string) (map[string]string, error) {
-	vars, err := DecodeProjectEnv(raw)
+	vars, err := DecodeWorkspaceEnv(raw)
 	if err != nil || len(vars) == 0 {
 		return nil, err
 	}
@@ -98,8 +98,8 @@ func EnvMap(raw string) (map[string]string, error) {
 // CONTAINER — the predicate behind the runtime-generation bump. Undecodable
 // compares unequal.
 func EnvContentEqual(a, b string) bool {
-	va, aerr := DecodeProjectEnv(a)
-	vb, berr := DecodeProjectEnv(b)
+	va, aerr := DecodeWorkspaceEnv(a)
+	vb, berr := DecodeWorkspaceEnv(b)
 	if aerr != nil || berr != nil {
 		return false
 	}

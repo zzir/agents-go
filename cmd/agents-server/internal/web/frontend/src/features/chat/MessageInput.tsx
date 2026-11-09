@@ -28,7 +28,7 @@ interface MessageInputProps {
   // configured AND the picked agent has Vision on.
   allowAttachments?: boolean;
   toolbar?: ReactNode;
-  // plusItems is what the "+" menu offers after Image — the Project submenu while
+  // plusItems is what the "+" menu offers after Image — the Workspace submenu while
   // unbound, null once bound; the button renders only when the menu has something.
   plusItems?: ReactNode;
   // compact folds the box to one line (ComposerDock, while the person reads back).

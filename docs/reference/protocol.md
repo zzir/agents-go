@@ -137,8 +137,8 @@ the agent's edit rule and a session's memory is its owner's
 it: a member runs any agent, workflow or sandbox they can see, in their own
 session, approving their own tool calls.
 
-**Projects** have no scope column at all: they are per user, and the web
-terminal follows the project — [Projects](#projects--apiv1projects),
+**Workspaces** have no scope column at all: they are per user, and the web
+terminal follows the workspace — [Workspaces](#workspaces--apiv1workspaces),
 [Terminal endpoint](#terminal-endpoint--get-wsterminal).
 
 ### Sessions — `/api/v1/sessions`
@@ -146,9 +146,9 @@ terminal follows the project — [Projects](#projects--apiv1projects),
 `POST /sessions` accepts an optional `agent_config_id`; it must reference an
 agent VISIBLE to the caller — a foreign private id reads as absent and answers
 `400`. Rename and pin are one `PATCH /sessions/:id` with a partial body.
-`project_id` is written by the session's first project-carrying run and is
+`workspace_id` is written by the session's first workspace-carrying run and is
 immutable afterwards, over the API included
-([invariant 27](../explanation/workbench-invariants.md)): switching projects
+([invariant 27](../explanation/workbench-invariants.md)): switching workspaces
 means starting (or forking into) another session.
 
 `GET /sessions` lists newest first by `updated_at` (id the tiebreaker) and
@@ -180,9 +180,9 @@ announced as `session.status`.
 `fork` copies the source session's entries (and their traces) into a new
 session, bounded by the optional `message_id` (`exclusive: true` stops before
 it; an id that is not an entry of the source is `404`). Entry ids and parent links are rewritten into the fork's namespace, and
-the fork inherits `agent_config_id` and `project_id` with no fresh bind — so
-it shares the project's working tree with its source and with every other
-session on that project; a regenerate or a branch switch in one session runs
+the fork inherits `agent_config_id` and `workspace_id` with no fresh bind — so
+it shares the workspace's working tree with its source and with every other
+session on that workspace; a regenerate or a branch switch in one session runs
 on that same tree.
 
 `branch` moves the session's active branch to an entry, so the next run
@@ -248,11 +248,11 @@ sequence. `plan` enters or leaves the planning phase with this run; absent
 leaves the phase as it stands
 ([invariant 33](../explanation/workbench-invariants.md)).
 
-The first run that carries a `project_id` binds it to the session for good
+The first run that carries a `workspace_id` binds it to the session for good
 ([invariant 27](../explanation/workbench-invariants.md)): validated first —
-a project that is missing or not the caller's is `400` and binds nothing —
-and announced once with `session.project_bound`; from then on the bound value
-wins over whatever the client sends, and a session with no project gets no
+a workspace that is missing or not the caller's is `400` and binds nothing —
+and announced once with `session.workspace_bound`; from then on the bound value
+wins over whatever the client sends, and a session with no workspace gets no
 sandbox tools at all.
 
 `GET /runs/:id` carries `task` only for a background task's run, with the
@@ -408,7 +408,7 @@ the `system_prompt` setting is not prepended, even when they are empty
 
 `GET /agents/:id/tools` is the agent's CURRENT surface — the built-ins,
 connected MCP servers' tools (a server whose listing fails is skipped, not
-fatal), the skills reader and the sandbox tools as a bound project would add
+fatal), the skills reader and the sandbox tools as a bound workspace would add
 them — as a member's own runs would get it, each tool's `read_only` as plan
 mode and `on_change` see it; it backs the Replay dialog's tool picker. An
 agent body carries no model-API credential — it names a provider, which is
@@ -582,7 +582,7 @@ The [how-to](../howto/workflows.md) walks defining and running one.
 
 An execution starts only with a brief written by someone who read the
 session — the agent (`spawn_task(workflow=name, input)`), a person
-(`POST /workflows/:id/runs {session_id, input, project_id?}`) or a trigger
+(`POST /workflows/:id/runs {session_id, input, workspace_id?}`) or a trigger
 ([invariant 30](../explanation/workbench-invariants.md)). The brief LEADS the
 first step's turn and is not repeated afterwards; it is kept in the task's
 `state` beside a SNAPSHOT of the definition, so editing a workflow never
@@ -698,14 +698,14 @@ freely and agent memory only through an approved `memory_write`.
 
 ### Sandboxes — `/api/v1/sandboxes`
 
-A **sandbox** is one row: WHERE it runs and WHAT runs on it. A project names
+A **sandbox** is one row: WHERE it runs and WHAT runs on it. A workspace names
 one (decisions §5.36). Two types: `docker` and `e2b`. Every returned row
 carries `supports` — the type's capability flags, derived and read-only — and
 clients offer actions from those flags, never from the `type` string
 ([invariant 53](../explanation/workbench-invariants.md)). The top-level
 `prompt` (both types) is appended as a SUFFIX to the instructions of every
-agent in a session bound to a project on this sandbox — after the agent's own
-instructions and its memories, before the skills index; no project means no
+agent in a session bound to a workspace on this sandbox — after the agent's own
+instructions and its memories, before the skills index; no workspace means no
 sandbox tools and no prompt (decisions §5.33). It is not a credential — it
 round-trips unmasked.
 
@@ -726,7 +726,7 @@ access for the SSH user; no remote docker CLI — decisions §5.27),
 the key file path, known-hosts and agent flag in the clear.
 Blank `memory_mb` / `cpus` take a capped workbench default, never "unlimited"
 (decisions §5.38). The daemon is the server's one external dependency
-([deploying](../howto/workbench-deploy.md#requirements)); a project's storage
+([deploying](../howto/workbench-deploy.md#requirements)); a workspace's storage
 is a volume on it (decisions §5.33).
 
 `POST /sandboxes/{id}/test` tells two failures apart: `200 {ok: false}` is a
@@ -734,11 +734,11 @@ service that was reached and a command that RAN and failed (non-zero exit or
 timeout); a daemon or service that could not be reached at all — a dial or
 credential failure — is `502`.
 
-`DELETE` refuses (`409`) while any project lives on the sandbox: a project's
-working tree is at that address, and deleting a project is what reclaims it.
+`DELETE` refuses (`409`) while any workspace lives on the sandbox: a workspace's
+working tree is at that address, and deleting a workspace is what reclaims it.
 For the same reason a `PUT` on a referenced sandbox refuses its identity
 fields — `type` and the destination, plus for `e2b` the three a resume cannot
-re-apply — answering `409` and counting the projects that block it; every
+re-apply — answering `409` and counting the workspaces that block it; every
 other field edits freely
 ([invariant 45](../explanation/workbench-invariants.md),
 [decisions §5.36](../explanation/decisions.md)). Editing the image reaches
@@ -748,7 +748,7 @@ running container to the next generation instead (decisions §5.66); editing
 the `prompt` is not a content change at all — it retires no instance and
 severs no terminal, the same as a rename.
 
-A `PUT` on a sandbox or a project MAY carry the `revision` the edit was based
+A `PUT` on a sandbox or a workspace MAY carry the `revision` the edit was based
 on (from GET/List) to make the write a compare-and-set — a concurrent update
 is then `409`, re-read and retry; omitting it is last-writer-wins, anchored on
 the row's current revision, which stops an in-handler race but not a
@@ -769,64 +769,64 @@ Tool output toward the model is capped above the SDK defaults: file reads at
 64 KiB (whole source files), exec output at 32 KiB per stream (truncation
 keeps head and tail).
 
-### Projects — `/api/v1/projects`
+### Workspaces — `/api/v1/workspaces`
 
-A project is one user's working tree on one sandbox — the unit a session binds
+A workspace is one user's working tree on one sandbox — the unit a session binds
 and the unit a container mounts at `/workspace`; the volume and container
-naming and the per-project container lifecycle are
+naming and the per-workspace container lifecycle are
 [decisions §5.28](../explanation/decisions.md) and §5.33. `sandbox_id` may
-change, but only to a sandbox at the SAME destination — how a project changes
+change, but only to a sandbox at the SAME destination — how a workspace changes
 its image, and no further (`409`; decisions §5.36). On an `e2b` sandbox the
 storage IS the instance, and the server records which one before the client
 first uses it — a sandbox nobody recorded is billed compute nobody will ever
-stop; the handle is not on the wire. Projects are **personal**: a member manages
+stop; the handle is not on the wire. Workspaces are **personal**: a member manages
 their own, an admin additionally manages the plane (`?all=true`, delete, stop,
 rebuild; never the export, the environment or the public address) —
 [Authorization](#authorization).
 
-`DELETE` refuses (`409`) while any session binds the project, and otherwise
+`DELETE` refuses (`409`) while any session binds the workspace, and otherwise
 **destroys the working tree**: the container and its volume are removed
 (decisions §5.33) — export what matters first. The row is gone whenever it
 answers, and a `storage_error` names storage left for the operator, NOT a
-project that survived
+workspace that survived
 ([invariant 46](../explanation/workbench-invariants.md)).
 
 An unreferenced container is **idle-stopped** after `sandbox_idle_minutes`
 with no run or terminal using it: stopped, not removed, so installed packages
 survive and the next run starts it again. The same acts are available by hand
-under `/projects/{id}/sandbox` (`absent` / `stopped` / `running`, `start`,
+under `/workspaces/{id}/sandbox` (`absent` / `stopped` / `running`, `start`,
 `stop`, `rebuild`): a `start` is where the image pull happens, with a person
 watching, rather than inside the next run; a `stop` answered `stopped: false`
 dooms the instance — nothing new joins it, and it stops when the run or
 terminal using it ends, since the person asked for the sandbox to stop, not
 for the work to die; a `rebuild` on an E2B-compatible target is refused with
 the way out (decisions §5.34). A `rebuild` whose body names `session_id` — the
-caller's own session, bound to the project, with no run live on it — leaves a
+caller's own session, bound to the workspace, with no run live on it — leaves a
 host note on that session that the container was rebuilt (an annotation of
 display kind `container_rebuilt`, for a person, not the model); when the
 session does not qualify the rebuild succeeds without the note.
 
-A project carries the **environment** its container is created with, so
+A workspace carries the **environment** its container is created with, so
 `exec_command`, a persistent shell and a terminal all read the same values.
 Values are write-only, like every other credential here
-([decisions §5.32](../explanation/decisions.md)): `GET /projects/{id}` is the
+([decisions §5.32](../explanation/decisions.md)): `GET /workspaces/{id}` is the
 ONE endpoint that returns an environment, as names with masked values and only
-to the project's owner — listings never carry it, and an admin's management
+to the workspace's owner — listings never carry it, and an admin's management
 reach does not extend to reading one. Changing an environment replaces the
-container **at the project's next run** and severs that project's terminals,
+container **at the workspace's next run** and severs that workspace's terminals,
 its siblings on the same sandbox untouched; files under `/workspace` survive,
 anything installed into the container does not, and a rename does neither.
 
-`GET /projects/{id}/export` is how files leave a sandbox whose storage the
+`GET /workspaces/{id}/export` is how files leave a sandbox whose storage the
 host cannot open directly. Its headers go out before the first byte, so a
 failure mid-stream cannot become a JSON error — the client sees a truncated
 archive, which tar itself reports.
 
-`GET /projects/{id}/host` names where a port inside the sandbox is public:
+`GET /workspaces/{id}/host` names where a port inside the sandbox is public:
 the sandbox id and the domain the service returned, from which a client
 renders `https://<port>-<sandbox_id>.<domain>` (decisions §5.70). Owner
 only, like the export: the address reaches whatever runs in the sandbox. A
-sandbox whose row does not declare `supports.public_host`, or a project with
+sandbox whose row does not declare `supports.public_host`, or a workspace with
 no sandbox to address (none provisioned yet, or gone), is `409`. It reads — it
 neither creates nor resumes the sandbox.
 
@@ -878,7 +878,7 @@ the plaintext is never sent to a client. On write, the mask keeps the stored
 value, a new value replaces it, `""` clears it — so the UI round-trips whole
 objects without ever seeing a plaintext. Masked fields: provider `api_key`,
 MCP `headers` values and `oauth_client_secret`, the sandbox `ssh_password`,
-e2b `api_key` and `headers` values, a project's environment values, and the settings the
+e2b `api_key` and `headers` values, a workspace's environment values, and the settings the
 registry marks secret. A model-API key crosses exactly one surface — the
 provider; an agent carries none (its fallback entries name providers).
 
@@ -894,9 +894,9 @@ every credential column (the masked fields above, the ChatGPT token, MCP
 (`enc:v2:<key id>:…`, the key id being the first bytes of the key's SHA-256),
 so possession of the database is not possession of every upstream credential.
 Each value is bound to its place — `table.column`, plus the field for a
-credential inside a JSON column, or the project id for an environment value —
+credential inside a JSON column, or the workspace id for an environment value —
 as the cipher's additional data, so a ciphertext moved to another column or
-project does not open there; a value pasted in through the API that already
+workspace does not open there; a value pasted in through the API that already
 looks sealed is sealed again as the text it is. Without a key the server logs
 one warning and stores plaintext — the single-user workbench. Rows written
 before a key was set stay plaintext until their next write, and open either
@@ -956,7 +956,7 @@ what those comments cannot.
 
 | type            | Meaning |
 |-----------------|---------|
-| `run.create`    | Start a run in a session; `plan` and `attachment_ids` mean what they do in the REST body, and the project named matters only until the session's first project-carrying run binds it |
+| `run.create`    | Start a run in a session; `plan` and `attachment_ids` mean what they do in the REST body, and the workspace named matters only until the session's first workspace-carrying run binds it |
 | `run.subscribe` | (Re)attach to a run's event stream from a cursor; no `from_seq` (or `0`) replays everything retained |
 | `run.cancel`    | Cancel an in-flight run, `graceful` finishing the current turn first; a run paused for approval is abandoned either way ([Approvals](#approvals--apiv1approvals)) |
 | `run.inject`    | Queue input on the live run: `steer` changes course inside the current exchange, `next_turn` is consumed at the next turn boundary, `follow_up` starts a new exchange once this one finishes. REST twin: `POST /runs/:id/inject` |
@@ -985,7 +985,7 @@ what those comments cannot.
 | `run.cancelled`         | Cancelled: `stopped` (a cancel, a task stop), `superseded` (a newer message on the session while the run waited for approval — [invariant 19](../explanation/workbench-invariants.md)) or `shutdown` (the server stopped; a task run so ended is failed by the next start's orphan sweep) |
 | `session.title_updated` | A session's title changed |
 | `task.updated`          | A background task moved — the row as the store has it; on the task's run stream when the hub holds that run, else broadcast to every connection |
-| `session.project_bound` | The session's first project-carrying run permanently bound its project; published exactly once, by the run that won the bind |
+| `session.workspace_bound` | The session's first workspace-carrying run permanently bound its workspace; published exactly once, by the run that won the bind |
 | `session.status`        | A session's derived status may have changed — the fields `GET /sessions` carries; broadcast to every connection of the owner and never replayed, so a reconnect relists |
 | `trace.span`            | A trace span; `payload_omitted` says the 256KB live cap replaced the payload fields, which the stored row still has, and `attachments` resolves the image attachments the span's input references, as `run.started` does for the message's |
 
@@ -1047,18 +1047,18 @@ handshake, after which the client sends exactly one control envelope:
 
 | type              | Direction | Meaning |
 |-------------------|-----------|---------|
-| `terminal.open`   | C → S     | Start the session in the named project's container; must be the first message |
+| `terminal.open`   | C → S     | Start the session in the named workspace's container; must be the first message |
 | `terminal.ready`  | S → C     | Shell is live; binary frames flow from here |
-| `terminal.error`  | S → C     | Open failed (unknown sandbox or project, foreign project, backend error); the server then closes |
+| `terminal.error`  | S → C     | Open failed (unknown sandbox or workspace, foreign workspace, backend error); the server then closes |
 | `terminal.resize` | C → S     | PTY resize |
 | `terminal.exit`   | S → C     | Shell exited (`-1` when the code is unknown); the server then closes |
 
 **Binary WebSocket frames carry the terminal byte stream in both directions**
 (client → stdin, PTY output → client); text frames are reserved for the JSON
-control envelopes above. The shell opens in exactly the (sandbox, project)
-container the session's runs use (`/workspace` mounts the project's tree); a
-member reaches their OWN projects (a foreign project reads as absent), an
-admin any, and a project on a different sandbox is refused (decisions §5.28).
+control envelopes above. The shell opens in exactly the (sandbox, workspace)
+container the session's runs use (`/workspace` mounts the workspace's tree); a
+member reaches their OWN workspaces (a foreign workspace reads as absent), an
+admin any, and a workspace on a different sandbox is refused (decisions §5.28).
 Terminals are capped per the `max_terminals_per_sandbox` setting, and
 updating or deleting a sandbox closes its live terminals.
 

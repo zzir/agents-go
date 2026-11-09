@@ -5,7 +5,7 @@ import { ChevronDownIcon, PlusIcon, QuoteIcon, SyncIcon, TerminalIcon, XIcon } f
 import { api } from '@/lib/api';
 import { readStoredSize, saveStoredSize, useApi } from '@/lib/hooks';
 import { insertIntoComposer, quoteAsCodeBlock } from '@/lib/composer';
-import { useProjects } from '@/lib/useProjects';
+import { useWorkspaces } from '@/lib/useWorkspaces';
 import { toast } from '@/lib/toast';
 import { TerminalView, type TerminalViewHandle, type TermStatus } from '@/features/terminal/TerminalView';
 
@@ -16,11 +16,11 @@ interface SandboxTarget {
 
 interface TerminalTab {
   id: number;
-  // The project whose container the shell opened into — a bound session's
-  // request lands the terminal in its own project container.
-  projectId: string;
-  projectName: string;
-  // The machine the project lives on, for the tab label.
+  // The workspace whose container the shell opened into — a bound session's
+  // request lands the terminal in its own workspace container.
+  workspaceId: string;
+  workspaceName: string;
+  // The machine the workspace lives on, for the tab label.
   targetName: string;
   // gen forces a fresh session (remount) on restart.
   gen: number;
@@ -32,11 +32,11 @@ interface TerminalPanelProps {
   onClose: () => void;
   settingsReloadKey?: number;
   // Bumped by the app when the set of session bindings changed; refreshes the
-  // + menu's project list.
+  // + menu's workspace list.
   bindingsVersion?: number;
-  // One-shot request to start (or focus) a terminal for a project, issued when
+  // One-shot request to start (or focus) a terminal for a workspace, issued when
   // the top-bar button opens a closed panel; the nonce marks each request as new.
-  openRequest?: { projectId: string; projectName?: string; targetName?: string; nonce: number } | null;
+  openRequest?: { workspaceId: string; workspaceName?: string; targetName?: string; nonce: number } | null;
 }
 
 // Dragging the top edge below this height collapses the panel to just its
@@ -75,17 +75,17 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   useEffect(() => {
     if (settingsReloadKey) reloadTargets();
   }, [settingsReloadKey, reloadTargets]);
-  // The caller's project rows for the + menu, the same hook the composer
-  // picker uses: a project's terminal lands in that project's container.
-  const { projects, error: projectsError } = useProjects(bindingsVersion);
+  // The caller's workspace rows for the + menu, the same hook the composer
+  // picker uses: a workspace's terminal lands in that workspace's container.
+  const { workspaces, error: workspacesError } = useWorkspaces(bindingsVersion);
 
   // A collapsed panel must expand before a terminal can be shown (a new tab
   // mounted into a zero-height body would fit to a bogus grid).
   const expand = () => setCollapsed(false);
 
-  const addTab = (targetName: string, project: { id: string; name: string }) => {
+  const addTab = (targetName: string, workspace: { id: string; name: string }) => {
     const id = nextId.current++;
-    setTabs(t => [...t, { id, projectId: project.id, projectName: project.name, targetName, gen: 0, status: 'connecting' }]);
+    setTabs(t => [...t, { id, workspaceId: workspace.id, workspaceName: workspace.name, targetName, gen: 0, status: 'connecting' }]);
     setActiveId(id);
     expand();
   };
@@ -153,22 +153,22 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   };
 
   // Consume the composer's one-shot open request: focus the most recent tab
-  // already running on that project, or start a fresh terminal for it.
+  // already running on that workspace, or start a fresh terminal for it.
   const consumedRequestNonce = useRef(0);
   useEffect(() => {
     if (!openRequest || openRequest.nonce === consumedRequestNonce.current) return;
     consumedRequestNonce.current = openRequest.nonce;
-    const matching = tabs.filter(t => t.projectId === openRequest.projectId);
+    const matching = tabs.filter(t => t.workspaceId === openRequest.workspaceId);
     const existing = matching[matching.length - 1];
     if (existing) {
       activateTab(existing.id);
     } else {
-      // The requester (ChatView) knows the project's name even before this
-      // panel's projects fetch lands, so a tab never opens nameless.
-      const project = (projects || []).find(p => p.id === openRequest.projectId);
-      const name = project?.name || openRequest.projectName || '';
-      const targetName = (targets || []).find(t => t.id === project?.sandbox_id)?.name || openRequest.targetName || '';
-      addTab(targetName, { id: openRequest.projectId, name });
+      // The requester (ChatView) knows the workspace's name even before this
+      // panel's workspaces fetch lands, so a tab never opens nameless.
+      const workspace = (workspaces || []).find(p => p.id === openRequest.workspaceId);
+      const name = workspace?.name || openRequest.workspaceName || '';
+      const targetName = (targets || []).find(t => t.id === workspace?.sandbox_id)?.name || openRequest.targetName || '';
+      addTab(targetName, { id: openRequest.workspaceId, name });
     }
     // activateTab/addTab close over current state; nonce guards re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -272,8 +272,8 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(tab.id); } }}
             >
               <TerminalIcon size={12} />
-              <span className="terminal-tab-name" title={tab.projectName || undefined}>
-                {tab.targetName ? `${tab.targetName} · ${tab.projectName}` : tab.projectName}
+              <span className="terminal-tab-name" title={tab.workspaceName || undefined}>
+                {tab.targetName ? `${tab.targetName} · ${tab.workspaceName}` : tab.workspaceName}
               </span>
               {(tab.status === 'exited' || tab.status === 'error') && (
                 <span className="terminal-tab-status">{tab.status === 'exited' ? 'exited' : 'lost'}</span>
@@ -283,7 +283,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                 variant="invisible"
                 size="small"
                 className="terminal-tab-close"
-                aria-label={`Close ${tab.projectName} terminal`}
+                aria-label={`Close ${tab.workspaceName} terminal`}
                 onClick={e => { e.stopPropagation(); closeTab(tab.id); }}
               />
             </div>
@@ -298,7 +298,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                   <ActionList.Item disabled>No sandbox targets configured</ActionList.Item>
                 ) : (
                   (targets || []).map(tg => {
-                    const items = (projects || []).filter(p => p.sandbox_id === tg.id);
+                    const items = (workspaces || []).filter(p => p.sandbox_id === tg.id);
                     return (
                       <ActionList.Group key={tg.id}>
                         {/* Menu-role ActionList: the heading is presentational,
@@ -306,7 +306,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                         <ActionList.GroupHeading>{tg.name}</ActionList.GroupHeading>
                         {items.length === 0 ? (
                           // A failed fetch must not read as an empty account.
-                          <ActionList.Item disabled>{projectsError ? 'projects failed to load' : 'no projects yet'}</ActionList.Item>
+                          <ActionList.Item disabled>{workspacesError ? 'workspaces failed to load' : 'no workspaces yet'}</ActionList.Item>
                         ) : (
                           items.map(p => (
                             <ActionList.Item
@@ -365,7 +365,7 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
                 if (h) viewRefs.current.set(tab.id, h);
                 else viewRefs.current.delete(tab.id);
               }}
-              projectId={tab.projectId}
+              workspaceId={tab.workspaceId}
               hidden={tab.id !== activeId}
               onStatus={s => setTabStatus(tab.id, s)}
               onSelection={has => {

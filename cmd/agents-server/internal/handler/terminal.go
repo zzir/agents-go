@@ -28,15 +28,15 @@ const (
 // terminal.open, then binary frames for bytes and text envelopes for control.
 type TerminalHandler struct {
 	// Audit, when set, records every terminal opened. Wired at bootstrap.
-	Audit     protocol.AuditFunc
-	sandboxes *store.SandboxStore
-	projects  *store.ProjectStore
-	manager   sandboxProvider
-	settings  *settings.Reader
+	Audit      protocol.AuditFunc
+	sandboxes  *store.SandboxStore
+	workspaces *store.WorkspaceStore
+	manager    sandboxProvider
+	settings   *settings.Reader
 
 	mu   sync.Mutex
-	live map[string]map[*liveTerminal]struct{} // project id → open terminals
-	// fence maps a project id to the lowest runtime generation still allowed to
+	live map[string]map[*liveTerminal]struct{} // workspace id → open terminals
+	// fence maps a workspace id to the lowest runtime generation still allowed to
 	// register: a terminal dials BEFORE registering, so a change in between is
 	// refused there.
 	fence map[string]int64
@@ -55,17 +55,17 @@ var _ sandboxProvider = (*sandboxes.Manager)(nil)
 // liveTerminal pairs a Terminal with its connection so a teardown stops both
 // pumps; gen is the config generation it opened under, sandboxID what the cap counts.
 type liveTerminal struct {
-	term      sandbox.Terminal
-	conn      *server.WSConn
-	gen       int64
-	projectID string
-	sandboxID string
+	term        sandbox.Terminal
+	conn        *server.WSConn
+	gen         int64
+	workspaceID string
+	sandboxID   string
 }
 
 // NewTerminalHandler returns a handler backed by the given stores and sandbox manager.
-func NewTerminalHandler(sbs *store.SandboxStore, projects *store.ProjectStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
+func NewTerminalHandler(sbs *store.SandboxStore, workspaces *store.WorkspaceStore, m sandboxProvider, cfg *settings.Reader) *TerminalHandler {
 	return &TerminalHandler{
-		sandboxes: sbs, projects: projects, manager: m, settings: cfg,
+		sandboxes: sbs, workspaces: workspaces, manager: m, settings: cfg,
 		live: map[string]map[*liveTerminal]struct{}{}, fence: map[string]int64{},
 	}
 }
@@ -77,12 +77,12 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 		return
 	}
 
-	term, proj, release, err := h.open(conn)
+	term, ws, release, err := h.open(conn)
 	if err == nil && h.Audit != nil {
 		// Detail names the owner: an admin may open a member's tree — decisions §5.28.
 		h.Audit(context.WithoutCancel(conn.Context()), protocol.AuditRecord{
-			Actor: conn.User, Action: "terminal.open", Resource: proj.ID,
-			Detail: "project " + proj.Name + " (owner " + proj.OwnerID + ")",
+			Actor: conn.User, Action: "terminal.open", Resource: ws.ID,
+			Detail: "workspace " + ws.Name + " (owner " + ws.OwnerID + ")",
 		})
 	}
 	if err != nil {
@@ -96,28 +96,28 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 	}
 	// The instance reference lives exactly as long as this connection.
 	defer release()
-	lt := &liveTerminal{term: term, conn: conn, gen: proj.RuntimeGen, projectID: proj.ID, sandboxID: proj.SandboxID}
+	lt := &liveTerminal{term: term, conn: conn, gen: ws.RuntimeGen, workspaceID: ws.ID, sandboxID: ws.SandboxID}
 	limit := h.settings.Int(conn.Context(), settings.KeyMaxTerminalsPerSandbox)
-	if ok, stale := h.register(proj.ID, lt, limit); !ok {
+	if ok, stale := h.register(ws.ID, lt, limit); !ok {
 		_ = term.Close()
 		msg := fmt.Sprintf("too many open terminals on this sandbox (max %d)", limit)
 		if stale {
-			// The project changed (or was deleted) while this terminal was
+			// The workspace changed (or was deleted) while this terminal was
 			// dialing; reconnect to open under the current one.
-			msg = "this project changed while the terminal was opening; reconnect"
+			msg = "this workspace changed while the terminal was opening; reconnect"
 		}
 		_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalError, Payload: mustJSON(protocol.TerminalError{
 			Message: msg,
 		})})
 		return
 	}
-	defer h.unregister(proj.ID, lt)
+	defer h.unregister(ws.ID, lt)
 	defer term.Close()
 
 	if err := conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalReady}); err != nil {
 		return
 	}
-	log.Debug("terminal opened", "project_id", proj.ID)
+	log.Debug("terminal opened", "workspace_id", ws.ID)
 
 	// Output pump: PTY → binary frames. It owns the exit notification, and
 	// closing the connection unblocks the input pump below.
@@ -179,8 +179,8 @@ func (h *TerminalHandler) Handle(conn *server.WSConn) {
 }
 
 // open reads the terminal.open handshake and builds the Terminal, returning
-// the project whose tree the shell reaches. The caller owns release once err is nil.
-func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Project, func(), error) {
+// the workspace whose tree the shell reaches. The caller owns release once err is nil.
+func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Workspace, func(), error) {
 	var env protocol.Envelope
 	if err := conn.ReadJSON(&env); err != nil {
 		return nil, nil, nil, fmt.Errorf("read terminal.open: %w", err)
@@ -192,21 +192,21 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Pr
 	if err := json.Unmarshal(env.Payload, &msg); err != nil {
 		return nil, nil, nil, fmt.Errorf("invalid terminal.open payload: %w", err)
 	}
-	if msg.ProjectID == "" {
-		return nil, nil, nil, errors.New("terminal.open requires project_id")
+	if msg.WorkspaceID == "" {
+		return nil, nil, nil, errors.New("terminal.open requires workspace_id")
 	}
 
 	ctx := conn.Context()
-	proj, err := h.projects.Get(ctx, msg.ProjectID)
+	ws, err := h.workspaces.Get(ctx, msg.WorkspaceID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, err)
+		return nil, nil, nil, fmt.Errorf("workspace %s: %w", msg.WorkspaceID, err)
 	}
-	// A member opens a shell into their OWN project; an admin into any
-	// (decisions §5.28). A foreign project reads as absent.
-	if conn.User.Role != store.RoleAdmin && proj.OwnerID != conn.User.ID {
-		return nil, nil, nil, fmt.Errorf("project %s: %w", msg.ProjectID, store.ErrNotFound)
+	// A member opens a shell into their OWN workspace; an admin into any
+	// (decisions §5.28). A foreign workspace reads as absent.
+	if conn.User.Role != store.RoleAdmin && ws.OwnerID != conn.User.ID {
+		return nil, nil, nil, fmt.Errorf("workspace %s: %w", msg.WorkspaceID, store.ErrNotFound)
 	}
-	spec, err := resolveSpec(ctx, h.sandboxes, proj)
+	spec, err := resolveSpec(ctx, h.sandboxes, ws)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -228,30 +228,30 @@ func (h *TerminalHandler) open(conn *server.WSConn) (sandbox.Terminal, *store.Pr
 		release()
 		return nil, nil, nil, err
 	}
-	return term, proj, release, nil
+	return term, ws, release, nil
 }
 
 // register adds a live terminal under one lock, enforcing the per-sandbox cap
 // and the generation fence; full is temporary, stale is final.
-func (h *TerminalHandler) register(projectID string, lt *liveTerminal, limit int) (ok, stale bool) {
+func (h *TerminalHandler) register(workspaceID string, lt *liveTerminal, limit int) (ok, stale bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if lt.gen < h.fence[projectID] {
+	if lt.gen < h.fence[workspaceID] {
 		return false, true
 	}
 	if h.openOnLocked(lt.sandboxID) >= limit {
 		return false, false
 	}
-	set := h.live[projectID]
+	set := h.live[workspaceID]
 	if set == nil {
 		set = map[*liveTerminal]struct{}{}
-		h.live[projectID] = set
+		h.live[workspaceID] = set
 	}
 	set[lt] = struct{}{}
 	return true, false
 }
 
-// openOnLocked counts the live terminals on sandboxID across every project.
+// openOnLocked counts the live terminals on sandboxID across every workspace.
 func (h *TerminalHandler) openOnLocked(sandboxID string) int {
 	n := 0
 	for _, set := range h.live {
@@ -264,25 +264,25 @@ func (h *TerminalHandler) openOnLocked(sandboxID string) int {
 	return n
 }
 
-func (h *TerminalHandler) unregister(projectID string, lt *liveTerminal) {
+func (h *TerminalHandler) unregister(workspaceID string, lt *liveTerminal) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	set := h.live[projectID]
+	set := h.live[workspaceID]
 	delete(set, lt)
 	if len(set) == 0 {
-		delete(h.live, projectID)
+		delete(h.live, workspaceID)
 	}
 }
 
-// CloseProjectTerminals severs the terminals a project opened before minGen and
+// CloseWorkspaceTerminals severs the terminals a workspace opened before minGen and
 // fences that generation off (decisions §5.33); a delete passes maxTerminalGen.
-func (h *TerminalHandler) CloseProjectTerminals(projectID string, minGen int64) {
+func (h *TerminalHandler) CloseWorkspaceTerminals(workspaceID string, minGen int64) {
 	h.mu.Lock()
-	if h.fence[projectID] < minGen {
-		h.fence[projectID] = minGen
+	if h.fence[workspaceID] < minGen {
+		h.fence[workspaceID] = minGen
 	}
-	terminals := make([]*liveTerminal, 0, len(h.live[projectID]))
-	for lt := range h.live[projectID] {
+	terminals := make([]*liveTerminal, 0, len(h.live[workspaceID]))
+	for lt := range h.live[workspaceID] {
 		if lt.gen < minGen {
 			terminals = append(terminals, lt)
 		}
@@ -295,15 +295,15 @@ func (h *TerminalHandler) CloseProjectTerminals(projectID string, minGen int64) 
 	}
 }
 
-// maxTerminalGen fences a project id permanently — the delete's minGen.
+// maxTerminalGen fences a workspace id permanently — the delete's minGen.
 const maxTerminalGen = int64(1) << 62
 
-// resolveSpec loads the target and template a project names, so a caller
-// holding only the project row can build or acquire its sandbox.
-func resolveSpec(ctx context.Context, sbs *store.SandboxStore, proj *store.Project) (sandboxes.Spec, error) {
-	sb, err := sbs.Get(ctx, proj.SandboxID)
+// resolveSpec loads the target and template a workspace names, so a caller
+// holding only the workspace row can build or acquire its sandbox.
+func resolveSpec(ctx context.Context, sbs *store.SandboxStore, ws *store.Workspace) (sandboxes.Spec, error) {
+	sb, err := sbs.Get(ctx, ws.SandboxID)
 	if err != nil {
-		return sandboxes.Spec{}, fmt.Errorf("sandbox %s: %w", proj.SandboxID, err)
+		return sandboxes.Spec{}, fmt.Errorf("sandbox %s: %w", ws.SandboxID, err)
 	}
-	return sandboxes.Spec{Sandbox: sb, Project: proj}, nil
+	return sandboxes.Spec{Sandbox: sb, Workspace: ws}, nil
 }

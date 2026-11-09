@@ -94,7 +94,7 @@ type RunInfo struct {
 	// attach, SSE) and act on it. Empty attaches nobody — fail closed.
 	OwnerID       string    `json:"-"`
 	AgentConfigID string    `json:"agent_config_id,omitempty"`
-	ProjectID     string    `json:"project_id,omitempty"`
+	WorkspaceID   string    `json:"workspace_id,omitempty"`
 	Status        RunStatus `json:"status"`
 	LastSeq       int       `json:"last_seq"`
 	// GracefulStop records a StopAfterTurn request: a clean finish after it is
@@ -378,7 +378,7 @@ func (e ErrTaskLimit) Error() string {
 
 // register creates a fresh run on sessionID, returning the caller's segment (finalize
 // it exactly once) and a hub-root context; ErrSessionBusy when a run is already live.
-func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, projectID string, task *TaskMeta) (*runSegment, context.Context, error) {
+func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, workspaceID string, task *TaskMeta) (*runSegment, context.Context, error) {
 	// The cap is resolved before the lock: the resolver reads the DB.
 	var limit int
 	if task != nil {
@@ -404,7 +404,7 @@ func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, projectID st
 	ctx, cancel := context.WithCancelCause(h.rootCtx)
 	seg := &runSegment{done: make(chan struct{}), cancel: cancel}
 	rec := &runRecord{
-		info:   RunInfo{RunID: runID, SessionID: sessionID, OwnerID: ownerID, AgentConfigID: agentConfigID, ProjectID: projectID, Status: RunRunning, Task: task},
+		info:   RunInfo{RunID: runID, SessionID: sessionID, OwnerID: ownerID, AgentConfigID: agentConfigID, WorkspaceID: workspaceID, Status: RunRunning, Task: task},
 		cancel: seg.cancel,
 		done:   seg.done,
 		fanout: newRunFanout(),
@@ -446,7 +446,7 @@ func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
 
 // resume reopens an interrupted run under the same id; a record lost to restart or GC
 // is recreated with seq from zero (reopened says which). Finalize seg exactly once.
-func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID string, task *TaskMeta) (seg *runSegment, ctx context.Context, reopened bool, err error) {
+func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, workspaceID string, task *TaskMeta) (seg *runSegment, ctx context.Context, reopened bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.draining {
@@ -466,7 +466,7 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 	rec := h.runs[runID]
 	if rec == nil {
 		rec = &runRecord{
-			info:   RunInfo{RunID: runID, SessionID: sessionID, OwnerID: ownerID, AgentConfigID: agentConfigID, ProjectID: projectID, Status: RunRunning, Task: task},
+			info:   RunInfo{RunID: runID, SessionID: sessionID, OwnerID: ownerID, AgentConfigID: agentConfigID, WorkspaceID: workspaceID, Status: RunRunning, Task: task},
 			cancel: seg.cancel,
 			done:   seg.done,
 			fanout: newRunFanout(),
@@ -486,7 +486,7 @@ func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, projectID stri
 	rec.cancel = seg.cancel
 	rec.info.Status = RunRunning
 	// The identity is the caller's fresh read: the owner may have changed while paused.
-	rec.info.OwnerID, rec.info.AgentConfigID, rec.info.ProjectID = ownerID, agentConfigID, projectID
+	rec.info.OwnerID, rec.info.AgentConfigID, rec.info.WorkspaceID = ownerID, agentConfigID, workspaceID
 	rec.info.GracefulStop = false
 	// The old segment's control goes; the new segment installs its own via setControl.
 	rec.ctrl = nil

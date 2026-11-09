@@ -10,8 +10,8 @@ import (
 	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
 )
 
-// e2bBackend runs a project on any service that speaks the E2B API (decisions
-// §5.34): one remote sandbox per project, remembered by projects.instance_ref.
+// e2bBackend runs a workspace on any service that speaks the E2B API (decisions
+// §5.34): one remote sandbox per workspace, remembered by workspaces.instance_ref.
 type e2bBackend struct{}
 
 func (e2bBackend) Open(spec Spec) (sandbox.Sandbox, error) {
@@ -25,7 +25,7 @@ func (e2bBackend) Open(spec Spec) (sandbox.Sandbox, error) {
 
 // Reclaim kills the sandbox; on these services the sandbox IS the storage.
 func (e2bBackend) Reclaim(ctx context.Context, spec Spec) error {
-	if spec.Project.InstanceRef == "" {
+	if spec.Workspace.InstanceRef == "" {
 		return nil // nothing was ever provisioned
 	}
 	opts, err := e2bOptions(spec)
@@ -39,7 +39,7 @@ func (e2bBackend) Reclaim(ctx context.Context, spec Spec) error {
 	return sb.Destroy(ctx)
 }
 
-// e2bOptions assembles the SDK options from the sandbox and the project.
+// e2bOptions assembles the SDK options from the sandbox and the workspace.
 func e2bOptions(spec Spec) (e2bsb.Options, error) {
 	var c store.E2BConfig
 	if err := store.DecodeConfig(spec.Sandbox.Config, &c); err != nil {
@@ -51,9 +51,9 @@ func e2bOptions(spec Spec) (e2bsb.Options, error) {
 	if c.TemplateID == "" {
 		return e2bsb.Options{}, fmt.Errorf("e2b sandbox %q names no template_id", spec.Sandbox.Name)
 	}
-	env, err := store.EnvMap(spec.Project.Env)
+	env, err := store.EnvMap(spec.Workspace.Env)
 	if err != nil {
-		return e2bsb.Options{}, fmt.Errorf("project %s: %w", spec.Project.Name, err)
+		return e2bsb.Options{}, fmt.Errorf("workspace %s: %w", spec.Workspace.Name, err)
 	}
 	return e2bsb.Options{
 		APIURL:           c.APIURL,
@@ -63,7 +63,7 @@ func e2bOptions(spec Spec) (e2bsb.Options, error) {
 		Headers:          c.Headers,
 		TemplateID:       c.TemplateID,
 		User:             c.User,
-		SandboxID:        spec.Project.InstanceRef,
+		SandboxID:        spec.Workspace.InstanceRef,
 		TimeoutSeconds:   c.TimeoutSeconds,
 		AutoPause:        c.AutoPause,
 		AllowInternet:    c.AllowInternet,
@@ -71,25 +71,25 @@ func e2bOptions(spec Spec) (e2bsb.Options, error) {
 		Env:              env,
 		// The tag an operator needs to tell whose sandbox is whose on the
 		// service's own console.
-		Metadata: map[string]string{"agents_project": spec.Project.ID, "agents_owner": spec.Project.OwnerID},
+		Metadata: map[string]string{"agents_workspace": spec.Workspace.ID, "agents_owner": spec.Workspace.OwnerID},
 	}, nil
 }
 
 // Rebuild is refused: the sandbox IS the storage (invariant 44).
 func (e2bBackend) Rebuild(context.Context, Spec) error {
 	return fmt.Errorf("this sandbox runs on an E2B-compatible service, where the sandbox IS the storage: " +
-		"replacing it would destroy the working tree. Export the project first, then create a new one")
+		"replacing it would destroy the working tree. Export the workspace first, then create a new one")
 }
 
 // Check provisions a sandbox, runs the health command in it and destroys it again.
 func (e2bBackend) Check(ctx context.Context, sb *store.Sandbox) error {
-	// A synthetic project: nothing it provisions outlives the call.
-	spec := Spec{Sandbox: sb, Project: &store.Project{ID: "health-check", Name: "health-check"}}
+	// A synthetic workspace: nothing it provisions outlives the call.
+	spec := Spec{Sandbox: sb, Workspace: &store.Workspace{ID: "health-check", Name: "health-check"}}
 	opts, err := e2bOptions(spec)
 	if err != nil {
 		return err
 	}
-	// No callback: the sandbox is destroyed below, and the project does not exist.
+	// No callback: the sandbox is destroyed below, and the workspace does not exist.
 	opts.OnSandboxID = nil
 	opts.Metadata = map[string]string{"agents_health_check": "1"}
 	inst, err := e2bsb.New(opts)

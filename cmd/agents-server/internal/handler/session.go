@@ -29,8 +29,8 @@ type RunStopper interface {
 	// committed or not.
 	EndSessionDelete(sessionID string)
 	// ReleaseSessionBinding releases the cached sandbox instance behind a
-	// deleted session's project binding when no other session references it.
-	ReleaseSessionBinding(projectID string)
+	// deleted session's workspace binding when no other session references it.
+	ReleaseSessionBinding(workspaceID string)
 	// ForgetSessionTrust drops a deleted session's exec_command trust grants.
 	ForgetSessionTrust(sessionID string)
 	// WithSessionTreeFenced runs fn with the session tree at rest and fenced
@@ -60,10 +60,10 @@ type SessionDeps struct {
 	Agents   *store.AgentConfigStore
 	// Profiles serves the Context report: the build's snapshot of what a run sends.
 	Profiles *store.ContextProfileStore
-	// Users resolves the account a session is reassigned to; Projects answers
-	// whether that account owns a bound session's project (SetOwner's gate).
-	Users    *store.UserStore
-	Projects *store.ProjectStore
+	// Users resolves the account a session is reassigned to; Workspaces answers
+	// whether that account owns a bound session's workspace (SetOwner's gate).
+	Users      *store.UserStore
+	Workspaces *store.WorkspaceStore
 	// Stopper stops the session tree before a delete's cascade; Compactor is
 	// the manual compaction pass. Both the bridge Runner.
 	Stopper   RunStopper
@@ -76,17 +76,17 @@ type SessionDeps struct {
 
 // SessionHandler serves CRUD endpoints for chat sessions and their entries.
 type SessionHandler struct {
-	sessions  *store.SessionStore
-	entries   *store.EntryStore
-	traces    *store.TraceStore
-	agents    *store.AgentConfigStore
-	profiles  *store.ContextProfileStore
-	users     *store.UserStore
-	projects  *store.ProjectStore
-	stopper   RunStopper
-	compactor SessionCompactor
-	statuses  SessionStatuser
-	settings  *settings.Reader
+	sessions   *store.SessionStore
+	entries    *store.EntryStore
+	traces     *store.TraceStore
+	agents     *store.AgentConfigStore
+	profiles   *store.ContextProfileStore
+	users      *store.UserStore
+	workspaces *store.WorkspaceStore
+	stopper    RunStopper
+	compactor  SessionCompactor
+	statuses   SessionStatuser
+	settings   *settings.Reader
 }
 
 // NewSessionHandler returns a handler over d. It panics on a missing
@@ -94,7 +94,7 @@ type SessionHandler struct {
 func NewSessionHandler(d SessionDeps) *SessionHandler {
 	switch {
 	case d.Sessions == nil, d.Entries == nil, d.Traces == nil, d.Agents == nil,
-		d.Profiles == nil, d.Users == nil, d.Projects == nil:
+		d.Profiles == nil, d.Users == nil, d.Workspaces == nil:
 		panic("handler: SessionDeps has a nil store")
 	case d.Stopper == nil, d.Compactor == nil, d.Statuses == nil, d.Settings == nil:
 		panic("handler: SessionDeps has a nil stopper, compactor, statuses or settings")
@@ -102,7 +102,7 @@ func NewSessionHandler(d SessionDeps) *SessionHandler {
 	return &SessionHandler{
 		sessions: d.Sessions, entries: d.Entries, traces: d.Traces, agents: d.Agents,
 		profiles: d.Profiles, users: d.Users,
-		projects: d.Projects, stopper: d.Stopper, compactor: d.Compactor, statuses: d.Statuses,
+		workspaces: d.Workspaces, stopper: d.Stopper, compactor: d.Compactor, statuses: d.Statuses,
 		settings: d.Settings,
 	}
 }
@@ -283,7 +283,7 @@ func (h *SessionHandler) Get(c *gin.Context) {
 }
 
 // sessionPatchReq is the request body for Patch; absent fields are unchanged.
-// The project binding is NOT patchable (decisions §5.28).
+// The workspace binding is NOT patchable (decisions §5.28).
 type sessionPatchReq struct {
 	Name   *string `json:"name"`
 	Pinned *bool   `json:"pinned"`
@@ -335,7 +335,7 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 }
 
 // SetOwner reassigns the session tree to another account (admin); refused while
-// a run or task is live in it (invariant 82) or to a non-owner of its project
+// a run or task is live in it (invariant 82) or to a non-owner of its workspace
 // (invariant 52).
 //
 //	@Summary	Reassign session owner (admin)
@@ -347,7 +347,7 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 //	@Failure	400		{object}	ErrorResponse	"malformed body, or no such user"
 //	@Failure	403		{object}	ErrorResponse
 //	@Failure	404		{object}	ErrorResponse
-//	@Failure	409		{object}	ErrorResponse	"a run or a background task is live on the session, or it is bound to a project the new owner does not own"
+//	@Failure	409		{object}	ErrorResponse	"a run or a background task is live on the session, or it is bound to a workspace the new owner does not own"
 //	@Security	BearerAuth
 //	@Router		/sessions/{id}/owner [put]
 func (h *SessionHandler) SetOwner(c *gin.Context) {
@@ -370,15 +370,15 @@ func (h *SessionHandler) SetOwner(c *gin.Context) {
 		storeError(c, err)
 		return
 	}
-	// A project-bound session transfers only to the project's owner — invariant 52.
-	if sess.ProjectID != "" {
-		proj, perr := h.projects.Get(c.Request.Context(), sess.ProjectID)
+	// A workspace-bound session transfers only to the workspace's owner — invariant 52.
+	if sess.WorkspaceID != "" {
+		ws, perr := h.workspaces.Get(c.Request.Context(), sess.WorkspaceID)
 		if perr != nil && !errors.Is(perr, store.ErrNotFound) {
 			storeError(c, perr)
 			return
 		}
-		if perr != nil || proj.OwnerID != req.UserID {
-			conflict(c, "the session is bound to a project the new owner does not own")
+		if perr != nil || ws.OwnerID != req.UserID {
+			conflict(c, "the session is bound to a workspace the new owner does not own")
 			return
 		}
 	}
@@ -427,7 +427,7 @@ type SetOwnerRequest struct {
 func (h *SessionHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	// Read the binding before the cascade erases it; the release below needs it.
-	var boundProject string
+	var boundWorkspace string
 	sess, err := h.sessions.Get(c.Request.Context(), id)
 	if err != nil {
 		storeError(c, err)
@@ -438,7 +438,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 		notFound(c)
 		return
 	}
-	boundProject = sess.ProjectID
+	boundWorkspace = sess.WorkspaceID
 	// Stop the live run and every task before the cascade, or one keeps
 	// writing into deleted rows.
 	h.stopper.StopSessionTree(id)
@@ -449,8 +449,8 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 		return
 	}
 	// After the cascade, so the reference count no longer includes this session.
-	if boundProject != "" {
-		h.stopper.ReleaseSessionBinding(boundProject)
+	if boundWorkspace != "" {
+		h.stopper.ReleaseSessionBinding(boundWorkspace)
 	}
 	h.stopper.ForgetSessionTrust(id)
 	c.Status(http.StatusNoContent)
@@ -504,8 +504,8 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		OwnerID:       src.OwnerID,
 		Name:          branchName(src.Name, label),
 		AgentConfigID: src.AgentConfigID,
-		// The project binding is copied: a fork continues over the same files.
-		ProjectID: src.ProjectID,
+		// The workspace binding is copied: a fork continues over the same files.
+		WorkspaceID: src.WorkspaceID,
 		// The plan phase carries over — invariant 33.
 		Planning: src.Planning,
 	}

@@ -12,7 +12,7 @@ import (
 // attach and ownership checks keyed off the record follow the transfer.
 func TestResumeReopenSyncsIdentity(t *testing.T) {
 	h := NewRunHub(context.Background())
-	seg, _, err := h.register("run1", "sess1", "alice", "agent1", "proj1", nil)
+	seg, _, err := h.register("run1", "sess1", "alice", "agent1", "ws1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestResumeReopenSyncsIdentity(t *testing.T) {
 	h.finish("run1", true)
 	seg.finalize()
 
-	seg2, _, reopened, err := h.resume("run1", "sess1", "bob", "agent2", "proj2", nil)
+	seg2, _, reopened, err := h.resume("run1", "sess1", "bob", "agent2", "ws2", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,8 +30,8 @@ func TestResumeReopenSyncsIdentity(t *testing.T) {
 		t.Fatal("expected the record to be reopened")
 	}
 	info, _ := h.Info("run1")
-	if info.OwnerID != "bob" || info.AgentConfigID != "agent2" || info.ProjectID != "proj2" {
-		t.Errorf("reopened record = owner %q agent %q project %q, want bob/agent2/proj2", info.OwnerID, info.AgentConfigID, info.ProjectID)
+	if info.OwnerID != "bob" || info.AgentConfigID != "agent2" || info.WorkspaceID != "ws2" {
+		t.Errorf("reopened record = owner %q agent %q workspace %q, want bob/agent2/ws2", info.OwnerID, info.AgentConfigID, info.WorkspaceID)
 	}
 }
 

@@ -64,7 +64,7 @@ Three ways, all the same start:
   that starts any background work; the workflow is a parameter, not a fifth
   tool. It asks after it with `task_status(task_id)`, which reports the step
   it is on (`progress: step 2/3 (verify)`).
-- **The API**: `POST /workflows/:id/runs {session_id, input, project_id?}`.
+- **The API**: `POST /workflows/:id/runs {session_id, input, workspace_id?}`.
 
 The brief (`input`) leads the first step's turn and is what the sequence works
 from — the execution runs off the session that asked

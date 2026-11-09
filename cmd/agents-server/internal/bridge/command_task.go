@@ -17,7 +17,7 @@ import (
 )
 
 // A background command is a task of kind command: exec_command hands the
-// approved line to backgroundCommand, the launcher runs it on the project's
+// approved line to backgroundCommand, the launcher runs it on the workspace's
 // sandbox with no agent, and its ending wakes the parent like any task's —
 // invariant 96, decisions §5.97.
 
@@ -40,8 +40,8 @@ type commandState struct {
 
 // commandRun is one background command this process is running.
 type commandRun struct {
-	taskID, projectID string
-	cancel            context.CancelFunc
+	taskID, workspaceID string
+	cancel              context.CancelFunc
 	// done closes once the outcome is recorded and the sandbox released.
 	done chan struct{}
 }
@@ -99,12 +99,12 @@ func (c *commandRuns) cancel(runID string) bool {
 	return true
 }
 
-func (c *commandRuns) ofProject(projectID string) []*commandRun {
+func (c *commandRuns) ofWorkspace(workspaceID string) []*commandRun {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []*commandRun
 	for _, run := range c.live {
-		if run.projectID == projectID {
+		if run.workspaceID == workspaceID {
 			out = append(out, run)
 		}
 	}
@@ -166,7 +166,7 @@ func commandLabel(line string) string {
 }
 
 // launchCommand is the launcher's answer for a command task: the parked command
-// runs on the parent's project sandbox, on its own goroutine, and reports its
+// runs on the parent's workspace sandbox, on its own goroutine, and reports its
 // ending as the run's outcome. A command this process never parked (a retry, a
 // restart) is refused.
 func (r *Runner) launchCommand(ctx context.Context, req tasks.LaunchRequest) error {
@@ -179,14 +179,14 @@ func (r *Runner) launchCommand(ctx context.Context, req tasks.LaunchRequest) err
 		return errors.New("a background command runs once: run it again instead")
 	}
 	in := store.DecodeInherit(req.Inherit)
-	if in.ProjectID == "" || r.Deps.Projects == nil || r.Deps.SandboxManager == nil {
-		return errors.New("a background command needs the session's project")
+	if in.WorkspaceID == "" || r.Deps.Workspaces == nil || r.Deps.SandboxManager == nil {
+		return errors.New("a background command needs the session's workspace")
 	}
-	proj, err := r.Deps.Projects.Get(ctx, in.ProjectID)
+	ws, err := r.Deps.Workspaces.Get(ctx, in.WorkspaceID)
 	if err != nil {
-		return fmt.Errorf("project %s: %w", in.ProjectID, err)
+		return fmt.Errorf("workspace %s: %w", in.WorkspaceID, err)
 	}
-	spec, err := projectSpec(ctx, r.Deps, proj)
+	spec, err := workspaceSpec(ctx, r.Deps, ws)
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func (r *Runner) launchCommand(ctx context.Context, req tasks.LaunchRequest) err
 		return err
 	}
 	runCtx, cancel := context.WithCancel(r.hub.rootCtx)
-	run := &commandRun{taskID: req.TaskID, projectID: proj.ID, cancel: cancel, done: make(chan struct{})}
+	run := &commandRun{taskID: req.TaskID, workspaceID: ws.ID, cancel: cancel, done: make(chan struct{})}
 	r.commands.start(req.RunID, run)
 	go func() {
 		defer close(run.done)
@@ -226,14 +226,14 @@ func (r *Runner) launchCommand(ctx context.Context, req tasks.LaunchRequest) err
 	return nil
 }
 
-// StopProjectCommands ends every background command running on the project
+// StopWorkspaceCommands ends every background command running on the workspace
 // and waits for their sandbox leases to go, so a sandbox stop that follows
 // finds the compute free; bounded by ctx and the teardown wait.
-func (r *Runner) StopProjectCommands(ctx context.Context, projectID string) {
+func (r *Runner) StopWorkspaceCommands(ctx context.Context, workspaceID string) {
 	if r.tasks == nil {
 		return
 	}
-	runs := r.commands.ofProject(projectID)
+	runs := r.commands.ofWorkspace(workspaceID)
 	for _, run := range runs {
 		if _, err := r.tasks.Stop(ctx, run.taskID, false); err != nil {
 			if _, final := errors.AsType[tasks.ErrAlreadyFinal](err); !final {

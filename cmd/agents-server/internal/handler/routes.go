@@ -26,7 +26,7 @@ type Handlers struct {
 	Triggers   *TriggerHandler
 	Guardrails *GuardrailHandler
 	Sandboxes  *SandboxHandler
-	Projects   *ProjectHandler
+	Workspaces *WorkspaceHandler
 	Traces     *TraceHandler
 	Playground *PlaygroundHandler
 	ChatGPT    *ChatGPTOAuthHandler
@@ -204,20 +204,20 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		h.registerTriggers(api)
 	}
 	{
-		// Projects are personal: the admin surface (?all=true listing, foreign
+		// Workspaces are personal: the admin surface (?all=true listing, foreign
 		// delete) is checked in the handlers, so no route-level gate here.
-		projects := api.Group("/projects")
-		projects.GET("", h.Projects.List)
-		projects.POST("", h.Projects.Create)
-		projects.GET("/:id", h.Projects.Get)
-		projects.PUT("/:id", h.Projects.Update)
-		projects.DELETE("/:id", h.Projects.Delete)
-		projects.GET("/:id/export", h.Projects.Export)
-		projects.GET("/:id/host", h.Projects.SandboxHost)
-		projects.GET("/:id/sandbox", h.Projects.SandboxStatus)
-		projects.POST("/:id/sandbox/start", h.Projects.SandboxStart)
-		projects.POST("/:id/sandbox/stop", h.Projects.SandboxStop)
-		projects.POST("/:id/sandbox/rebuild", h.Projects.RebuildContainer)
+		workspaces := api.Group("/workspaces")
+		workspaces.GET("", h.Workspaces.List)
+		workspaces.POST("", h.Workspaces.Create)
+		workspaces.GET("/:id", h.Workspaces.Get)
+		workspaces.PUT("/:id", h.Workspaces.Update)
+		workspaces.DELETE("/:id", h.Workspaces.Delete)
+		workspaces.GET("/:id/export", h.Workspaces.Export)
+		workspaces.GET("/:id/host", h.Workspaces.SandboxHost)
+		workspaces.GET("/:id/sandbox", h.Workspaces.SandboxStatus)
+		workspaces.POST("/:id/sandbox/start", h.Workspaces.SandboxStart)
+		workspaces.POST("/:id/sandbox/stop", h.Workspaces.SandboxStop)
+		workspaces.POST("/:id/sandbox/rebuild", h.Workspaces.RebuildContainer)
 	}
 	{
 		guardrails := api.Group("/guardrails")

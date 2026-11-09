@@ -87,7 +87,7 @@ type Options struct {
 	// and sent explicitly either way (decisions §5.37).
 	AllowInternet bool
 	// Metadata tags the sandbox on the service side; the workbench uses it to
-	// say which project a sandbox belongs to.
+	// say which workspace a sandbox belongs to.
 	Metadata map[string]string
 	// Env is the environment every command sees.
 	Env map[string]string

@@ -20,7 +20,7 @@ import (
 
 // buildAgentRegistry's agent is the one the SDK re-runs on approval, so the
 // registry MUST carry the run's sandbox-backed tools: built with an empty
-// project id, the approved call fails with "tool not found on agent".
+// workspace id, the approved call fails with "tool not found on agent".
 func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -48,11 +48,11 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
 		McpManager:     mcpservers.NewManager(ctx),
 		SandboxManager: sandboxes.NewManager(),
-		Projects:       store.NewProjectStore(db),
+		Workspaces:     store.NewWorkspaceStore(db),
 	})
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
-	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
-		t.Fatalf("create project: %v", err)
+	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
+	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
+		t.Fatalf("create workspace: %v", err)
 	}
 
 	hasExec := func(reg map[string]*agents.Agent) bool {
@@ -68,13 +68,13 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 		return false
 	}
 
-	// With the project id: the resolved agent must carry exec_command.
-	withSb, _, err := runner.buildAgentRegistry(ctx, ac.ID, proj.ID, false, "")
+	// With the workspace id: the resolved agent must carry exec_command.
+	withSb, _, err := runner.buildAgentRegistry(ctx, ac.ID, ws.ID, false, "")
 	if err != nil {
-		t.Fatalf("buildAgentRegistry(project, false): %v", err)
+		t.Fatalf("buildAgentRegistry(workspace, false): %v", err)
 	}
 	if !hasExec(withSb) {
-		t.Error("registry built with a project id is missing exec_command")
+		t.Error("registry built with a workspace id is missing exec_command")
 	}
 
 	// Without it, exec_command is absent — this is exactly the state that
@@ -84,7 +84,7 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 		t.Fatalf("buildAgentRegistry(none, false): %v", err)
 	}
 	if hasExec(noSb) {
-		t.Error("registry built with no project id unexpectedly has exec_command")
+		t.Error("registry built with no workspace id unexpectedly has exec_command")
 	}
 }
 
@@ -125,18 +125,18 @@ func TestResumeBuildsTheAgentOnce(t *testing.T) {
 		Sessions:         sessions,
 		Users:            users,
 		Sandboxes:        targets,
-		Projects:         store.NewProjectStore(db),
+		Workspaces:       store.NewWorkspaceStore(db),
 		Settings:         settings.NewReader(store.NewSettingStore(db)),
 		Memories:         store.NewMemoryStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
 		SandboxManager:   mgr,
 		Traces:           store.NewTraceStore(db),
 	})
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
-	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
+	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
+	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s", ProjectID: proj.ID}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s", WorkspaceID: ws.ID}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestResumeBuildsTheAgentOnce(t *testing.T) {
 	}
 	calls, _ := json.Marshal([]store.PendingToolCall{{ToolCallID: "call-once-1", ToolName: "exec_command", Arguments: args}})
 	if err := runner.Deps.PendingApprovals.Save(ctx, &store.PendingApproval{
-		RunID: store.NewID(), SessionID: sess.ID, AgentConfigID: ac.ID, ProjectID: proj.ID, State: string(stateJSON), ToolCalls: calls,
+		RunID: store.NewID(), SessionID: sess.ID, AgentConfigID: ac.ID, WorkspaceID: ws.ID, State: string(stateJSON), ToolCalls: calls,
 	}); err != nil {
 		t.Fatal(err)
 	}

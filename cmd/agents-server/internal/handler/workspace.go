@@ -20,40 +20,40 @@ import (
 	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
 )
 
-// ProjectHandler manages projects, the per-user working trees on a sandbox —
+// WorkspaceHandler manages workspaces, the per-user working trees on a sandbox —
 // see decisions §5.28; who may act on whose rows is decisions §5.29.
-type ProjectHandler struct {
+type WorkspaceHandler struct {
 	// Audit, when set, records every working-tree export. Wired at bootstrap.
 	Audit protocol.AuditFunc
 	// Notes, when set, lets a rebuild leave its note on the session it was
 	// asked from. Wired at bootstrap.
 	Notes *RebuildNoteDeps
-	// StopCommands, when set, ends the project's background commands before
+	// StopCommands, when set, ends the workspace's background commands before
 	// its compute stops. Wired at bootstrap.
-	StopCommands func(ctx context.Context, projectID string)
-	store        *store.ProjectStore
+	StopCommands func(ctx context.Context, workspaceID string)
+	store        *store.WorkspaceStore
 	sandboxes    *store.SandboxStore
 	manager      *sandboxes.Manager
 	terminals    *TerminalHandler
 	settings     *settings.Reader
 }
 
-// NewProjectHandler returns a handler over the project store; m reclaims a
-// deleted project's storage, and terminals is the registry a content change severs.
-func NewProjectHandler(s *store.ProjectStore, sbs *store.SandboxStore, m *sandboxes.Manager, terminals *TerminalHandler, cfg *settings.Reader) *ProjectHandler {
-	return &ProjectHandler{store: s, sandboxes: sbs, manager: m, terminals: terminals, settings: cfg}
+// NewWorkspaceHandler returns a handler over the workspace store; m reclaims a
+// deleted workspace's storage, and terminals is the registry a content change severs.
+func NewWorkspaceHandler(s *store.WorkspaceStore, sbs *store.SandboxStore, m *sandboxes.Manager, terminals *TerminalHandler, cfg *settings.Reader) *WorkspaceHandler {
+	return &WorkspaceHandler{store: s, sandboxes: sbs, manager: m, terminals: terminals, settings: cfg}
 }
 
-// projectDetail is the single-project response: the row plus its environment
+// workspaceDetail is the single-workspace response: the row plus its environment
 // NAMES, every value masked. Env shadows the row's json:"-" field on purpose.
-type projectDetail struct {
-	store.Project
+type workspaceDetail struct {
+	store.Workspace
 	Env []store.EnvVar `json:"env"`
 }
 
-// maskProjectEnv replaces every value with the sentinel restoreProjectEnv
+// maskWorkspaceEnv replaces every value with the sentinel restoreWorkspaceEnv
 // resolves back; names stay readable — decisions §5.32.
-func maskProjectEnv(vars []store.EnvVar) []store.EnvVar {
+func maskWorkspaceEnv(vars []store.EnvVar) []store.EnvVar {
 	out := make([]store.EnvVar, 0, len(vars))
 	for _, v := range vars {
 		v.Value = maskSecret(v.Value) // an empty value stays empty, as everywhere else
@@ -62,9 +62,9 @@ func maskProjectEnv(vars []store.EnvVar) []store.EnvVar {
 	return out
 }
 
-// restoreProjectEnv resolves masked values against the stored ones BY NAME,
+// restoreWorkspaceEnv resolves masked values against the stored ones BY NAME,
 // so a mask never rides to a name it was not stored under — invariant 9.
-func restoreProjectEnv(incoming, prev []store.EnvVar) ([]store.EnvVar, error) {
+func restoreWorkspaceEnv(incoming, prev []store.EnvVar) ([]store.EnvVar, error) {
 	stored := make(map[string]string, len(prev))
 	for _, v := range prev {
 		stored[v.Key] = v.Value
@@ -83,27 +83,27 @@ func restoreProjectEnv(incoming, prev []store.EnvVar) ([]store.EnvVar, error) {
 	return out, nil
 }
 
-// detail builds the single-project response, masking the environment. An
+// detail builds the single-workspace response, masking the environment. An
 // undecodable stored payload is reported rather than silently shown empty.
-func (h *ProjectHandler) detail(p *store.Project) (*projectDetail, error) {
-	vars, err := store.DecodeProjectEnv(p.Env)
+func (h *WorkspaceHandler) detail(p *store.Workspace) (*workspaceDetail, error) {
+	vars, err := store.DecodeWorkspaceEnv(p.Env)
 	if err != nil {
 		return nil, err
 	}
-	out := &projectDetail{Project: *p, Env: maskProjectEnv(vars)}
+	out := &workspaceDetail{Workspace: *p, Env: maskWorkspaceEnv(vars)}
 	return out, nil
 }
 
-// projectDeleteResp answers a delete. The row is always gone when this is
+// workspaceDeleteResp answers a delete. The row is always gone when this is
 // returned; storage_error names storage that could not be reclaimed with it.
-type projectDeleteResp struct {
+type workspaceDeleteResp struct {
 	Deleted      bool   `json:"deleted"`
 	StorageError string `json:"storage_error,omitempty"`
 }
 
-// own resolves the caller's project by id; an admin's reach does not extend
-// here, and a foreign project reads as absent.
-func (h *ProjectHandler) own(c *gin.Context) (*store.Project, bool) {
+// own resolves the caller's workspace by id; an admin's reach does not extend
+// here, and a foreign workspace reads as absent.
+func (h *WorkspaceHandler) own(c *gin.Context) (*store.Workspace, bool) {
 	ownerID, _, ok := callerScope(c)
 	if !ok {
 		return nil, false
@@ -120,9 +120,9 @@ func (h *ProjectHandler) own(c *gin.Context) (*store.Project, bool) {
 	return p, true
 }
 
-// manage resolves the project for an operation on its COMPUTE (status, start,
+// manage resolves the workspace for an operation on its COMPUTE (status, start,
 // stop, rebuild); an admin passes on any. Export, which discloses files, uses own.
-func (h *ProjectHandler) manage(c *gin.Context) (*store.Project, bool) {
+func (h *WorkspaceHandler) manage(c *gin.Context) (*store.Workspace, bool) {
 	ownerID, admin, ok := callerScope(c)
 	if !ok {
 		return nil, false
@@ -139,19 +139,19 @@ func (h *ProjectHandler) manage(c *gin.Context) (*store.Project, bool) {
 	return p, true
 }
 
-// List responds with the caller's projects; `?all=true` is the admin's
+// List responds with the caller's workspaces; `?all=true` is the admin's
 // listing of every owner's.
 //
-//	@Summary		List projects
+//	@Summary		List workspaces
 //	@Description	Every row carries session_count. storage_hint (where the files live) is reported to admins only.
-//	@Tags			projects
+//	@Tags			workspaces
 //	@Produce		json
-//	@Param			all	query		bool	false	"admin: every owner's projects"
-//	@Success		200	{array}		store.Project
+//	@Param			all	query		bool	false	"admin: every owner's workspaces"
+//	@Success		200	{array}		store.Workspace
 //	@Failure		403	{object}	ErrorResponse	"all=true by a member"
 //	@Security		BearerAuth
-//	@Router			/projects [get]
-func (h *ProjectHandler) List(c *gin.Context) {
+//	@Router			/workspaces [get]
+func (h *WorkspaceHandler) List(c *gin.Context) {
 	ownerID, admin, ok := callerScope(c)
 	if !ok {
 		return
@@ -169,7 +169,7 @@ func (h *ProjectHandler) List(c *gin.Context) {
 		return
 	}
 	if out == nil {
-		out = []store.Project{}
+		out = []store.Workspace{}
 	}
 	hosts := map[string]string{}
 	for i := range out {
@@ -182,7 +182,7 @@ func (h *ProjectHandler) List(c *gin.Context) {
 
 // storageHint names where p's files live (decisions §5.33); admin-only, as a
 // daemon address is a server-side fact. hints caches the per-sandbox half.
-func (h *ProjectHandler) storageHint(c *gin.Context, hints map[string]string, p *store.Project) string {
+func (h *WorkspaceHandler) storageHint(c *gin.Context, hints map[string]string, p *store.Workspace) string {
 	where, ok := hints[p.SandboxID]
 	if !ok {
 		sb, err := h.sandboxes.Get(c.Request.Context(), p.SandboxID)
@@ -199,56 +199,56 @@ func (h *ProjectHandler) storageHint(c *gin.Context, hints map[string]string, p 
 		}
 		return ref + " — a " + where
 	}
-	return "docker volume " + sandboxes.ProjectVolumeName(p.ID) + " on " + where
+	return "docker volume " + sandboxes.WorkspaceVolumeName(p.ID) + " on " + where
 }
 
-type projectReq struct {
+type workspaceReq struct {
 	Name string `json:"name" binding:"required"`
-	// SandboxID is what the project runs on — the machine and the image.
+	// SandboxID is what the workspace runs on — the machine and the image.
 	SandboxID string `json:"sandbox_id" binding:"required"`
-	// Env is the environment the project's container is created with;
+	// Env is the environment the workspace's container is created with;
 	// optional, and empty means none.
 	Env []store.EnvVar `json:"env,omitempty"`
 }
 
-// projectUpdateReq is the update body: the name, the sandbox, the whole
+// workspaceUpdateReq is the update body: the name, the sandbox, the whole
 // environment, and the revision the edit was made against (optional).
-type projectUpdateReq struct {
+type workspaceUpdateReq struct {
 	Name      string         `json:"name" binding:"required"`
 	SandboxID string         `json:"sandbox_id" binding:"required"`
 	Env       []store.EnvVar `json:"env,omitempty"`
 	Revision  int64          `json:"revision,omitempty"`
 }
 
-// Create makes a new project for the caller on the named sandbox.
+// Create makes a new workspace for the caller on the named sandbox.
 //
-//	@Summary	Create project
-//	@Tags		projects
+//	@Summary	Create workspace
+//	@Tags		workspaces
 //	@Accept		json
 //	@Produce	json
-//	@Param		project	body		projectReq	true	"Name and sandbox"
-//	@Success	201		{object}	projectDetail
-//	@Failure	400		{object}	ErrorResponse
-//	@Failure	409		{object}	ErrorResponse	"name already in use on this sandbox"
+//	@Param		workspace	body		workspaceReq	true	"Name and sandbox"
+//	@Success	201			{object}	workspaceDetail
+//	@Failure	400			{object}	ErrorResponse
+//	@Failure	409			{object}	ErrorResponse	"name already in use on this sandbox"
 //	@Security	BearerAuth
-//	@Router		/projects [post]
-func (h *ProjectHandler) Create(c *gin.Context) {
+//	@Router		/workspaces [post]
+func (h *WorkspaceHandler) Create(c *gin.Context) {
 	ownerID, admin, ok := callerScope(c)
 	if !ok {
 		return
 	}
-	var req projectReq
+	var req workspaceReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, "name and sandbox_id are required")
 		return
 	}
-	env, err := store.NormalizeProjectEnv(req.Env)
+	env, err := store.NormalizeWorkspaceEnv(req.Env)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
 	}
 	// A missing sandbox 404s from the insert itself: the store locks the row.
-	p := &store.Project{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env}
+	p := &store.Workspace{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env}
 	if err := h.store.Create(c.Request.Context(), p); err != nil {
 		saveError(c, err)
 		return
@@ -264,18 +264,18 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 	created(c, p.ID, out)
 }
 
-// Get responds with one of the caller's projects, environment masked.
+// Get responds with one of the caller's workspaces, environment masked.
 //
-//	@Summary		Get project
-//	@Description	The one endpoint that returns a project's environment — names, with every value masked. Listings never carry it at all. Owner only: an environment is not part of an admin's management reach.
-//	@Tags			projects
+//	@Summary		Get workspace
+//	@Description	The one endpoint that returns a workspace's environment — names, with every value masked. Listings never carry it at all. Owner only: an environment is not part of an admin's management reach.
+//	@Tags			workspaces
 //	@Produce		json
-//	@Param			id	path		string	true	"Project id"
-//	@Success		200	{object}	projectDetail
+//	@Param			id	path		string	true	"Workspace id"
+//	@Success		200	{object}	workspaceDetail
 //	@Failure		404	{object}	ErrorResponse
 //	@Security		BearerAuth
-//	@Router			/projects/{id} [get]
-func (h *ProjectHandler) Get(c *gin.Context) {
+//	@Router			/workspaces/{id} [get]
+func (h *WorkspaceHandler) Get(c *gin.Context) {
 	p, ok := h.own(c)
 	if !ok {
 		return
@@ -288,23 +288,23 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// Update renames the caller's project and replaces its environment.
+// Update renames the caller's workspace and replaces its environment.
 //
-//	@Summary		Update project
-//	@Description	A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run and severs its terminals; a rename does none of that.
-//	@Tags			projects
+//	@Summary		Update workspace
+//	@Description	A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the workspace's container at its next run and severs its terminals; a rename does none of that.
+//	@Tags			workspaces
 //	@Accept			json
 //	@Produce		json
-//	@Param			id		path		string				true	"Project id"
-//	@Param			project	body		projectUpdateReq	true	"Name and environment"
-//	@Success		200		{object}	projectDetail
-//	@Failure		400		{object}	ErrorResponse
-//	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"name already in use, or the project changed concurrently — re-read and retry"
+//	@Param			id			path		string				true	"Workspace id"
+//	@Param			workspace	body		workspaceUpdateReq	true	"Name and environment"
+//	@Success		200			{object}	workspaceDetail
+//	@Failure		400			{object}	ErrorResponse
+//	@Failure		404			{object}	ErrorResponse
+//	@Failure		409			{object}	ErrorResponse	"name already in use, or the workspace changed concurrently — re-read and retry"
 //	@Security		BearerAuth
-//	@Router			/projects/{id} [put]
-func (h *ProjectHandler) Update(c *gin.Context) {
-	var req projectUpdateReq
+//	@Router			/workspaces/{id} [put]
+func (h *WorkspaceHandler) Update(c *gin.Context) {
+	var req workspaceUpdateReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, "name and sandbox_id are required")
 		return
@@ -313,18 +313,18 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	if !ok {
 		return
 	}
-	stored, err := store.DecodeProjectEnv(prev.Env)
+	stored, err := store.DecodeWorkspaceEnv(prev.Env)
 	if err != nil {
 		internalError(c, err)
 		return
 	}
 	// Masks resolve before normalization: the canonical payload carries real values.
-	restored, err := restoreProjectEnv(req.Env, stored)
+	restored, err := restoreWorkspaceEnv(req.Env, stored)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
 	}
-	env, err := store.NormalizeProjectEnv(restored)
+	env, err := store.NormalizeWorkspaceEnv(restored)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
@@ -345,8 +345,8 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 	}
 	// Invalidate from the generation the store wrote, not prev+1 or a re-read.
 	if contentChanged {
-		h.manager.RetireProject(prev.ID, newGen)
-		h.terminals.CloseProjectTerminals(prev.ID, newGen)
+		h.manager.RetireWorkspace(prev.ID, newGen)
+		h.terminals.CloseWorkspaceTerminals(prev.ID, newGen)
 	}
 	// Re-read for the response, so the client holds the current revision.
 	updated, err := h.store.Get(c.Request.Context(), prev.ID)
@@ -371,25 +371,25 @@ type RebuildNoteDeps struct {
 
 // rebuildReq is RebuildContainer's optional body.
 type rebuildReq struct {
-	// SessionID is the caller's session, bound to this project, to leave the
+	// SessionID is the caller's session, bound to this workspace, to leave the
 	// rebuilt note on; left out, no note is written.
 	SessionID string `json:"session_id,omitempty"`
 }
 
-// RebuildContainer discards the project's container and creates a fresh one.
+// RebuildContainer discards the workspace's container and creates a fresh one.
 //
-//	@Summary		Rebuild the project's sandbox
-//	@Description	Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first. With a body naming session_id — the caller's own session, bound to this project and with no run live on it — the session gets a note that the container was rebuilt; otherwise none is written and the rebuild still succeeds.
-//	@Tags			projects
+//	@Summary		Rebuild the workspace's sandbox
+//	@Description	Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first. With a body naming session_id — the caller's own session, bound to this workspace and with no run live on it — the session gets a note that the container was rebuilt; otherwise none is written and the rebuild still succeeds.
+//	@Tags			workspaces
 //	@Accept			json
-//	@Param			id		path	string		true	"Project id"
+//	@Param			id		path	string		true	"Workspace id"
 //	@Param			body	body	rebuildReq	false	"The session to note the rebuild on"
 //	@Success		204		"rebuilt"
 //	@Failure		404		{object}	ErrorResponse
 //	@Failure		502		{object}	ErrorResponse
 //	@Security		BearerAuth
-//	@Router			/projects/{id}/sandbox/rebuild [post]
-func (h *ProjectHandler) RebuildContainer(c *gin.Context) {
+//	@Router			/workspaces/{id}/sandbox/rebuild [post]
+func (h *WorkspaceHandler) RebuildContainer(c *gin.Context) {
 	var req rebuildReq
 	if c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -417,8 +417,8 @@ func (h *ProjectHandler) RebuildContainer(c *gin.Context) {
 }
 
 // noteRebuild leaves the rebuilt note on the session when it is the caller's,
-// bound to the project and at rest; otherwise nothing, and never a failure.
-func (h *ProjectHandler) noteRebuild(c *gin.Context, p *store.Project, sessionID string) {
+// bound to the workspace and at rest; otherwise nothing, and never a failure.
+func (h *WorkspaceHandler) noteRebuild(c *gin.Context, p *store.Workspace, sessionID string) {
 	if h.Notes == nil {
 		return
 	}
@@ -428,7 +428,7 @@ func (h *ProjectHandler) noteRebuild(c *gin.Context, p *store.Project, sessionID
 	}
 	ctx := c.Request.Context()
 	sess, err := h.Notes.Sessions.Get(ctx, sessionID)
-	if err != nil || sess.OwnerID != ownerID || sess.ProjectID != p.ID {
+	if err != nil || sess.OwnerID != ownerID || sess.WorkspaceID != p.ID {
 		return
 	}
 	err = h.Notes.Fence.WithSessionTreeFenced(ctx, sessionID, func() error {
@@ -436,7 +436,7 @@ func (h *ProjectHandler) noteRebuild(c *gin.Context, p *store.Project, sessionID
 		if err != nil {
 			return err
 		}
-		return h.Notes.Entries.AppendContainerRebuilt(ctx, ref, store.ContainerRebuilt{ProjectID: p.ID, ProjectName: p.Name})
+		return h.Notes.Entries.AppendContainerRebuilt(ctx, ref, store.ContainerRebuilt{WorkspaceID: p.ID, WorkspaceName: p.Name})
 	})
 	if err != nil {
 		if _, busy := errors.AsType[bridge.ErrSessionBusy](err); !busy {
@@ -445,7 +445,7 @@ func (h *ProjectHandler) noteRebuild(c *gin.Context, p *store.Project, sessionID
 	}
 }
 
-// sandboxStateResp is the project's compute state, as the UI badge shows it.
+// sandboxStateResp is the workspace's compute state, as the UI badge shows it.
 type sandboxStateResp struct {
 	// State is absent | stopped | running.
 	State string `json:"state"`
@@ -457,18 +457,18 @@ type sandboxStopResp struct {
 	Stopped bool `json:"stopped"`
 }
 
-// SandboxStatus reports what the project's compute is doing.
+// SandboxStatus reports what the workspace's compute is doing.
 //
-//	@Summary	Project sandbox status
-//	@Tags		projects
+//	@Summary	Workspace sandbox status
+//	@Tags		workspaces
 //	@Produce	json
-//	@Param		id	path		string	true	"Project id"
+//	@Param		id	path		string	true	"Workspace id"
 //	@Success	200	{object}	sandboxStateResp
 //	@Failure	404	{object}	ErrorResponse
 //	@Failure	502	{object}	ErrorResponse
 //	@Security	BearerAuth
-//	@Router		/projects/{id}/sandbox [get]
-func (h *ProjectHandler) SandboxStatus(c *gin.Context) {
+//	@Router		/workspaces/{id}/sandbox [get]
+func (h *WorkspaceHandler) SandboxStatus(c *gin.Context) {
 	spec, ok := h.spec(c)
 	if !ok {
 		return
@@ -481,26 +481,26 @@ func (h *ProjectHandler) SandboxStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, sandboxStateResp{State: state.String()})
 }
 
-// projectHostResp is where a port inside the project's sandbox is public: https://<port>-<sandbox_id>.<domain>.
-type projectHostResp struct {
+// workspaceHostResp is where a port inside the workspace's sandbox is public: https://<port>-<sandbox_id>.<domain>.
+type workspaceHostResp struct {
 	SandboxID string `json:"sandbox_id"`
 	Domain    string `json:"domain"`
 }
 
-// SandboxHost names where the project's sandbox serves its ports.
+// SandboxHost names where the workspace's sandbox serves its ports.
 //
-//	@Summary		Project sandbox public address
+//	@Summary		Workspace sandbox public address
 //	@Description	The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Owner only. 409 where the sandbox's row does not declare supports.public_host, or where there is no sandbox to address (none provisioned yet, or gone).
-//	@Tags			projects
+//	@Tags			workspaces
 //	@Produce		json
-//	@Param			id	path		string	true	"Project id"
-//	@Success		200	{object}	projectHostResp
+//	@Param			id	path		string	true	"Workspace id"
+//	@Success		200	{object}	workspaceHostResp
 //	@Failure		404	{object}	ErrorResponse
 //	@Failure		409	{object}	ErrorResponse	"ports not public, or no sandbox to address"
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
-//	@Router			/projects/{id}/host [get]
-func (h *ProjectHandler) SandboxHost(c *gin.Context) {
+//	@Router			/workspaces/{id}/host [get]
+func (h *WorkspaceHandler) SandboxHost(c *gin.Context) {
 	spec, ok := h.ownSpec(c)
 	if !ok {
 		return
@@ -521,49 +521,49 @@ func (h *ProjectHandler) SandboxHost(c *gin.Context) {
 	if h.Audit != nil {
 		user, _ := server.CurrentUser(c)
 		h.Audit(context.WithoutCancel(c.Request.Context()), protocol.AuditRecord{
-			Actor: user, Action: "project.host", Resource: spec.Project.ID,
-			Detail: "project " + spec.Project.Name,
+			Actor: user, Action: "workspace.host", Resource: spec.Workspace.ID,
+			Detail: "workspace " + spec.Workspace.Name,
 		})
 	}
-	c.JSON(http.StatusOK, projectHostResp{SandboxID: id, Domain: domain})
+	c.JSON(http.StatusOK, workspaceHostResp{SandboxID: id, Domain: domain})
 }
 
-// SandboxStart provisions the project's sandbox and makes it ready, image
+// SandboxStart provisions the workspace's sandbox and makes it ready, image
 // pull included.
 //
-//	@Summary		Start the project's sandbox
+//	@Summary		Start the workspace's sandbox
 //	@Description	Synchronous, and can take an image pull's worth of time. Owner or admin.
-//	@Tags			projects
-//	@Param			id	path	string	true	"Project id"
+//	@Tags			workspaces
+//	@Param			id	path	string	true	"Workspace id"
 //	@Success		204	"running"
 //	@Failure		404	{object}	ErrorResponse
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
-//	@Router			/projects/{id}/sandbox/start [post]
-func (h *ProjectHandler) SandboxStart(c *gin.Context) {
+//	@Router			/workspaces/{id}/sandbox/start [post]
+func (h *WorkspaceHandler) SandboxStart(c *gin.Context) {
 	h.containerAct(c, h.manager.EnsureRunning)
 }
 
 // SandboxStop releases the compute, keeping the working tree.
 //
-//	@Summary		Stop the project's sandbox
+//	@Summary		Stop the workspace's sandbox
 //	@Description	Keeps the working tree. `stopped: false` means a run or terminal is still using it and the stop happens when that ends. Owner or admin.
-//	@Tags			projects
+//	@Tags			workspaces
 //	@Produce		json
-//	@Param			id	path		string	true	"Project id"
+//	@Param			id	path		string	true	"Workspace id"
 //	@Success		200	{object}	sandboxStopResp
 //	@Failure		404	{object}	ErrorResponse
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
-//	@Router			/projects/{id}/sandbox/stop [post]
-func (h *ProjectHandler) SandboxStop(c *gin.Context) {
+//	@Router			/workspaces/{id}/sandbox/stop [post]
+func (h *WorkspaceHandler) SandboxStop(c *gin.Context) {
 	spec, ok := h.spec(c)
 	if !ok {
 		return
 	}
 	// A command still running would hold the compute: it is ended first.
 	if h.StopCommands != nil {
-		h.StopCommands(c.Request.Context(), spec.Project.ID)
+		h.StopCommands(c.Request.Context(), spec.Workspace.ID)
 	}
 	stopped, err := h.manager.Stop(c.Request.Context(), spec)
 	if err != nil {
@@ -573,25 +573,25 @@ func (h *ProjectHandler) SandboxStop(c *gin.Context) {
 	c.JSON(http.StatusOK, sandboxStopResp{Stopped: stopped})
 }
 
-// Export streams the project's working tree as a tar archive — decisions §5.33.
+// Export streams the workspace's working tree as a tar archive — decisions §5.33.
 //
-//	@Summary		Export the project's working tree
+//	@Summary		Export the workspace's working tree
 //	@Description	Streams /workspace as an uncompressed tar. Owner only, and audited: this takes the whole tree off the machine.
-//	@Tags			projects
+//	@Tags			workspaces
 //	@Produce		application/x-tar
-//	@Param			id	path	string	true	"Project id"
+//	@Param			id	path	string	true	"Workspace id"
 //	@Success		200	"tar stream"
 //	@Failure		404	{object}	ErrorResponse
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
-//	@Router			/projects/{id}/export [get]
-func (h *ProjectHandler) Export(c *gin.Context) {
+//	@Router			/workspaces/{id}/export [get]
+func (h *WorkspaceHandler) Export(c *gin.Context) {
 	// Owner only, unlike the lifecycle routes.
 	spec, ok := h.ownSpec(c)
 	if !ok {
 		return
 	}
-	rc, err := h.manager.ExportProject(c.Request.Context(), spec)
+	rc, err := h.manager.ExportWorkspace(c.Request.Context(), spec)
 	if err != nil {
 		upstreamError(c, err)
 		return
@@ -600,21 +600,21 @@ func (h *ProjectHandler) Export(c *gin.Context) {
 	if h.Audit != nil {
 		user, _ := server.CurrentUser(c)
 		h.Audit(context.WithoutCancel(c.Request.Context()), protocol.AuditRecord{
-			Actor: user, Action: "project.export", Resource: spec.Project.ID,
-			Detail: "project " + spec.Project.Name,
+			Actor: user, Action: "workspace.export", Resource: spec.Workspace.ID,
+			Detail: "workspace " + spec.Workspace.Name,
 		})
 	}
 	// Headers go out before the first byte: a mid-stream failure shows as a
 	// truncated archive.
-	c.Header("Content-Disposition", `attachment; filename="`+tarFilename(spec.Project.Name)+`"`)
+	c.Header("Content-Disposition", `attachment; filename="`+tarFilename(spec.Workspace.Name)+`"`)
 	c.Header("Content-Type", "application/x-tar")
 	c.Status(http.StatusOK)
 	if _, err := io.Copy(c.Writer, rc); err != nil {
-		logging.Ctx(c.Request.Context()).Warn("project export stream ended early", "error", err, "project_id", spec.Project.ID)
+		logging.Ctx(c.Request.Context()).Warn("workspace export stream ended early", "error", err, "workspace_id", spec.Workspace.ID)
 	}
 }
 
-// tarFilename turns a project name into a safe download name.
+// tarFilename turns a workspace name into a safe download name.
 func tarFilename(name string) string {
 	out := make([]rune, 0, len(name)+4)
 	for _, r := range name {
@@ -626,23 +626,23 @@ func tarFilename(name string) string {
 		}
 	}
 	if len(out) == 0 {
-		return "project.tar"
+		return "workspace.tar"
 	}
 	return string(out) + ".tar"
 }
 
-// spec resolves the caller's project into a build spec, answering the error
+// spec resolves the caller's workspace into a build spec, answering the error
 // when it cannot; owner or admin (see manage).
-func (h *ProjectHandler) spec(c *gin.Context) (sandboxes.Spec, bool) {
+func (h *WorkspaceHandler) spec(c *gin.Context) (sandboxes.Spec, bool) {
 	return h.specFrom(c, h.manage)
 }
 
 // ownSpec is spec for the routes that reach into the sandbox: owner only.
-func (h *ProjectHandler) ownSpec(c *gin.Context) (sandboxes.Spec, bool) {
+func (h *WorkspaceHandler) ownSpec(c *gin.Context) (sandboxes.Spec, bool) {
 	return h.specFrom(c, h.own)
 }
 
-func (h *ProjectHandler) specFrom(c *gin.Context, resolve func(*gin.Context) (*store.Project, bool)) (sandboxes.Spec, bool) {
+func (h *WorkspaceHandler) specFrom(c *gin.Context, resolve func(*gin.Context) (*store.Workspace, bool)) (sandboxes.Spec, bool) {
 	p, ok := resolve(c)
 	if !ok {
 		return sandboxes.Spec{}, false
@@ -655,9 +655,9 @@ func (h *ProjectHandler) specFrom(c *gin.Context, resolve func(*gin.Context) (*s
 	return spec, true
 }
 
-// containerAct resolves the project into a build spec, then runs one of the
+// containerAct resolves the workspace into a build spec, then runs one of the
 // manager's sandbox calls against it. Owner or admin (see manage).
-func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, sandboxes.Spec) error) {
+func (h *WorkspaceHandler) containerAct(c *gin.Context, act func(context.Context, sandboxes.Spec) error) {
 	spec, ok := h.spec(c)
 	if !ok {
 		return
@@ -669,18 +669,18 @@ func (h *ProjectHandler) containerAct(c *gin.Context, act func(context.Context, 
 	c.Status(http.StatusNoContent)
 }
 
-// Delete removes the project and destroys its storage — decisions §5.33.
+// Delete removes the workspace and destroys its storage — decisions §5.33.
 //
-//	@Summary		Delete project
-//	@Description	Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any. The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the project survived.
-//	@Tags			projects
-//	@Param			id	path		string	true	"Project id"
-//	@Success		200	{object}	projectDeleteResp
+//	@Summary		Delete workspace
+//	@Description	Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any. The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the workspace survived.
+//	@Tags			workspaces
+//	@Param			id	path		string	true	"Workspace id"
+//	@Success		200	{object}	workspaceDeleteResp
 //	@Failure		404	{object}	ErrorResponse
 //	@Failure		409	{object}	ErrorResponse	"sessions still bound"
 //	@Security		BearerAuth
-//	@Router			/projects/{id} [delete]
-func (h *ProjectHandler) Delete(c *gin.Context) {
+//	@Router			/workspaces/{id} [delete]
+func (h *WorkspaceHandler) Delete(c *gin.Context) {
 	ownerID, admin, ok := callerScope(c)
 	if !ok {
 		return
@@ -691,7 +691,7 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 		return
 	}
 	if p.OwnerID != ownerID && !admin {
-		notFound(c) // a foreign project reads as absent
+		notFound(c) // a foreign workspace reads as absent
 		return
 	}
 	refs, err := h.store.DeleteIfUnreferenced(c.Request.Context(), p.ID)
@@ -700,26 +700,26 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 		return
 	}
 	if refs > 0 {
-		conflict(c, "sessions are still bound to this project; delete them first")
+		conflict(c, "sessions are still bound to this workspace; delete them first")
 		return
 	}
-	// The project's shells die with it.
-	h.terminals.CloseProjectTerminals(p.ID, maxTerminalGen)
+	// The workspace's shells die with it.
+	h.terminals.CloseWorkspaceTerminals(p.ID, maxTerminalGen)
 	// Reclaim the storage; a failure is reported inside the 200 — invariant 46.
 	if h.manager != nil {
 		// WithoutCancel: a client disconnect must not abort the reclaim.
 		reclaimCtx := context.WithoutCancel(c.Request.Context())
 		spec, serr := resolveSpec(reclaimCtx, h.sandboxes, p)
 		if serr == nil {
-			serr = h.manager.ReclaimProject(reclaimCtx, spec)
+			serr = h.manager.ReclaimWorkspace(reclaimCtx, spec)
 		} else {
-			h.manager.RemoveProject(p.ID)
+			h.manager.RemoveWorkspace(p.ID)
 		}
 		if serr != nil {
-			logging.Ctx(c.Request.Context()).Warn("reclaiming a deleted project's storage", "project", p.ID, "error", serr)
-			c.JSON(http.StatusOK, projectDeleteResp{Deleted: true, StorageError: serr.Error()})
+			logging.Ctx(c.Request.Context()).Warn("reclaiming a deleted workspace's storage", "workspace", p.ID, "error", serr)
+			c.JSON(http.StatusOK, workspaceDeleteResp{Deleted: true, StorageError: serr.Error()})
 			return
 		}
 	}
-	c.JSON(http.StatusOK, projectDeleteResp{Deleted: true})
+	c.JSON(http.StatusOK, workspaceDeleteResp{Deleted: true})
 }

@@ -53,7 +53,7 @@ func TestMcpServerReqValidate(t *testing.T) {
 
 // Sandbox save-time validation rejects an unknown type, a docker config that
 // fails to parse (which must not slip a bare-host config past the block) and
-// one with no image — stored as-is they would give projects a sandbox that can
+// one with no image — stored as-is they would give workspaces a sandbox that can
 // never build.
 func TestSandboxValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)

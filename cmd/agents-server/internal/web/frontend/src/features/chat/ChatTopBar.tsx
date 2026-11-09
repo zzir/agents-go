@@ -8,23 +8,23 @@ interface ChatTopBarProps {
   sessionName: string;
   panel: InspectorPanel;
   onPanelChange: (panel: InspectorPanel) => void;
-  /* The terminal opens from the project menu (it is the BOUND project's
+  /* The terminal opens from the workspace menu (it is the BOUND workspace's
      terminal), never from a lens button; an unbound session has no way in. */
   terminalEnabled: boolean;
   onTerminalOpen?: () => void;
   /* The session's sandbox binding, a read-only label beside the title: the
-     project name, the sandbox name in the hover title. WHICH tree is permanent,
+     workspace name, the sandbox name in the hover title. WHICH tree is permanent,
      the container's configuration (what the menu beside it edits) is not — invariant 27. */
-  binding?: { title: string; projectName: string } | null;
-  /* The bound project's own actions. Absent while unbound: there is no
+  binding?: { title: string; workspaceName: string } | null;
+  /* The bound workspace's own actions. Absent while unbound: there is no
      container to act on yet. */
-  projectMenu?: ProjectMenu | null;
+  workspaceMenu?: WorkspaceMenu | null;
 }
 
-/* What the bound project offers: its terminal, the environment its container
+/* What the bound workspace offers: its terminal, the environment its container
    is created with, starting and stopping the compute, and the way back from a
    container someone broke. */
-export interface ProjectMenu {
+export interface WorkspaceMenu {
   busy: boolean;
   /* absent | stopped | running, or '' while unknown. */
   state: string;
@@ -55,7 +55,7 @@ export function ChatTopBar({
   terminalEnabled,
   onTerminalOpen,
   binding,
-  projectMenu,
+  workspaceMenu,
 }: ChatTopBarProps): ReactElement {
   const { sessionId } = useChatSession();
   return (
@@ -63,24 +63,24 @@ export function ChatTopBar({
       <div className="chat-topbar-info">
         <div className="chat-topbar-title" title={sessionName}>{sessionName}</div>
         {binding && (
-          // Quiet metadata next to the title: just the project's name — the
+          // Quiet metadata next to the title: just the workspace's name — the
           // name a person knows it by — in muted text.
           <span className="chat-topbar-binding" title={binding.title}>
             <FileDirectoryIcon size={12} />
             <span className="chat-topbar-binding-path">
-              {binding.projectName}
+              {binding.workspaceName}
             </span>
           </span>
         )}
-        {binding && projectMenu && (
-          <ActionMenu onOpenChange={open => { if (open) projectMenu.onOpen(); }}>
+        {binding && workspaceMenu && (
+          <ActionMenu onOpenChange={open => { if (open) workspaceMenu.onOpen(); }}>
             <ActionMenu.Anchor>
               <IconButton
                 icon={KebabHorizontalIcon}
                 variant="invisible"
                 size="small"
-                aria-label={`Actions for ${binding.projectName}`}
-                disabled={projectMenu.busy}
+                aria-label={`Actions for ${binding.workspaceName}`}
+                disabled={workspaceMenu.busy}
               />
             </ActionMenu.Anchor>
             <ActionMenu.Overlay>
@@ -89,40 +89,40 @@ export function ChatTopBar({
                   <ActionList.LeadingVisual><TerminalIcon /></ActionList.LeadingVisual>
                   Terminal panel
                 </ActionList.Item>
-                <ActionList.Item onSelect={projectMenu.onEnv}>
+                <ActionList.Item onSelect={workspaceMenu.onEnv}>
                   <ActionList.LeadingVisual><KeyAsteriskIcon /></ActionList.LeadingVisual>
                   Environment…
                 </ActionList.Item>
-                <ActionList.Item onSelect={projectMenu.onExport}>
+                <ActionList.Item onSelect={workspaceMenu.onExport}>
                   <ActionList.LeadingVisual><DownloadIcon /></ActionList.LeadingVisual>
                   Export as tar…
                 </ActionList.Item>
-                {projectMenu.hostable && projectMenu.state !== 'absent' && (
-                  <ActionList.Item onSelect={projectMenu.onHost}>
+                {workspaceMenu.hostable && workspaceMenu.state !== 'absent' && (
+                  <ActionList.Item onSelect={workspaceMenu.onHost}>
                     <ActionList.LeadingVisual><GlobeIcon /></ActionList.LeadingVisual>
                     Public URL…
                   </ActionList.Item>
                 )}
                 <ActionList.Divider />
-                {projectMenu.stateLoading && projectMenu.state === '' ? (
+                {workspaceMenu.stateLoading && workspaceMenu.state === '' ? (
                   // Only the first read shows "Checking…" — invariant 49.
                   <ActionList.Item disabled>
                     <ActionList.LeadingVisual><PlayIcon /></ActionList.LeadingVisual>
                     Checking the sandbox…
                   </ActionList.Item>
-                ) : projectMenu.state === 'running' ? (
-                  <ActionList.Item disabled={projectMenu.stateLoading} onSelect={projectMenu.onStop}>
+                ) : workspaceMenu.state === 'running' ? (
+                  <ActionList.Item disabled={workspaceMenu.stateLoading} onSelect={workspaceMenu.onStop}>
                     <ActionList.LeadingVisual><SquareFillIcon /></ActionList.LeadingVisual>
                     Stop sandbox
                   </ActionList.Item>
                 ) : (
-                  <ActionList.Item disabled={projectMenu.stateLoading} onSelect={projectMenu.onStart}>
+                  <ActionList.Item disabled={workspaceMenu.stateLoading} onSelect={workspaceMenu.onStart}>
                     <ActionList.LeadingVisual><PlayIcon /></ActionList.LeadingVisual>
                     Start sandbox
                   </ActionList.Item>
                 )}
-                {projectMenu.rebuildable && (
-                  <ActionList.Item variant="danger" onSelect={projectMenu.onRebuild}>
+                {workspaceMenu.rebuildable && (
+                  <ActionList.Item variant="danger" onSelect={workspaceMenu.onRebuild}>
                     <ActionList.LeadingVisual><SyncIcon /></ActionList.LeadingVisual>
                     Rebuild container
                   </ActionList.Item>

@@ -22,7 +22,7 @@ import (
 
 // pausedOn writes a pause of the session's run on the given exec_command
 // calls (plus any extra interruptions), as the runner would have.
-func pausedOn(t *testing.T, runner *Runner, sess *store.Session, ac *store.AgentConfig, proj *store.Project, callIDs []string, extra ...*agents.ToolApprovalItem) string {
+func pausedOn(t *testing.T, runner *Runner, sess *store.Session, ac *store.AgentConfig, ws *store.Workspace, callIDs []string, extra ...*agents.ToolApprovalItem) string {
 	t.Helper()
 	args := `{"cmd":"echo ok","timeout_seconds":0,"workdir":"","session_id":""}`
 	var items []*agents.ToolApprovalItem
@@ -52,7 +52,7 @@ func pausedOn(t *testing.T, runner *Runner, sess *store.Session, ac *store.Agent
 	callsJSON, _ := json.Marshal(calls)
 	runID := store.NewID()
 	if err := runner.Deps.PendingApprovals.Save(context.Background(), &store.PendingApproval{
-		RunID: runID, SessionID: sess.ID, AgentConfigID: ac.ID, ProjectID: proj.ID, State: string(stateJSON), ToolCalls: callsJSON,
+		RunID: runID, SessionID: sess.ID, AgentConfigID: ac.ID, WorkspaceID: ws.ID, State: string(stateJSON), ToolCalls: callsJSON,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -103,15 +103,15 @@ func TestApproveAllResumesOnce(t *testing.T) {
 	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil })
 	runner := NewRunner(ctx, db, &AgentDeps{
 		AgentConfigs: agentConfigs, Providers: store.NewProviderStore(db), Sessions: sessions, Users: users,
-		Sandboxes: targets, Projects: store.NewProjectStore(db), Settings: settings.NewReader(store.NewSettingStore(db)),
+		Sandboxes: targets, Workspaces: store.NewWorkspaceStore(db), Settings: settings.NewReader(store.NewSettingStore(db)),
 		Memories: store.NewMemoryStore(db), PendingApprovals: store.NewPendingApprovalStore(db), SandboxManager: mgr,
 		Traces: store.NewTraceStore(db),
 	})
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
-	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
+	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
+	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s", ProjectID: proj.ID}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s", WorkspaceID: ws.ID}
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestApproveAllResumesOnce(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"type":"function_call","call_id":"call-plan","name":"`+middleware.PlanToolName+`","arguments":"{\"plan\":\"x\"}"}`), &planRaw); err != nil {
 		t.Fatal(err)
 	}
-	planRun := pausedOn(t, runner, sess, ac, proj, nil, &agents.ToolApprovalItem{Agent: &agents.Agent{Name: ac.Name}, ToolName: middleware.PlanToolName, CallID: "call-plan", Raw: planRaw})
+	planRun := pausedOn(t, runner, sess, ac, ws, nil, &agents.ToolApprovalItem{Agent: &agents.Agent{Name: ac.Name}, ToolName: middleware.PlanToolName, CallID: "call-plan", Raw: planRaw})
 	if _, _, err := runner.ApproveAll(ctx, sess.ID, nil); !errors.Is(err, ErrNothingToApproveAll) {
 		t.Fatalf("approve-all on a plan-only pause: err = %v, want ErrNothingToApproveAll", err)
 	}
@@ -138,7 +138,7 @@ func TestApproveAllResumesOnce(t *testing.T) {
 	}
 
 	// Two commands: both approved, one resume, one model call after it.
-	pausedOn(t, runner, sess, ac, proj, []string{"call-a", "call-b"})
+	pausedOn(t, runner, sess, ac, ws, []string{"call-a", "call-b"})
 	done := make(chan *RunOutcome, 1)
 	runID, n, err := runner.ApproveAll(ctx, sess.ID, func(res *RunOutcome) { done <- res })
 	if err != nil {

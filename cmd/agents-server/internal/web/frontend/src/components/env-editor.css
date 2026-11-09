@@ -1,4 +1,4 @@
-/* The project environment editor: a name/value row per variable. */
+/* The workspace environment editor: a name/value row per variable. */
 .env-editor {
   display: grid;
   gap: var(--base-size-8);

@@ -208,7 +208,7 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 	runner, sessions, tasks, agentConfigs := newTaskTestRunner(t)
 	workspace := t.TempDir()
 	runner.Deps.Sandboxes = store.NewSandboxStore(runner.db)
-	runner.Deps.Projects = store.NewProjectStore(runner.db)
+	runner.Deps.Workspaces = store.NewWorkspaceStore(runner.db)
 	runner.Deps.SandboxManager = sandboxes.NewManager()
 	// The command must run on THIS host (awaitProcess reads the local process
 	// table), so the docker config's build is overridden with the SDK local
@@ -220,12 +220,12 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 	if err := runner.Deps.Sandboxes.Create(ctx, tg); err != nil {
 		t.Fatal(err)
 	}
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
-	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
+	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
+	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
 	fakeModelAgent(t, runner.db, agentConfigs, srv.URL)
-	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", ProjectID: proj.ID}
+	parent := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", WorkspaceID: ws.ID}
 	if err := sessions.Create(ctx, parent); err != nil {
 		t.Fatal(err)
 	}

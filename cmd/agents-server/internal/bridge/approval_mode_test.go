@@ -63,9 +63,9 @@ func deniedWhilePlanning(t *testing.T, tool *agents.Tool) bool {
 	return strings.Contains(s, "disabled while planning")
 }
 
-// approvalModeRunner is a runner over a project with a local sandbox and an
+// approvalModeRunner is a runner over a workspace with a local sandbox and an
 // entry agent that hands off to a target, both in the given mode.
-func approvalModeRunner(t *testing.T, mode string, approveTools ...string) (*Runner, *store.AgentConfig, *store.Project) {
+func approvalModeRunner(t *testing.T, mode string, approveTools ...string) (*Runner, *store.AgentConfig, *store.Workspace) {
 	t.Helper()
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -92,7 +92,7 @@ func approvalModeRunner(t *testing.T, mode string, approveTools ...string) (*Run
 		AgentConfigs:   agentConfigs,
 		Providers:      store.NewProviderStore(db),
 		Sandboxes:      targets,
-		Projects:       store.NewProjectStore(db),
+		Workspaces:     store.NewWorkspaceStore(db),
 		Sessions:       store.NewSessionStore(db),
 		Tasks:          store.NewTaskStore(db),
 		Settings:       settings.NewReader(store.NewSettingStore(db)),
@@ -101,19 +101,19 @@ func approvalModeRunner(t *testing.T, mode string, approveTools ...string) (*Run
 		SandboxManager: mgr,
 		Traces:         store.NewTraceStore(db),
 	})
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
-	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
+	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
+	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	return runner, entry, proj
+	return runner, entry, ws
 }
 
 // on_change asks about exactly the tools plan mode refuses, tool by tool, on
 // the entry agent (sandbox, tasks, checklist) and on a handoff target that
 // plan mode never touches — invariant 90.
 func TestApprovalModeOnChangeGatesExactlyThePlanDenySet(t *testing.T) {
-	runner, entry, proj := approvalModeRunner(t, store.ApprovalModeOnChange)
-	built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, proj.ID, false, store.LocalUserID)
+	runner, entry, ws := approvalModeRunner(t, store.ApprovalModeOnChange)
+	built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, false, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestApprovalModeOnChangeGatesExactlyThePlanDenySet(t *testing.T) {
 	planned, phase := built.plan().Apply(target)
 	compare("target", planned, phase)
 	// And a background build, which plan mode never wraps, asks the same.
-	bg, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, proj.ID, true, store.LocalUserID)
+	bg, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, true, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,8 +226,8 @@ func TestApprovalModeOnChangeFollowsTheMCPAllowList(t *testing.T) {
 // always asks about every tool, reads included, and exec_command still goes
 // through the per-command gate: a command the session trusts is not asked.
 func TestApprovalModeAlwaysKeepsPerCommandExec(t *testing.T) {
-	runner, entry, proj := approvalModeRunner(t, store.ApprovalModeAlways)
-	built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, proj.ID, true, store.LocalUserID)
+	runner, entry, ws := approvalModeRunner(t, store.ApprovalModeAlways)
+	built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, true, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,8 +255,8 @@ func TestApprovalModeAlwaysKeepsPerCommandExec(t *testing.T) {
 // predicate is installed anywhere else.
 func TestEmptyModeKeepsLegacyBehavior(t *testing.T) {
 	for _, mode := range []string{"", store.ApprovalModeNever} {
-		runner, entry, proj := approvalModeRunner(t, mode, "write_file", execCommandToolName)
-		built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, proj.ID, true, store.LocalUserID)
+		runner, entry, ws := approvalModeRunner(t, mode, "write_file", execCommandToolName)
+		built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, true, store.LocalUserID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,8 +274,8 @@ func TestEmptyModeKeepsLegacyBehavior(t *testing.T) {
 		built.Release()
 	}
 	// With nothing listed, never installs nothing at all.
-	runner, entry, proj := approvalModeRunner(t, store.ApprovalModeNever)
-	built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, proj.ID, true, store.LocalUserID)
+	runner, entry, ws := approvalModeRunner(t, store.ApprovalModeNever)
+	built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, true, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}

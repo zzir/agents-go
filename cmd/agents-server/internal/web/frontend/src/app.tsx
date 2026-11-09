@@ -59,7 +59,7 @@ const SETTINGS_TABS: DialogTab[] = [
 const ADMIN_TABS: DialogTab[] = [
   { key: 'members',   label: 'Members',    icon: PeopleIcon,            load: () => import('@/features/admin/MembersPanel') },
   { key: 'sessions',  label: 'Sessions',   icon: CommentDiscussionIcon, load: () => import('@/features/admin/SessionsPanel') },
-  { key: 'projects',  label: 'Projects',   icon: FileDirectoryIcon,     load: () => import('@/features/admin/ProjectsPanel') },
+  { key: 'workspaces',  label: 'Workspaces',   icon: FileDirectoryIcon,     load: () => import('@/features/admin/WorkspacesPanel') },
   { key: 'workflows', label: 'Workflows',  icon: WorkflowIcon,          load: () => import('@/features/admin/ScopedRowsPanel').then(m => ({ default: m.AdminWorkflows })) },
   { key: 'audit',     label: 'Audit logs', icon: LogIcon,               load: () => import('@/features/admin/AuditPanel') },
 ];
@@ -126,30 +126,30 @@ function App() {
   const narrowRef = useRef(narrow);
   narrowRef.current = narrow;
   // The active session's name and binding, from the existence-check fetch below
-  // and the title_updated / project_bound events; the id rejects a response that
+  // and the title_updated / workspace_bound events; the id rejects a response that
   // lands after a session switch.
-  const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; projectId: string; agentConfigId: string } | null>(null);
+  const [sessionMeta, setSessionMeta] = useState<{ id: string; name: string; workspaceId: string; agentConfigId: string } | null>(null);
   // Bindings announced over the socket, per session: the broadcast can land while
   // the session GET is in flight (meta is null then), and an announced binding
   // wins over what the GET returns — invariant 27.
   const announcedBindings = useRef<Record<string, string>>({});
   // Bumped when the set of bound sessions changes: a bind can auto-create its
-  // scratch project, so the project pickers (ChatView, terminal panel) refetch.
+  // scratch workspace, so the workspace pickers (ChatView, terminal panel) refetch.
   const [bindingsVersion, setBindingsVersion] = useState(0);
   // Global terminal panel, opened from the composer (closing lives on the panel).
   // everOpened defers the mount to first use; then it stays mounted while hidden.
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalEverOpened, setTerminalEverOpened] = useState(false);
-  // A one-shot "start a terminal for this project" request, set only when the
-  // composer opens a CLOSED panel with a project selected; the nonce tells
+  // A one-shot "start a terminal for this workspace" request, set only when the
+  // composer opens a CLOSED panel with a workspace selected; the nonce tells
   // repeats apart.
-  const [terminalRequest, setTerminalRequest] = useState<{ projectId: string; projectName?: string; targetName?: string; nonce: number } | null>(null);
+  const [terminalRequest, setTerminalRequest] = useState<{ workspaceId: string; workspaceName?: string; targetName?: string; nonce: number } | null>(null);
   const terminalOpenRef = useRef(false);
   terminalOpenRef.current = terminalOpen;
   const terminalNonceRef = useRef(0);
-  const handleTerminalOpen = useCallback((project?: { projectId: string; projectName?: string; targetName?: string }) => {
-    if (!terminalOpenRef.current && project) {
-      setTerminalRequest({ ...project, nonce: ++terminalNonceRef.current });
+  const handleTerminalOpen = useCallback((workspace?: { workspaceId: string; workspaceName?: string; targetName?: string }) => {
+    if (!terminalOpenRef.current && workspace) {
+      setTerminalRequest({ ...workspace, nonce: ++terminalNonceRef.current });
     }
     setTerminalOpen(true);
     setTerminalEverOpened(true);
@@ -314,15 +314,15 @@ function App() {
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>({});
 
   // What the socket says about a session beyond its runs: the auto-title and
-  // the project binding (recorded in announcedBindings, which outlives a cleared meta).
+  // the workspace binding (recorded in announcedBindings, which outlives a cleared meta).
   const sessionEvents = useMemo(() => ({
     activeSession: () => activeSessionRef.current,
     onTitleUpdated: (sid: string, title: string) => {
       setSessionMeta(prev => (prev && prev.id === sid ? { ...prev, name: title } : prev));
     },
-    onProjectBound: (sid: string, projectId: string) => {
-      announcedBindings.current[sid] = projectId;
-      setSessionMeta(prev => (prev && prev.id === sid ? { ...prev, projectId } : prev));
+    onWorkspaceBound: (sid: string, workspaceId: string) => {
+      announcedBindings.current[sid] = workspaceId;
+      setSessionMeta(prev => (prev && prev.id === sid ? { ...prev, workspaceId } : prev));
       setBindingsVersion(v => v + 1);
     },
     onStatus: (st: SessionStatusEvent | null) => {
@@ -380,7 +380,7 @@ function App() {
     api.sessions.get(activeSession)
       .then((sess) => {
         if (cancelled) return;
-        const s = sess as { name?: string; project_id?: string; agent_config_id?: string };
+        const s = sess as { name?: string; workspace_id?: string; agent_config_id?: string };
         // A re-read a status announcement started since is the newer answer.
         if (pendingGen === ownPendingGen.current) readOwnPending(activeSession, sess);
         // A binding announced while this fetch was in flight wins — invariant 27.
@@ -388,7 +388,7 @@ function App() {
         setSessionMeta({
           id: activeSession,
           name: s?.name || '',
-          projectId: announced || s?.project_id || '',
+          workspaceId: announced || s?.workspace_id || '',
           // The session's server-side agent: the composer's fallback when this
           // browser holds no draft (a fork, another device).
           agentConfigId: s?.agent_config_id || '',
@@ -428,7 +428,7 @@ function App() {
   // The /workflow command: the name, then the brief. With no session open it
   // makes one, as a message would (invariant 69); the reload brings in the
   // started note the server writes.
-  const runWorkflowCommand = useCallback(async (rest: string, agentConfigId?: string, projectId?: string) => {
+  const runWorkflowCommand = useCallback(async (rest: string, agentConfigId?: string, workspaceId?: string) => {
     const spec = rest.trim();
     if (!spec) {
       toast.error('Which workflow? /workflow <name> <brief>');
@@ -467,23 +467,23 @@ function App() {
       }
     }
     try {
-      // The composer's project rides along as on a message: it binds an unbound
+      // The composer's workspace rides along as on a message: it binds an unbound
       // session before the start — invariant 27.
-      const body: { session_id: string; input: string; project_id?: string } = { session_id: sid, input: brief };
-      if (projectId) body.project_id = projectId;
+      const body: { session_id: string; input: string; workspace_id?: string } = { session_id: sid, input: brief };
+      if (workspaceId) body.workspace_id = workspaceId;
       await api.workflows.run(wf.id, body);
       toast.success(`Started "${wf.name}" in the background — the result comes back here`);
-      // Not visible from here: with no project, bound or picked, the workflow
+      // Not visible from here: with no workspace, bound or picked, the workflow
       // has no file or command tools.
-      const bound = (sessionMeta && sessionMeta.id === sid ? !!sessionMeta.projectId : false) || !!projectId;
-      if (!bound) toast.info('This session has no project — the workflow has no file or command tools');
+      const bound = (sessionMeta && sessionMeta.id === sid ? !!sessionMeta.workspaceId : false) || !!workspaceId;
+      if (!bound) toast.info('This session has no workspace — the workflow has no file or command tools');
       await reloadTimeline(sid);
     } catch (e) {
       toast.error((e as Error).message || 'Could not start the workflow');
     }
   }, [activeSession, sessionMeta, reloadTimeline]);
 
-  const handleSend = useCallback(async (input: string, agentConfigId?: string, projectId?: string, attachments?: AttachmentMeta[]) => {
+  const handleSend = useCallback(async (input: string, agentConfigId?: string, workspaceId?: string, attachments?: AttachmentMeta[]) => {
     if (!wsRef.current) return;
     if (!wsRef.current.isConnected()) {
       toast.error('Connection lost, reconnecting — message not sent');
@@ -492,7 +492,7 @@ function App() {
     // `/workflow <name> <brief>` starts a workflow into this conversation
     // instead of a turn — the composer's way to what the hub's Run… does.
     if (WORKFLOW_COMMAND.test(input)) {
-      await runWorkflowCommand(input.replace(WORKFLOW_COMMAND, ''), agentConfigId, projectId);
+      await runWorkflowCommand(input.replace(WORKFLOW_COMMAND, ''), agentConfigId, workspaceId);
       return;
     }
     // `/plan <message>` runs the message in plan mode, `/plan off <message>`
@@ -510,7 +510,7 @@ function App() {
     if (attachments?.length) payload.attachment_ids = attachments.map(a => a.id);
     if (planned) payload.plan = true;
     if (planOff) payload.plan = false;
-    if (projectId) payload.project_id = projectId;
+    if (workspaceId) payload.workspace_id = workspaceId;
     // Over the server's frame limit the socket would be closed (1009), with
     // no run.error to say why — measured before a conversation is made for it.
     if (frameTooLarge(EV.runCreate, payload)) {
@@ -634,7 +634,7 @@ function App() {
     });
     // The announced-binding record dies with the session.
     delete announcedBindings.current[deletedId];
-    // The deleted session may have carried the last reference to a project —
+    // The deleted session may have carried the last reference to a workspace —
     // the pickers re-aggregate.
     setBindingsVersion(v => v + 1);
   }, [deleteSession]);
@@ -695,7 +695,7 @@ function App() {
 
   // Regenerating branches back to the user's message and runs again IN PLACE:
   // the attempts live in one session, switchable.
-  const handleRegenerate = useCallback(async (userEntryId: string, userContent: string, agentConfigId: string, projectId?: string) => {
+  const handleRegenerate = useCallback(async (userEntryId: string, userContent: string, agentConfigId: string, workspaceId?: string) => {
     if (!activeSession || !wsRef.current) return;
     // Probe before switching: a regen that branches the session and then fails
     // to send would strand the user on a branch with no assistant reply.
@@ -709,8 +709,8 @@ function App() {
       // The Inspector stays open: an in-place regen keeps its lens valid. Empty
       // input makes the run answer the branch just switched to, adding no user message.
       const payload: Record<string, unknown> = { session_id: activeSession, input: '', agent_config_id: agentConfigId };
-      // A regen can be an unbound session's first project-carrying run — invariant 27.
-      if (projectId) payload.project_id = projectId;
+      // A regen can be an unbound session's first workspace-carrying run — invariant 27.
+      if (workspaceId) payload.workspace_id = workspaceId;
       if (!wsRef.current.send(EV.runCreate, payload)) {
         // The socket dropped between the probe and the send: roll the branch
         // back to where it was so the person keeps the attempt they had.
@@ -770,8 +770,8 @@ function App() {
   // Stable reference so MemoizedChatView's shallow compare isn't defeated by a
   // fresh object literal every render.
   const sessionBinding = useMemo(() =>
-    sessionMeta && sessionMeta.id === activeSession && sessionMeta.projectId
-      ? { projectId: sessionMeta.projectId }
+    sessionMeta && sessionMeta.id === activeSession && sessionMeta.workspaceId
+      ? { workspaceId: sessionMeta.workspaceId }
       : null,
   [sessionMeta, activeSession]);
 

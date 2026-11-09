@@ -23,7 +23,7 @@ import { EdgeGraph, END, stepLabel, type Workflow, type WorkflowBudget, type Wor
 import { Disclosure } from '@/components/Disclosure';
 import { TriggersDialog } from '@/features/workflows/TriggersDialog';
 import { NEW_SESSION, SessionPicker } from '@/features/sessions/SessionPicker';
-import { projectLabel, type Project, type SandboxLite } from '@/lib/binding';
+import { workspaceLabel, type Workspace, type SandboxLite } from '@/lib/binding';
 import '@/features/chat/workflow.css';
 import './workflow-panel.css';
 import './hub.css';
@@ -262,18 +262,18 @@ function WorkflowForm({ initial, onSave, onCancel, onDelete, saving, agents }: W
 
 // RunDialog asks for the brief and the session to report back to (the one the
 // person came from by default) and starts the workflow, as the agent's tool does.
-// A session with no project bound is offered one: without it, no file or command tools.
+// A session with no workspace bound is offered one: without it, no file or command tools.
 function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessionId: string | null; onClose: () => void }) {
   const [target, setTarget] = useState(sessionId || '');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const { data: targetSession } = useApi<{ project_id?: string } | null>(
-    () => (target && target !== NEW_SESSION ? api.sessions.get(target) as Promise<{ project_id?: string }> : Promise.resolve(null)), [target]);
+  const { data: targetSession } = useApi<{ workspace_id?: string } | null>(
+    () => (target && target !== NEW_SESSION ? api.sessions.get(target) as Promise<{ workspace_id?: string }> : Promise.resolve(null)), [target]);
   const { data: sandboxDefs } = useApi<SandboxLite[]>(() => api.sandboxes.list() as Promise<SandboxLite[]>, [], 'sandboxes');
-  const { data: projects } = useApi<Project[]>(() => api.projects.list() as Promise<Project[]>, [], 'projects');
-  const [projectId, setProjectId] = useState('');
-  const unbound = target === NEW_SESSION || (!!target && !!targetSession && !targetSession.project_id);
-  const project = (projects || []).find(p => p.id === projectId);
+  const { data: workspaces } = useApi<Workspace[]>(() => api.workspaces.list() as Promise<Workspace[]>, [], 'workspaces');
+  const [workspaceId, setWorkspaceId] = useState('');
+  const unbound = target === NEW_SESSION || (!!target && !!targetSession && !targetSession.workspace_id);
+  const workspace = (workspaces || []).find(p => p.id === workspaceId);
   // "New session" is made here, on Run, default-named (the start names it after
   // the workflow and brief); a refused start takes it back (invariant 69).
   const run = async () => {
@@ -284,9 +284,9 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
       if (sessionId === NEW_SESSION) {
         made = sessionId = ((await api.sessions.create()) as { id: string }).id;
       }
-      const body: { session_id: string; input: string; project_id?: string } = { session_id: sessionId, input: input.trim() };
-      if (unbound && project) {
-        body.project_id = project.id;
+      const body: { session_id: string; input: string; workspace_id?: string } = { session_id: sessionId, input: input.trim() };
+      if (unbound && workspace) {
+        body.workspace_id = workspace.id;
       }
       await api.workflows.run(workflow.id, body);
       if (made) invalidate(SESSION_LISTS);
@@ -311,11 +311,11 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
         </div>
         {fc('Session', <SessionPicker value={target} onChange={setTarget} />, 'Where the result comes back')}
         {unbound && (
-          fc('Project', <Select block value={projectId} onChange={e => setProjectId(e.target.value)}>
+          fc('Workspace', <Select block value={workspaceId} onChange={e => setWorkspaceId(e.target.value)}>
             <Select.Option value="">None — no file or command tools</Select.Option>
-            {(projects || []).filter(p => (sandboxDefs || []).some(sb => sb.id === p.sandbox_id))
-              .map(p => <Select.Option key={p.id} value={p.id}>{projectLabel(p.name, nameOf(sandboxDefs, p.sandbox_id))}</Select.Option>)}
-          </Select>, 'This session has no project bound yet; the one picked here becomes its binding, as a first message\'s would')
+            {(workspaces || []).filter(p => (sandboxDefs || []).some(sb => sb.id === p.sandbox_id))
+              .map(p => <Select.Option key={p.id} value={p.id}>{workspaceLabel(p.name, nameOf(sandboxDefs, p.sandbox_id))}</Select.Option>)}
+          </Select>, 'This session has no workspace bound yet; the one picked here becomes its binding, as a first message\'s would')
         )}
         <Textarea block rows={8} value={input} onChange={e => setInput(e.target.value)} autoFocus
           placeholder="What this run is about — the brief that leads the first step" />

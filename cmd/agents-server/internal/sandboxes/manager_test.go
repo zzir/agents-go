@@ -14,25 +14,25 @@ import (
 )
 
 // testSpec is an in-memory build spec for manager tests: the manager reads
-// the ids and the project's runtime generation, and the build override
+// the ids and the workspace's runtime generation, and the build override
 // usually ignores the rest.
-func testSpec(projectID string) Spec {
-	return specGen(projectID, "", 1)
+func testSpec(workspaceID string) Spec {
+	return specGen(workspaceID, "", 1)
 }
 
 // specGen is testSpec with an explicit environment and runtime generation —
-// what a project edit produces.
-func specGen(projectID, env string, gen int64) Spec {
+// what a workspace edit produces.
+func specGen(workspaceID, env string, gen int64) Spec {
 	return Spec{
-		Sandbox: &store.Sandbox{ID: "sb", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)},
-		Project: &store.Project{ID: projectID, OwnerID: "owner-1", SandboxID: "sb", Name: projectID, Env: env, RuntimeGen: gen},
+		Sandbox:   &store.Sandbox{ID: "sb", Name: "local", Type: "docker", Config: []byte(`{"image":"i"}`)},
+		Workspace: &store.Workspace{ID: workspaceID, OwnerID: "owner-1", SandboxID: "sb", Name: workspaceID, Env: env, RuntimeGen: gen},
 	}
 }
 
-// One live instance per project: sessions bound to different projects must
-// not share a sandbox, while the same project keeps hitting the cache.
-// RemoveProject tears down every generation of the id.
-func TestSandboxManagerKeysByProject(t *testing.T) {
+// One live instance per workspace: sessions bound to different workspaces must
+// not share a sandbox, while the same workspace keeps hitting the cache.
+// RemoveWorkspace tears down every generation of the id.
+func TestSandboxManagerKeysByWorkspace(t *testing.T) {
 	m := NewManager()
 
 	a1, r1, err := m.Acquire(testSpec("p1"))
@@ -46,7 +46,7 @@ func TestSandboxManagerKeysByProject(t *testing.T) {
 	}
 	defer r2()
 	if a1 == a2 {
-		t.Fatal("different projects share one sandbox instance")
+		t.Fatal("different workspaces share one sandbox instance")
 	}
 	again, r3, err := m.Acquire(testSpec("p1"))
 	if err != nil {
@@ -54,15 +54,15 @@ func TestSandboxManagerKeysByProject(t *testing.T) {
 	}
 	defer r3()
 	if again != a1 {
-		t.Fatal("the same project was not served from the cache")
+		t.Fatal("the same workspace was not served from the cache")
 	}
 
-	m.RemoveProject("p1")
+	m.RemoveWorkspace("p1")
 	m.mu.Lock()
-	_, left := m.instances[sandboxKey{projectID: "p1", gen: 1}]
+	_, left := m.instances[sandboxKey{workspaceID: "p1", gen: 1}]
 	m.mu.Unlock()
 	if left {
-		t.Fatal("RemoveProject left the project cached")
+		t.Fatal("RemoveWorkspace left the workspace cached")
 	}
 }
 
@@ -81,7 +81,7 @@ func TestSandboxManagerEvictionDefersToHolders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.EvictProject("wd")
+	m.EvictWorkspace("wd")
 	m.mu.Lock()
 	doomed, refs := inst1.doomed, inst1.refs
 	m.mu.Unlock()
@@ -138,7 +138,7 @@ func TestSandboxManagerIdleEvictionAndReuse(t *testing.T) {
 	}
 	rel2()
 
-	m.EvictProject("wd")
+	m.EvictWorkspace("wd")
 	m.mu.Lock()
 	left := len(m.instances)
 	m.mu.Unlock()
@@ -238,7 +238,7 @@ func gatedManager(t *testing.T) (*Manager, chan struct{}, *closeCountingSandbox)
 // the instance the moment its build lands — the run that started on it
 // finishes and releases, then it closes. It never re-enters the cache for new
 // runs. Every content change reaches the manager this way, whether it was the
-// project's own environment, its template or its target (decisions §5.33).
+// workspace's own environment, its template or its target (decisions §5.33).
 func TestSandboxManagerRetireFencesInFlightBuilds(t *testing.T) {
 	m, gate, sb := gatedManager(t)
 
@@ -255,7 +255,7 @@ func TestSandboxManagerRetireFencesInFlightBuilds(t *testing.T) {
 	}()
 
 	// The update lands mid-dial: generations below 2 are retired.
-	m.RetireProject("p", 2)
+	m.RetireWorkspace("p", 2)
 	close(gate)
 	<-done
 
@@ -317,7 +317,7 @@ func TestSandboxManagerCloseAllDuringBuild(t *testing.T) {
 }
 
 // A rename bumps the row revision but not the runtime generation, and the
-// cache keys on the generation: the renamed project keeps sharing the live
+// cache keys on the generation: the renamed workspace keeps sharing the live
 // instance, and nothing retires it over a display-name edit.
 func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 	m := NewManager()
@@ -329,13 +329,13 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 	}
 
 	v1 := testSpec("p")
-	v1.Project.Revision = 1
+	v1.Workspace.Revision = 1
 	_, rel1, err := m.Acquire(v1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	renamed := testSpec("p")
-	renamed.Project.Name, renamed.Project.Revision = "new", 2
+	renamed.Workspace.Name, renamed.Workspace.Revision = "new", 2
 	_, rel2, err := m.Acquire(renamed)
 	if err != nil {
 		t.Fatal(err)
@@ -362,7 +362,7 @@ func TestSandboxManagerRenameSharesInstance(t *testing.T) {
 
 // A delete landing between a caller's read and its acquire: the tombstone
 // dooms the late build instead of letting it enter the cache as an instance
-// of a deleted project that nothing would ever retire.
+// of a deleted workspace that nothing would ever retire.
 func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	m, gate, sb := gatedManager(t)
 
@@ -379,7 +379,7 @@ func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	}()
 
 	// The DELETE lands mid-dial: the id is gone for good.
-	m.RemoveProject("p")
+	m.RemoveWorkspace("p")
 	close(gate)
 	<-done
 
@@ -387,7 +387,7 @@ func TestSandboxManagerRemoveFencesLateAcquires(t *testing.T) {
 	left := len(m.instances)
 	m.mu.Unlock()
 	if left != 0 {
-		t.Fatalf("a deleted project's build re-entered the cache (%d instances)", left)
+		t.Fatalf("a deleted workspace's build re-entered the cache (%d instances)", left)
 	}
 	if sb.closes.Load() != 0 {
 		t.Fatal("the instance closed while its holder was still using it")
@@ -515,10 +515,10 @@ func TestSandboxManagerAcquireWaitsOutIdleExpiry(t *testing.T) {
 	}
 }
 
-// A project's runtime generation is part of the cache key: a content change
+// A workspace's runtime generation is part of the cache key: a content change
 // anywhere upstream must not keep being served from the instance built before
 // it.
-func TestSandboxManagerKeysByProjectGeneration(t *testing.T) {
+func TestSandboxManagerKeysByWorkspaceGeneration(t *testing.T) {
 	m := NewManager()
 	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil }
 
@@ -534,7 +534,7 @@ func TestSandboxManagerKeysByProjectGeneration(t *testing.T) {
 	}
 	defer r2()
 	if a1 == a2 {
-		t.Fatal("a new project generation was served the instance built from the old environment")
+		t.Fatal("a new workspace generation was served the instance built from the old environment")
 	}
 	// The unchanged generation still hits the cache — a rename (revision
 	// only) must not split it.
@@ -544,12 +544,12 @@ func TestSandboxManagerKeysByProjectGeneration(t *testing.T) {
 	}
 	defer r3()
 	if again != a1 {
-		t.Fatal("the same project generation was not served from the cache")
+		t.Fatal("the same workspace generation was not served from the cache")
 	}
 }
 
-// Retiring one project leaves its siblings' instances alone.
-func TestRetireProjectSparesSiblings(t *testing.T) {
+// Retiring one workspace leaves its siblings' instances alone.
+func TestRetireWorkspaceSparesSiblings(t *testing.T) {
 	m := NewManager()
 	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil }
 
@@ -564,7 +564,7 @@ func TestRetireProjectSparesSiblings(t *testing.T) {
 	}
 	defer r2()
 
-	m.RetireProject("p1", 2)
+	m.RetireWorkspace("p1", 2)
 
 	stillCached, r3, err := m.Acquire(testSpec("p2"))
 	if err != nil {
@@ -572,7 +572,7 @@ func TestRetireProjectSparesSiblings(t *testing.T) {
 	}
 	defer r3()
 	if stillCached != sibling {
-		t.Error("retiring one project evicted another project's instance")
+		t.Error("retiring one workspace evicted another workspace's instance")
 	}
 	rebuilt, r4, err := m.Acquire(specGen("p1", "", 2))
 	if err != nil {
@@ -580,7 +580,7 @@ func TestRetireProjectSparesSiblings(t *testing.T) {
 	}
 	defer r4()
 	if rebuilt == mine {
-		t.Error("the retired project was served its old instance")
+		t.Error("the retired workspace was served its old instance")
 	}
 }
 
@@ -591,12 +591,12 @@ func TestBuildSandboxRejectsUndecodableEnv(t *testing.T) {
 	m := NewManager()
 	_, _, err := m.Acquire(specGen("p", "{not json", 1))
 	if err == nil || !strings.Contains(err.Error(), "environment") {
-		t.Fatalf("err = %v, want a project-environment failure", err)
+		t.Fatalf("err = %v, want a workspace-environment failure", err)
 	}
 }
 
 // DaemonOptions carries only how to reach the daemon; BuildOptions layers the
-// image and the project's container and volume on top.
+// image and the workspace's container and volume on top.
 func TestDaemonAndBuildOptions(t *testing.T) {
 	daemonOnly := &store.Sandbox{ID: "sb", Type: "docker", Config: []byte(`{"host":"ssh://u@h","ssh_use_agent":true}`)}
 	opts, err := DaemonOptions(daemonOnly)
@@ -607,15 +607,15 @@ func TestDaemonAndBuildOptions(t *testing.T) {
 		t.Errorf("daemon options = %+v", opts)
 	}
 	if opts.Image != "" || opts.ContainerName != "" || opts.VolumeName != "" || opts.Persistent {
-		t.Errorf("daemon options carry image or project settings: %+v", opts)
+		t.Errorf("daemon options carry image or workspace settings: %+v", opts)
 	}
 	if _, err := DaemonOptions(&store.Sandbox{ID: "x", Type: "podman"}); err == nil {
 		t.Error("a non-docker sandbox type was accepted")
 	}
 
 	spec := Spec{
-		Sandbox: &store.Sandbox{ID: "sb", Type: "docker", Config: []byte(`{"host":"ssh://u@h","ssh_use_agent":true,"image":"img","memory_mb":256,"cpus":2,"network":"agents-net"}`)},
-		Project: &store.Project{ID: "proj", Name: "proj"},
+		Sandbox:   &store.Sandbox{ID: "sb", Type: "docker", Config: []byte(`{"host":"ssh://u@h","ssh_use_agent":true,"image":"img","memory_mb":256,"cpus":2,"network":"agents-net"}`)},
+		Workspace: &store.Workspace{ID: "ws", Name: "ws"},
 	}
 	full, err := BuildOptions(spec)
 	if err != nil {
@@ -627,8 +627,8 @@ func TestDaemonAndBuildOptions(t *testing.T) {
 	if full.User != DefaultContainerUser {
 		t.Errorf("user = %q, want %q — a sandbox naming none runs as root", full.User, DefaultContainerUser)
 	}
-	if !full.Persistent || full.ContainerName != ContainerName("proj") || full.VolumeName != ProjectVolumeName("proj") {
-		t.Errorf("build options miss the project's container or volume: %+v", full)
+	if !full.Persistent || full.ContainerName != ContainerName("ws") || full.VolumeName != WorkspaceVolumeName("ws") {
+		t.Errorf("build options miss the workspace's container or volume: %+v", full)
 	}
 	if full.HostDir != "" {
 		t.Errorf("build options carry a host bind mount: %q", full.HostDir)
@@ -890,11 +890,11 @@ type detachCountingSandbox struct {
 
 func (d *detachCountingSandbox) Detach() error { d.detaches.Add(1); return nil }
 
-// A retired generation whose project a successor already occupies lets go of
+// A retired generation whose workspace a successor already occupies lets go of
 // its connection only: the container is the successor's now (a content change
 // outside the adoption fingerprint hands the SAME running container over).
 // Without a successor a retired instance closes as before.
-func TestReleaseDetachesWhenASuccessorHoldsTheProject(t *testing.T) {
+func TestReleaseDetachesWhenASuccessorHoldsTheWorkspace(t *testing.T) {
 	m := NewManager()
 	var built []*detachCountingSandbox // in build order
 	m.buildOverride = func(Spec) (sandbox.Sandbox, error) {
@@ -913,7 +913,7 @@ func TestReleaseDetachesWhenASuccessorHoldsTheProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.RetireProject("p", 2) // doomed under its holder
+	m.RetireWorkspace("p", 2) // doomed under its holder
 	// built[1], the successor.
 	_, rel2, err := m.Acquire(specGen("p", "", 2))
 	if err != nil {
@@ -923,7 +923,7 @@ func TestReleaseDetachesWhenASuccessorHoldsTheProject(t *testing.T) {
 	want(0, 1, 0)
 
 	// The same for a deferred user Stop that new work overtook.
-	m.stopProjectOnRelease("p")
+	m.stopWorkspaceOnRelease("p")
 	_, rel3, err := m.Acquire(specGen("p", "", 2)) // built[2]
 	if err != nil {
 		t.Fatal(err)
@@ -933,13 +933,13 @@ func TestReleaseDetachesWhenASuccessorHoldsTheProject(t *testing.T) {
 	rel3()
 
 	// No successor: an idle retired instance closes now, a held one on release.
-	m.RetireProject("p", 3)
+	m.RetireWorkspace("p", 3)
 	want(2, 0, 1)
 	_, rel4, err := m.Acquire(specGen("p", "", 3)) // built[3]
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.RetireProject("p", 4)
+	m.RetireWorkspace("p", 4)
 	rel4()
 	want(3, 0, 1)
 }

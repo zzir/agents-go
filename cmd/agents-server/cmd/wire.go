@@ -42,7 +42,7 @@ type stores struct {
 	Settings         *store.SettingStore
 	SettingReader    *settings.Reader
 	SandboxDefs      *store.SandboxStore
-	Projects         *store.ProjectStore
+	Workspaces       *store.WorkspaceStore
 	Guardrails       *store.GuardrailStore
 	PendingApprovals *store.PendingApprovalStore
 	Tasks            *store.TaskStore
@@ -71,7 +71,7 @@ func newStores(db *bun.DB) *stores {
 		Settings:         settingStore,
 		SettingReader:    settings.NewReader(settingStore),
 		SandboxDefs:      store.NewSandboxStore(db),
-		Projects:         store.NewProjectStore(db),
+		Workspaces:       store.NewWorkspaceStore(db),
 		Guardrails:       store.NewGuardrailStore(db),
 		PendingApprovals: store.NewPendingApprovalStore(db),
 		Tasks:            store.NewTaskStore(db),
@@ -123,7 +123,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		ChatGPT:    providers.NewChatGPTOAuth(st.Providers),
 		Sandboxes:  sandboxes.NewManager(),
 	}
-	svc.Sandboxes.SetInstanceRefWriter(st.Projects.SetInstanceRef)
+	svc.Sandboxes.SetInstanceRefWriter(st.Workspaces.SetInstanceRef)
 	svc.Sandboxes.SetIdleTimeout(func() time.Duration {
 		return time.Duration(st.SettingReader.Int(context.Background(), settings.KeySandboxIdleMinutes)) * time.Minute
 	})
@@ -134,7 +134,7 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Providers:        st.Providers,
 		McpServers:       st.McpServers,
 		Sandboxes:        st.SandboxDefs,
-		Projects:         st.Projects,
+		Workspaces:       st.Workspaces,
 		Skills:           st.Skills,
 		Memories:         st.Memories,
 		Settings:         st.SettingReader,
@@ -176,15 +176,15 @@ type handlers struct {
 // newHandlers builds the handlers on the stores and the bridge; info is the
 // process facts /server reports. Handlers.Auth is left for newServer.
 func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string, info handler.ServerInfo) *handlers {
-	terminal := handler.NewTerminalHandler(st.SandboxDefs, st.Projects, svc.Sandboxes, st.SettingReader)
+	terminal := handler.NewTerminalHandler(st.SandboxDefs, st.Workspaces, svc.Sandboxes, st.SettingReader)
 	terminal.Audit = audit
 	ws := handler.NewWSHandler(svc.Runner, st.Sessions, st.PendingApprovals)
 	ws.Audit = audit
-	projects := handler.NewProjectHandler(st.Projects, st.SandboxDefs, svc.Sandboxes, terminal, st.SettingReader)
-	retirer := handler.NewRetirer(st.Projects, svc.Sandboxes, terminal)
-	projects.Audit = audit
-	projects.Notes = &handler.RebuildNoteDeps{Sessions: st.Sessions, Entries: st.Entries, Fence: svc.Runner}
-	projects.StopCommands = svc.Runner.StopProjectCommands
+	workspaces := handler.NewWorkspaceHandler(st.Workspaces, st.SandboxDefs, svc.Sandboxes, terminal, st.SettingReader)
+	retirer := handler.NewRetirer(st.Workspaces, svc.Sandboxes, terminal)
+	workspaces.Audit = audit
+	workspaces.Notes = &handler.RebuildNoteDeps{Sessions: st.Sessions, Entries: st.Entries, Fence: svc.Runner}
+	workspaces.StopCommands = svc.Runner.StopWorkspaceCommands
 	return &handlers{
 		WS:       ws,
 		Terminal: terminal,
@@ -196,7 +196,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Sessions: handler.NewSessionHandler(handler.SessionDeps{
 				Sessions: st.Sessions, Entries: st.Entries, Traces: st.Traces, Agents: st.AgentConfigs,
 				Profiles: st.ContextProfiles, Users: st.Users,
-				Projects: st.Projects, Stopper: svc.Runner, Compactor: svc.Runner, Statuses: svc.Runner,
+				Workspaces: st.Workspaces, Stopper: svc.Runner, Compactor: svc.Runner, Statuses: svc.Runner,
 				Settings: st.SettingReader,
 			}),
 			Runs:       handler.NewRunHandler(svc.Runner),
@@ -212,7 +212,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, st.Workflows, st.AgentConfigs, svc.Scheduler),
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
 			Sandboxes:  handler.NewSandboxHandler(st.SandboxDefs, svc.Sandboxes, retirer),
-			Projects:   projects,
+			Workspaces: workspaces,
 			Traces:     handler.NewTraceHandler(st.Traces, st.SettingReader),
 			Playground: handler.NewPlaygroundHandler(svc.Deps),
 			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT, st.Providers),

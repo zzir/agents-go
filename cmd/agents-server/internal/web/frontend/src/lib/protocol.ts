@@ -39,8 +39,8 @@ export const EV = {
   runDiagnostic: 'run.diagnostic',
   runGap: 'run.gap',
   sessionTitleUpdated: 'session.title_updated',
-  // The session's project binding, published once by the run that won the bind.
-  sessionProjectBound: 'session.project_bound',
+  // The session's workspace binding, published once by the run that won the bind.
+  sessionWorkspaceBound: 'session.workspace_bound',
   // A session's server-derived status (GET /sessions carries the same);
   // broadcast, never replayed.
   sessionStatus: 'session.status',

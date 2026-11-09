@@ -286,7 +286,7 @@ func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 	}
 	// The sandbox comes from the PARENT (Inherit); the agent is the step's own.
 	in := store.DecodeInherit(req.Inherit)
-	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.ProjectID, TextInput(req.Input), "", nil, nil)
+	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.WorkspaceID, TextInput(req.Input), "", nil, nil)
 	return err
 }
 
@@ -308,7 +308,7 @@ func (r *Runner) pauseWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 	// (invariant 37); the manager reports the row once the launch settles.
 	won, err := r.Deps.Tasks.Pause(ctx, req.TaskID, req.RunID, st.Encode(), &store.PendingApproval{
 		RunID: req.RunID, SessionID: req.SessionID, Kind: store.ApprovalKindStep,
-		AgentConfigID: step.AgentConfigID, ProjectID: in.ProjectID,
+		AgentConfigID: step.AgentConfigID, WorkspaceID: in.WorkspaceID,
 		ToolCalls: calls,
 	})
 	if err != nil {
@@ -394,7 +394,7 @@ func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.Pending
 		TaskID: row.ID, Kind: row.Kind, State: row.State, RunID: pending.RunID, SessionID: row.ChildSessionID,
 		Input: st.PendingInput,
 		Inherit: store.EncodeInherit(store.Inherit{
-			AgentConfigID: row.ParentAgentConfigID, ProjectID: row.ParentProjectID,
+			AgentConfigID: row.ParentAgentConfigID, WorkspaceID: row.ParentWorkspaceID,
 		}),
 	}
 	if lerr := r.startWorkflowStep(mctx, req, st, step); lerr != nil {

@@ -316,7 +316,7 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 // definitions, for the Replay tool picker and the agent editor.
 //
 //	@Summary		Agent tool surface
-//	@Description	Schema-only definitions (name, description, parameters, read_only, source) of every tool the agent would carry right now; the sandbox tools are listed as a bound project would add them. Tools are never executed from here.
+//	@Description	Schema-only definitions (name, description, parameters, read_only, source) of every tool the agent would carry right now; the sandbox tools are listed as a bound workspace would add them. Tools are never executed from here.
 //	@Tags			agents
 //	@Produce		json
 //	@Param			id	path		string	true	"Agent config ID"
@@ -357,8 +357,8 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 			ReadOnly: readOnly.Admits(t, fromMCP), Source: source}
 	}
 	out := make([]playgroundTool, 0, len(built.Agent.Tools))
-	// No project is bound here, so the sandbox tools are described from their
-	// constructors, in the slot a bound project would give them.
+	// No workspace is bound here, so the sandbox tools are described from their
+	// constructors, in the slot a bound workspace would give them.
 	for _, t := range sandboxes.ToolSurface() {
 		out = append(out, describe(t, store.ToolSourceSandbox, false))
 	}

@@ -108,14 +108,14 @@ describe('TurnBlock controls', () => {
   );
   const labels = (host: HTMLElement) => Array.from(host.querySelectorAll('button[aria-label]')).map(b => b.getAttribute('aria-label'));
 
-  // A session bound to a project: fork, regenerate and the attempt switch
-  // say the project's files are shared (decisions §5.28).
-  it('says the project files are shared on a bound session', () => {
-    const { host, unmount } = turn({ sessionId: 's1', running: false, compacting: false, agentAvatars: {}, projectBound: true });
+  // A session bound to a workspace: fork, regenerate and the attempt switch
+  // say the workspace's files are shared (decisions §5.28).
+  it('says the workspace files are shared on a bound session', () => {
+    const { host, unmount } = turn({ sessionId: 's1', running: false, compacting: false, agentAvatars: {}, workspaceBound: true });
     const got = labels(host);
-    expect(got).toContain("Fork — the new session shares the project's files with this one");
-    expect(got).toContain("Regenerate — the project's files keep what the first attempt changed");
-    expect(got).toContain("Next attempt — attempts share the project's files");
+    expect(got).toContain("Fork — the new session shares the workspace's files with this one");
+    expect(got).toContain("Regenerate — the workspace's files keep what the first attempt changed");
+    expect(got).toContain("Next attempt — attempts share the workspace's files");
     unmount();
   });
 
@@ -189,7 +189,7 @@ describe('TurnBlock controls', () => {
     const got = labels(host);
     expect(got).toContain('Fork');
     expect(got).toContain('Regenerate');
-    expect(got.some(l => l?.includes('project'))).toBe(false);
+    expect(got.some(l => l?.includes('workspace'))).toBe(false);
     unmount();
   });
 });

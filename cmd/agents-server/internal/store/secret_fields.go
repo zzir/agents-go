@@ -29,7 +29,7 @@ const (
 	labelMcpOAuthToken        = "mcp_servers.oauth_token"
 	labelMcpConfig            = "mcp_servers.config"
 	labelSandboxConfig        = "sandboxes.config"
-	labelProjectEnv           = "projects.env"
+	labelWorkspaceEnv         = "projects.env" // the table's old name: renaming it would orphan every sealed env
 	labelTriggerSecret        = "triggers.secret"
 	labelSetting              = "settings.value"
 )
@@ -80,28 +80,28 @@ func openSandbox(sb *Sandbox) (err error) {
 	return err
 }
 
-// A project's environment is a credential surface like any other here: every
+// A workspace's environment is a credential surface like any other here: every
 // value sealed at rest, none readable back (decisions §5.32).
-func sealProject(p *Project) error {
-	return mapProjectEnv(p, func(label, s string) (string, error) { return sealSecret(label, s), nil })
+func sealWorkspace(p *Workspace) error {
+	return mapWorkspaceEnv(p, func(label, s string) (string, error) { return sealSecret(label, s), nil })
 }
 
-func openProject(p *Project) error {
-	return mapProjectEnv(p, openSecret)
+func openWorkspace(p *Workspace) error {
+	return mapWorkspaceEnv(p, openSecret)
 }
 
-// mapProjectEnv applies fn to every value, re-marshaling through []EnvVar so
+// mapWorkspaceEnv applies fn to every value, re-marshaling through []EnvVar so
 // the payload keeps its canonical field order.
-func mapProjectEnv(p *Project, fn func(label, s string) (string, error)) error {
+func mapWorkspaceEnv(p *Workspace, fn func(label, s string) (string, error)) error {
 	if p.Env == "" || secretBox == nil && !hasSealed(json.RawMessage(p.Env)) {
 		return nil
 	}
-	vars, err := DecodeProjectEnv(p.Env)
+	vars, err := DecodeWorkspaceEnv(p.Env)
 	if err != nil {
 		return err
 	}
-	// AAD is bound to the project id: another project's ciphertext does not open here.
-	label := labelProjectEnv + "." + p.ID
+	// AAD is bound to the workspace id: another workspace's ciphertext does not open here.
+	label := labelWorkspaceEnv + "." + p.ID
 	for i, v := range vars {
 		out, ferr := fn(label, v.Value)
 		if ferr != nil {
@@ -111,7 +111,7 @@ func mapProjectEnv(p *Project, fn func(label, s string) (string, error)) error {
 	}
 	b, err := json.Marshal(vars)
 	if err != nil {
-		return fmt.Errorf("encoding project environment: %w", err)
+		return fmt.Errorf("encoding workspace environment: %w", err)
 	}
 	p.Env = string(b)
 	return nil

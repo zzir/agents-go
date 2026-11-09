@@ -105,7 +105,7 @@ sandbox. This chapter and the ones after it are optional.
    read before changing, test before reporting) for you to edit. Or type
    `e2b` for any service speaking the E2B API. **Test** runs `echo ok` in a
    throw-away container.
-2. In a session, the composer's **Project** picker creates a project on
+2. In a session, the composer's **Workspace** picker creates a workspace on
    that sandbox — one user's working tree, mounted at `/workspace`. The first
    run binds the session to it for good.
 
@@ -120,8 +120,8 @@ only the tools named under **Advanced → Also ask for these tools** pause. With
 decision offers no fork or regenerate until it is made. A session waiting on you is marked in the
 sidebar of every tab and counted in the page title; the account menu's
 **Desktop notifications** adds one while the page is in the background. The top
-bar's project menu opens a **terminal** into the same container, sets the
-project's **Environment…** (the variables its container is created with;
+bar's workspace menu opens a **terminal** into the same container, sets the
+workspace's **Environment…** (the variables its container is created with;
 write-only, like every credential), exports the working tree as a tar, shows
 the **Public URL…** of a sandbox whose ports are public (an E2B-compatible
 service), and stops or rebuilds the container.
@@ -141,7 +141,7 @@ Running as a team (`--auth oauth`, [authentication](../howto/workbench-auth.md))
 adds two things an admin sees in the same hub: a **Mine | All** filter on the
 shared panels — Providers, Agents, MCP servers, Skills — that lists every
 member's rows for publishing and transfer, and, after a divider, the admin
-panels: Members, Sessions, Projects, Workflows and Audit logs.
+panels: Members, Sessions, Workspaces, Workflows and Audit logs.
 
 ## Automate it
 

@@ -50,7 +50,7 @@ function toolGroup(name: string): string {
   return 'Other';
 }
 
-// comparableText projects response items into diffable lines: message text and
+// comparableText workspaces response items into diffable lines: message text and
 // tool calls; reasoning items vary run to run and are skipped.
 function comparableText(items: PayloadRecord[]): string {
   return items

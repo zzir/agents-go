@@ -13,7 +13,7 @@ import (
 )
 
 // A rebuild notes itself on the session it was asked from only when that
-// session is the caller's, bound to the project and at rest. The container
+// session is the caller's, bound to the workspace and at rest. The container
 // call itself needs a daemon, so the note step is driven on its own.
 func TestRebuildAnnotatesRequestingSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -27,21 +27,21 @@ func TestRebuildAnnotatesRequestingSession(t *testing.T) {
 	if err := store.NewSandboxStore(db).Create(ctx, tg); err != nil {
 		t.Fatal(err)
 	}
-	projects := store.NewProjectStore(db)
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
-	other := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "q"}
-	for _, p := range []*store.Project{proj, other} {
-		if err := projects.Create(ctx, p); err != nil {
+	workspaces := store.NewWorkspaceStore(db)
+	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
+	other := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "q"}
+	for _, p := range []*store.Workspace{ws, other} {
+		if err := workspaces.Create(ctx, p); err != nil {
 			t.Fatal(err)
 		}
 	}
-	mine := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "mine", ProjectID: proj.ID}
-	elsewhere := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "elsewhere", ProjectID: other.ID}
+	mine := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "mine", WorkspaceID: ws.ID}
+	elsewhere := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "elsewhere", WorkspaceID: other.ID}
 	stranger := store.NewID()
 	if _, err := db.NewInsert().Model(&store.User{ID: stranger, Email: "stranger@example.com", Role: store.RoleMember}).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	foreign := &store.Session{OwnerID: stranger, ID: store.NewID(), Name: "theirs", ProjectID: proj.ID}
+	foreign := &store.Session{OwnerID: stranger, ID: store.NewID(), Name: "theirs", WorkspaceID: ws.ID}
 	for _, s := range []*store.Session{mine, elsewhere, foreign} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatal(err)
@@ -65,17 +65,17 @@ func TestRebuildAnnotatesRequestingSession(t *testing.T) {
 		}
 		return n
 	}
-	handlerWith := func(fence RunStopper) *ProjectHandler {
-		h := &ProjectHandler{Notes: &RebuildNoteDeps{Sessions: sessions, Entries: entries, Fence: fence}}
+	handlerWith := func(fence RunStopper) *WorkspaceHandler {
+		h := &WorkspaceHandler{Notes: &RebuildNoteDeps{Sessions: sessions, Entries: entries, Fence: fence}}
 		return h
 	}
-	call := func(h *ProjectHandler, sessionID string) {
+	call := func(h *WorkspaceHandler, sessionID string) {
 		engine := newTestEngine()
-		engine.POST("/x", func(c *gin.Context) { h.noteRebuild(c, proj, sessionID); c.Status(http.StatusNoContent) })
+		engine.POST("/x", func(c *gin.Context) { h.noteRebuild(c, ws, sessionID); c.Status(http.StatusNoContent) })
 		doJSON(t, engine, http.MethodPost, "/x", "")
 	}
 
-	// A session of another project or another owner: no note.
+	// A session of another workspace or another owner: no note.
 	call(handlerWith(noopStopper{}), elsewhere.ID)
 	call(handlerWith(noopStopper{}), foreign.ID)
 	// A live run on it: no note, and no failure.
@@ -97,7 +97,7 @@ func TestRebuildAnnotatesRequestingSession(t *testing.T) {
 	if note.Kind != session.EntryKindAnnotation || note.Source.Type != "host" || note.Display.Text == "" {
 		t.Fatalf("note = kind %q source %q text %q; want a host annotation with text", note.Kind, note.Source.Type, note.Display.Text)
 	}
-	if note.Display.Extra["project_id"] != proj.ID {
-		t.Fatalf("note extra = %v, want project_id %s", note.Display.Extra, proj.ID)
+	if note.Display.Extra["workspace_id"] != ws.ID {
+		t.Fatalf("note extra = %v, want workspace_id %s", note.Display.Extra, ws.ID)
 	}
 }

@@ -1,4 +1,4 @@
-// Package sandboxes keeps the live sandbox instances behind stored projects —
+// Package sandboxes keeps the live sandbox instances behind stored workspaces —
 // built on demand, shared across a session, retired on edit — and the
 // per-session command trust that gates exec_command.
 package sandboxes
@@ -17,22 +17,22 @@ import (
 	dockersb "github.com/zzir/agents-go/sandbox/docker"
 )
 
-// Spec is everything one project's sandbox is built from: the sandbox — where
-// it runs and what it runs — and the project whose tree it mounts.
+// Spec is everything one workspace's sandbox is built from: the sandbox — where
+// it runs and what it runs — and the workspace whose tree it mounts.
 type Spec struct {
-	Sandbox *store.Sandbox
-	Project *store.Project
-	// SaveInstanceRef records the handle a service minted for this project's
+	Sandbox   *store.Sandbox
+	Workspace *store.Workspace
+	// SaveInstanceRef records the handle a service minted for this workspace's
 	// sandbox. The MANAGER fills it in; a backend that derives its own name
 	// (docker) never calls it.
 	SaveInstanceRef func(ctx context.Context, ref string) error
 }
 
-// sandboxKey identifies one live instance: the PROJECT and its RUNTIME
+// sandboxKey identifies one live instance: the WORKSPACE and its RUNTIME
 // GENERATION — one axis, moved by every content change (decisions §5.33).
 type sandboxKey struct {
-	projectID string
-	gen       int64
+	workspaceID string
+	gen         int64
 }
 
 // sandboxInstance is one live sandbox plus what is scoped to its lifetime:
@@ -104,14 +104,14 @@ func (i *sandboxInstance) stop() {
 	i.close()
 }
 
-// Manager caches sandbox instances keyed by (project, runtime generation),
+// Manager caches sandbox instances keyed by (workspace, runtime generation),
 // reference-counted: runs and terminals Acquire and release, and an eviction
 // defers to the last holder (sandboxInstance).
 type Manager struct {
 	mu        sync.Mutex
 	instances map[sandboxKey]*sandboxInstance
-	// retired maps a project id to the lowest generation still current — the
-	// fence RetireProject moves; an in-flight build from below it lands doomed.
+	// retired maps a workspace id to the lowest generation still current — the
+	// fence RetireWorkspace moves; an in-flight build from below it lands doomed.
 	retired map[string]int64
 	// closed latches on CloseAll: no new acquire, and every instance is doomed
 	// so the last holder's release closes it.
@@ -121,9 +121,9 @@ type Manager struct {
 	// trust holds per-session exec_command approval grants, consulted by the
 	// commandGate and updated by the approval resolver.
 	trust *TrustStore
-	// writeInstanceRef persists a backend's handle on a project's sandbox; a
+	// writeInstanceRef persists a backend's handle on a workspace's sandbox; a
 	// remote build refuses without it.
-	writeInstanceRef func(ctx context.Context, projectID, ref string) error
+	writeInstanceRef func(ctx context.Context, workspaceID, ref string) error
 	// idleAfter, when set, is how long an unreferenced instance lives (0 =
 	// never), read per release; the eviction STOPS the container (decisions §5.28).
 	idleAfter func() time.Duration
@@ -132,9 +132,9 @@ type Manager struct {
 // SetIdleTimeout installs the idle-stop duration provider (see idleAfter).
 func (m *Manager) SetIdleTimeout(fn func() time.Duration) { m.idleAfter = fn }
 
-// SetInstanceRefWriter installs how a backend's handle on a project's sandbox
+// SetInstanceRefWriter installs how a backend's handle on a workspace's sandbox
 // is persisted.
-func (m *Manager) SetInstanceRefWriter(fn func(ctx context.Context, projectID, ref string) error) {
+func (m *Manager) SetInstanceRefWriter(fn func(ctx context.Context, workspaceID, ref string) error) {
 	m.writeInstanceRef = fn
 }
 
@@ -168,7 +168,7 @@ func (m *Manager) commandGate(ctx context.Context, rc *agents.RunContext, argsJS
 	return !m.trust.ForSession(sid).trusted(CommandHash(argsJSON)), nil
 }
 
-// Acquire returns the cached sandbox for spec's project, building one if
+// Acquire returns the cached sandbox for spec's workspace, building one if
 // absent, and takes a reference on it. The returned release MUST be called once
 // the holder is done (idempotent); the last release of a doomed instance closes
 // it.
@@ -183,10 +183,10 @@ func (m *Manager) Acquire(spec Spec) (sandbox.Sandbox, func(), error) {
 // acquire backs Acquire. The build runs OUTSIDE the manager lock (an ssh dial
 // takes seconds): the first acquirer installs a placeholder, the rest wait on ready.
 func (m *Manager) acquire(spec Spec) (*sandboxInstance, func(), error) {
-	if spec.Project == nil || spec.Sandbox == nil {
-		return nil, nil, fmt.Errorf("sandbox acquire needs a sandbox and a project")
+	if spec.Workspace == nil || spec.Sandbox == nil {
+		return nil, nil, fmt.Errorf("sandbox acquire needs a sandbox and a workspace")
 	}
-	key := sandboxKey{projectID: spec.Project.ID, gen: spec.Project.RuntimeGen}
+	key := sandboxKey{workspaceID: spec.Workspace.ID, gen: spec.Workspace.RuntimeGen}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -221,7 +221,7 @@ func (m *Manager) acquire(spec Spec) (*sandboxInstance, func(), error) {
 		case m.instances[key] != inst:
 			// Evicted while dialing: the evictor marked the placeholder doomed,
 			// so the last release closes what was just built.
-		case m.retired[key.projectID] > key.gen || m.closed:
+		case m.retired[key.workspaceID] > key.gen || m.closed:
 			// Built from a generation retired mid-dial, or after shutdown: serve
 			// the holders already waiting, out of the cache and doomed.
 			delete(m.instances, key)
@@ -281,8 +281,8 @@ func (m *Manager) release(inst *sandboxInstance) {
 	m.mu.Lock()
 	inst.refs--
 	dead := inst.doomed && inst.refs <= 0
-	// New work occupies the project: this instance only lets go — decisions §5.66.
-	superseded := dead && m.projectCachedLocked(inst.key.projectID)
+	// New work occupies the workspace: this instance only lets go — decisions §5.66.
+	superseded := dead && m.workspaceCachedLocked(inst.key.workspaceID)
 	stopIntent := inst.stopOnRelease && !superseded
 	if dead && stopIntent {
 		// Fence the pause like the idle expiry: reclaim the key as an
@@ -311,11 +311,11 @@ func (m *Manager) release(inst *sandboxInstance) {
 	}
 }
 
-// projectCachedLocked reports whether any instance of the project occupies the
+// workspaceCachedLocked reports whether any instance of the workspace occupies the
 // cache — live, building, or mid-stop. Callers hold m.mu.
-func (m *Manager) projectCachedLocked(projectID string) bool {
+func (m *Manager) workspaceCachedLocked(workspaceID string) bool {
 	for key := range m.instances {
-		if key.projectID == projectID {
+		if key.workspaceID == workspaceID {
 			return true
 		}
 	}
@@ -365,16 +365,16 @@ func (m *Manager) evictLocked(key sandboxKey) (toClose *sandboxInstance) {
 	return inst
 }
 
-// RetireProject evicts every instance of a project built before minLive and
+// RetireWorkspace evicts every instance of a workspace built before minLive and
 // fences that generation off; live holders finish on what they have (invariant 27).
-func (m *Manager) RetireProject(projectID string, minLive int64) {
+func (m *Manager) RetireWorkspace(workspaceID string, minLive int64) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
-	if m.retired[projectID] < minLive {
-		m.retired[projectID] = minLive
+	if m.retired[workspaceID] < minLive {
+		m.retired[workspaceID] = minLive
 	}
 	for key := range m.instances {
-		if key.projectID != projectID || key.gen >= minLive {
+		if key.workspaceID != workspaceID || key.gen >= minLive {
 			continue
 		}
 		if inst := m.evictLocked(key); inst != nil {
@@ -387,14 +387,14 @@ func (m *Manager) RetireProject(projectID string, minLive int64) {
 	}
 }
 
-// RemoveProject evicts every cached instance of the project and fences its id
+// RemoveWorkspace evicts every cached instance of the workspace and fences its id
 // permanently (ids are never reused); in-flight holders finish on what they acquired.
-func (m *Manager) RemoveProject(projectID string) {
+func (m *Manager) RemoveWorkspace(workspaceID string) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
-	m.retired[projectID] = maxGen
+	m.retired[workspaceID] = maxGen
 	for key := range m.instances {
-		if key.projectID != projectID {
+		if key.workspaceID != workspaceID {
 			continue
 		}
 		if inst := m.evictLocked(key); inst != nil {
@@ -407,13 +407,13 @@ func (m *Manager) RemoveProject(projectID string) {
 	}
 }
 
-// maxGen fences a project id permanently: no runtime generation can reach it.
+// maxGen fences a workspace id permanently: no runtime generation can reach it.
 const maxGen = int64(1) << 62
 
-// ReclaimProject evicts the cached instance, then destroys the project's
+// ReclaimWorkspace evicts the cached instance, then destroys the workspace's
 // compute AND its storage (decisions §5.33); the caller deletes the row first.
-func (m *Manager) ReclaimProject(ctx context.Context, spec Spec) error {
-	m.RemoveProject(spec.Project.ID)
+func (m *Manager) ReclaimWorkspace(ctx context.Context, spec Spec) error {
+	m.RemoveWorkspace(spec.Workspace.ID)
 	b, err := backendFor(spec)
 	if err != nil {
 		return err
@@ -421,14 +421,14 @@ func (m *Manager) ReclaimProject(ctx context.Context, spec Spec) error {
 	return b.Reclaim(ctx, spec)
 }
 
-// RebuildContainer discards the project's compute and provisions it again
+// RebuildContainer discards the workspace's compute and provisions it again
 // from the current template (invariant 44); in-flight commands fail.
 func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
 	b, err := backendFor(spec)
 	if err != nil {
 		return err
 	}
-	m.EvictProject(spec.Project.ID)
+	m.EvictWorkspace(spec.Workspace.ID)
 	if err := b.Rebuild(ctx, spec); err != nil {
 		return err
 	}
@@ -436,7 +436,7 @@ func (m *Manager) RebuildContainer(ctx context.Context, spec Spec) error {
 }
 
 // Check reports whether the sandbox is reachable and runnable, touching no
-// project and leaving nothing behind.
+// workspace and leaving nothing behind.
 func (m *Manager) Check(ctx context.Context, sb *store.Sandbox) error {
 	b, err := BackendFor(sb.Type)
 	if err != nil {
@@ -445,13 +445,13 @@ func (m *Manager) Check(ctx context.Context, sb *store.Sandbox) error {
 	return b.Check(ctx, sb)
 }
 
-// EvictProject drops the project's cached instances without fencing the id:
-// the project stays acquirable (a rebuild, a last-session-released binding).
-func (m *Manager) EvictProject(projectID string) {
+// EvictWorkspace drops the workspace's cached instances without fencing the id:
+// the workspace stays acquirable (a rebuild, a last-session-released binding).
+func (m *Manager) EvictWorkspace(workspaceID string) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
 	for key := range m.instances {
-		if key.projectID != projectID {
+		if key.workspaceID != workspaceID {
 			continue
 		}
 		if inst := m.evictLocked(key); inst != nil {
@@ -464,13 +464,13 @@ func (m *Manager) EvictProject(projectID string) {
 	}
 }
 
-// stopProjectOnRelease evicts every instance of the project and makes the last
+// stopWorkspaceOnRelease evicts every instance of the workspace and makes the last
 // holder's release PAUSE it (a user Stop deferred behind live work); idle ones now.
-func (m *Manager) stopProjectOnRelease(projectID string) {
+func (m *Manager) stopWorkspaceOnRelease(workspaceID string) {
 	var toStop []*sandboxInstance
 	m.mu.Lock()
 	for key, inst := range m.instances {
-		if key.projectID != projectID || inst.expired {
+		if key.workspaceID != workspaceID || inst.expired {
 			continue // an idle expiry mid-stop already owns that one's teardown
 		}
 		inst.stopOnRelease = true
@@ -521,12 +521,12 @@ const (
 	fileToolMaxOutputBytes = 65536
 	execToolMaxOutputBytes = 32768
 	// execSpillDir is where exec_command saves output past its cap, under the
-	// project's working directory (spec §2.7v).
+	// workspace's working directory (spec §2.7v).
 	execSpillDir = ".agents/exec"
 )
 
 // SandboxTools returns exec_command, read_file, write_file, list_files and
-// apply_patch for the project over one Sandbox, holding a reference the
+// apply_patch for the workspace over one Sandbox, holding a reference the
 // returned release drops (with any named shells); commandApproval gates
 // exec_command per call.
 func (m *Manager) SandboxTools(spec Spec, commandApproval bool, background BackgroundCommand) ([]*agents.Tool, func(), error) {
@@ -571,17 +571,17 @@ func (m *Manager) buildSandbox(spec Spec) (sandbox.Sandbox, error) {
 	if err != nil {
 		return nil, err
 	}
-	projectID := spec.Project.ID
+	workspaceID := spec.Workspace.ID
 	spec.SaveInstanceRef = func(ctx context.Context, ref string) error {
 		if m.writeInstanceRef == nil {
-			return fmt.Errorf("no way to record the sandbox for project %s: nothing would ever stop it", projectID)
+			return fmt.Errorf("no way to record the sandbox for workspace %s: nothing would ever stop it", workspaceID)
 		}
-		return m.writeInstanceRef(ctx, projectID, ref)
+		return m.writeInstanceRef(ctx, workspaceID, ref)
 	}
 	return b.Open(spec)
 }
 
-// EnsureRunning provisions the project's sandbox and readies it for commands
+// EnsureRunning provisions the workspace's sandbox and readies it for commands
 // now, not on the first command: the image pull's wait lands here, not in a run.
 func (m *Manager) EnsureRunning(ctx context.Context, spec Spec) error {
 	sb, release, err := m.Acquire(spec)
@@ -596,7 +596,7 @@ func (m *Manager) EnsureRunning(ctx context.Context, spec Spec) error {
 	return lc.Start(ctx)
 }
 
-// Stop releases the project's compute, keeping its storage, and reports
+// Stop releases the workspace's compute, keeping its storage, and reports
 // whether it stopped NOW: with another holder the instance is only doomed.
 func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error) {
 	sb, release, err := m.Acquire(spec)
@@ -609,10 +609,10 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 		return false, fmt.Errorf("%s sandbox: %w", spec.Sandbox.Type, sandbox.ErrLifecycleUnsupported)
 	}
 	// "Sole holder?" and "fence as stopping" under one lock.
-	finish, sole := m.detachIfSole(spec.Project.ID)
+	finish, sole := m.detachIfSole(spec.Workspace.ID)
 	if !sole {
 		// Held: the last holder's release PAUSES it.
-		m.stopProjectOnRelease(spec.Project.ID)
+		m.stopWorkspaceOnRelease(spec.Workspace.ID)
 		return false, nil
 	}
 	err = lc.Stop(ctx)
@@ -620,17 +620,17 @@ func (m *Manager) Stop(ctx context.Context, spec Spec) (stopped bool, err error)
 	return err == nil, err
 }
 
-// detachIfSole reports whether this caller holds the project's only reference and,
+// detachIfSole reports whether this caller holds the workspace's only reference and,
 // if so, fences every instance as stopping (idleExpire's shape); finish frees the keys.
-func (m *Manager) detachIfSole(projectID string) (finish func(), sole bool) {
+func (m *Manager) detachIfSole(workspaceID string) (finish func(), sole bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.projectRefsLocked(projectID) != 1 {
+	if m.workspaceRefsLocked(workspaceID) != 1 {
 		return nil, false
 	}
 	var fenced []*sandboxInstance
 	for key, inst := range m.instances {
-		if key.projectID != projectID || inst.expired {
+		if key.workspaceID != workspaceID || inst.expired {
 			continue // an idle expiry mid-stop frees its own key
 		}
 		inst.doomed = true
@@ -654,19 +654,19 @@ func (m *Manager) detachIfSole(projectID string) (finish func(), sole bool) {
 	}, true
 }
 
-// projectRefsLocked sums the live holders across every cached generation of
-// the project. Callers hold m.mu.
-func (m *Manager) projectRefsLocked(projectID string) int {
+// workspaceRefsLocked sums the live holders across every cached generation of
+// the workspace. Callers hold m.mu.
+func (m *Manager) workspaceRefsLocked(workspaceID string) int {
 	n := 0
 	for key, inst := range m.instances {
-		if key.projectID == projectID {
+		if key.workspaceID == workspaceID {
 			n += inst.refs
 		}
 	}
 	return n
 }
 
-// Status reports what the project's compute is doing; building the sandbox is
+// Status reports what the workspace's compute is doing; building the sandbox is
 // a connection, not a container, so "never started" answers absent.
 func (m *Manager) Status(ctx context.Context, spec Spec) (sandbox.State, error) {
 	sb, release, err := m.Acquire(spec)
@@ -681,7 +681,7 @@ func (m *Manager) Status(ctx context.Context, spec Spec) (sandbox.State, error) 
 	return lc.Status(ctx)
 }
 
-// Address is where the project's sandbox serves its ports — the sandbox id
+// Address is where the workspace's sandbox serves its ports — the sandbox id
 // and the domain of "<port>-<id>.<domain>" — on a backend whose ports are public.
 func (m *Manager) Address(ctx context.Context, spec Spec) (id, domain string, err error) {
 	sb, release, err := m.Acquire(spec)
@@ -698,10 +698,10 @@ func (m *Manager) Address(ctx context.Context, spec Spec) (id, domain string, er
 	return a.Address(ctx)
 }
 
-// ExportProject streams the project's working tree as a tar archive; the
+// ExportWorkspace streams the workspace's working tree as a tar archive; the
 // reference it holds is released when the reader is closed (the backend
 // produces the archive lazily).
-func (m *Manager) ExportProject(ctx context.Context, spec Spec) (io.ReadCloser, error) {
+func (m *Manager) ExportWorkspace(ctx context.Context, spec Spec) (io.ReadCloser, error) {
 	sb, release, err := m.Acquire(spec)
 	if err != nil {
 		return nil, err
@@ -732,15 +732,15 @@ func (r *releasingReader) Close() error {
 	return err
 }
 
-// holders counts the live references across every cached generation of the project.
-func (m *Manager) holders(projectID string) int {
+// holders counts the live references across every cached generation of the workspace.
+func (m *Manager) holders(workspaceID string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.projectRefsLocked(projectID)
+	return m.workspaceRefsLocked(workspaceID)
 }
 
 // BuildOptions assembles the SDK options for spec: the sandbox's daemon,
-// image and limits, and the project's container, volume and environment.
+// image and limits, and the workspace's container, volume and environment.
 func BuildOptions(spec Spec) (dockersb.Options, error) {
 	opts, err := DaemonOptions(spec.Sandbox)
 	if err != nil {
@@ -749,14 +749,14 @@ func BuildOptions(spec Spec) (dockersb.Options, error) {
 	if err := applyImage(&opts, spec.Sandbox); err != nil {
 		return dockersb.Options{}, err
 	}
-	if opts.Env, err = store.EnvMap(spec.Project.Env); err != nil {
-		return dockersb.Options{}, fmt.Errorf("project %s: %w", spec.Project.Name, err)
+	if opts.Env, err = store.EnvMap(spec.Workspace.Env); err != nil {
+		return dockersb.Options{}, fmt.Errorf("workspace %s: %w", spec.Workspace.Name, err)
 	}
 	opts.Persistent = true
 	opts.KeepOnClose = true
 	opts.TmpfsSize = "1g"
-	opts.ContainerName = ContainerName(spec.Project.ID)
-	opts.VolumeName = ProjectVolumeName(spec.Project.ID)
+	opts.ContainerName = ContainerName(spec.Workspace.ID)
+	opts.VolumeName = WorkspaceVolumeName(spec.Workspace.ID)
 	return opts, nil
 }
 
@@ -832,14 +832,14 @@ func shortID(id string) string {
 	return id
 }
 
-// ContainerName derives the docker container name serving a project;
+// ContainerName derives the docker container name serving a workspace;
 // deterministic, so a restarted server re-adopts it — decisions §5.19.
-func ContainerName(projectID string) string {
-	return "agents-" + shortID(projectID)
+func ContainerName(workspaceID string) string {
+	return "agents-" + shortID(workspaceID)
 }
 
-// ProjectVolumeName is the named volume serving a project's /workspace on its
+// WorkspaceVolumeName is the named volume serving a workspace's /workspace on its
 // target's daemon (decisions §5.33).
-func ProjectVolumeName(projectID string) string {
-	return "agents-proj-" + shortID(projectID)
+func WorkspaceVolumeName(workspaceID string) string {
+	return "agents-ws-" + shortID(workspaceID)
 }

@@ -20,8 +20,8 @@ export interface ChatSessionState {
   diagnostics?: RunDiagnostic[];
   // Set when the durable task list failed to load (the Tasks panel says so).
   tasksError?: string;
-  // Whether the session is bound to a project (its forks and attempts share its files).
-  projectBound?: boolean;
+  // Whether the session is bound to a workspace (its forks and attempts share its files).
+  workspaceBound?: boolean;
   // The newest todo_write on the timeline (lib/checklist.ts): the chip above
   // the composer shows it, and only its card opens by default.
   checklist?: Checklist | null;

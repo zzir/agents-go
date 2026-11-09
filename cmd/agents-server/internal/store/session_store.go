@@ -240,13 +240,13 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 	return nil
 }
 
-// BindProjectIfEmpty permanently binds project_id to the session unless it is
+// BindWorkspaceIfEmpty permanently binds workspace_id to the session unless it is
 // already bound (decisions §5.28), reporting whether THIS call bound it; the
-// project's existence is pinned inside the write (EXISTS on SQLite, FOR KEY
-// SHARE on PostgreSQL). An empty projectID binds nothing; a missing session is
+// workspace's existence is pinned inside the write (EXISTS on SQLite, FOR KEY
+// SHARE on PostgreSQL). An empty workspaceID binds nothing; a missing session is
 // (false, nil).
-func (s *SessionStore) BindProjectIfEmpty(ctx context.Context, id, projectID string) (bool, error) {
-	if projectID == "" {
+func (s *SessionStore) BindWorkspaceIfEmpty(ctx context.Context, id, workspaceID string) (bool, error) {
+	if workspaceID == "" {
 		return false, nil
 	}
 	var res sql.Result
@@ -254,49 +254,49 @@ func (s *SessionStore) BindProjectIfEmpty(ctx context.Context, id, projectID str
 	if s.db.Dialect().Name() == dialect.PG {
 		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			var pid string
-			lerr := tx.NewSelect().Model((*Project)(nil)).Column("id").
-				Where("id = ?", projectID).For("KEY SHARE").Scan(ctx, &pid)
+			lerr := tx.NewSelect().Model((*Workspace)(nil)).Column("id").
+				Where("id = ?", workspaceID).For("KEY SHARE").Scan(ctx, &pid)
 			if errors.Is(lerr, sql.ErrNoRows) {
-				return nil // no project row: bind nothing (res stays nil)
+				return nil // no workspace row: bind nothing (res stays nil)
 			}
 			if lerr != nil {
 				return lerr
 			}
 			res, lerr = tx.NewUpdate().Model((*Session)(nil)).
-				Set("project_id = ?", projectID).
+				Set("workspace_id = ?", workspaceID).
 				Where("id = ?", id).
-				Where("project_id IS NULL").
+				Where("workspace_id IS NULL").
 				Exec(ctx)
 			return lerr
 		})
 	} else {
 		res, err = s.db.NewUpdate().Model((*Session)(nil)).
-			Set("project_id = ?", projectID).
+			Set("workspace_id = ?", workspaceID).
 			Where("id = ?", id).
-			Where("project_id IS NULL").
-			Where("EXISTS (SELECT 1 FROM projects WHERE id = ?)", projectID).
+			Where("workspace_id IS NULL").
+			Where("EXISTS (SELECT 1 FROM workspaces WHERE id = ?)", workspaceID).
 			Exec(ctx)
 	}
 	if err != nil {
-		return false, fmt.Errorf("binding session %s to project %s: %w", id, projectID, err)
+		return false, fmt.Errorf("binding session %s to workspace %s: %w", id, workspaceID, err)
 	}
 	if res == nil {
-		return false, nil // the project vanished before the lock
+		return false, nil // the workspace vanished before the lock
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("binding session %s to project %s: %w", id, projectID, err)
+		return false, fmt.Errorf("binding session %s to workspace %s: %w", id, workspaceID, err)
 	}
 	return n > 0, nil
 }
 
-// CountProjectRefs reports how many sessions bind projectID — the unit the
+// CountWorkspaceRefs reports how many sessions bind workspaceID — the unit the
 // SandboxManager caches an instance per. An empty id counts the unbound (NULL,
 // see boundTo).
-func (s *SessionStore) CountProjectRefs(ctx context.Context, projectID string) (int, error) {
-	n, err := boundTo(s.db.NewSelect().Model((*Session)(nil)), "project_id", projectID).Count(ctx)
+func (s *SessionStore) CountWorkspaceRefs(ctx context.Context, workspaceID string) (int, error) {
+	n, err := boundTo(s.db.NewSelect().Model((*Session)(nil)), "workspace_id", workspaceID).Count(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("counting sessions bound to project %s: %w", projectID, err)
+		return 0, fmt.Errorf("counting sessions bound to workspace %s: %w", workspaceID, err)
 	}
 	return n, nil
 }

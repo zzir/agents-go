@@ -9,9 +9,9 @@ import { labelRuns } from '@/lib/runLabels';
 import { turnSpeed, loadSpeedPref, saveSpeedPref } from '@/lib/turnSpeed';
 import { queuedInputMarkers } from '@/lib/queuedInputs';
 import { useScrollToBottom, useApi, useCopy } from '@/lib/hooks';
-import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionProject, saveSessionProject } from '@/lib/drafts';
-import { composerProjectRows, composerSandboxView, projectLabel, type SandboxSupports, type SessionBinding } from '@/lib/binding';
-import { useProjects } from '@/lib/useProjects';
+import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionWorkspace, saveSessionWorkspace } from '@/lib/drafts';
+import { composerWorkspaceRows, composerSandboxView, workspaceLabel, type SandboxSupports, type SessionBinding } from '@/lib/binding';
+import { useWorkspaces } from '@/lib/useWorkspaces';
 import { parseTaskNotification, TASK_KIND_WORKFLOW, type InjectQueue, type TaskStatus } from '@/lib/protocol';
 import type { SessionState, TaskState } from '@/lib/useAgentSocket';
 import { ChatSessionProvider, useDerivedChatTasks, type ChatSessionState, type ChatActions } from '@/features/chat/ChatSessionContext';
@@ -37,7 +37,7 @@ import { groupTraceRuns } from '@/lib/traceGroups';
 import { ReplayDialog } from '@/features/chat/ReplayDialog';
 import { ContextPanel } from '@/features/chat/ContextPanel';
 import { ChatTopBar } from '@/features/chat/ChatTopBar';
-import { NewProjectDialog, useProjectMenu } from '@/features/chat/ProjectControls';
+import { NewWorkspaceDialog, useWorkspaceMenu } from '@/features/chat/WorkspaceControls';
 import { FileDirectoryIcon } from '@primer/octicons-react';
 import { toast } from '@/lib/toast';
 
@@ -102,7 +102,7 @@ const PENDING_HINT = 'Sending skips the pending call — or use Reject with reas
 // ChatViewActions is what the view can ask the app to do. Every member is a
 // stable callback, so the object is memoized once and the memo'd view holds.
 export interface ChatViewActions {
-  onSend: (text: string, agentConfigId: string, projectId?: string, attachments?: AttachmentMeta[]) => void;
+  onSend: (text: string, agentConfigId: string, workspaceId?: string, attachments?: AttachmentMeta[]) => void;
   onCancel: (graceful?: boolean) => boolean;
   onApprove?: (id: string, scope?: string) => void;
   // Approves every listed pending call of the session's pause at once.
@@ -117,7 +117,7 @@ export interface ChatViewActions {
   // Forces one compaction pass now (the Context panel's button); resolves
   // after the timeline reload that follows a fold.
   onCompact?: () => Promise<void>;
-  onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, projectId?: string) => void;
+  onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, workspaceId?: string) => void;
   onWatchTask?: (sid: string, taskId: string, childSessionId: string) => void;
   onUnwatchTask?: (sid: string) => void;
   // Applies a server-confirmed task state change (the stop API response) —
@@ -134,9 +134,9 @@ export interface ChatViewActions {
   onRetryTasks?: () => void;
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (open-only; it closes on the panel itself)
-  // with the bound session's project, so a fresh panel starts a terminal in the
+  // with the bound session's workspace, so a fresh panel starts a terminal in the
   // runs' container.
-  onTerminalOpen?: (project?: { projectId: string; projectName?: string; targetName?: string }) => void;
+  onTerminalOpen?: (workspace?: { workspaceId: string; workspaceName?: string; targetName?: string }) => void;
 }
 
 interface ChatViewProps {
@@ -147,7 +147,7 @@ interface ChatViewProps {
   // composer waits for it before the first agent when no local draft exists),
   // '' when none bound.
   sessionAgentId?: string;
-  // The session's project binding, or null while unbound — invariant 27.
+  // The session's workspace binding, or null while unbound — invariant 27.
   sessionBinding?: SessionBinding | null;
   // The session's OWN run waits on a decision (the server's word): a message
   // sent now abandons that pause, and the composer says so.
@@ -159,7 +159,7 @@ interface ChatViewProps {
   loadError?: string;
   settingsReloadKey?: number;
   // Bumped by the app when the set of session bindings changed; refreshes the
-  // Project picker's list.
+  // Workspace picker's list.
   bindingsVersion?: number;
   panel: InspectorPanel;
   actions: ChatViewActions;
@@ -180,13 +180,13 @@ export function ChatView({
     onWatchTask, onUnwatchTask, onPatchTask, onLoadSpan, onPanelChange, onTerminalOpen, onSettingsOpen, onRetryTasks,
   } = actions;
   const [agentConfigId, setAgentConfigIdState] = useState(() => loadSessionAgent(sessionId || ''));
-  const [projectId, setProjectIdState] = useState(() => loadSessionProject(sessionId || ''));
-  // The "New project…" dialog, seeded with the machine to offer first.
-  const [newProject, setNewProject] = useState<{ sandboxId: string } | null>(null);
+  const [workspaceId, setWorkspaceIdState] = useState(() => loadSessionWorkspace(sessionId || ''));
+  // The "New workspace…" dialog, seeded with the machine to offer first.
+  const [newWorkspace, setNewWorkspace] = useState<{ sandboxId: string } | null>(null);
 
   useEffect(() => {
     setAgentConfigIdState(loadSessionAgent(sessionId || ''));
-    setProjectIdState(loadSessionProject(sessionId || ''));
+    setWorkspaceIdState(loadSessionWorkspace(sessionId || ''));
   }, [sessionId]);
 
   const setAgentConfigId = useCallback((id: string) => {
@@ -200,9 +200,9 @@ export function ChatView({
     saveLastAgent(id);
   }, [setAgentConfigId]);
 
-  const setProjectId = useCallback((id: string) => {
-    setProjectIdState(id);
-    saveSessionProject(sessionId || '', id);
+  const setWorkspaceId = useCallback((id: string) => {
+    setWorkspaceIdState(id);
+    saveSessionWorkspace(sessionId || '', id);
   }, [sessionId]);
 
   const [traceActiveRun, setTraceActiveRun] = useState<string | null>(null);
@@ -211,9 +211,9 @@ export function ChatView({
   // hand, never "no agents".
   const gate = composerGate(agentConfigs, agentsError);
   const { data: sandboxDefs, reload: reloadSandboxes } = useApi<SandboxDef[]>(() => api.sandboxes.list() as Promise<SandboxDef[]>, [], 'sandboxes');
-  // The caller's project rows for the picker — the same hook the terminal
+  // The caller's workspace rows for the picker — the same hook the terminal
   // panel's + menu uses.
-  const { projects, error: projectsError, reload: reloadProjects, mutate: mutateProjects } = useProjects(bindingsVersion);
+  const { workspaces, error: workspacesError, reload: reloadWorkspaces, mutate: mutateWorkspaces } = useWorkspaces(bindingsVersion);
 
   useEffect(() => {
     if (!agentConfigs || agentConfigs.length === 0) return;
@@ -232,12 +232,12 @@ export function ChatView({
     setAgentConfigId(agentConfigs.some(a => a.id === last) ? last : agentConfigs[0].id);
   }, [agentConfigs, agentConfigId, sessionId, sessionAgentId, setAgentConfigId]);
 
-  // A persisted project may have since been deleted — a send carrying it
+  // A persisted workspace may have since been deleted — a send carrying it
   // would be refused, so a now-unknown id drops back to None.
   useEffect(() => {
-    if (!projectId || !projects) return;
-    if (!projects.some(p => p.id === projectId)) setProjectId('');
-  }, [projects, projectId, setProjectId]);
+    if (!workspaceId || !workspaces) return;
+    if (!workspaces.some(p => p.id === workspaceId)) setWorkspaceId('');
+  }, [workspaces, workspaceId, setWorkspaceId]);
 
   useEffect(() => {
     if (settingsReloadKey) { reloadAgents(); reloadSandboxes(); }
@@ -280,24 +280,24 @@ export function ChatView({
     });
   }, [copy]);
 
-  const selectedProject = projects?.find(p => p.id === projectId);
+  const selectedWorkspace = workspaces?.find(p => p.id === workspaceId);
   const sandboxName = (id?: string) => sandboxDefs?.find(sb => sb.id === id)?.name || '';
   // The bound pair is what the top-bar menu acts on: a session's container is
   // its binding's, never the composer's current pick.
-  const boundProject = sessionBinding?.projectId ? projects?.find(p => p.id === sessionBinding.projectId) || null : null;
-  const boundSandbox = sandboxDefs?.find(sb => sb.id === boundProject?.sandbox_id);
-  // Capabilities come from the sandbox row the project names; Rebuild is
+  const boundWorkspace = sessionBinding?.workspaceId ? workspaces?.find(p => p.id === sessionBinding.workspaceId) || null : null;
+  const boundSandbox = sandboxDefs?.find(sb => sb.id === boundWorkspace?.sandbox_id);
+  // Capabilities come from the sandbox row the workspace names; Rebuild is
   // withheld until that row declares `rebuild` (a store that IS the compute
   // cannot be rebuilt).
-  const { menu: projectMenu, dialog: envDialog } = useProjectMenu({
-    project: boundProject,
+  const { menu: workspaceMenu, dialog: envDialog } = useWorkspaceMenu({
+    workspace: boundWorkspace,
     sessionId,
-    rebuildable: !!boundProject && !!boundSandbox?.supports?.rebuild,
-    hostable: !!boundProject && !!boundSandbox?.supports?.public_host,
+    rebuildable: !!boundWorkspace && !!boundSandbox?.supports?.rebuild,
+    hostable: !!boundWorkspace && !!boundSandbox?.supports?.public_host,
     running,
-    onProjectsChanged: reloadProjects,
+    onWorkspacesChanged: reloadWorkspaces,
   });
-  const sandboxView = composerSandboxView(sessionBinding || null, projects, sandboxDefs);
+  const sandboxView = composerSandboxView(sessionBinding || null, workspaces, sandboxDefs);
 
   const handleSend = useCallback((text: string, attachments?: AttachmentMeta[]) => {
     // No sessionId is fine: sending with no active session starts a new session
@@ -305,9 +305,9 @@ export function ChatView({
     if (!agentConfigId) return;
     // Your own send follows the log again, wherever you had scrolled — invariant 18.
     scrollToBottom();
-    // Bound: the server uses the binding regardless — send no project claim.
-    onSend(text, agentConfigId, sessionBinding ? '' : projectId, attachments);
-  }, [agentConfigId, projectId, sessionBinding, onSend, scrollToBottom]);
+    // Bound: the server uses the binding regardless — send no workspace claim.
+    onSend(text, agentConfigId, sessionBinding ? '' : workspaceId, attachments);
+  }, [agentConfigId, workspaceId, sessionBinding, onSend, scrollToBottom]);
 
   // A message typed while the run is live is queued on it; like a send, it
   // follows the log again (invariant 18).
@@ -500,12 +500,12 @@ export function ChatView({
     flashMessage(el);
   }, []);
 
-  // Bound sessions claim no project (the server uses the binding); unbound ones
-  // carry the choice, since a regen can be the first project-carrying run.
-  const regenProjectId = sessionBinding ? '' : projectId;
+  // Bound sessions claim no workspace (the server uses the binding); unbound ones
+  // carry the choice, since a regen can be the first workspace-carrying run.
+  const regenWorkspaceId = sessionBinding ? '' : workspaceId;
   const handleRegen = useCallback((messageId: string, content: string) => {
-    onRegenerate?.(messageId, content, agentConfigId, regenProjectId);
-  }, [onRegenerate, agentConfigId, regenProjectId]);
+    onRegenerate?.(messageId, content, agentConfigId, regenWorkspaceId);
+  }, [onRegenerate, agentConfigId, regenWorkspaceId]);
 
   // The session scope every transcript component reads (invariant 38); each value
   // is memoized on its inputs, so a streaming delta re-renders no consumer.
@@ -519,14 +519,14 @@ export function ChatView({
     for (const a of agentConfigs || []) m[a.id] = a.name;
     return m;
   }, [agentConfigs]);
-  const projectBound = !!sessionBinding?.projectId;
+  const workspaceBound = !!sessionBinding?.workspaceId;
   // state.messages is the typed timeline; ChatMessage is this file's looser
   // read of the same rows.
   const checklist = useMemo(() => latestChecklist(state.messages), [state.messages]);
   const traceMarkers = useMemo(() => queuedInputMarkers(state.messages), [state.messages]);
   const session = useMemo<ChatSessionState>(
-    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, agentNames, tasksError, projectBound, checklist }),
-    [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, projectBound, checklist],
+    () => ({ sessionId, running, compacting, diagnostics, agentAvatars, agentNames, tasksError, workspaceBound, checklist }),
+    [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, workspaceBound, checklist],
   );
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, approveAll: onApproveAll, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
@@ -540,15 +540,15 @@ export function ChatView({
       panel={panel}
       onPanelChange={onPanelChange}
       terminalEnabled={!!onTerminalOpen && !!sandboxDefs && sandboxDefs.length > 0}
-      // The bound project's terminal — the same container the runs use. The
+      // The bound workspace's terminal — the same container the runs use. The
       // menu that offers it renders only once the session is bound.
-      onTerminalOpen={onTerminalOpen && boundProject
-        ? () => onTerminalOpen({ projectId: boundProject.id, projectName: boundProject.name, targetName: sandboxName(boundProject.sandbox_id) })
+      onTerminalOpen={onTerminalOpen && boundWorkspace
+        ? () => onTerminalOpen({ workspaceId: boundWorkspace.id, workspaceName: boundWorkspace.name, targetName: sandboxName(boundWorkspace.sandbox_id) })
         : undefined}
       binding={sandboxView.bound && sessionBinding
-        ? { title: sandboxView.title, projectName: projects?.find(p => p.id === sessionBinding.projectId)?.name || '…' }
+        ? { title: sandboxView.title, workspaceName: workspaces?.find(p => p.id === sessionBinding.workspaceId)?.name || '…' }
         : null}
-      projectMenu={projectMenu}
+      workspaceMenu={workspaceMenu}
     />
   );
 
@@ -562,35 +562,35 @@ export function ChatView({
   const selectedAgentLabel = selectedAgent?.name || 'Agent';
   const agentCollisions = collidingNames(agentConfigs || []);
 
-  // The composer's "+" carries the Project submenu until the session binds: the
-  // caller's projects newest first, then New project; picking the checked project
+  // The composer's "+" carries the Workspace submenu until the session binds: the
+  // caller's workspaces newest first, then New workspace; picking the checked workspace
   // again clears it. Once bound, the top bar's badge is the binding.
-  const projectRows = composerProjectRows(projects, sandboxDefs);
+  const workspaceRows = composerWorkspaceRows(workspaces, sandboxDefs);
   const plusItems: ReactNode = !sandboxView.bound && sandboxDefs && sandboxDefs.length > 0 ? (
     <ActionMenu>
       <ActionMenu.Anchor>
         <ActionList.Item>
           <ActionList.LeadingVisual><FileDirectoryIcon /></ActionList.LeadingVisual>
-          Project
-          {selectedProject && <ActionList.Description variant="inline">{selectedProject.name}</ActionList.Description>}
+          Workspace
+          {selectedWorkspace && <ActionList.Description variant="inline">{selectedWorkspace.name}</ActionList.Description>}
         </ActionList.Item>
       </ActionMenu.Anchor>
       <ActionMenu.Overlay>
         <ActionList selectionVariant="single">
           {/* A failed fetch must not read as an empty account. */}
-          {projectsError ? (
-            <ActionList.Item disabled>projects failed to load</ActionList.Item>
-          ) : projectRows.length === 0 ? (
-            <ActionList.Item disabled>no projects yet</ActionList.Item>
-          ) : projectRows.map(({ project: p, sandboxName: sb }) => (
-            <ActionList.Item key={p.id} selected={projectId === p.id} onSelect={() => setProjectId(projectId === p.id ? '' : p.id)} title={projectLabel(p.name, sb)}>
+          {workspacesError ? (
+            <ActionList.Item disabled>workspaces failed to load</ActionList.Item>
+          ) : workspaceRows.length === 0 ? (
+            <ActionList.Item disabled>no workspaces yet</ActionList.Item>
+          ) : workspaceRows.map(({ workspace: p, sandboxName: sb }) => (
+            <ActionList.Item key={p.id} selected={workspaceId === p.id} onSelect={() => setWorkspaceId(workspaceId === p.id ? '' : p.id)} title={workspaceLabel(p.name, sb)}>
               {p.name}
               <ActionList.Description variant="inline">{sb}</ActionList.Description>
             </ActionList.Item>
           ))}
           <ActionList.Divider />
-          <ActionList.Item onSelect={() => setNewProject({ sandboxId: selectedProject?.sandbox_id || sandboxDefs[0].id })}>
-            New project…
+          <ActionList.Item onSelect={() => setNewWorkspace({ sandboxId: selectedWorkspace?.sandbox_id || sandboxDefs[0].id })}>
+            New workspace…
           </ActionList.Item>
         </ActionList>
       </ActionMenu.Overlay>
@@ -599,19 +599,19 @@ export function ChatView({
 
   const inputToolbar: ReactNode = (
     <>
-      {newProject && sandboxDefs && (
-        <NewProjectDialog
+      {newWorkspace && sandboxDefs && (
+        <NewWorkspaceDialog
           sandboxes={sandboxDefs}
-          initialSandboxId={newProject.sandboxId}
-          onClose={() => setNewProject(null)}
+          initialSandboxId={newWorkspace.sandboxId}
+          onClose={() => setNewWorkspace(null)}
           onCreated={created => {
             // Seed the cached list before selecting: the stale-id guard above
-            // runs against `projects` on the next commit, and a fire-and-forget
+            // runs against `workspaces` on the next commit, and a fire-and-forget
             // reload would wipe the selection.
-            mutateProjects(prev => prev ? [...prev.filter(p => p.id !== created.id), created] : [created]);
-            if (created.id) setProjectId(created.id);
-            reloadProjects();
-            setNewProject(null);
+            mutateWorkspaces(prev => prev ? [...prev.filter(p => p.id !== created.id), created] : [created]);
+            if (created.id) setWorkspaceId(created.id);
+            reloadWorkspaces();
+            setNewWorkspace(null);
           }}
         />
       )}

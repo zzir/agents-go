@@ -178,7 +178,7 @@ Tables are created automatically on startup:
 | `attachments`       | Image attachments: the bucket key and owner of each upload, and whether a message bound it |
 | `settings`          | Global key-value settings                                                           |
 | `sandboxes`         | Sandbox rows: where it runs (`docker` / `e2b`) and what runs on it                  |
-| `projects`          | Per-user working trees on a sandbox (decisions §5.28); storage derived from the ids       |
+| `workspaces`        | Per-user working trees on a sandbox (decisions §5.28); storage derived from the ids |
 | `guardrails`        | Custom guardrail definitions                                                        |
 | `trace_events`      | Trace spans (agent, generation, function, handoff, compaction) + run lineage; payload referenced from `trace_blobs`; pruned in batches by `trace_retention_days` |
 | `trace_blobs`       | Payload elements of a session's spans (input items, replies, tool definitions, instructions): one row per distinct element per session, gzip-compressed when smaller; dropped with the session's last event or by `trace_payload_retention_days` |
@@ -198,8 +198,8 @@ There is no migration mechanism yet
 ([decisions §5.59](../explanation/decisions.md#559-a-schema-change-recreates-the-database)):
 a release that changes the schema refuses an older database at startup
 ([invariant 25](../explanation/workbench-invariants.md)) and the database must
-be recreated. Before upgrading across one, export what you need — project
-files with `GET /api/v1/projects/:id/export`, memories with
+be recreated. Before upgrading across one, export what you need — workspace
+files with `GET /api/v1/workspaces/:id/export`, memories with
 `GET /api/v1/memories`; sessions, users, tokens and the audit log have no
 export. Back up the database file (or dump the PostgreSQL database) before any
 upgrade. Each release's notes open with whether it refuses the previous

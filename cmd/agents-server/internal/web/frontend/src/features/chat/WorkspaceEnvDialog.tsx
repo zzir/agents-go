@@ -4,14 +4,14 @@ import type { ReactElement } from 'react';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
-import type { EnvVar, Project, ProjectDetail } from '@/lib/binding';
+import type { EnvVar, Workspace, WorkspaceDetail } from '@/lib/binding';
 
-/* The project's settings: the environment, loaded on open (a listing never
+/* The workspace's settings: the environment, loaded on open (a listing never
    carries one), masked both ways unless a value is rewritten. Saving a CHANGED
    environment replaces the container at the next run, so that save confirms first. */
 
-interface ProjectEnvDialogProps {
-  project: Project;
+interface WorkspaceEnvDialogProps {
+  workspace: Workspace;
   sessionCount?: number;
   onClose: () => void;
 }
@@ -28,10 +28,10 @@ interface SandboxSummary {
 const containerEnv = (vars: EnvVar[]) =>
   JSON.stringify(cleanEnv(vars).map(v => [v.key, v.value]).sort((a, b) => a[0].localeCompare(b[0])));
 
-export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvDialogProps): ReactElement {
+export function WorkspaceEnvDialog({ workspace, sessionCount, onClose }: WorkspaceEnvDialogProps): ReactElement {
   const [vars, setVars] = useState<EnvVar[] | null>(null);
   const [sandbox, setSandbox] = useState<SandboxSummary | null>(null);
-  const [revision, setRevision] = useState<number | undefined>(project.revision);
+  const [revision, setRevision] = useState<number | undefined>(workspace.revision);
   const [loaded, setLoaded] = useState('');
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -39,21 +39,21 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
 
   useEffect(() => {
     let live = true;
-    api.projects.get(project.id)
+    api.workspaces.get(workspace.id)
       .then(d => {
         if (!live) return;
-        const env = ((d as ProjectDetail).env || []) as EnvVar[];
+        const env = ((d as WorkspaceDetail).env || []) as EnvVar[];
         setVars(env);
-        setRevision((d as ProjectDetail).revision);
+        setRevision((d as WorkspaceDetail).revision);
         setLoaded(containerEnv(env));
       })
       .catch((e: Error) => { if (live) setError(e.message || 'Could not load the environment'); });
     return () => { live = false; };
-  }, [project.id]);
+  }, [workspace.id]);
 
   useEffect(() => {
     let live = true;
-    api.sandboxes.get(project.sandbox_id)
+    api.sandboxes.get(workspace.sandbox_id)
       .then(sb => {
         // A failure here costs a hint, not the dialog: the environment is
         // still editable without knowing the image.
@@ -62,7 +62,7 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
       })
       .catch(() => {});
     return () => { live = false; };
-  }, [project.sandbox_id]);
+  }, [workspace.sandbox_id]);
 
   const changed = vars !== null && containerEnv(vars) !== loaded;
   const invalid = vars ? envError(vars) : null;
@@ -71,22 +71,22 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
     if (!vars || saving) return;
     setSaving(true);
     try {
-      await api.projects.update(project.id, {
-        name: project.name, sandbox_id: project.sandbox_id,
+      await api.workspaces.update(workspace.id, {
+        name: workspace.name, sandbox_id: workspace.sandbox_id,
         env: cleanEnv(vars), revision,
       });
       toast.success(changed ? 'Saved — the container is recreated on the next run' : 'Saved');
       onClose();
     } catch (e) {
-      // 409: someone else edited this project since it was loaded.
-      toast.error((e as Error).message || 'Could not save the project');
+      // 409: someone else edited this workspace since it was loaded.
+      toast.error((e as Error).message || 'Could not save the workspace');
       setSaving(false);
     }
   };
 
   if (confirming) {
     const used = sessionCount && sessionCount > 0
-      ? ` This project is used by ${sessionCount} session${sessionCount === 1 ? '' : 's'}.`
+      ? ` This workspace is used by ${sessionCount} session${sessionCount === 1 ? '' : 's'}.`
       : '';
     return (
       <Dialog
@@ -98,7 +98,7 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
         ]}
       >
         <p>
-          The container for “{project.name}” is recreated at its <strong>next run</strong>.
+          The container for “{workspace.name}” is recreated at its <strong>next run</strong>.
         </p>
         <p className="env-editor-hint">
           Packages installed inside the container are lost; files under <code>/workspace</code> are not
@@ -111,7 +111,7 @@ export function ProjectEnvDialog({ project, sessionCount, onClose }: ProjectEnvD
 
   return (
     <Dialog
-      title={`Environment — ${project.name}`}
+      title={`Environment — ${workspace.name}`}
       onClose={onClose}
       width="xlarge"
       footerButtons={[

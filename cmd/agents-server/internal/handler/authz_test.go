@@ -528,11 +528,11 @@ func TestSessionReassignIsAdminManagement(t *testing.T) {
 	}
 }
 
-// A session bound to a project transfers only to the project's owner: the
-// binding is immutable and its runs execute in that project's container, so a
+// A session bound to a workspace transfers only to the workspace's owner: the
+// binding is immutable and its runs execute in that workspace's container, so a
 // reassignment elsewhere would hand a stranger the original owner's files and
 // write-only env. An unbound session reassigns as before.
-func TestSessionReassignRespectsProjectBinding(t *testing.T) {
+func TestSessionReassignRespectsWorkspaceBinding(t *testing.T) {
 	r := authzRig(t)
 	engine, sessions, db := r.engine, r.sessions, r.db
 	ctx := context.Background()
@@ -541,12 +541,12 @@ func TestSessionReassignRespectsProjectBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	proj := &store.Project{ID: store.NewID(), OwnerID: memberUser.ID, SandboxID: mkSandboxRow(t, db), Name: "p"}
-	if err := store.NewProjectStore(db).Create(ctx, proj); err != nil {
+	ws := &store.Workspace{ID: store.NewID(), OwnerID: memberUser.ID, SandboxID: mkSandboxRow(t, db), Name: "p"}
+	if err := store.NewWorkspaceStore(db).Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
 	unbound := &store.Session{ID: store.NewID(), OwnerID: memberUser.ID, Name: "free"}
-	bound := &store.Session{ID: store.NewID(), OwnerID: otherUser.ID, Name: "bound", ProjectID: proj.ID}
+	bound := &store.Session{ID: store.NewID(), OwnerID: otherUser.ID, Name: "bound", WorkspaceID: ws.ID}
 	for _, s := range []*store.Session{unbound, bound} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatal(err)
@@ -557,7 +557,7 @@ func TestSessionReassignRespectsProjectBinding(t *testing.T) {
 	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+unbound.ID+"/owner", toOther)); rec.Code != http.StatusNoContent {
 		t.Fatalf("reassign unbound = %d (%s)", rec.Code, rec.Body.String())
 	}
-	// Bound: neither the current owner nor the admin owns the project.
+	// Bound: neither the current owner nor the admin owns the workspace.
 	for _, target := range []string{otherUser.ID, adminUser.ID} {
 		rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+bound.ID+"/owner", `{"user_id":"`+target+`"}`))
 		if rec.Code != http.StatusConflict {
@@ -568,10 +568,10 @@ func TestSessionReassignRespectsProjectBinding(t *testing.T) {
 		t.Fatalf("a refused reassign moved the session to %s", got.OwnerID)
 	}
 	if rec := serve(engine, as(adminUser, http.MethodPut, "/api/v1/sessions/"+bound.ID+"/owner", `{"user_id":"`+memberUser.ID+`"}`)); rec.Code != http.StatusNoContent {
-		t.Fatalf("reassign bound to the project's owner = %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("reassign bound to the workspace's owner = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if got, _ := sessions.Get(ctx, bound.ID); got.OwnerID != memberUser.ID {
-		t.Fatalf("session owner = %s, want the project's owner", got.OwnerID)
+		t.Fatalf("session owner = %s, want the workspace's owner", got.OwnerID)
 	}
 }
 
@@ -742,9 +742,9 @@ func TestRunEventsStayWithTheOwner(t *testing.T) {
 
 	// The broadcast bus — a fact about the session a run stream cannot carry
 	// to everyone — reaches the owner's connections only.
-	fact := &protocol.Envelope{Type: protocol.EventSessionProjectBound, Payload: json.RawMessage(`{"session_id":"` + sess.ID + `"}`)}
+	fact := &protocol.Envelope{Type: protocol.EventSessionWorkspaceBound, Payload: json.RawMessage(`{"session_id":"` + sess.ID + `"}`)}
 	wsh.registry.Broadcast(t.Context(), fact, "", sess.ID)
-	if got := readUntil(t, owner, protocol.EventSessionProjectBound); got.Type != protocol.EventSessionProjectBound {
+	if got := readUntil(t, owner, protocol.EventSessionWorkspaceBound); got.Type != protocol.EventSessionWorkspaceBound {
 		t.Fatalf("owner did not hear the broadcast")
 	}
 	if err := stranger.WriteJSON(protocol.Envelope{Type: protocol.EventRunSubscribe, Payload: sub}); err != nil {

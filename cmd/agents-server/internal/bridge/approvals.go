@@ -74,7 +74,7 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 		RunID:         result.RunID,
 		SessionID:     result.SessionID,
 		AgentConfigID: result.AgentConfigID,
-		ProjectID:     result.ProjectID,
+		WorkspaceID:   result.WorkspaceID,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
 		// The paused turn's user text, a fallback for a reload during the pause.
@@ -96,9 +96,9 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 }
 
 // buildAgentRegistry builds the agent and its reachable handoff targets by name for
-// agents.RunStateFromJSON; pass the run's project, or the re-run agent loses its tools.
-func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, projectID string, background bool, ownerID string) (map[string]*agents.Agent, *BuildResult, error) {
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, projectID, background, ownerID)
+// agents.RunStateFromJSON; pass the run's workspace, or the re-run agent loses its tools.
+func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, workspaceID string, background bool, ownerID string) (map[string]*agents.Agent, *BuildResult, error) {
+	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, workspaceID, background, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -312,7 +312,7 @@ func (r *Runner) resolvePending(ctx context.Context, pending *store.PendingAppro
 	if err != nil {
 		return "", err
 	}
-	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.ProjectID, taskMeta != nil, sess.OwnerID)
+	registry, rebuilt, err := r.buildAgentRegistry(ctx, pending.AgentConfigID, pending.WorkspaceID, taskMeta != nil, sess.OwnerID)
 	if err != nil {
 		return "", fmt.Errorf("rebuilding agent: %w", err)
 	}
@@ -386,7 +386,7 @@ func (r *Runner) resolvePending(ctx context.Context, pending *store.PendingAppro
 		}
 		return nil
 	}
-	runID, err = r.ResumeRun(pending.RunID, state, rebuilt, pending.SessionID, pending.AgentConfigID, pending.ProjectID, verify, onDone)
+	runID, err = r.ResumeRun(pending.RunID, state, rebuilt, pending.SessionID, pending.AgentConfigID, pending.WorkspaceID, verify, onDone)
 	if errors.Is(err, errResumeStopped) {
 		// Stopped between the claim and the launch: nothing ran, nothing to
 		// restore (409).

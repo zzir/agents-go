@@ -16,7 +16,7 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// commandFixture is a runner with a project on a local sandbox under workspace
+// commandFixture is a runner with a workspace on a local sandbox under dir
 // and an agent opted into background commands, on the model at url.
 type commandFixture struct {
 	runner    *Runner
@@ -24,27 +24,27 @@ type commandFixture struct {
 	tasks     *store.TaskStore
 	agents    *store.AgentConfigStore
 	agent     *store.AgentConfig
-	project   *store.Project
-	workspace string
+	workspace *store.Workspace
+	dir       string
 }
 
 func newCommandFixture(t *testing.T, url string) *commandFixture {
 	t.Helper()
 	ctx := context.Background()
 	runner, sessions, taskRows, agentConfigs := newTaskTestRunner(t)
-	workspace := t.TempDir()
+	dir := t.TempDir()
 	runner.Deps.Sandboxes = store.NewSandboxStore(runner.db)
-	runner.Deps.Projects = store.NewProjectStore(runner.db)
+	runner.Deps.Workspaces = store.NewWorkspaceStore(runner.db)
 	runner.Deps.SandboxManager = sandboxes.NewManager()
 	runner.Deps.SandboxManager.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
-		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workspace}), nil
+		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: dir}), nil
 	})
 	tg := &store.Sandbox{ID: store.NewID(), Name: "host", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := runner.Deps.Sandboxes.Create(ctx, tg); err != nil {
 		t.Fatal(err)
 	}
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
-	if err := runner.Deps.Projects.Create(ctx, proj); err != nil {
+	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
+	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "operator", Model: "gpt-test",
@@ -53,7 +53,7 @@ func newCommandFixture(t *testing.T, url string) *commandFixture {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	return &commandFixture{runner, sessions, taskRows, agentConfigs, ac, proj, workspace}
+	return &commandFixture{runner, sessions, taskRows, agentConfigs, ac, ws, dir}
 }
 
 // backgroundModel asks for cmd in the background on its first call and says a
@@ -70,16 +70,16 @@ func backgroundModel(t *testing.T, cmd string) (*recordingModel, string) {
 	return model, srv.URL
 }
 
-// chat runs one turn on a fresh session bound to the project and waits for it.
+// chat runs one turn on a fresh session bound to the workspace and waits for it.
 func (f *commandFixture) chat(t *testing.T) *store.Session {
 	t.Helper()
 	ctx := context.Background()
-	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", ProjectID: f.project.ID}
+	sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "chat", WorkspaceID: f.workspace.ID}
 	if err := f.sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan *RunOutcome, 1)
-	if _, err := f.runner.StartRun(sess.ID, f.agent.ID, f.project.ID, TextInput("build it"), nil, func(o *RunOutcome) { done <- o }); err != nil {
+	if _, err := f.runner.StartRun(sess.ID, f.agent.ID, f.workspace.ID, TextInput("build it"), nil, func(o *RunOutcome) { done <- o }); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -122,7 +122,7 @@ func (f *commandFixture) idle(t *testing.T, sessionID string) {
 }
 
 // An exec_command call with background: true becomes a task of kind command
-// on the call's own card: it runs on the project's sandbox, its output lands
+// on the call's own card: it runs on the workspace's sandbox, its output lands
 // under the spill directory, a non-zero exit fails it, the verdict wakes the
 // parent, and it cannot be retried — invariant 96.
 func TestBackgroundCommandRunsAsATask(t *testing.T) {
@@ -143,7 +143,7 @@ func TestBackgroundCommandRunsAsATask(t *testing.T) {
 		t.Errorf("summary %q / result %q: want the verdict first and both streams", row.Summary, row.Result)
 	}
 	// The whole output is in the sandbox, not only what reached the model.
-	saved, _ := filepath.Glob(filepath.Join(f.workspace, ".agents", "exec", "*-call_1.stdout"))
+	saved, _ := filepath.Glob(filepath.Join(f.dir, ".agents", "exec", "*-call_1.stdout"))
 	if len(saved) != 1 {
 		t.Fatalf("saved stdout files = %v, want one", saved)
 	}
@@ -190,9 +190,9 @@ func TestBackgroundCommandStopKillsIt(t *testing.T) {
 	f.idle(t, sess.ID)
 }
 
-// A sandbox stop ends the project's commands first and returns once their
+// A sandbox stop ends the workspace's commands first and returns once their
 // leases are gone, so the compute is free to stop.
-func TestStopProjectCommandsEndsThem(t *testing.T) {
+func TestStopWorkspaceCommandsEndsThem(t *testing.T) {
 	const marker = "sleep 986413"
 	_, url := backgroundModel(t, marker)
 	f := newCommandFixture(t, url)
@@ -201,9 +201,9 @@ func TestStopProjectCommandsEndsThem(t *testing.T) {
 	if !awaitProcess(marker, true, 10*time.Second) {
 		t.Fatal("the command never started")
 	}
-	f.runner.StopProjectCommands(context.Background(), f.project.ID)
+	f.runner.StopWorkspaceCommands(context.Background(), f.workspace.ID)
 	if awaitProcess(marker, true, 0) {
-		t.Error("the command outlived StopProjectCommands")
+		t.Error("the command outlived StopWorkspaceCommands")
 	}
 	after, err := f.tasks.Get(context.Background(), row.ID)
 	if err != nil {
@@ -212,8 +212,8 @@ func TestStopProjectCommandsEndsThem(t *testing.T) {
 	if after.Status != "cancelled" {
 		t.Errorf("row = %q right after the stop, want cancelled", after.Status)
 	}
-	if runs := f.runner.commands.ofProject(f.project.ID); len(runs) != 0 {
-		t.Errorf("%d commands still registered for the project", len(runs))
+	if runs := f.runner.commands.ofWorkspace(f.workspace.ID); len(runs) != 0 {
+		t.Errorf("%d commands still registered for the workspace", len(runs))
 	}
 	f.idle(t, sess.ID)
 }
@@ -239,7 +239,7 @@ func TestBackgroundCommandOfferedToChatRunsThatOptIn(t *testing.T) {
 		{"chat run, not opted in", plain.ID, false, false},
 	}
 	for _, tc := range cases {
-		built, err := buildFullAgent(ctx, f.runner.Deps, tc.agent, f.project.ID, tc.background, store.LocalUserID)
+		built, err := buildFullAgent(ctx, f.runner.Deps, tc.agent, f.workspace.ID, tc.background, store.LocalUserID)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}

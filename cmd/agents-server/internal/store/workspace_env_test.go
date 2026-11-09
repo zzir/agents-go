@@ -7,8 +7,8 @@ import (
 
 // The canonical payload is sorted by key, whatever order it arrived in — the
 // order storage, the container fingerprint and EnvContentEqual all share.
-func TestNormalizeProjectEnvCanonical(t *testing.T) {
-	got, err := NormalizeProjectEnv([]EnvVar{{Key: "B", Value: "2"}, {Key: "A", Value: "1"}})
+func TestNormalizeWorkspaceEnvCanonical(t *testing.T) {
+	got, err := NormalizeWorkspaceEnv([]EnvVar{{Key: "B", Value: "2"}, {Key: "A", Value: "1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,17 +16,17 @@ func TestNormalizeProjectEnvCanonical(t *testing.T) {
 	if got != want {
 		t.Errorf("canonical = %s, want %s", got, want)
 	}
-	// An empty environment is no environment: the empty string, so a project
+	// An empty environment is no environment: the empty string, so a workspace
 	// without one stays off the sandbox fingerprint (spec §2.7n).
-	if got, err := NormalizeProjectEnv(nil); err != nil || got != "" {
+	if got, err := NormalizeWorkspaceEnv(nil); err != nil || got != "" {
 		t.Errorf("empty environment = %q, %v; want \"\"", got, err)
 	}
-	if got, err := NormalizeProjectEnv([]EnvVar{}); err != nil || got != "" {
+	if got, err := NormalizeWorkspaceEnv([]EnvVar{}); err != nil || got != "" {
 		t.Errorf("empty slice = %q, %v; want \"\"", got, err)
 	}
 }
 
-func TestNormalizeProjectEnvRejects(t *testing.T) {
+func TestNormalizeWorkspaceEnvRejects(t *testing.T) {
 	tests := map[string]struct {
 		vars []EnvVar
 		want string
@@ -40,7 +40,7 @@ func TestNormalizeProjectEnvRejects(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NormalizeProjectEnv(tc.vars); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := NormalizeWorkspaceEnv(tc.vars); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v, want one containing %q", err, tc.want)
 			}
 		})
@@ -50,7 +50,7 @@ func TestNormalizeProjectEnvRejects(t *testing.T) {
 	for i := range many {
 		many[i] = EnvVar{Key: "K" + string(rune('a'+i%26)) + string(rune('a'+i/26)), Value: "v"}
 	}
-	if _, err := NormalizeProjectEnv(many); err == nil {
+	if _, err := NormalizeWorkspaceEnv(many); err == nil {
 		t.Error("too many variables were accepted")
 	}
 
@@ -59,7 +59,7 @@ func TestNormalizeProjectEnvRejects(t *testing.T) {
 	for i := range big {
 		big[i] = EnvVar{Key: "K" + string(rune('a'+i)), Value: strings.Repeat("x", MaxEnvValueBytes)}
 	}
-	if _, err := NormalizeProjectEnv(big); err == nil || !strings.Contains(err.Error(), "environment is") {
+	if _, err := NormalizeWorkspaceEnv(big); err == nil || !strings.Contains(err.Error(), "environment is") {
 		t.Errorf("total-size err = %v, want the whole-environment refusal", err)
 	}
 }
@@ -67,22 +67,22 @@ func TestNormalizeProjectEnvRejects(t *testing.T) {
 // The predicate behind the runtime-generation bump: what the container gets,
 // nothing else.
 func TestEnvContentEqual(t *testing.T) {
-	shown, err := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "t"}})
+	shown, err := NormalizeWorkspaceEnv([]EnvVar{{Key: "TOKEN", Value: "t"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	same, err := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "t"}})
+	same, err := NormalizeWorkspaceEnv([]EnvVar{{Key: "TOKEN", Value: "t"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !EnvContentEqual(shown, same) {
 		t.Error("identical environments compared unequal")
 	}
-	changed, _ := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "other"}})
+	changed, _ := NormalizeWorkspaceEnv([]EnvVar{{Key: "TOKEN", Value: "other"}})
 	if EnvContentEqual(shown, changed) {
 		t.Error("a changed value compared as equal")
 	}
-	added, _ := NormalizeProjectEnv([]EnvVar{{Key: "TOKEN", Value: "t"}, {Key: "MORE", Value: "m"}})
+	added, _ := NormalizeWorkspaceEnv([]EnvVar{{Key: "TOKEN", Value: "t"}, {Key: "MORE", Value: "m"}})
 	if EnvContentEqual(shown, added) {
 		t.Error("an added variable compared as equal")
 	}
@@ -96,7 +96,7 @@ func TestEnvContentEqual(t *testing.T) {
 }
 
 func TestEnvMap(t *testing.T) {
-	raw, err := NormalizeProjectEnv([]EnvVar{{Key: "A", Value: "1"}, {Key: "B", Value: "2"}})
+	raw, err := NormalizeWorkspaceEnv([]EnvVar{{Key: "A", Value: "1"}, {Key: "B", Value: "2"}})
 	if err != nil {
 		t.Fatal(err)
 	}

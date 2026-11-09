@@ -26,39 +26,39 @@ func memberEngine(userID string) *gin.Engine {
 	return e
 }
 
-// Projects are personal, and the admin surface is management (decisions §5.28):
+// Workspaces are personal, and the admin surface is management (decisions §5.28):
 // a member sees and deletes only their own rows and never a storage_hint;
 // an admin lists every owner's (?all=true, hints included) and deletes any.
-func TestProjectAdminSurface(t *testing.T) {
+func TestWorkspaceAdminSurface(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
 	db := testdb.New(t)
-	projects := store.NewProjectStore(db)
+	workspaces := store.NewWorkspaceStore(db)
 	mgr := sandboxes.NewManager()
 	sandboxID := mkSandboxRow(t, db)
-	h := NewProjectHandler(projects, store.NewSandboxStore(db), mgr, NewTerminalHandler(store.NewSandboxStore(db), projects, mgr, settings.NewReader(nil)), settings.NewReader(nil))
+	h := NewWorkspaceHandler(workspaces, store.NewSandboxStore(db), mgr, NewTerminalHandler(store.NewSandboxStore(db), workspaces, mgr, settings.NewReader(nil)), settings.NewReader(nil))
 
 	memberID := store.NewID()
-	memberProj := &store.Project{ID: store.NewID(), OwnerID: memberID, SandboxID: sandboxID, Name: "member-proj"}
-	adminProj := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "admin-proj"}
-	for _, p := range []*store.Project{memberProj, adminProj} {
-		if err := projects.Create(ctx, p); err != nil {
-			t.Fatalf("create project %s: %v", p.Name, err)
+	memberWs := &store.Workspace{ID: store.NewID(), OwnerID: memberID, SandboxID: sandboxID, Name: "member-ws"}
+	adminWs := &store.Workspace{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "admin-ws"}
+	for _, p := range []*store.Workspace{memberWs, adminWs} {
+		if err := workspaces.Create(ctx, p); err != nil {
+			t.Fatalf("create workspace %s: %v", p.Name, err)
 		}
 	}
 
 	mount := func(e *gin.Engine) *gin.Engine {
-		e.GET("/projects", h.List)
-		e.GET("/projects/:id/host", h.SandboxHost)
-		e.DELETE("/projects/:id", h.Delete)
+		e.GET("/workspaces", h.List)
+		e.GET("/workspaces/:id/host", h.SandboxHost)
+		e.DELETE("/workspaces/:id", h.Delete)
 		return e
 	}
 	member := mount(memberEngine(memberID))
 	admin := mount(newTestEngine())
 
-	decode := func(t *testing.T, body []byte) []store.Project {
+	decode := func(t *testing.T, body []byte) []store.Workspace {
 		t.Helper()
-		var out []store.Project
+		var out []store.Workspace
 		if err := json.Unmarshal(body, &out); err != nil {
 			t.Fatalf("decode listing: %v", err)
 		}
@@ -66,26 +66,26 @@ func TestProjectAdminSurface(t *testing.T) {
 	}
 
 	// Member: own rows only, no hint; ?all=true refused; foreign delete 404s.
-	w := doJSON(t, member, http.MethodGet, "/projects", "")
+	w := doJSON(t, member, http.MethodGet, "/workspaces", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("member list: %d", w.Code)
 	}
 	rows := decode(t, w.Body.Bytes())
-	if len(rows) != 1 || rows[0].ID != memberProj.ID {
+	if len(rows) != 1 || rows[0].ID != memberWs.ID {
 		t.Fatalf("member listing = %+v, want just their own row", rows)
 	}
 	if rows[0].StorageHint != "" {
 		t.Fatalf("member listing carries storage_hint %q, want none", rows[0].StorageHint)
 	}
-	if w := doJSON(t, member, http.MethodGet, "/projects?all=true", ""); w.Code != http.StatusForbidden {
+	if w := doJSON(t, member, http.MethodGet, "/workspaces?all=true", ""); w.Code != http.StatusForbidden {
 		t.Fatalf("member ?all=true: %d, want 403", w.Code)
 	}
-	if w := doJSON(t, member, http.MethodDelete, "/projects/"+adminProj.ID, ""); w.Code != http.StatusNotFound {
-		t.Fatalf("member deleting a foreign project: %d, want 404", w.Code)
+	if w := doJSON(t, member, http.MethodDelete, "/workspaces/"+adminWs.ID, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("member deleting a foreign workspace: %d, want 404", w.Code)
 	}
 
 	// Admin: ?all=true lists every owner's row, hints included.
-	w = doJSON(t, admin, http.MethodGet, "/projects?all=true", "")
+	w = doJSON(t, admin, http.MethodGet, "/workspaces?all=true", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("admin list all: %d", w.Code)
 	}
@@ -100,34 +100,34 @@ func TestProjectAdminSurface(t *testing.T) {
 	}
 
 	// The public address reaches whatever runs in the sandbox, so like the
-	// export it is the owner's: a foreign project reads as absent even to an
-	// admin. The owner's own docker project answers 409 — its ports are not public.
-	if w := doJSON(t, admin, http.MethodGet, "/projects/"+memberProj.ID+"/host", ""); w.Code != http.StatusNotFound {
+	// export it is the owner's: a foreign workspace reads as absent even to an
+	// admin. The owner's own docker workspace answers 409 — its ports are not public.
+	if w := doJSON(t, admin, http.MethodGet, "/workspaces/"+memberWs.ID+"/host", ""); w.Code != http.StatusNotFound {
 		t.Fatalf("admin reading a member's public address: %d, want 404", w.Code)
 	}
-	if w := doJSON(t, member, http.MethodGet, "/projects/"+memberProj.ID+"/host", ""); w.Code != http.StatusConflict {
-		t.Fatalf("public address of a docker project: %d, want 409", w.Code)
+	if w := doJSON(t, member, http.MethodGet, "/workspaces/"+memberWs.ID+"/host", ""); w.Code != http.StatusConflict {
+		t.Fatalf("public address of a docker workspace: %d, want 409", w.Code)
 	}
 
-	// Admin delete of a member's project: refused while a session binds it,
+	// Admin delete of a member's workspace: refused while a session binds it,
 	// gone once unbound.
-	sess := &store.Session{ID: store.NewID(), OwnerID: memberID, Name: "s", ProjectID: memberProj.ID}
+	sess := &store.Session{ID: store.NewID(), OwnerID: memberID, Name: "s", WorkspaceID: memberWs.ID}
 	sessions := store.NewSessionStore(db)
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if w := doJSON(t, admin, http.MethodDelete, "/projects/"+memberProj.ID, ""); w.Code != http.StatusConflict {
-		t.Fatalf("admin delete of a bound project: %d, want 409", w.Code)
+	if w := doJSON(t, admin, http.MethodDelete, "/workspaces/"+memberWs.ID, ""); w.Code != http.StatusConflict {
+		t.Fatalf("admin delete of a bound workspace: %d, want 409", w.Code)
 	}
 	if err := sessions.Delete(ctx, sess.ID); err != nil {
 		t.Fatalf("delete session: %v", err)
 	}
 	// 200 with deleted:true — a delete reports what it could not reclaim
-	// without claiming the project survived.
-	if w := doJSON(t, admin, http.MethodDelete, "/projects/"+memberProj.ID, ""); w.Code != http.StatusOK {
-		t.Fatalf("admin delete of a member's project: %d, want 200", w.Code)
+	// without claiming the workspace survived.
+	if w := doJSON(t, admin, http.MethodDelete, "/workspaces/"+memberWs.ID, ""); w.Code != http.StatusOK {
+		t.Fatalf("admin delete of a member's workspace: %d, want 200", w.Code)
 	}
-	if _, err := projects.Get(ctx, memberProj.ID); err == nil {
-		t.Fatal("member project still present after the admin delete")
+	if _, err := workspaces.Get(ctx, memberWs.ID); err == nil {
+		t.Fatal("member workspace still present after the admin delete")
 	}
 }

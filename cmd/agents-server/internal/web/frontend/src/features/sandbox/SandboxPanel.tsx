@@ -15,9 +15,9 @@ import { headersToText, parseHeadersText } from '@/lib/headers';
 import { toast } from '@/lib/toast';
 import { parseOptionalPositive, parseOptionalPositiveDecimal } from '@/lib/numericField';
 
-// A sandbox is one row: WHERE it runs and WHAT runs on it; a project picks one.
+// A sandbox is one row: WHERE it runs and WHAT runs on it; a workspace picks one.
 // The fields split by mutability, not section — type and destination freeze
-// while projects live on the sandbox, the rest edits freely (decisions §5.36).
+// while workspaces live on the sandbox, the rest edits freely (decisions §5.36).
 
 type SandboxType = 'docker' | 'e2b';
 
@@ -201,7 +201,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
   // initial edits that row; seed prefills a NEW one from a copy.
   initial?: SandboxRow;
   seed?: SandboxRow;
-  // Whether projects live on the row being edited — what freezes its
+  // Whether workspaces live on the row being edited — what freezes its
   // identity fields (invariant 45). Unknown leaves them editable; the
   // server's 409 still refuses a change.
   inUse?: boolean;
@@ -214,7 +214,7 @@ function SandboxForm({ initial, seed, inUse, onSave, onCancel, onDelete, saving 
   const set = (k: keyof FormState, v: unknown) => setForm(prev => ({ ...prev, [k]: v }));
   const remote = form.type === 'docker' && form.host.startsWith('ssh://');
   const frozen = !!initial && !!inUse;
-  const frozenNote = frozen ? ' Frozen while projects live on it.' : ' Freezes once a project lives on it.';
+  const frozenNote = frozen ? ' Frozen while workspaces live on it.' : ' Freezes once a workspace lives on it.';
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const insertAgreement = () => {
     const el = promptRef.current;
@@ -380,11 +380,11 @@ export function SandboxPanel() {
     useCrud<SandboxRow, PackedForm>(api.sandboxes, 'sandboxes');
   const [seed, setSeed] = useState<SandboxRow | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
-  // Every owner's projects, to know which sandboxes have projects on them
+  // Every owner's workspaces, to know which sandboxes have workspaces on them
   // (the admin's listing; a member's form is disabled as a whole anyway).
-  const { data: projects } = useApi<{ sandbox_id?: string }[]>(
-    () => (readOnly ? Promise.resolve([]) : api.projects.listAll() as Promise<{ sandbox_id?: string }[]>), [readOnly], readOnly ? undefined : 'admin:projects');
-  const inUse = (id: string) => projects ? projects.some(p => p.sandbox_id === id) : undefined;
+  const { data: workspaces } = useApi<{ sandbox_id?: string }[]>(
+    () => (readOnly ? Promise.resolve([]) : api.workspaces.listAll() as Promise<{ sandbox_id?: string }[]>), [readOnly], readOnly ? undefined : 'admin:workspaces');
+  const inUse = (id: string) => workspaces ? workspaces.some(p => p.sandbox_id === id) : undefined;
 
   const handleTest = async (s: SandboxRow) => {
     setTestingId(s.id);
@@ -409,7 +409,7 @@ export function SandboxPanel() {
 
   return (
     <CrudPanel title="Sandboxes" onAdd={() => { setSeed(null); startAdd(); }} onCancel={close} form={form} loading={loading} error={error} onRetry={reload} isEmpty={items.length === 0}
-      empty="No sandboxes yet." emptyHint="A sandbox is where a project's files live and its commands run.">
+      empty="No sandboxes yet." emptyHint="A sandbox is where a workspace's files live and its commands run.">
       {items.map(s => (
         <ResourceRow key={s.id}
           title={s.name}
@@ -425,7 +425,7 @@ export function SandboxPanel() {
               name={s.name}
               onEdit={() => { setSeed(null); startEdit(s); }}
               // Another image on the same machine, without retyping how to
-              // reach it — a project moves freely between two sandboxes at
+              // reach it — a workspace moves freely between two sandboxes at
               // one address.
               onDuplicate={readOnly ? undefined : () => { setSeed(copyOf(s)); startAdd(); }}
             />

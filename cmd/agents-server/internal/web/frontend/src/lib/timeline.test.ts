@@ -823,7 +823,7 @@ describe('host notes', () => {
   // system row carrying the note's text (the container-rebuilt note is one).
   it('an unknown host note renders as a system row with its text', () => {
     const rows: EntryView[] = [
-      { id: "1", kind: 'annotation', role: 'system', content: 'Container rebuilt for "p": processes and anything outside /workspace are gone', display: { kind: 'container_rebuilt', text: 'Container rebuilt for "p": processes and anything outside /workspace are gone', extra: { project_id: 'p1' } } },
+      { id: "1", kind: 'annotation', role: 'system', content: 'Container rebuilt for "p": processes and anything outside /workspace are gone', display: { kind: 'container_rebuilt', text: 'Container rebuilt for "p": processes and anything outside /workspace are gone', extra: { workspace_id: 'p1' } } },
     ];
     const out = buildTimeline(rows);
     expect(out).toHaveLength(1);

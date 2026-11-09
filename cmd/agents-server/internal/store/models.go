@@ -24,9 +24,9 @@ type Session struct {
 	// Hidden marks a background task's transcript session; listings leave it out.
 	Hidden        bool   `bun:"hidden"               json:"hidden,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	// ProjectID is the project the session is bound to, set once by the first
-	// project-carrying run and never rewritten.
-	ProjectID string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
+	// WorkspaceID is the workspace the session is bound to, set once by the first
+	// workspace-carrying run and never rewritten.
+	WorkspaceID string `bun:"workspace_id,nullzero,type:uuid" json:"workspace_id,omitempty"`
 	// Planning is the session's plan phase: the next run starts read-only until
 	// a plan is approved.
 	Planning  bool      `bun:"planning"             json:"planning"`
@@ -65,10 +65,10 @@ type Task struct {
 	Depth int `bun:"depth" json:"depth,omitempty"`
 	// Attempt counts this task's runs, 1 for the original; zero reads as the first.
 	Attempt int `bun:"attempt" json:"attempt,omitempty"`
-	// ParentAgentConfigID and ParentProjectID snapshot the spawning run's
+	// ParentAgentConfigID and ParentWorkspaceID snapshot the spawning run's
 	// configuration for the wake-up run and a retry.
 	ParentAgentConfigID string `bun:"parent_agent_config_id,nullzero,type:uuid" json:"-"`
-	ParentProjectID     string `bun:"parent_project_id,nullzero,type:uuid" json:"-"`
+	ParentWorkspaceID   string `bun:"parent_workspace_id,nullzero,type:uuid" json:"-"`
 	Status              string `bun:"status,notnull"     json:"status"`
 	Summary             string `bun:"summary,nullzero"   json:"summary,omitempty"`
 	// Result is the task's full final output; Summary and the wake-up
@@ -429,7 +429,7 @@ type Sandbox struct {
 
 	ID   string `bun:"id,pk,type:uuid" json:"id"`
 	Name string `bun:"name,notnull" json:"name"`
-	// Type is the backend, one of SandboxTypes; frozen while projects live on
+	// Type is the backend, one of SandboxTypes; frozen while workspaces live on
 	// the sandbox.
 	Type string `bun:"type,notnull" json:"type"`
 
@@ -438,7 +438,7 @@ type Sandbox struct {
 	Config json.RawMessage `bun:"config,type:text,nullzero" json:"config,omitempty"`
 
 	// Prompt is appended to the instructions of every agent in a session bound
-	// to a project here; an edit reaches the next run.
+	// to a workspace here; an edit reaches the next run.
 	Prompt string `bun:"prompt" json:"prompt,omitempty"`
 
 	// Revision counts the row's writes, name-only included; every update
@@ -454,7 +454,7 @@ type Sandbox struct {
 }
 
 // DockerConfig is the Sandbox.Config payload for type "docker": the daemon
-// and how to reach it (frozen while projects live on the sandbox), then content.
+// and how to reach it (frozen while workspaces live on the sandbox), then content.
 type DockerConfig struct {
 	// Host reaches a remote daemon, "ssh://user@host[:port]" or
 	// "tcp://host:port"; empty is the local daemon.
@@ -481,7 +481,7 @@ type DockerConfig struct {
 
 // E2BConfig is the Sandbox.Config payload for type "e2b": the service and its
 // template; APIURL, Domain, TemplateID, AutoPause and AllowInternet freeze
-// while projects live on the sandbox.
+// while workspaces live on the sandbox.
 type E2BConfig struct {
 	// APIURL is the control plane base; empty means E2B's own.
 	APIURL string `json:"api_url,omitempty"`
@@ -515,26 +515,26 @@ type E2BConfig struct {
 	MaxReadFileBytes int64 `json:"max_read_file_bytes,omitempty"`
 }
 
-// Project is one user's working tree on one sandbox, the unit a session binds
+// Workspace is one user's working tree on one sandbox, the unit a session binds
 // (decisions §5.28); the storage name is derived from the id, never stored.
-type Project struct {
-	bun.BaseModel `bun:"table:projects,alias:pj"`
+type Workspace struct {
+	bun.BaseModel `bun:"table:workspaces,alias:ws"`
 
 	ID      string `bun:"id,pk,type:uuid"               json:"id"`
 	OwnerID string `bun:"owner_id,notnull,type:uuid"    json:"owner_id"`
-	// SandboxID is what the project runs on; it may move only to a sandbox of
+	// SandboxID is what the workspace runs on; it may move only to a sandbox of
 	// the same type and destination (409 otherwise).
 	SandboxID string `bun:"sandbox_id,notnull,type:uuid" json:"sandbox_id"`
 	// Name is display only, unique per (owner, sandbox); a rename moves nothing.
 	Name string `bun:"name,notnull"                json:"name"`
 	// Env is the canonical environment the container is created with, sealed at
-	// rest; GET /projects/{id} alone returns it, values masked.
+	// rest; GET /workspaces/{id} alone returns it, values masked.
 	Env string `bun:"env,type:text,nullzero" json:"-"`
 	// InstanceRef is the backend's handle on the live instance, for a backend
-	// that does not derive it from the project id.
+	// that does not derive it from the workspace id.
 	InstanceRef string `bun:"instance_ref,nullzero" json:"-"`
 	// Revision is the expected-revision CAS every update lands against.
-	// RuntimeGen moves when the project's content or its sandbox changes; the
+	// RuntimeGen moves when the workspace's content or its sandbox changes; the
 	// instance cache and terminals fence on it.
 	Revision   int64     `bun:"revision,notnull,default:1"    json:"revision,omitempty"`
 	RuntimeGen int64     `bun:"runtime_gen,notnull,default:1" json:"-"`
@@ -543,7 +543,7 @@ type Project struct {
 	// StorageHint names where the files live (the named volume), derived per
 	// response for admins only and never stored.
 	StorageHint string `bun:"-" json:"storage_hint,omitempty"`
-	// SessionCount is how many sessions bind this project, filled by List.
+	// SessionCount is how many sessions bind this workspace, filled by List.
 	SessionCount int `bun:"session_count,scanonly" json:"session_count,omitempty"`
 }
 
@@ -584,7 +584,7 @@ type PendingApproval struct {
 	// workflow step waiting to start.
 	Kind          string `bun:"kind"                   json:"kind,omitempty"`
 	AgentConfigID string `bun:"agent_config_id,nullzero,type:uuid" json:"agent_config_id,omitempty"`
-	ProjectID     string `bun:"project_id,nullzero,type:uuid" json:"project_id,omitempty"`
+	WorkspaceID   string `bun:"workspace_id,nullzero,type:uuid" json:"workspace_id,omitempty"`
 	// State is the JSON from agents.RunState.MarshalJSON. Hidden from the API.
 	State string `bun:"state,type:text,notnull" json:"-"`
 	// ToolCalls is the JSON array of pending tool calls ([]PendingToolCall)
@@ -699,7 +699,7 @@ func (m *Sandbox) BeforeAppendModel(_ context.Context, q bun.Query) error {
 }
 
 // BeforeAppendModel stamps the id and timestamps; bun invokes it on insert and update.
-func (m *Project) BeforeAppendModel(_ context.Context, q bun.Query) error {
+func (m *Workspace) BeforeAppendModel(_ context.Context, q bun.Query) error {
 	return stampOnAppend(q, &m.ID, &m.CreatedAt, &m.UpdatedAt)
 }
 

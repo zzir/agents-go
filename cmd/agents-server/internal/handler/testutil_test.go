@@ -93,8 +93,8 @@ func testSessionDeps(db *bun.DB, tune ...func(*SessionDeps)) SessionDeps {
 	d := SessionDeps{
 		Sessions: store.NewSessionStore(db), Entries: store.NewSharedEntryStore(db), Traces: store.NewTraceStore(db),
 		Agents: store.NewAgentConfigStore(db), Profiles: store.NewContextProfileStore(db),
-		Users:    store.NewUserStore(db),
-		Projects: store.NewProjectStore(db), Stopper: noopStopper{}, Compactor: noopCompactor{}, Statuses: noStatuses{},
+		Users:      store.NewUserStore(db),
+		Workspaces: store.NewWorkspaceStore(db), Stopper: noopStopper{}, Compactor: noopCompactor{}, Statuses: noStatuses{},
 		Settings: settings.NewReader(store.NewSettingStore(db)),
 	}
 	for _, f := range tune {
@@ -112,13 +112,13 @@ func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 // testSandboxHandler wires a SandboxHandler over a database, with a terminal
 // registry and retirer over the same stores.
 func testSandboxHandler(db *bun.DB, manager *sandboxes.Manager) *SandboxHandler {
-	sbs, projects := store.NewSandboxStore(db), store.NewProjectStore(db)
-	terminals := NewTerminalHandler(sbs, projects, manager, settings.NewReader(nil))
-	return NewSandboxHandler(sbs, manager, NewRetirer(projects, manager, terminals))
+	sbs, workspaces := store.NewSandboxStore(db), store.NewWorkspaceStore(db)
+	terminals := NewTerminalHandler(sbs, workspaces, manager, settings.NewReader(nil))
+	return NewSandboxHandler(sbs, manager, NewRetirer(workspaces, manager, terminals))
 }
 
 // mkSandboxRow persists a docker sandbox and returns its id — what every
-// project needs.
+// workspace needs.
 func mkSandboxRow(t *testing.T, db *bun.DB) string {
 	t.Helper()
 	sb := &store.Sandbox{ID: store.NewID(), Name: "sb-" + store.NewID(), Type: "docker", Config: json.RawMessage(`{"image":"i"}`)}

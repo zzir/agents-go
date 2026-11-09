@@ -18,7 +18,7 @@ import (
 
 // The surface says where each tool comes from and whether plan mode (and so
 // "ask before changes") leaves it alone; the sandbox tools are listed as a
-// bound project would add them, read flags from their own constructors.
+// bound workspace would add them, read flags from their own constructors.
 func TestAgentToolSurfaceCarriesSourceAndReadOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)

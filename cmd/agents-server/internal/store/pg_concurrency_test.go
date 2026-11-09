@@ -62,21 +62,21 @@ func TestPGAgentWritesShareOneLockOrder(t *testing.T) {
 	}
 }
 
-// A first-run bind and a project delete race on the project row's lock (FOR
+// A first-run bind and a workspace delete race on the workspace row's lock (FOR
 // KEY SHARE vs FOR UPDATE): whichever commits first, no interleaving may end
-// with a session bound to a deleted project — there is no unbind path. On
+// with a session bound to a deleted workspace — there is no unbind path. On
 // READ COMMITTED, the old single-statement guards let both commit.
-func TestPGBindVsProjectDeleteNeverDangles(t *testing.T) {
+func TestPGBindVsWorkspaceDeleteNeverDangles(t *testing.T) {
 	ctx := context.Background()
 	db := pgTestDB(t)
 	id := ids(t)
 	createSandboxRow(t, db, id("sb"))
-	projects := NewProjectStore(db)
+	workspaces := NewWorkspaceStore(db)
 	sessions := NewSessionStore(db)
 
 	for i := range 20 {
-		p := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("sb"), Name: fmt.Sprintf("p-%d", i)}
-		if err := projects.Create(ctx, p); err != nil {
+		p := &Workspace{ID: NewID(), OwnerID: LocalUserID, SandboxID: id("sb"), Name: fmt.Sprintf("p-%d", i)}
+		if err := workspaces.Create(ctx, p); err != nil {
 			t.Fatal(err)
 		}
 		sess := &Session{ID: NewID(), OwnerID: LocalUserID, Name: "s"}
@@ -86,13 +86,13 @@ func TestPGBindVsProjectDeleteNeverDangles(t *testing.T) {
 		var wg sync.WaitGroup
 		var bound bool
 		var bindErr, delErr error
-		wg.Go(func() { bound, bindErr = sessions.BindProjectIfEmpty(ctx, sess.ID, p.ID) })
-		wg.Go(func() { _, delErr = projects.DeleteIfUnreferenced(ctx, p.ID) })
+		wg.Go(func() { bound, bindErr = sessions.BindWorkspaceIfEmpty(ctx, sess.ID, p.ID) })
+		wg.Go(func() { _, delErr = workspaces.DeleteIfUnreferenced(ctx, p.ID) })
 		wg.Wait()
 		if bindErr != nil || delErr != nil {
 			t.Fatalf("round %d: bind=%v delete=%v", i, bindErr, delErr)
 		}
-		_, gerr := projects.Get(ctx, p.ID)
+		_, gerr := workspaces.Get(ctx, p.ID)
 		gone := gerr != nil
 		if gone && !errors.Is(gerr, ErrNotFound) {
 			t.Fatal(gerr)
@@ -102,31 +102,31 @@ func TestPGBindVsProjectDeleteNeverDangles(t *testing.T) {
 			t.Fatal(err)
 		}
 		if bound && gone {
-			t.Fatalf("round %d: the bind won and the delete still removed the project", i)
+			t.Fatalf("round %d: the bind won and the delete still removed the workspace", i)
 		}
-		if got.ProjectID != "" && gone {
-			t.Fatalf("round %d: session bound to the deleted project %s", i, got.ProjectID)
+		if got.WorkspaceID != "" && gone {
+			t.Fatalf("round %d: session bound to the deleted workspace %s", i, got.WorkspaceID)
 		}
 	}
 }
 
-// A project create and a sandbox delete race on the sandbox row's FOR UPDATE
+// A workspace create and a sandbox delete race on the sandbox row's FOR UPDATE
 // lock: either the create lands first and the delete refuses, or the delete
-// wins and the create refuses (ErrNotFound) — never a project on a deleted
+// wins and the create refuses (ErrNotFound) — never a workspace on a deleted
 // sandbox.
-func TestPGProjectCreateVsSandboxDeleteNeverOrphans(t *testing.T) {
+func TestPGWorkspaceCreateVsSandboxDeleteNeverOrphans(t *testing.T) {
 	ctx := context.Background()
 	db := pgTestDB(t)
-	projects := NewProjectStore(db)
+	workspaces := NewWorkspaceStore(db)
 	sandboxes := NewSandboxStore(db)
 
 	for i := range 20 {
 		sbID := NewID()
 		createSandboxRow(t, db, sbID)
-		p := &Project{ID: NewID(), OwnerID: LocalUserID, SandboxID: sbID, Name: fmt.Sprintf("p-%d", i)}
+		p := &Workspace{ID: NewID(), OwnerID: LocalUserID, SandboxID: sbID, Name: fmt.Sprintf("p-%d", i)}
 		var wg sync.WaitGroup
 		var createErr, delErr error
-		wg.Go(func() { createErr = projects.Create(ctx, p) })
+		wg.Go(func() { createErr = workspaces.Create(ctx, p) })
 		wg.Go(func() { _, delErr = sandboxes.DeleteIfUnreferenced(ctx, sbID) })
 		wg.Wait()
 		if createErr != nil && !errors.Is(createErr, ErrNotFound) {
@@ -135,7 +135,7 @@ func TestPGProjectCreateVsSandboxDeleteNeverOrphans(t *testing.T) {
 		if delErr != nil {
 			t.Fatalf("round %d: delete: %v", i, delErr)
 		}
-		_, perr := projects.Get(ctx, p.ID)
+		_, perr := workspaces.Get(ctx, p.ID)
 		if perr != nil && !errors.Is(perr, ErrNotFound) {
 			t.Fatal(perr)
 		}
@@ -144,7 +144,7 @@ func TestPGProjectCreateVsSandboxDeleteNeverOrphans(t *testing.T) {
 			t.Fatal(serr)
 		}
 		if perr == nil && !sbExists {
-			t.Fatalf("round %d: project survived on a deleted sandbox", i)
+			t.Fatalf("round %d: workspace survived on a deleted sandbox", i)
 		}
 	}
 }

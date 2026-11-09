@@ -13,14 +13,14 @@ import (
 )
 
 // A sandbox carries a prompt describing the machine; a session bound to a
-// project on it gets that prompt appended to its agent's instructions — after
+// workspace on it gets that prompt appended to its agent's instructions — after
 // the agent's own, and measured into the context profile.
 func TestBuildFullAgentAppendsSandboxPrompt(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
 	sandboxStore := store.NewSandboxStore(db)
-	projects := store.NewProjectStore(db)
+	workspaces := store.NewWorkspaceStore(db)
 
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "coder", Model: "gpt-test", Instructions: "Be precise."}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
@@ -31,8 +31,8 @@ func TestBuildFullAgentAppendsSandboxPrompt(t *testing.T) {
 	if err := sandboxStore.Create(ctx, sb); err != nil {
 		t.Fatal(err)
 	}
-	proj := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "p"}
-	if err := projects.Create(ctx, proj); err != nil {
+	ws := &store.Workspace{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "p"}
+	if err := workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
 
@@ -46,11 +46,11 @@ func TestBuildFullAgentAppendsSandboxPrompt(t *testing.T) {
 		Settings:       settings.NewReader(store.NewSettingStore(db)),
 		Memories:       store.NewMemoryStore(db),
 		Sandboxes:      sandboxStore,
-		Projects:       projects,
+		Workspaces:     workspaces,
 		SandboxManager: mgr,
 	}
 
-	built, err := BuildFullAgent(ctx, deps, ac.ID, proj.ID, store.LocalUserID)
+	built, err := BuildFullAgent(ctx, deps, ac.ID, ws.ID, store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestBuildFullAgentNoSandboxPromptWhenEmpty(t *testing.T) {
 	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
 	sandboxStore := store.NewSandboxStore(db)
-	projects := store.NewProjectStore(db)
+	workspaces := store.NewWorkspaceStore(db)
 
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "coder", Model: "gpt-test", Instructions: "Be precise."}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
@@ -89,8 +89,8 @@ func TestBuildFullAgentNoSandboxPromptWhenEmpty(t *testing.T) {
 	if err := sandboxStore.Create(ctx, sb); err != nil {
 		t.Fatal(err)
 	}
-	proj := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "p"}
-	if err := projects.Create(ctx, proj); err != nil {
+	ws := &store.Workspace{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "p"}
+	if err := workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
 
@@ -104,11 +104,11 @@ func TestBuildFullAgentNoSandboxPromptWhenEmpty(t *testing.T) {
 		Settings:       settings.NewReader(store.NewSettingStore(db)),
 		Memories:       store.NewMemoryStore(db),
 		Sandboxes:      sandboxStore,
-		Projects:       projects,
+		Workspaces:     workspaces,
 		SandboxManager: mgr,
 	}
 
-	built, err := BuildFullAgent(ctx, deps, ac.ID, proj.ID, store.LocalUserID)
+	built, err := BuildFullAgent(ctx, deps, ac.ID, ws.ID, store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

@@ -381,7 +381,7 @@ export interface paths {
         };
         /**
          * Agent tool surface
-         * @description Schema-only definitions (name, description, parameters, read_only, source) of every tool the agent would carry right now; the sandbox tools are listed as a bound project would add them. Tools are never executed from here.
+         * @description Schema-only definitions (name, description, parameters, read_only, source) of every tool the agent would carry right now; the sandbox tools are listed as a bound workspace would add them. Tools are never executed from here.
          */
         get: {
             parameters: {
@@ -2893,620 +2893,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/projects": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List projects
-         * @description Every row carries session_count. storage_hint (where the files live) is reported to admins only.
-         */
-        get: {
-            parameters: {
-                query?: {
-                    /** @description admin: every owner's projects */
-                    all?: boolean;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["store.Project"][];
-                    };
-                };
-                /** @description all=true by a member */
-                403: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        /** Create project */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            /** @description Name and sandbox */
-            requestBody: {
-                content: {
-                    "application/json": Record<string, never> | components["schemas"]["handler.projectReq"];
-                };
-            };
-            responses: {
-                /** @description Created */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.projectDetail"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description name already in use on this sandbox */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get project
-         * @description The one endpoint that returns a project's environment — names, with every value masked. Listings never carry it at all. Owner only: an environment is not part of an admin's management reach.
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.projectDetail"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        /**
-         * Update project
-         * @description A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the project's container at its next run and severs its terminals; a rename does none of that.
-         */
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            /** @description Name and environment */
-            requestBody: {
-                content: {
-                    "application/json": Record<string, never> | components["schemas"]["handler.projectUpdateReq"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.projectDetail"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description name already in use, or the project changed concurrently — re-read and retry */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        post?: never;
-        /**
-         * Delete project
-         * @description Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any. The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the project survived.
-         */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.projectDeleteResp"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description sessions still bound */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{id}/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Export the project's working tree
-         * @description Streams /workspace as an uncompressed tar. Owner only, and audited: this takes the whole tree off the machine.
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description tar stream */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/x-tar": string;
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/x-tar": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Bad Gateway */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/x-tar": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{id}/host": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Project sandbox public address
-         * @description The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Owner only. 409 where the sandbox's row does not declare supports.public_host, or where there is no sandbox to address (none provisioned yet, or gone).
-         */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.projectHostResp"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description ports not public, or no sandbox to address */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Bad Gateway */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{id}/sandbox": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Project sandbox status */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.sandboxStateResp"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Bad Gateway */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{id}/sandbox/rebuild": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rebuild the project's sandbox
-         * @description Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first. With a body naming session_id — the caller's own session, bound to this project and with no run live on it — the session gets a note that the container was rebuilt; otherwise none is written and the rebuild still succeeds.
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            /** @description The session to note the rebuild on */
-            requestBody?: {
-                content: {
-                    "application/json": Record<string, never> | components["schemas"]["handler.rebuildReq"];
-                };
-            };
-            responses: {
-                /** @description rebuilt */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Bad Gateway */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{id}/sandbox/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Start the project's sandbox
-         * @description Synchronous, and can take an image pull's worth of time. Owner or admin.
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description running */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Bad Gateway */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{id}/sandbox/stop": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Stop the project's sandbox
-         * @description Keeps the working tree. `stopped: false` means a run or terminal is still using it and the stop happens when that ends. Owner or admin.
-         */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Project id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.sandboxStopResp"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Bad Gateway */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/provider-types": {
         parameters: {
             query?: never;
@@ -4500,7 +3886,7 @@ export interface paths {
         put?: never;
         /**
          * Create sandbox
-         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, headers (sent with every request, for a service that authenticates with its own header), template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password, api_key and the headers values are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, public_host), derived and read-only.
+         * @description type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, headers (sent with every request, for a service that authenticates with its own header), template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password, api_key and the headers values are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a workspace on this sandbox — no workspace, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, public_host), derived and read-only.
          */
         post: {
             parameters: {
@@ -4639,7 +4025,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description identity change refused (projects live on it), or the row changed concurrently — re-read and retry */
+                /** @description identity change refused (workspaces live on it), or the row changed concurrently — re-read and retry */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -4689,7 +4075,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description projects live on this sandbox */
+                /** @description workspaces live on this sandbox */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -5919,7 +5305,7 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
-                /** @description a run or a background task is live on the session, or it is bound to a project the new owner does not own */
+                /** @description a run or a background task is live on the session, or it is bound to a workspace the new owner does not own */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -7812,7 +7198,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run a workflow (optionally binding the session's project first)
+         * Run a workflow (optionally binding the session's workspace first)
          * @description Starts an execution as a background task of the given session, with the brief in the body (the workflow's session cannot see the conversation, so the brief is what it works from). The result comes back to the session as a notification, like any task's. 400 when the workflow has no runnable steps or an agent is gone, 404 for an unknown workflow or session, 409 when the session is at its background-task cap.
          */
         post: {
@@ -7921,6 +7307,620 @@ export interface paths {
                 };
                 /** @description name collision in the target scope */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List workspaces
+         * @description Every row carries session_count. storage_hint (where the files live) is reported to admins only.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description admin: every owner's workspaces */
+                    all?: boolean;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["store.Workspace"][];
+                    };
+                };
+                /** @description all=true by a member */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create workspace */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            /** @description Name and sandbox */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.workspaceReq"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.workspaceDetail"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name already in use on this sandbox */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get workspace
+         * @description The one endpoint that returns a workspace's environment — names, with every value masked. Listings never carry it at all. Owner only: an environment is not part of an admin's management reach.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workspace id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.workspaceDetail"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        /**
+         * Update workspace
+         * @description A value sent back as its mask keeps what is stored; any other value replaces it. An environment change replaces the workspace's container at its next run and severs its terminals; a rename does none of that.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workspace id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description Name and environment */
+            requestBody: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.workspaceUpdateReq"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.workspaceDetail"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description name already in use, or the workspace changed concurrently — re-read and retry */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Delete workspace
+         * @description Deletes the working tree too — the container and its volume are removed. The owner deletes their own; an admin deletes any. The row is gone whenever this answers 200: a storage_error means the STORAGE could not be reclaimed and is left for the operator, not that the workspace survived.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workspace id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.workspaceDeleteResp"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description sessions still bound */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export the workspace's working tree
+         * @description Streams /workspace as an uncompressed tar. Owner only, and audited: this takes the whole tree off the machine.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workspace id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description tar stream */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/x-tar": string;
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/x-tar": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/x-tar": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{id}/host": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Workspace sandbox public address
+         * @description The sandbox id and the domain a port inside the sandbox is public at, as https://<port>-<sandbox_id>.<domain>. Owner only. 409 where the sandbox's row does not declare supports.public_host, or where there is no sandbox to address (none provisioned yet, or gone).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workspace id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.workspaceHostResp"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description ports not public, or no sandbox to address */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{id}/sandbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspace sandbox status */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workspace id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.sandboxStateResp"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{id}/sandbox/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebuild the workspace's sandbox
+         * @description Discards the container and creates a fresh one from the current sandbox and environment. Files under /workspace survive; anything installed into the container does not, and commands running in it fail. Synchronous. Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible): export first. With a body naming session_id — the caller's own session, bound to this workspace and with no run live on it — the session gets a note that the container was rebuilt; otherwise none is written and the rebuild still succeeds.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workspace id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            /** @description The session to note the rebuild on */
+            requestBody?: {
+                content: {
+                    "application/json": Record<string, never> | components["schemas"]["handler.rebuildReq"];
+                };
+            };
+            responses: {
+                /** @description rebuilt */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{id}/sandbox/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the workspace's sandbox
+         * @description Synchronous, and can take an image pull's worth of time. Owner or admin.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workspace id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description running */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspaces/{id}/sandbox/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop the workspace's sandbox
+         * @description Keeps the working tree. `stopped: false` means a run or terminal is still using it and the stop happens when that ends. Owner or admin.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Workspace id */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.sandboxStopResp"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -8171,11 +8171,11 @@ export interface components {
         "bridge.RunInfo": {
             agent_config_id?: string;
             last_seq?: number;
-            project_id?: string;
             run_id?: string;
             session_id?: string;
             status?: components["schemas"]["bridge.RunStatus"];
             task?: components["schemas"]["bridge.TaskMeta"];
+            workspace_id?: string;
         };
         /** @enum {string} */
         "bridge.RunStatus": "running" | "interrupted" | "completed" | "error" | "cancelled";
@@ -8267,7 +8267,6 @@ export interface components {
              *     workflow step waiting to start.
              */
             kind?: string;
-            project_id?: string;
             run_id?: string;
             session_id?: string;
             task_id?: string;
@@ -8282,6 +8281,7 @@ export interface components {
              *     shows it while the run waits.
              */
             user_input?: string;
+            workspace_id?: string;
         };
         "handler.SessionMemoryInfo": {
             bytes?: number;
@@ -8411,10 +8411,10 @@ export interface components {
              */
             plan?: boolean;
             /**
-             * @description ProjectID only matters until the session's first project-carrying run
+             * @description WorkspaceID only matters until the session's first workspace-carrying run
              *     permanently binds it; after that it is ignored.
              */
-            project_id?: string;
+            workspace_id?: string;
         };
         "handler.createRunResp": {
             run_id?: string;
@@ -8561,57 +8561,6 @@ export interface components {
              */
             source?: string;
         };
-        "handler.projectDeleteResp": {
-            deleted?: boolean;
-            storage_error?: string;
-        };
-        "handler.projectDetail": {
-            created_at?: string;
-            env?: components["schemas"]["store.EnvVar"][];
-            id?: string;
-            /** @description Name is display only, unique per (owner, sandbox); a rename moves nothing. */
-            name?: string;
-            owner_id?: string;
-            /**
-             * @description Revision is the expected-revision CAS every update lands against.
-             *     RuntimeGen moves when the project's content or its sandbox changes; the
-             *     instance cache and terminals fence on it.
-             */
-            revision?: number;
-            /**
-             * @description SandboxID is what the project runs on; it may move only to a sandbox of
-             *     the same type and destination (409 otherwise).
-             */
-            sandbox_id?: string;
-            /** @description SessionCount is how many sessions bind this project, filled by List. */
-            session_count?: number;
-            /**
-             * @description StorageHint names where the files live (the named volume), derived per
-             *     response for admins only and never stored.
-             */
-            storage_hint?: string;
-            updated_at?: string;
-        };
-        "handler.projectHostResp": {
-            domain?: string;
-            sandbox_id?: string;
-        };
-        "handler.projectReq": {
-            /**
-             * @description Env is the environment the project's container is created with;
-             *     optional, and empty means none.
-             */
-            env?: components["schemas"]["store.EnvVar"][];
-            name: string;
-            /** @description SandboxID is what the project runs on — the machine and the image. */
-            sandbox_id: string;
-        };
-        "handler.projectUpdateReq": {
-            env?: components["schemas"]["store.EnvVar"][];
-            name: string;
-            revision?: number;
-            sandbox_id: string;
-        };
         "handler.providerReq": {
             /** @description APIKey is write-only: the ******** mask keeps the stored key. */
             api_key?: string;
@@ -8640,7 +8589,7 @@ export interface components {
         };
         "handler.rebuildReq": {
             /**
-             * @description SessionID is the caller's session, bound to this project, to leave the
+             * @description SessionID is the caller's session, bound to this workspace, to leave the
              *     rebuilt note on; left out, no note is written.
              */
             session_id?: string;
@@ -8655,19 +8604,19 @@ export interface components {
         };
         "handler.runWorkflowReq": {
             input?: string;
+            session_id: string;
             /**
-             * @description ProjectID binds a still-unbound session first, so the execution has its
+             * @description WorkspaceID binds a still-unbound session first, so the execution has its
              *     file and command tools; a bound session ignores it.
              */
-            project_id?: string;
-            session_id: string;
+            workspace_id?: string;
         };
         "handler.sandboxReq": {
             config?: number[];
             name?: string;
             /**
              * @description Prompt is appended to the instructions of every agent in a session bound
-             *     to a project on this sandbox; an edit reaches the next run, retiring nothing.
+             *     to a workspace on this sandbox; an edit reaches the next run, retiring nothing.
              */
             prompt?: string;
             /**
@@ -8725,14 +8674,14 @@ export interface components {
              *     a plan is approved.
              */
             planning?: boolean;
-            /**
-             * @description ProjectID is the project the session is bound to, set once by the first
-             *     project-carrying run and never rewritten.
-             */
-            project_id?: string;
             /** @description Status is idle, running, requires_action or failed. */
             status?: string;
             updated_at?: string;
+            /**
+             * @description WorkspaceID is the workspace the session is bound to, set once by the first
+             *     workspace-carrying run and never rewritten.
+             */
+            workspace_id?: string;
         };
         "handler.sessionPatchReq": {
             name?: string;
@@ -8765,14 +8714,14 @@ export interface components {
              *     a plan is approved.
              */
             planning?: boolean;
-            /**
-             * @description ProjectID is the project the session is bound to, set once by the first
-             *     project-carrying run and never rewritten.
-             */
-            project_id?: string;
             /** @description Status is idle, running, requires_action or failed. */
             status?: string;
             updated_at?: string;
+            /**
+             * @description WorkspaceID is the workspace the session is bound to, set once by the first
+             *     workspace-carrying run and never rewritten.
+             */
+            workspace_id?: string;
         };
         "handler.setSettingReq": {
             value?: string;
@@ -8823,6 +8772,57 @@ export interface components {
             session_id?: string;
             target?: string;
             workflow_id?: string;
+        };
+        "handler.workspaceDeleteResp": {
+            deleted?: boolean;
+            storage_error?: string;
+        };
+        "handler.workspaceDetail": {
+            created_at?: string;
+            env?: components["schemas"]["store.EnvVar"][];
+            id?: string;
+            /** @description Name is display only, unique per (owner, sandbox); a rename moves nothing. */
+            name?: string;
+            owner_id?: string;
+            /**
+             * @description Revision is the expected-revision CAS every update lands against.
+             *     RuntimeGen moves when the workspace's content or its sandbox changes; the
+             *     instance cache and terminals fence on it.
+             */
+            revision?: number;
+            /**
+             * @description SandboxID is what the workspace runs on; it may move only to a sandbox of
+             *     the same type and destination (409 otherwise).
+             */
+            sandbox_id?: string;
+            /** @description SessionCount is how many sessions bind this workspace, filled by List. */
+            session_count?: number;
+            /**
+             * @description StorageHint names where the files live (the named volume), derived per
+             *     response for admins only and never stored.
+             */
+            storage_hint?: string;
+            updated_at?: string;
+        };
+        "handler.workspaceHostResp": {
+            domain?: string;
+            sandbox_id?: string;
+        };
+        "handler.workspaceReq": {
+            /**
+             * @description Env is the environment the workspace's container is created with;
+             *     optional, and empty means none.
+             */
+            env?: components["schemas"]["store.EnvVar"][];
+            name: string;
+            /** @description SandboxID is what the workspace runs on — the machine and the image. */
+            sandbox_id: string;
+        };
+        "handler.workspaceUpdateReq": {
+            env?: components["schemas"]["store.EnvVar"][];
+            name: string;
+            revision?: number;
+            sandbox_id: string;
         };
         "protocol.APIError": {
             code?: string;
@@ -9251,32 +9251,6 @@ export interface components {
              */
             memory_tools?: boolean;
         };
-        "store.Project": {
-            created_at?: string;
-            id?: string;
-            /** @description Name is display only, unique per (owner, sandbox); a rename moves nothing. */
-            name?: string;
-            owner_id?: string;
-            /**
-             * @description Revision is the expected-revision CAS every update lands against.
-             *     RuntimeGen moves when the project's content or its sandbox changes; the
-             *     instance cache and terminals fence on it.
-             */
-            revision?: number;
-            /**
-             * @description SandboxID is what the project runs on; it may move only to a sandbox of
-             *     the same type and destination (409 otherwise).
-             */
-            sandbox_id?: string;
-            /** @description SessionCount is how many sessions bind this project, filled by List. */
-            session_count?: number;
-            /**
-             * @description StorageHint names where the files live (the named volume), derived per
-             *     response for admins only and never stored.
-             */
-            storage_hint?: string;
-            updated_at?: string;
-        };
         /**
          * @description Prompt is what the last build put in front of the conversation; absent
          *     until a run has built once.
@@ -9341,7 +9315,7 @@ export interface components {
             name?: string;
             /**
              * @description Prompt is appended to the instructions of every agent in a session bound
-             *     to a project here; an edit reaches the next run.
+             *     to a workspace here; an edit reaches the next run.
              */
             prompt?: string;
             /**
@@ -9351,7 +9325,7 @@ export interface components {
             revision?: number;
             supports?: components["schemas"]["store.SandboxSupports"];
             /**
-             * @description Type is the backend, one of SandboxTypes; frozen while projects live on
+             * @description Type is the backend, one of SandboxTypes; frozen while workspaces live on
              *     the sandbox.
              */
             type?: string;
@@ -9388,12 +9362,12 @@ export interface components {
              *     a plan is approved.
              */
             planning?: boolean;
-            /**
-             * @description ProjectID is the project the session is bound to, set once by the first
-             *     project-carrying run and never rewritten.
-             */
-            project_id?: string;
             updated_at?: string;
+            /**
+             * @description WorkspaceID is the workspace the session is bound to, set once by the first
+             *     workspace-carrying run and never rewritten.
+             */
+            workspace_id?: string;
         };
         "store.SessionGroup": {
             /** @description HistoryLimit caps how many recent session items each turn loads (0 = all). */
@@ -9596,6 +9570,32 @@ export interface components {
             pause_before?: boolean;
             /** @description Prompt is the step's input, sent as the user turn that starts it. */
             prompt?: string;
+        };
+        "store.Workspace": {
+            created_at?: string;
+            id?: string;
+            /** @description Name is display only, unique per (owner, sandbox); a rename moves nothing. */
+            name?: string;
+            owner_id?: string;
+            /**
+             * @description Revision is the expected-revision CAS every update lands against.
+             *     RuntimeGen moves when the workspace's content or its sandbox changes; the
+             *     instance cache and terminals fence on it.
+             */
+            revision?: number;
+            /**
+             * @description SandboxID is what the workspace runs on; it may move only to a sandbox of
+             *     the same type and destination (409 otherwise).
+             */
+            sandbox_id?: string;
+            /** @description SessionCount is how many sessions bind this workspace, filled by List. */
+            session_count?: number;
+            /**
+             * @description StorageHint names where the files live (the named volume), derived per
+             *     response for admins only and never stored.
+             */
+            storage_hint?: string;
+            updated_at?: string;
         };
     };
     responses: never;

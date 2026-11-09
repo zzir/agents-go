@@ -367,36 +367,36 @@ export const api = {
     // Lists the models with the stored key; a model name is looked up in the list.
     test: (id: string, model?: string) => request<S['handler.providerTestResp']>(`/providers/${id}/test`, { method: 'POST', body: JSON.stringify(model ? { model } : {}) }),
   },
-  // Projects carry a name, a template and an environment; the target is fixed at
+  // Workspaces carry a name, a template and an environment; the target is fixed at
   // creation. A delete refuses (409) while sessions bind one, else destroys the tree.
-  projects: {
-    list: () => request<S['store.Project'][]>('/projects'),
-    // Admin: every owner's projects, storage hints included.
-    listAll: () => request<S['store.Project'][]>('/projects?all=true'),
-    create: (data: unknown) => request<S['handler.projectDetail']>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+  workspaces: {
+    list: () => request<S['store.Workspace'][]>('/workspaces'),
+    // Admin: every owner's workspaces, storage hints included.
+    listAll: () => request<S['store.Workspace'][]>('/workspaces?all=true'),
+    create: (data: unknown) => request<S['handler.workspaceDetail']>('/workspaces', { method: 'POST', body: JSON.stringify(data) }),
     // The one call that returns an environment, and only to the owner.
-    get: (id: string) => request<S['handler.projectDetail']>(`/projects/${id}`),
+    get: (id: string) => request<S['handler.workspaceDetail']>(`/workspaces/${id}`),
     update: (id: string, data: unknown) =>
-      request<S['handler.projectDetail']>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      request<S['handler.workspaceDetail']>(`/workspaces/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     // Answers 200 whenever the row is gone; storage_error names storage that
     // could not be reclaimed with it — a warning, not a failed delete.
-    delete: (id: string) => request<{ deleted: boolean; storage_error?: string }>(`/projects/${id}`, { method: 'DELETE' }),
+    delete: (id: string) => request<{ deleted: boolean; storage_error?: string }>(`/workspaces/${id}`, { method: 'DELETE' }),
     // Creates the container up front, or discards and recreates it, synchronously
     // (an image pull's worth of time); sessionId is where the rebuilt note is left.
-    rebuildContainer: (id: string, sessionId?: string) => request<null>(`/projects/${id}/sandbox/rebuild`, { method: 'POST', body: sessionId ? JSON.stringify({ session_id: sessionId }) : undefined }),
-    // The project's compute: what it is doing, and starting/stopping it by
+    rebuildContainer: (id: string, sessionId?: string) => request<null>(`/workspaces/${id}/sandbox/rebuild`, { method: 'POST', body: sessionId ? JSON.stringify({ session_id: sessionId }) : undefined }),
+    // The workspace's compute: what it is doing, and starting/stopping it by
     // hand rather than leaving both to the next run and the idle timer.
-    sandboxStatus: (id: string) => request<{ state: string }>(`/projects/${id}/sandbox`),
-    sandboxHost: (id: string) => request<{ sandbox_id: string; domain: string }>(`/projects/${id}/host`),
-    sandboxStart: (id: string) => request<null>(`/projects/${id}/sandbox/start`, { method: 'POST' }),
-    sandboxStop: (id: string) => request<{ stopped: boolean }>(`/projects/${id}/sandbox/stop`, { method: 'POST' }),
+    sandboxStatus: (id: string) => request<{ state: string }>(`/workspaces/${id}/sandbox`),
+    sandboxHost: (id: string) => request<{ sandbox_id: string; domain: string }>(`/workspaces/${id}/host`),
+    sandboxStart: (id: string) => request<null>(`/workspaces/${id}/sandbox/start`, { method: 'POST' }),
+    sandboxStop: (id: string) => request<{ stopped: boolean }>(`/workspaces/${id}/sandbox/stop`, { method: 'POST' }),
     // The working tree as a tar: a DOWNLOAD, not JSON, so it bypasses request()
     // — the bearer token must ride on the fetch, and the body is a stream.
     exportTar: async (id: string, name: string): Promise<void> => {
       const headers: Record<string, string> = {};
       const t = getToken();
       if (t) headers['Authorization'] = `Bearer ${t}`;
-      const res = await fetch(`${BASE}/projects/${id}/export`, { headers });
+      const res = await fetch(`${BASE}/workspaces/${id}/export`, { headers });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error?.message || res.statusText);
@@ -404,7 +404,7 @@ export const api = {
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${name || 'project'}.tar`;
+      a.download = `${name || 'workspace'}.tar`;
       // Appended to the DOM (older Firefox ignores a detached anchor); the URL
       // is revoked on a delay, since revoking right after click() can cancel
       // Safari's download.
@@ -420,8 +420,8 @@ export const api = {
     setScope: setScope('/workflows'),
     setOwner: setOwner('/workflows'),
     // A person's own run of a workflow: the brief, for the session the result
-    // comes back to; project_id binds a still-unbound session first — invariant 27.
-    run: (id: string | number, body: { session_id: string; input: string; project_id?: string }) =>
+    // comes back to; workspace_id binds a still-unbound session first — invariant 27.
+    run: (id: string | number, body: { session_id: string; input: string; workspace_id?: string }) =>
       request(`/workflows/${id}/runs`, { method: 'POST', body: JSON.stringify(body) }),
   },
   // Triggers start a workflow without a conversation asking: on a cron

@@ -7,7 +7,7 @@ import { nameOf } from '@/lib/named';
 import { filterSessionsByName } from '@/lib/sessionFilter';
 import './sessions.css';
 
-interface SessionRef { id: string; name: string; pinned?: boolean; project_id?: string }
+interface SessionRef { id: string; name: string; pinned?: boolean; workspace_id?: string }
 
 // SESSION_REMOVED carries (detail) the id of a session this browser can no
 // longer see (deleted or reassigned from Admin), for the app to drop its state.
@@ -67,18 +67,18 @@ export function SessionPicker({ value, onChange, placeholder = 'Select a session
 }
 
 // UnboundHint says, under a picker, when the chosen session (a new one always)
-// has no project bound, so no file or command tools; `what` names the work.
+// has no workspace bound, so no file or command tools; `what` names the work.
 export function UnboundHint({ sessionId, what }: { sessionId: string; what: string }) {
   const isNew = sessionId === NEW_SESSION;
   const { data } = useApi<SessionRef | null>(
     () => (sessionId && !isNew ? api.sessions.get(sessionId) as Promise<SessionRef> : Promise.resolve(null)),
     [sessionId],
   );
-  if (!sessionId || (!isNew && (!data || data.project_id))) return null;
+  if (!sessionId || (!isNew && (!data || data.workspace_id))) return null;
   return (
     <Flash variant="warning" style={{ fontSize: 'var(--base-text-size-xs)', padding: 'var(--base-size-6) var(--base-size-8)' }}>
-      {isNew ? 'A new session' : 'This session'} has no project bound — {what} will have no file or command tools. Bind
-      one by sending it a message with a project picked, if the work touches files.
+      {isNew ? 'A new session' : 'This session'} has no workspace bound — {what} will have no file or command tools. Bind
+      one by sending it a message with a workspace picked, if the work touches files.
     </Flash>
   );
 }

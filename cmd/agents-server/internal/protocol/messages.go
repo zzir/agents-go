@@ -55,8 +55,8 @@ const (
 	EventRunDiagnostic       = "run.diagnostic"
 	EventRunGap              = "run.gap"
 	EventSessionTitleUpdated = "session.title_updated"
-	// EventSessionProjectBound announces the run that bound a project to the session.
-	EventSessionProjectBound = "session.project_bound"
+	// EventSessionWorkspaceBound announces the run that bound a workspace to the session.
+	EventSessionWorkspaceBound = "session.workspace_bound"
 	// EventSessionStatus carries a conversation's derived status to its owner's
 	// connections; never replayed.
 	EventSessionStatus = "session.status"
@@ -108,7 +108,7 @@ type AttachmentRef struct {
 	URL string `json:"url"`
 }
 
-// RunCreate is the client request to start a run; ProjectID matters only until
+// RunCreate is the client request to start a run; WorkspaceID matters only until
 // the session binds one.
 type RunCreate struct {
 	SessionID string `json:"session_id"`
@@ -116,7 +116,7 @@ type RunCreate struct {
 	// AttachmentIDs name uploaded images to send; chat runs with Vision only.
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 	AgentConfigID string   `json:"agent_config_id,omitempty"`
-	ProjectID     string   `json:"project_id,omitempty"`
+	WorkspaceID   string   `json:"workspace_id,omitempty"`
 	// Plan: true enters the plan phase, false leaves it, absent keeps it.
 	Plan *bool `json:"plan,omitempty"`
 }
@@ -167,10 +167,10 @@ type ToolReject struct {
 // TerminalOpen is the first message on /ws/terminal after auth; zero Cols/Rows
 // mean 80x24.
 type TerminalOpen struct {
-	// ProjectID selects the container to open the shell in.
-	ProjectID string `json:"project_id"`
-	Cols      int    `json:"cols,omitempty"`
-	Rows      int    `json:"rows,omitempty"`
+	// WorkspaceID selects the container to open the shell in.
+	WorkspaceID string `json:"workspace_id"`
+	Cols        int    `json:"cols,omitempty"`
+	Rows        int    `json:"rows,omitempty"`
 }
 
 // TerminalResize is the client request to change the PTY size.
@@ -409,10 +409,10 @@ type SessionTitleUpdated struct {
 	Title     string `json:"title"`
 }
 
-// SessionProjectBound notifies the client that the session is now bound to project_id.
-type SessionProjectBound struct {
-	SessionID string `json:"session_id"`
-	ProjectID string `json:"project_id"`
+// SessionWorkspaceBound notifies the client that the session is now bound to workspace_id.
+type SessionWorkspaceBound struct {
+	SessionID   string `json:"session_id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
 // A conversation's derived status, highest priority first.

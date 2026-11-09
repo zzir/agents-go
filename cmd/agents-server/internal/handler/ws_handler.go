@@ -240,7 +240,7 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 	// No explicit subscribe: OnRunAttach attached every connection of the owner
 	// before the first event. StartRun applies the plan intent inside its
 	// reservation.
-	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.ProjectID, bridge.RunInput{Text: msg.Input, AttachmentIDs: msg.AttachmentIDs}, msg.Plan, nil)
+	_, err := h.runner.StartRun(msg.SessionID, msg.AgentConfigID, msg.WorkspaceID, bridge.RunInput{Text: msg.Input, AttachmentIDs: msg.AttachmentIDs}, msg.Plan, nil)
 	if err == nil {
 		h.audit(conn, "ws.run.create", msg.SessionID, "")
 	}

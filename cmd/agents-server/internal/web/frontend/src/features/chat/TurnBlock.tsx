@@ -20,13 +20,13 @@ const STAGE_NOTES: Record<string, string> = {
   tool_output: "A tool's result was blocked before the model could read it.",
 };
 
-// SHARED_FILES_COPY is what the turn controls add on a project-bound session: a
+// SHARED_FILES_COPY is what the turn controls add on a workspace-bound session: a
 // fork, a regenerate and an attempt switch act on the one shared working tree
 // (decisions §5.28).
 export const SHARED_FILES_COPY = {
-  fork: "the new session shares the project's files with this one",
-  regenerate: "the project's files keep what the first attempt changed",
-  attempts: "attempts share the project's files",
+  fork: "the new session shares the workspace's files with this one",
+  regenerate: "the workspace's files keep what the first attempt changed",
+  attempts: "attempts share the workspace's files",
 };
 
 // endpointTrouble recognizes the pre-flight failures a Providers edit fixes: no
@@ -155,11 +155,11 @@ interface TurnBlockProps {
 export const TurnBlock = memo(function TurnBlock({ parts, streaming, reasoning, isLive, prompt, duration, speed, showSpeed, onToggleSpeed, messageId, branches, runId }: TurnBlockProps) {
   // Live-run state applies to the live turn only — every read below is gated
   // on isLive.
-  const { running, compacting, projectBound } = useChatSession();
+  const { running, compacting, workspaceBound } = useChatSession();
   const { regenerate, fork, switchBranch, openSettings, approveAll, openTrace, replayRun, compact } = useChatActions();
-  // On a bound session the attempts and forks share the project's files,
+  // On a bound session the attempts and forks share the workspace's files,
   // and the controls say so (decisions §5.28).
-  const shared = projectBound ? SHARED_FILES_COPY : null;
+  const shared = workspaceBound ? SHARED_FILES_COPY : null;
   const isEmpty = parts.length === 0 && !streaming && !reasoning;
   const { copied, copy } = useCopy();
   // A turn paused on a decision offers no fork, regenerate or attempt switch:

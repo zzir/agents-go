@@ -99,7 +99,7 @@ entry in the settings registry (invariant 40). Keys by panel group:
 | `max_tasks_per_session` | limits | `6` | Concurrent live background tasks one session may have — a fat-finger guard against a runaway fan-out, not a scheduler. Read at each spawn, so a change applies to the next one. |
 | `task_session_retention_days` | limits | — | A background task finished (completed, failed or cancelled) for longer than this many days loses its transcript and its row hourly; its result stays in the session it reported to. 0 keeps them forever. |
 | `max_terminals_per_sandbox` | limits | `4` (max `32`) | Concurrent interactive terminals allowed on one sandbox — a fat-finger guard, not a scheduler. |
-| `sandbox_idle_minutes` | limits | `30` | Stop a project's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again. |
+| `sandbox_idle_minutes` | limits | `30` | Stop a workspace's container after this many minutes with no run or terminal using it; 0 disables. The next run starts it again. |
 | `s3_endpoint` | storage | — | S3-compatible API endpoint image attachments are uploaded to. The section saves as one form: Save probes the bucket end to end and refuses a broken configuration, Clear disables image input. |
 | `s3_region` | storage | `auto` | Signing region. R2 and MinIO accept "auto"; AWS needs the bucket's real region. |
 | `s3_bucket` | storage | — | Bucket the image objects live in. It must allow PUBLIC READS: model providers fetch attachment URLs anonymously, and so does anyone else holding a link. |

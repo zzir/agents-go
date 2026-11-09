@@ -1,25 +1,25 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { adoptNewSessionPrefs, loadSessionAgent, loadSessionProject, saveSessionAgent, saveSessionProject } from '@/lib/drafts';
+import { adoptNewSessionPrefs, loadSessionAgent, loadSessionWorkspace, saveSessionAgent, saveSessionWorkspace } from '@/lib/drafts';
 
 beforeEach(() => { localStorage.clear(); });
 
 describe('adoptNewSessionPrefs', () => {
   it('moves the New composer picks to the session its first message made', () => {
     saveSessionAgent('', 'agent-1');
-    saveSessionProject('', 'proj-1');
+    saveSessionWorkspace('', 'ws-1');
     adoptNewSessionPrefs('s1');
     expect(loadSessionAgent('s1')).toBe('agent-1');
-    expect(loadSessionProject('s1')).toBe('proj-1');
-    // The next New starts clean: nothing inherits the project.
+    expect(loadSessionWorkspace('s1')).toBe('ws-1');
+    // The next New starts clean: nothing inherits the workspace.
     expect(loadSessionAgent('')).toBe('');
-    expect(loadSessionProject('')).toBe('');
+    expect(loadSessionWorkspace('')).toBe('');
   });
 
   it('keeps what the session already drafted when New picked nothing', () => {
-    saveSessionProject('s2', 'kept');
+    saveSessionWorkspace('s2', 'kept');
     adoptNewSessionPrefs('s2');
-    expect(loadSessionProject('s2')).toBe('kept');
+    expect(loadSessionWorkspace('s2')).toBe('kept');
     expect(loadSessionAgent('s2')).toBe('');
   });
 });

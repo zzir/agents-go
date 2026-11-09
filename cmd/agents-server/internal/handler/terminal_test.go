@@ -105,9 +105,9 @@ type fakeProvider struct {
 	// releases counts how often the acquired reference was dropped — the
 	// terminal must release exactly once when its connection ends.
 	releases atomic.Int64
-	// projects records what each Acquire was asked for.
-	mu       sync.Mutex
-	projects []string
+	// workspaces records what each Acquire was asked for.
+	mu         sync.Mutex
+	workspaces []string
 }
 
 func (p *fakeProvider) Acquire(spec sandboxes.Spec) (sandbox.Sandbox, func(), error) {
@@ -115,37 +115,37 @@ func (p *fakeProvider) Acquire(spec sandboxes.Spec) (sandbox.Sandbox, func(), er
 		return nil, nil, p.err
 	}
 	p.mu.Lock()
-	p.projects = append(p.projects, spec.Project.ID)
+	p.workspaces = append(p.workspaces, spec.Workspace.ID)
 	p.mu.Unlock()
 	return p.sb, func() { p.releases.Add(1) }, nil
 }
 
 // terminalTestServer stands up /ws/terminal with a fake sandbox backend and a
-// stored project, returning the pieces tests need.
+// stored workspace, returning the pieces tests need.
 func terminalTestServer(t *testing.T, provider sandboxProvider) (*httptest.Server, *TerminalHandler, string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	projects := store.NewProjectStore(db)
+	workspaces := store.NewWorkspaceStore(db)
 	sandboxID := mkSandboxRow(t, db)
-	proj := &store.Project{OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p"}
-	if err := projects.Create(t.Context(), proj); err != nil {
+	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "p"}
+	if err := workspaces.Create(t.Context(), ws); err != nil {
 		t.Fatal(err)
 	}
-	th := NewTerminalHandler(store.NewSandboxStore(db), projects, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(store.NewSandboxStore(db), workspaces, provider, settings.NewReader(nil))
 	engine := newTestEngine()
 	engine.GET("/ws/terminal", server.HandleWSWithAuth(th.Handle, testAuthFunc(testWSToken), nil, nil))
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	return srv, th, proj.ID
+	return srv, th, ws.ID
 }
 
 // dialTerminal connects, authenticates and completes the terminal.open
 // handshake, returning the connection after terminal.ready.
-func dialTerminal(t *testing.T, srv *httptest.Server, projectID string) *websocket.Conn {
+func dialTerminal(t *testing.T, srv *httptest.Server, workspaceID string) *websocket.Conn {
 	t.Helper()
 	conn := dialTerminalRaw(t, srv)
-	openTerminal(t, conn, projectID)
+	openTerminal(t, conn, workspaceID)
 	env := readTerminalEnvelope(t, conn)
 	if env.Type != protocol.EventTerminalReady {
 		t.Fatalf("handshake reply = %q, want %s", env.Type, protocol.EventTerminalReady)
@@ -173,10 +173,10 @@ func dialTerminalRaw(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	return conn
 }
 
-func openTerminal(t *testing.T, conn *websocket.Conn, projectID string) {
+func openTerminal(t *testing.T, conn *websocket.Conn, workspaceID string) {
 	t.Helper()
 	if err := conn.WriteJSON(&protocol.Envelope{Type: protocol.EventTerminalOpen, Payload: mustJSON(protocol.TerminalOpen{
-		ProjectID: projectID, Cols: 100, Rows: 30,
+		WorkspaceID: workspaceID, Cols: 100, Rows: 30,
 	})}); err != nil {
 		t.Fatalf("send terminal.open: %v", err)
 	}
@@ -273,24 +273,24 @@ func TestTerminalWS_EchoResizeExit(t *testing.T) {
 	}
 }
 
-// A member opens a shell into their OWN project's container; a foreign
-// project reads as absent and acquires nothing (decisions §5.28 — admins reach
-// any project, which the other tests exercise via the local user).
-func TestTerminalWS_ProjectOwnership(t *testing.T) {
+// A member opens a shell into their OWN workspace's container; a foreign
+// workspace reads as absent and acquires nothing (decisions §5.28 — admins reach
+// any workspace, which the other tests exercise via the local user).
+func TestTerminalWS_WorkspaceOwnership(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	projects := store.NewProjectStore(db)
+	workspaces := store.NewWorkspaceStore(db)
 	sandboxID := mkSandboxRow(t, db)
 	member := protocol.UserInfo{ID: store.NewID(), Email: "m@example.com", Role: store.RoleMember}
-	own := &store.Project{OwnerID: member.ID, SandboxID: sandboxID, Name: "own"}
-	foreign := &store.Project{OwnerID: store.NewID(), SandboxID: sandboxID, Name: "foreign"}
-	for _, p := range []*store.Project{own, foreign} {
-		if err := projects.Create(t.Context(), p); err != nil {
+	own := &store.Workspace{OwnerID: member.ID, SandboxID: sandboxID, Name: "own"}
+	foreign := &store.Workspace{OwnerID: store.NewID(), SandboxID: sandboxID, Name: "foreign"}
+	for _, p := range []*store.Workspace{own, foreign} {
+		if err := workspaces.Create(t.Context(), p); err != nil {
 			t.Fatal(err)
 		}
 	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(store.NewSandboxStore(db), projects, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(store.NewSandboxStore(db), workspaces, provider, settings.NewReader(nil))
 	asMember := func(_ context.Context, bearer string) (protocol.UserInfo, error) {
 		if bearer != testWSToken {
 			return protocol.UserInfo{}, server.ErrUnauthorized
@@ -305,9 +305,9 @@ func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	conn := dialTerminalRaw(t, srv)
 	openTerminal(t, conn, own.ID)
 	if env := readTerminalEnvelope(t, conn); env.Type != protocol.EventTerminalReady {
-		t.Fatalf("member on their own project = %q, want %s", env.Type, protocol.EventTerminalReady)
+		t.Fatalf("member on their own workspace = %q, want %s", env.Type, protocol.EventTerminalReady)
 	}
-	acquired := len(provider.projects)
+	acquired := len(provider.workspaces)
 
 	conn2 := dialTerminalRaw(t, srv)
 	openTerminal(t, conn2, foreign.ID)
@@ -315,14 +315,14 @@ func TestTerminalWS_ProjectOwnership(t *testing.T) {
 	var te protocol.TerminalError
 	_ = json.Unmarshal(env.Payload, &te)
 	if env.Type != protocol.EventTerminalError || !strings.Contains(te.Message, "not found") {
-		t.Fatalf("member on a foreign project = %s %q, want a not-found refusal", env.Type, te.Message)
+		t.Fatalf("member on a foreign workspace = %s %q, want a not-found refusal", env.Type, te.Message)
 	}
-	if len(provider.projects) != acquired {
+	if len(provider.workspaces) != acquired {
 		t.Fatal("a refused open acquired a sandbox")
 	}
 }
 
-func TestTerminalWS_UnknownProjectRejected(t *testing.T) {
+func TestTerminalWS_UnknownWorkspaceRejected(t *testing.T) {
 	srv, _, _ := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}})
 	conn := dialTerminalRaw(t, srv)
 	openTerminal(t, conn, store.NewID())
@@ -345,16 +345,16 @@ func TestTerminalWS_OpenErrorReported(t *testing.T) {
 	}
 }
 
-// A configuration change must tear down the project's live terminals: the
+// A configuration change must tear down the workspace's live terminals: the
 // client observes the shell dying (exit envelope and/or socket close).
-func TestTerminalWS_CloseProjectTerminals(t *testing.T) {
+func TestTerminalWS_CloseWorkspaceTerminals(t *testing.T) {
 	term := newFakeTerminal()
 	srv, th, pid := terminalTestServer(t, &fakeProvider{sb: &fakeTerminalSandbox{term: term}})
 	conn := dialTerminal(t, srv, pid)
 
 	// The update's new generation retires everything below it (the test
-	// project sits at generation 1).
-	th.CloseProjectTerminals(pid, 2)
+	// workspace sits at generation 1).
+	th.CloseWorkspaceTerminals(pid, 2)
 
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for {
@@ -373,24 +373,24 @@ func TestTerminalWS_CloseProjectTerminals(t *testing.T) {
 	closed := term.closed
 	term.mu.Unlock()
 	if !closed {
-		t.Error("terminal not closed after CloseProjectTerminals")
+		t.Error("terminal not closed after CloseWorkspaceTerminals")
 	}
 }
 
-// terminal.open resolves its project and refuses anything that is not one the
-// caller may reach: the shell must land in the exact project container the
+// terminal.open resolves its workspace and refuses anything that is not one the
+// caller may reach: the shell must land in the exact workspace container the
 // sessions bound to it use.
-func TestTerminalOpen_ValidatesProject(t *testing.T) {
+func TestTerminalOpen_ValidatesWorkspace(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	projects := store.NewProjectStore(db)
+	workspaces := store.NewWorkspaceStore(db)
 	sandboxID := mkSandboxRow(t, db)
-	mine := &store.Project{OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "mine"}
-	if err := projects.Create(t.Context(), mine); err != nil {
+	mine := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: "mine"}
+	if err := workspaces.Create(t.Context(), mine); err != nil {
 		t.Fatal(err)
 	}
 	provider := &fakeProvider{sb: &fakeTerminalSandbox{term: newFakeTerminal()}}
-	th := NewTerminalHandler(store.NewSandboxStore(db), projects, provider, settings.NewReader(nil))
+	th := NewTerminalHandler(store.NewSandboxStore(db), workspaces, provider, settings.NewReader(nil))
 	var auditMu sync.Mutex
 	var audited []protocol.AuditRecord
 	th.Audit = func(_ context.Context, r protocol.AuditRecord) {
@@ -403,39 +403,39 @@ func TestTerminalOpen_ValidatesProject(t *testing.T) {
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 
-	open := func(projectID string) protocol.Envelope {
+	open := func(workspaceID string) protocol.Envelope {
 		conn := dialTerminalRaw(t, srv)
-		openTerminal(t, conn, projectID)
+		openTerminal(t, conn, workspaceID)
 		return readTerminalEnvelope(t, conn)
 	}
 
-	// No project and an unknown one: refused.
+	// No workspace and an unknown one: refused.
 	if env := open(""); env.Type != protocol.EventTerminalError {
-		t.Fatalf("projectless open: %s, want %s", env.Type, protocol.EventTerminalError)
+		t.Fatalf("workspaceless open: %s, want %s", env.Type, protocol.EventTerminalError)
 	}
 	if env := open(store.NewID()); env.Type != protocol.EventTerminalError {
-		t.Fatalf("unknown-project open: %s, want %s", env.Type, protocol.EventTerminalError)
+		t.Fatalf("unknown-workspace open: %s, want %s", env.Type, protocol.EventTerminalError)
 	}
-	// The caller's own project opens, and the manager saw exactly it.
+	// The caller's own workspace opens, and the manager saw exactly it.
 	if env := open(mine.ID); env.Type != protocol.EventTerminalReady {
 		t.Fatalf("valid open: %s, want %s", env.Type, protocol.EventTerminalReady)
 	}
 	provider.mu.Lock()
-	got := append([]string(nil), provider.projects...)
+	got := append([]string(nil), provider.workspaces...)
 	provider.mu.Unlock()
 	if len(got) != 1 || got[0] != mine.ID {
-		t.Fatalf("manager saw projects %q, want [%s]", got, mine.ID)
+		t.Fatalf("manager saw workspaces %q, want [%s]", got, mine.ID)
 	}
-	// Only the successful open leaves an audit line, and it names the project
+	// Only the successful open leaves an audit line, and it names the workspace
 	// and its owner.
 	auditMu.Lock()
 	records := append([]protocol.AuditRecord(nil), audited...)
 	auditMu.Unlock()
 	if len(records) != 1 || records[0].Resource != mine.ID {
-		t.Fatalf("audit records = %+v, want one for project %s", records, mine.ID)
+		t.Fatalf("audit records = %+v, want one for workspace %s", records, mine.ID)
 	}
 	if d := records[0].Detail; !strings.Contains(d, mine.Name) || !strings.Contains(d, store.LocalUserID) {
-		t.Fatalf("audit detail %q does not name the project and owner", d)
+		t.Fatalf("audit detail %q does not name the workspace and owner", d)
 	}
 }
 
@@ -462,7 +462,7 @@ func TestTerminalWS_ReleasesInstanceOnClose(t *testing.T) {
 // this terminal was still dialing and could not see it.
 func TestTerminalRegisterFence(t *testing.T) {
 	th := NewTerminalHandler(nil, nil, nil, settings.NewReader(nil))
-	th.CloseProjectTerminals("p1", 2)
+	th.CloseWorkspaceTerminals("p1", 2)
 
 	if ok, stale := th.register("p1", &liveTerminal{gen: 1}, 4); ok || !stale {
 		t.Fatalf("stale-generation register: ok=%v stale=%v, want a stale refusal", ok, stale)
@@ -471,13 +471,13 @@ func TestTerminalRegisterFence(t *testing.T) {
 		t.Fatalf("current-generation register: ok=%v stale=%v, want accepted", ok, stale)
 	}
 	// The fence never regresses: an older sweep arriving late cannot reopen it.
-	th.CloseProjectTerminals("p1", 1)
+	th.CloseWorkspaceTerminals("p1", 1)
 	if ok, stale := th.register("p1", &liveTerminal{gen: 1}, 4); ok || !stale {
 		t.Fatalf("register after a late older sweep: ok=%v stale=%v, want still refused", ok, stale)
 	}
-	// A sibling project is its own fence.
+	// A sibling workspace is its own fence.
 	if ok, stale := th.register("p2", &liveTerminal{gen: 1}, 4); !ok || stale {
-		t.Fatalf("sibling project: ok=%v stale=%v, want accepted", ok, stale)
+		t.Fatalf("sibling workspace: ok=%v stale=%v, want accepted", ok, stale)
 	}
 }
 
@@ -489,23 +489,23 @@ func (perOpenTerminalSandbox) OpenTerminal(context.Context, sandbox.TerminalOpti
 	return newFakeTerminal(), nil
 }
 
-// A project's sweep closes that project's terminals and leaves other
-// projects' connected — they share a target, not a container.
-func TestCloseProjectTerminalsSparesSiblings(t *testing.T) {
+// A workspace's sweep closes that workspace's terminals and leaves other
+// workspaces' connected — they share a target, not a container.
+func TestCloseWorkspaceTerminalsSparesSiblings(t *testing.T) {
 	srv, th, pid := terminalTestServer(t, &fakeProvider{sb: perOpenTerminalSandbox{}})
-	first, err := th.projects.Get(t.Context(), pid)
+	first, err := th.workspaces.Get(t.Context(), pid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sibling := &store.Project{OwnerID: store.LocalUserID, SandboxID: first.SandboxID, Name: "sibling"}
-	if err := th.projects.Create(t.Context(), sibling); err != nil {
+	sibling := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: first.SandboxID, Name: "sibling"}
+	if err := th.workspaces.Create(t.Context(), sibling); err != nil {
 		t.Fatal(err)
 	}
 	mine := dialTerminal(t, srv, pid)
 	other := dialTerminal(t, srv, sibling.ID)
 
-	// The project's environment changed: generations below 2 are retired.
-	th.CloseProjectTerminals(pid, 2)
+	// The workspace's environment changed: generations below 2 are retired.
+	th.CloseWorkspaceTerminals(pid, 2)
 
 	_ = mine.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for {
@@ -523,7 +523,7 @@ func TestCloseProjectTerminalsSparesSiblings(t *testing.T) {
 	}
 }
 
-// The cap is the sandbox's, not the project's: projects on one sandbox share
+// The cap is the sandbox's, not the workspace's: workspaces on one sandbox share
 // a container, so their terminals count together, and a sibling sandbox is
 // its own budget.
 func TestTerminalCapCountsPerSandbox(t *testing.T) {

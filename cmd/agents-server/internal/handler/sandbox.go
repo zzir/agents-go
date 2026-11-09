@@ -25,7 +25,7 @@ type SandboxHandler struct {
 }
 
 // NewSandboxHandler returns a handler over the sandbox store; the manager runs
-// the health check, and the retirer carries a content change to the projects.
+// the health check, and the retirer carries a content change to the workspaces.
 func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, r *Retirer) *SandboxHandler {
 	if s == nil || m == nil || r == nil {
 		panic("handler: NewSandboxHandler needs the sandbox store, the manager and a retirer")
@@ -33,35 +33,35 @@ func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, r *Retirer) 
 	return &SandboxHandler{store: s, manager: m, retire: r}
 }
 
-// Retirer turns a content change on a sandbox into the project generations it
-// invalidates, then retires each project's live instance and terminals
+// Retirer turns a content change on a sandbox into the workspace generations it
+// invalidates, then retires each workspace's live instance and terminals
 // (decisions §5.33).
 type Retirer struct {
-	projects  *store.ProjectStore
-	manager   *sandboxes.Manager
-	terminals *TerminalHandler
+	workspaces *store.WorkspaceStore
+	manager    *sandboxes.Manager
+	terminals  *TerminalHandler
 }
 
 // NewRetirer wires the things a retirement touches.
-func NewRetirer(projects *store.ProjectStore, m *sandboxes.Manager, terminals *TerminalHandler) *Retirer {
-	if projects == nil || terminals == nil {
-		panic("handler: NewRetirer needs the project store and the terminal handler")
+func NewRetirer(workspaces *store.WorkspaceStore, m *sandboxes.Manager, terminals *TerminalHandler) *Retirer {
+	if workspaces == nil || terminals == nil {
+		panic("handler: NewRetirer needs the workspace store and the terminal handler")
 	}
-	return &Retirer{projects: projects, manager: m, terminals: terminals}
+	return &Retirer{workspaces: workspaces, manager: m, terminals: terminals}
 }
 
-// bump moves the runtime generation of every project on the sandbox and
+// bump moves the runtime generation of every workspace on the sandbox and
 // retires what each was serving. A failure answers 500: the row is already written.
 func (r *Retirer) bump(ctx context.Context, sandboxID string) error {
-	gens, err := r.projects.BumpRuntimeGen(ctx, sandboxID)
+	gens, err := r.workspaces.BumpRuntimeGen(ctx, sandboxID)
 	if err != nil {
 		return err
 	}
 	for _, g := range gens {
 		if r.manager != nil {
-			r.manager.RetireProject(g.ID, g.RuntimeGen)
+			r.manager.RetireWorkspace(g.ID, g.RuntimeGen)
 		}
-		r.terminals.CloseProjectTerminals(g.ID, g.RuntimeGen)
+		r.terminals.CloseWorkspaceTerminals(g.ID, g.RuntimeGen)
 	}
 	return nil
 }
@@ -92,7 +92,7 @@ type sandboxReq struct {
 	Type   string          `json:"type"`
 	Config json.RawMessage `json:"config"`
 	// Prompt is appended to the instructions of every agent in a session bound
-	// to a project on this sandbox; an edit reaches the next run, retiring nothing.
+	// to a workspace on this sandbox; an edit reaches the next run, retiring nothing.
 	Prompt string `json:"prompt,omitempty"`
 	// Revision, on update only, is the revision the edit was based on: a
 	// stale form is 409. Absent (0) keeps last-writer-wins. Ignored on create.
@@ -124,7 +124,7 @@ func (h *SandboxHandler) validate(c *gin.Context, req *sandboxReq) bool {
 // Create persists a new sandbox from the request body.
 //
 //	@Summary		Create sandbox
-//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, headers (sent with every request, for a service that authenticates with its own header), template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password, api_key and the headers values are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a project on this sandbox — no project, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, public_host), derived and read-only.
+//	@Description	type "docker" config: host ("" = local daemon, tcp://, or ssh://user@host with ssh_* auth), image (required), runtime, user ("" = root), network (docker network name; "" = no network), memory_mb/cpus caps, max_read_file_bytes. type "e2b" config: api_url, domain, api_key, data_plane_auth, headers (sent with every request, for a service that authenticates with its own header), template_id (required — build it on the service first), user ("" = the template's default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes. ssh_password, api_key and the headers values are write-only, ******** mask semantics. Top-level optional "prompt" (both types) is appended to the agent instructions of every session bound to a workspace on this sandbox — no workspace, no sandbox tools, no prompt; editing it reaches the next run without retiring the container. Every returned row carries "supports" — the type's capability flags (rebuild, public_host), derived and read-only.
 //	@Tags			sandboxes
 //	@Accept			json
 //	@Produce		json
@@ -185,7 +185,7 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 }
 
 // Update overwrites the sandbox; a masked credential keeps the stored value,
-// and an identity change is 409 while any project lives on it — decisions §5.36.
+// and an identity change is 409 while any workspace lives on it — decisions §5.36.
 //
 //	@Summary		Update sandbox
 //	@Description	Include the revision the edit was based on (from GET/List) to make the write conditional: 409 if the row changed meanwhile. Omitting it falls back to last-writer-wins. Editing the top-level "prompt" is NOT a content change: it retires no container and severs no terminal, reaching bound sessions at their next run (unlike an image change).
@@ -197,7 +197,7 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 //	@Success		200		{object}	store.Sandbox
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		404		{object}	ErrorResponse
-//	@Failure		409		{object}	ErrorResponse	"identity change refused (projects live on it), or the row changed concurrently — re-read and retry"
+//	@Failure		409		{object}	ErrorResponse	"identity change refused (workspaces live on it), or the row changed concurrently — re-read and retry"
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sandboxes/{id} [put]
@@ -247,14 +247,14 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	}
 	contentChanged := prev.Type != sb.Type || !store.SandboxContentEqual(sb.Type, prev.Config, sb.Config)
 	if store.SandboxIdentityChanged(prev, sb) {
-		projects, uerr := h.store.UpdateIdentityIfUnreferenced(ctx, id, sb, expected)
+		workspaces, uerr := h.store.UpdateIdentityIfUnreferenced(ctx, id, sb, expected)
 		if uerr != nil {
 			storeError(c, uerr)
 			return
 		}
-		if projects > 0 {
-			conflict(c, fmt.Sprintf("%d project(s) live on this sandbox; %s, or create a new sandbox for the new location",
-				projects, store.SandboxFrozenFields(prev.Type)))
+		if workspaces > 0 {
+			conflict(c, fmt.Sprintf("%d workspace(s) live on this sandbox; %s, or create a new sandbox for the new location",
+				workspaces, store.SandboxFrozenFields(prev.Type)))
 			return
 		}
 	} else if err := h.store.Update(ctx, id, sb, expected); err != nil {
@@ -278,7 +278,7 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, sanitizeSandboxConfig(*updated))
 }
 
-// Delete removes the sandbox; one still carrying projects is 409, decided by
+// Delete removes the sandbox; one still carrying workspaces is 409, decided by
 // the delete statement itself.
 //
 //	@Summary	Delete sandbox
@@ -286,18 +286,18 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 //	@Param		id	path	string	true	"Sandbox id"
 //	@Success	204	"deleted"
 //	@Failure	404	{object}	ErrorResponse
-//	@Failure	409	{object}	ErrorResponse	"projects live on this sandbox"
+//	@Failure	409	{object}	ErrorResponse	"workspaces live on this sandbox"
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sandboxes/{id} [delete]
 func (h *SandboxHandler) Delete(c *gin.Context) {
-	projects, err := h.store.DeleteIfUnreferenced(c.Request.Context(), c.Param("id"))
+	workspaces, err := h.store.DeleteIfUnreferenced(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		storeError(c, err)
 		return
 	}
-	if projects > 0 {
-		conflict(c, fmt.Sprintf("%d project(s) live on this sandbox; delete them first", projects))
+	if workspaces > 0 {
+		conflict(c, fmt.Sprintf("%d workspace(s) live on this sandbox; delete them first", workspaces))
 		return
 	}
 	c.Status(http.StatusNoContent)

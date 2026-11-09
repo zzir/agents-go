@@ -11,7 +11,7 @@ import (
 )
 
 // createSandboxRow persists a sandbox under the given id.
-// BindProjectIfEmpty refuses a bind whose project is gone (the in-write
+// BindWorkspaceIfEmpty refuses a bind whose workspace is gone (the in-write
 // existence guard), so binding tests must create what they bind.
 func createSandboxRow(t *testing.T, db *bun.DB, id string) {
 	t.Helper()
@@ -21,13 +21,13 @@ func createSandboxRow(t *testing.T, db *bun.DB, id string) {
 	}
 }
 
-// createProjectRow persists a project on the given sandbox — a bind's project
-// must exist (the existence guard mirrors ProjectStore.DeleteIfUnreferenced).
-func createProjectRow(t *testing.T, db *bun.DB, id, sandboxID string) {
+// createWorkspaceRow persists a workspace on the given sandbox — a bind's workspace
+// must exist (the existence guard mirrors WorkspaceStore.DeleteIfUnreferenced).
+func createWorkspaceRow(t *testing.T, db *bun.DB, id, sandboxID string) {
 	t.Helper()
-	p := &Project{ID: id, OwnerID: LocalUserID, SandboxID: sandboxID, Name: id}
-	if err := NewProjectStore(db).Create(context.Background(), p); err != nil {
-		t.Fatalf("create project %s: %v", id, err)
+	p := &Workspace{ID: id, OwnerID: LocalUserID, SandboxID: sandboxID, Name: id}
+	if err := NewWorkspaceStore(db).Create(context.Background(), p); err != nil {
+		t.Fatalf("create workspace %s: %v", id, err)
 	}
 }
 
@@ -96,10 +96,10 @@ func TestBindAgentIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	}
 }
 
-// The first project-carrying run permanently binds project_id: the binding is
+// The first workspace-carrying run permanently binds workspace_id: the binding is
 // the session's file system context and must never change under a
 // conversation that already touched it. Exactly one caller wins.
-func TestBindProjectIfEmptyKeepsTheFirstBinding(t *testing.T) {
+func TestBindWorkspaceIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
@@ -111,13 +111,13 @@ func TestBindProjectIfEmptyKeepsTheFirstBinding(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	createProjectRow(t, db, id("p-1"), id("tg-1"))
-	createProjectRow(t, db, id("p-2"), id("tg-1"))
-	won, err := sessions.BindProjectIfEmpty(ctx, sess.ID, id("p-1"))
+	createWorkspaceRow(t, db, id("p-1"), id("tg-1"))
+	createWorkspaceRow(t, db, id("p-2"), id("tg-1"))
+	won, err := sessions.BindWorkspaceIfEmpty(ctx, sess.ID, id("p-1"))
 	if err != nil || !won {
 		t.Fatalf("first bind: won=%v err=%v, want a win", won, err)
 	}
-	won, err = sessions.BindProjectIfEmpty(ctx, sess.ID, id("p-2"))
+	won, err = sessions.BindWorkspaceIfEmpty(ctx, sess.ID, id("p-2"))
 	if err != nil || won {
 		t.Fatalf("second bind: won=%v err=%v, want a silent loss", won, err)
 	}
@@ -125,36 +125,36 @@ func TestBindProjectIfEmptyKeepsTheFirstBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.ProjectID != id("p-1") {
-		t.Fatalf("bound to %q, want the first binding p-1", got.ProjectID)
+	if got.WorkspaceID != id("p-1") {
+		t.Fatalf("bound to %q, want the first binding p-1", got.WorkspaceID)
 	}
 
 	// Binding nothing and binding a missing session are quiet non-events.
-	if won, err := sessions.BindProjectIfEmpty(ctx, sess.ID, ""); err != nil || won {
-		t.Fatalf("empty project: won=%v err=%v, want a no-op", won, err)
+	if won, err := sessions.BindWorkspaceIfEmpty(ctx, sess.ID, ""); err != nil || won {
+		t.Fatalf("empty workspace: won=%v err=%v, want a no-op", won, err)
 	}
-	if won, err := sessions.BindProjectIfEmpty(ctx, NewID(), id("p-1")); err != nil || won {
+	if won, err := sessions.BindWorkspaceIfEmpty(ctx, NewID(), id("p-1")); err != nil || won {
 		t.Fatalf("missing session: won=%v err=%v, want a no-op", won, err)
 	}
 }
 
 // The reference count behind "may this cached instance be released": one
-// project, dropping to zero when the last bound session goes.
-func TestCountProjectRefs(t *testing.T) {
+// workspace, dropping to zero when the last bound session goes.
+func TestCountWorkspaceRefs(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
 	sessions := NewSessionStore(db)
 	createSandboxRow(t, db, id("tg-1"))
-	createProjectRow(t, db, id("p-1"), id("tg-1"))
-	createProjectRow(t, db, id("p-2"), id("tg-1"))
-	mk := func(projectID string) *Session {
+	createWorkspaceRow(t, db, id("p-1"), id("tg-1"))
+	createWorkspaceRow(t, db, id("p-2"), id("tg-1"))
+	mk := func(workspaceID string) *Session {
 		s := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatalf("create: %v", err)
 		}
-		if projectID != "" {
-			if won, err := sessions.BindProjectIfEmpty(ctx, s.ID, projectID); err != nil || !won {
+		if workspaceID != "" {
+			if won, err := sessions.BindWorkspaceIfEmpty(ctx, s.ID, workspaceID); err != nil || !won {
 				t.Fatalf("bind: won=%v err=%v", won, err)
 			}
 		}
@@ -164,30 +164,30 @@ func TestCountProjectRefs(t *testing.T) {
 	mk(id("p-2"))
 	mk("")
 
-	if n, err := sessions.CountProjectRefs(ctx, id("p-1")); err != nil || n != 1 {
-		t.Fatalf("CountProjectRefs(p-1) = %d, %v; want 1", n, err)
+	if n, err := sessions.CountWorkspaceRefs(ctx, id("p-1")); err != nil || n != 1 {
+		t.Fatalf("CountWorkspaceRefs(p-1) = %d, %v; want 1", n, err)
 	}
-	if n, err := sessions.CountProjectRefs(ctx, NewID()); err != nil || n != 0 {
-		t.Fatalf("CountProjectRefs(unknown) = %d, %v; want 0", n, err)
+	if n, err := sessions.CountWorkspaceRefs(ctx, NewID()); err != nil || n != 0 {
+		t.Fatalf("CountWorkspaceRefs(unknown) = %d, %v; want 0", n, err)
 	}
 	// An unset binding is stored as NULL, so it is asked for as NULL: "" is
 	// the unbound sessions, not a syntax error (PostgreSQL refuses "" as a
 	// uuid) and not silently nothing (what SQLite would answer).
-	if n, err := sessions.CountProjectRefs(ctx, ""); err != nil || n != 1 {
-		t.Fatalf("CountProjectRefs(unbound) = %d, %v; want the one unbound session", n, err)
+	if n, err := sessions.CountWorkspaceRefs(ctx, ""); err != nil || n != 1 {
+		t.Fatalf("CountWorkspaceRefs(unbound) = %d, %v; want the one unbound session", n, err)
 	}
 	if err := sessions.Delete(ctx, a.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if n, err := sessions.CountProjectRefs(ctx, id("p-1")); err != nil || n != 0 {
-		t.Fatalf("CountProjectRefs after delete = %d, %v; want 0", n, err)
+	if n, err := sessions.CountWorkspaceRefs(ctx, id("p-1")); err != nil || n != 0 {
+		t.Fatalf("CountWorkspaceRefs after delete = %d, %v; want 0", n, err)
 	}
 }
 
-// The in-write existence guard: a bind whose project vanished between the caller's
+// The in-write existence guard: a bind whose workspace vanished between the caller's
 // validation and the write must lose, not point the session at nothing
-// forever — the caller's re-plan then reports the project as missing.
-func TestBindProjectRefusesVanishedTarget(t *testing.T) {
+// forever — the caller's re-plan then reports the workspace as missing.
+func TestBindWorkspaceRefusesVanishedTarget(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
@@ -196,25 +196,25 @@ func TestBindProjectRefusesVanishedTarget(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	// No project row at all — the delete already landed.
-	won, err := sessions.BindProjectIfEmpty(ctx, sess.ID, NewID())
+	// No workspace row at all — the delete already landed.
+	won, err := sessions.BindWorkspaceIfEmpty(ctx, sess.ID, NewID())
 	if err != nil || won {
-		t.Fatalf("bind to a vanished project: won=%v err=%v, want a quiet loss", won, err)
+		t.Fatalf("bind to a vanished workspace: won=%v err=%v, want a quiet loss", won, err)
 	}
-	if got, _ := sessions.Get(ctx, sess.ID); got.ProjectID != "" {
-		t.Fatalf("session bound to %q, want unbound", got.ProjectID)
+	if got, _ := sessions.Get(ctx, sess.ID); got.WorkspaceID != "" {
+		t.Fatalf("session bound to %q, want unbound", got.WorkspaceID)
 	}
 }
 
 // Two racing binds settle in SQL: exactly one wins.
-func TestBindProjectIfEmptyRace(t *testing.T) {
+func TestBindWorkspaceIfEmptyRace(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
 	sessions := NewSessionStore(db)
 	createSandboxRow(t, db, id("tg-a"))
-	createProjectRow(t, db, id("p-a"), id("tg-a"))
-	createProjectRow(t, db, id("p-b"), id("tg-a"))
+	createWorkspaceRow(t, db, id("p-a"), id("tg-a"))
+	createWorkspaceRow(t, db, id("p-b"), id("tg-a"))
 
 	sess := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "s"}
 	if err := sessions.Create(ctx, sess); err != nil {
@@ -224,7 +224,7 @@ func TestBindProjectIfEmptyRace(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, pid := range []string{id("p-a"), id("p-b")} {
 		wg.Go(func() {
-			won, err := sessions.BindProjectIfEmpty(ctx, sess.ID, pid)
+			won, err := sessions.BindWorkspaceIfEmpty(ctx, sess.ID, pid)
 			if err != nil {
 				t.Error(err)
 			}

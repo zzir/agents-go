@@ -61,12 +61,12 @@ func TestSandboxPromptRoundTripsUnmasked(t *testing.T) {
 }
 
 // Editing the prompt is content, not identity, and NOT a retirement trigger:
-// it must not move the runtime generation of a project on the sandbox (which
+// it must not move the runtime generation of a workspace on the sandbox (which
 // is what severs terminals and retires containers). An image change must.
 func TestSandboxPromptEditIsNotAContentChange(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	projects := store.NewProjectStore(db)
+	workspaces := store.NewWorkspaceStore(db)
 	h := testSandboxHandler(db, sandboxes.NewManager())
 	e := newTestEngine()
 	e.POST("/sandboxes", h.Create)
@@ -82,15 +82,15 @@ func TestSandboxPromptEditIsNotAContentChange(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &sb); err != nil {
 		t.Fatal(err)
 	}
-	proj := &store.Project{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "p"}
-	if err := projects.Create(context.Background(), proj); err != nil {
+	ws := &store.Workspace{ID: store.NewID(), OwnerID: store.LocalUserID, SandboxID: sb.ID, Name: "p"}
+	if err := workspaces.Create(context.Background(), ws); err != nil {
 		t.Fatal(err)
 	}
 	readGen := func() int64 {
 		t.Helper()
-		p, err := projects.Get(context.Background(), proj.ID)
+		p, err := workspaces.Get(context.Background(), ws.ID)
 		if err != nil {
-			t.Fatalf("read project: %v", err)
+			t.Fatalf("read workspace: %v", err)
 		}
 		return p.RuntimeGen
 	}

@@ -35,7 +35,7 @@ type AgentDeps struct {
 	McpServers       *store.McpServerStore
 	Sandboxes        *store.SandboxStore
 	Skills           *store.SkillStore
-	Projects         *store.ProjectStore
+	Workspaces       *store.WorkspaceStore
 	Memories         *store.MemoryStore
 	Settings         *settings.Reader
 	Sessions         *store.SessionStore
@@ -173,10 +173,10 @@ func (b *BuildResult) Release() {
 }
 
 // BuildFullAgent constructs an *agents.Agent from a config id with everything
-// it names: provider, MCP tools, the project's sandbox tools, memories, skills
+// it names: provider, MCP tools, the workspace's sandbox tools, memories, skills
 // and the global system prompt. forUserID decides which tools the build gets.
-func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, projectID, forUserID string) (*BuildResult, error) {
-	return buildFullAgent(ctx, deps, agentConfigID, projectID, false, forUserID)
+func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, workspaceID, forUserID string) (*BuildResult, error) {
+	return buildFullAgent(ctx, deps, agentConfigID, workspaceID, false, forUserID)
 }
 
 // BackgroundInstructions is what a run nobody is watching is told (invariant 34).
@@ -187,17 +187,17 @@ was. Your final message is the only account of this turn that leaves here — en
 with the outcome, not with a question.`
 
 // buildFullAgent is BuildFullAgent with the run-scoped extras: the bound
-// project, BACKGROUND (invariant 34), and the owner whose role gates saves.
-func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, projectID string, background bool, ownerID string) (*BuildResult, error) {
+// workspace, BACKGROUND (invariant 34), and the owner whose role gates saves.
+func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, workspaceID string, background bool, ownerID string) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
 	bc := &agentBuildCtx{
-		stack:      make(map[string]bool),
-		cache:      make(map[string]*BuildResult),
-		projectID:  projectID,
-		ownerID:    ownerID,
-		background: background,
+		stack:       make(map[string]bool),
+		cache:       make(map[string]*BuildResult),
+		workspaceID: workspaceID,
+		ownerID:     ownerID,
+		background:  background,
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, bc)
 	if err == nil {
@@ -374,9 +374,9 @@ func (b *BuildResult) SentProfile() store.PromptProfile {
 type agentBuildCtx struct {
 	stack map[string]bool
 	cache map[string]*BuildResult
-	// projectID is the session's bound project, applied to every sandbox
+	// workspaceID is the session's bound workspace, applied to every sandbox
 	// toolset of this run — handoff targets included.
-	projectID string
+	workspaceID string
 	// ownerID is the session owner every built config must be visible to
 	// (decisions §5.29); empty skips the check.
 	ownerID string
@@ -614,20 +614,20 @@ func planReadOnlyNames(servers []attachedMCP) []string {
 	return out
 }
 
-// attachSandboxTools attaches the bound project's sandbox tools; no project,
+// attachSandboxTools attaches the bound workspace's sandbox tools; no workspace,
 // no sandbox tools (invariant 27). A build failure fails the run.
 func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, approveCommands, backgroundCommands bool, prof *store.PromptProfile) error {
-	if bc.projectID == "" {
+	if bc.workspaceID == "" {
 		return nil
 	}
-	if deps.Projects == nil {
-		return fmt.Errorf("project %s: no project store is wired", bc.projectID)
+	if deps.Workspaces == nil {
+		return fmt.Errorf("workspace %s: no workspace store is wired", bc.workspaceID)
 	}
-	proj, err := deps.Projects.Get(ctx, bc.projectID)
+	ws, err := deps.Workspaces.Get(ctx, bc.workspaceID)
 	if err != nil {
-		return fmt.Errorf("project %s: %w", bc.projectID, err)
+		return fmt.Errorf("workspace %s: %w", bc.workspaceID, err)
 	}
-	spec, err := projectSpec(ctx, deps, proj)
+	spec, err := workspaceSpec(ctx, deps, ws)
 	if err != nil {
 		return err
 	}
@@ -637,7 +637,7 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 	}
 	tools, release, err := deps.SandboxManager.SandboxTools(spec, approveCommands, background)
 	if err != nil {
-		return fmt.Errorf("project %q: building tools: %w", proj.Name, err)
+		return fmt.Errorf("workspace %q: building tools: %w", ws.Name, err)
 	}
 	bc.releases = append(bc.releases, release)
 	agent.Tools = append(agent.Tools, tools...)
@@ -795,12 +795,12 @@ func ownerIsAdmin(ctx context.Context, deps *AgentDeps, ownerID string) bool {
 	return u.Role == store.RoleAdmin
 }
 
-// projectSpec loads the sandbox a project names — everything the sandbox
+// workspaceSpec loads the sandbox a workspace names — everything the sandbox
 // manager needs to build or acquire its instance.
-func projectSpec(ctx context.Context, deps *AgentDeps, proj *store.Project) (sandboxes.Spec, error) {
-	sb, err := deps.Sandboxes.Get(ctx, proj.SandboxID)
+func workspaceSpec(ctx context.Context, deps *AgentDeps, ws *store.Workspace) (sandboxes.Spec, error) {
+	sb, err := deps.Sandboxes.Get(ctx, ws.SandboxID)
 	if err != nil {
-		return sandboxes.Spec{}, fmt.Errorf("project %q: sandbox %s: %w", proj.Name, proj.SandboxID, err)
+		return sandboxes.Spec{}, fmt.Errorf("workspace %q: sandbox %s: %w", ws.Name, ws.SandboxID, err)
 	}
-	return sandboxes.Spec{Sandbox: sb, Project: proj}, nil
+	return sandboxes.Spec{Sandbox: sb, Workspace: ws}, nil
 }

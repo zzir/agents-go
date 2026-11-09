@@ -87,7 +87,7 @@ async function mount(active: () => string | null) {
     const next = fn(cur);
     if (next !== cur) store[sid] = next;
   };
-  const events: SessionEvents = { activeSession: active, onTitleUpdated: vi.fn(), onProjectBound: vi.fn(), onStatus: vi.fn() };
+  const events: SessionEvents = { activeSession: active, onTitleUpdated: vi.fn(), onWorkspaceBound: vi.fn(), onStatus: vi.fn() };
   let hook!: ReturnType<typeof useAgentSocket>;
   function Probe() { hook = useAgentSocket(updateSS, events); return null; }
   const root = createRoot(document.createElement('div'));

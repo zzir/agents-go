@@ -20,10 +20,10 @@ func NewTaskAdapter(s *TaskStore) *TaskAdapter { return &TaskAdapter{store: s} }
 // Inherit is the configuration snapshot the SDK carries opaquely and hands back
 // when it launches a run — this server's agent config and sandbox.
 type Inherit struct {
-	// AgentConfigID and ProjectID are the SPAWNING run's setup, replayed when
+	// AgentConfigID and WorkspaceID are the SPAWNING run's setup, replayed when
 	// the parent is woken.
 	AgentConfigID string `json:"agent_config_id,omitempty"`
-	ProjectID     string `json:"project_id,omitempty"`
+	WorkspaceID   string `json:"workspace_id,omitempty"`
 	// TaskAgentID is the agent the task itself runs as, which is usually a
 	// different one.
 	TaskAgentID string `json:"task_agent_id,omitempty"`
@@ -66,7 +66,7 @@ func toSDK(t *Task) *tasks.Task {
 		// the snapshot read back off the row, not from a fresh resolve.
 		Inherit: EncodeInherit(Inherit{
 			AgentConfigID: t.ParentAgentConfigID,
-			ProjectID:     t.ParentProjectID,
+			WorkspaceID:   t.ParentWorkspaceID,
 			TaskAgentID:   t.AgentConfigID,
 		}),
 		Status:    tasks.Status(t.Status),
@@ -103,7 +103,7 @@ func (a *TaskAdapter) Create(ctx context.Context, t *tasks.Task) error {
 		// snapshot the wake-up run uses.
 		AgentConfigID:       inherit.TaskAgentID,
 		ParentAgentConfigID: inherit.AgentConfigID,
-		ParentProjectID:     inherit.ProjectID,
+		ParentWorkspaceID:   inherit.WorkspaceID,
 		Attempt:             t.Attempt,
 		Status:              string(t.Status),
 		Summary:             t.Summary,
@@ -168,7 +168,7 @@ func taskWakeup(row *Task, st tasks.Status, summary, result, attempt string) *Wa
 		// debts by this string.
 		Inherit: string(EncodeInherit(Inherit{
 			AgentConfigID: row.ParentAgentConfigID,
-			ProjectID:     row.ParentProjectID,
+			WorkspaceID:   row.ParentWorkspaceID,
 		})),
 		ParentRunID: row.ParentRunID,
 		Payload:     tasks.DefaultNotifyFormatter([]tasks.Task{*t}),

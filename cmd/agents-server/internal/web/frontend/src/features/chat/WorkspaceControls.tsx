@@ -3,14 +3,14 @@ import { Dialog, Select, Stack, TextInput, useConfirm } from '@primer/react';
 import { api } from '@/lib/api';
 import { fc } from '@/lib/form';
 import { toast } from '@/lib/toast';
-import type { EnvVar, Project } from '@/lib/binding';
+import type { EnvVar, Workspace } from '@/lib/binding';
 import { EnvEditor, cleanEnv, envError } from '@/components/EnvEditor';
-import { ProjectEnvDialog } from '@/features/chat/ProjectEnvDialog';
-import { ProjectHostDialog } from '@/features/chat/ProjectHostDialog';
-import type { ProjectMenu } from '@/features/chat/ChatTopBar';
+import { WorkspaceEnvDialog } from '@/features/chat/WorkspaceEnvDialog';
+import { WorkspaceHostDialog } from '@/features/chat/WorkspaceHostDialog';
+import type { WorkspaceMenu } from '@/features/chat/ChatTopBar';
 
-// What the chat does TO a project, apart from picking one: creating it, and
-// the bound project's container — its state, start/stop, export, rebuild,
+// What the chat does TO a workspace, apart from picking one: creating it, and
+// the bound workspace's container — its state, start/stop, export, rebuild,
 // and the environment it is created with.
 
 interface SandboxOption {
@@ -18,12 +18,12 @@ interface SandboxOption {
   name: string;
 }
 
-// NewProjectDialog: pick a machine and a template, name the project, set its
+// NewWorkspaceDialog: pick a machine and a template, name the workspace, set its
 // environment. The created row is handed back; selecting it is the caller's.
-export function NewProjectDialog({ sandboxes, initialSandboxId, onCreated, onClose }: {
+export function NewWorkspaceDialog({ sandboxes, initialSandboxId, onCreated, onClose }: {
   sandboxes: SandboxOption[];
   initialSandboxId: string;
-  onCreated: (project: Project) => void;
+  onCreated: (workspace: Workspace) => void;
   onClose: () => void;
 }) {
   const [sandboxId, setSandboxId] = useState(initialSandboxId);
@@ -36,11 +36,11 @@ export function NewProjectDialog({ sandboxes, initialSandboxId, onCreated, onClo
     if (!sandbox || !name.trim() || saving) return;
     setSaving(true);
     try {
-      const created = await api.projects.create({ name: name.trim(), sandbox_id: sandbox.id, env: cleanEnv(env) }) as Project;
+      const created = await api.workspaces.create({ name: name.trim(), sandbox_id: sandbox.id, env: cleanEnv(env) }) as Workspace;
       onCreated(created);
     } catch (e) {
-      // 409: a project of that name already exists on this machine.
-      toast.error((e as Error).message || 'Could not create the project');
+      // 409: a workspace of that name already exists on this machine.
+      toast.error((e as Error).message || 'Could not create the workspace');
     } finally {
       setSaving(false);
     }
@@ -48,7 +48,7 @@ export function NewProjectDialog({ sandboxes, initialSandboxId, onCreated, onClo
 
   return (
     <Dialog
-      title="New project"
+      title="New workspace"
       onClose={onClose}
       width="large"
       footerButtons={[
@@ -68,7 +68,7 @@ export function NewProjectDialog({ sandboxes, initialSandboxId, onCreated, onClo
               <Select.Option key={sb.id} value={sb.id}>{sb.name}</Select.Option>
             ))}
           </Select>
-        ), 'The machine the files live on and the image they run in. The machine is fixed once the project exists; the image can change.')}
+        ), 'Where the files live and run; only the image can change later.')}
         {fc('Name', (
           <TextInput
             block
@@ -76,7 +76,7 @@ export function NewProjectDialog({ sandboxes, initialSandboxId, onCreated, onClo
             placeholder="e.g. goagents"
             onChange={e => setName(e.target.value)}
           />
-        ), 'Names the working tree the container mounts; unique per sandbox.')}
+        ), 'Mounted at /workspace; unique per sandbox.')}
         {/* The editor carries its own explanation; a caption here would be a
             third line of small print saying the same. */}
         {fc('Environment', (
@@ -87,11 +87,11 @@ export function NewProjectDialog({ sandboxes, initialSandboxId, onCreated, onClo
   );
 }
 
-// useProjectMenu is the bound project's menu (ChatTopBar.projectMenu): the
+// useWorkspaceMenu is the bound workspace's menu (ChatTopBar.workspaceMenu): the
 // container's state and the acts on it. `menu` is null while nothing is
 // bound; `dialog` is the environment editor, open or not.
-export function useProjectMenu({ project, sessionId, rebuildable, hostable, running, onProjectsChanged }: {
-  project: Project | null;
+export function useWorkspaceMenu({ workspace, sessionId, rebuildable, hostable, running, onWorkspacesChanged }: {
+  workspace: Workspace | null;
   // The session the menu is open in: a rebuild leaves its note there.
   sessionId: string | null;
   // False until the sandbox row declares `rebuild` — never offered on a guess.
@@ -99,16 +99,16 @@ export function useProjectMenu({ project, sessionId, rebuildable, hostable, runn
   // False until the sandbox row declares `public_host`.
   hostable: boolean;
   running: boolean;
-  // The environment dialog closed: the project rows may have changed.
-  onProjectsChanged: () => void;
-}): { menu: ProjectMenu | null; dialog: ReactNode } {
+  // The environment dialog closed: the workspace rows may have changed.
+  onWorkspacesChanged: () => void;
+}): { menu: WorkspaceMenu | null; dialog: ReactNode } {
   const confirmDialog = useConfirm();
-  // The project whose environment is open for editing, and whether a
+  // The workspace whose environment is open for editing, and whether a
   // container call is in flight (both disable the menu).
-  const [envProject, setEnvProject] = useState<Project | null>(null);
-  const [hostProject, setHostProject] = useState<Project | null>(null);
+  const [envWorkspace, setEnvWorkspace] = useState<Workspace | null>(null);
+  const [hostWorkspace, setHostWorkspace] = useState<Workspace | null>(null);
   const [containerBusy, setContainerBusy] = useState(false);
-  // The compute state, refreshed when the project changes and after every act
+  // The compute state, refreshed when the workspace changes and after every act
   // on it. '' means "not asked yet".
   const [sandboxState, setSandboxState] = useState('');
   const [stateLoading, setStateLoading] = useState(false);
@@ -116,11 +116,11 @@ export function useProjectMenu({ project, sessionId, rebuildable, hostable, runn
   // The state is re-read on the edges that move it; only the newest read lands
   // — invariant 49.
   const stateReqSeq = useRef(0);
-  const refreshSandboxState = useCallback(async (projectID: string) => {
+  const refreshSandboxState = useCallback(async (workspaceID: string) => {
     const seq = ++stateReqSeq.current;
     setStateLoading(true);
     try {
-      const state = (await api.projects.sandboxStatus(projectID)).state;
+      const state = (await api.workspaces.sandboxStatus(workspaceID)).state;
       if (seq === stateReqSeq.current) setSandboxState(state);
     } catch {
       // Keep the last known value; '' stays '' and renders Start.
@@ -129,22 +129,22 @@ export function useProjectMenu({ project, sessionId, rebuildable, hostable, runn
     }
   }, []);
   useEffect(() => {
-    if (!project) { stateReqSeq.current++; setSandboxState(''); return; }
-    void refreshSandboxState(project.id);
-  }, [project, refreshSandboxState]);
+    if (!workspace) { stateReqSeq.current++; setSandboxState(''); return; }
+    void refreshSandboxState(workspace.id);
+  }, [workspace, refreshSandboxState]);
   useEffect(() => {
-    if (project) void refreshSandboxState(project.id);
+    if (workspace) void refreshSandboxState(workspace.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
   // Start, stop and rebuild are synchronous and can take an image pull's
   // worth of time, so the menu stays disabled until they answer.
   const startSandbox = async () => {
-    if (!project || containerBusy) return;
+    if (!workspace || containerBusy) return;
     setContainerBusy(true);
     toast.info('Starting the sandbox…');
     try {
-      await api.projects.sandboxStart(project.id);
+      await api.workspaces.sandboxStart(workspace.id);
       setSandboxState('running');
       toast.success('Sandbox running');
     } catch (e) {
@@ -155,10 +155,10 @@ export function useProjectMenu({ project, sessionId, rebuildable, hostable, runn
   };
 
   const stopSandbox = async () => {
-    if (!project || containerBusy) return;
+    if (!workspace || containerBusy) return;
     setContainerBusy(true);
     try {
-      const res = await api.projects.sandboxStop(project.id);
+      const res = await api.workspaces.sandboxStop(workspace.id);
       if (res.stopped) {
         setSandboxState('stopped');
         toast.success('Sandbox stopped — the files are kept');
@@ -176,30 +176,30 @@ export function useProjectMenu({ project, sessionId, rebuildable, hostable, runn
   // Export reads the container without changing its lifecycle, so it never
   // takes the containerBusy lock; its own ref only stops a double-click.
   const exportBusy = useRef(false);
-  const exportProject = async () => {
-    if (!project || exportBusy.current) return;
+  const exportWorkspace = async () => {
+    if (!workspace || exportBusy.current) return;
     exportBusy.current = true;
     toast.info('Preparing the archive…');
     try {
-      await api.projects.exportTar(project.id, project.name);
+      await api.workspaces.exportTar(workspace.id, workspace.name);
     } catch (e) {
-      toast.error((e as Error).message || 'Could not export the project');
+      toast.error((e as Error).message || 'Could not export the workspace');
     } finally {
       exportBusy.current = false;
     }
   };
 
   const rebuildContainer = async () => {
-    if (!project || containerBusy) return;
+    if (!workspace || containerBusy) return;
     if (!await confirmDialog({
-      title: `Rebuild the container for “${project.name}”?`,
-      content: 'The container is discarded and created again from the image. Files under /workspace survive; anything installed into the container does not, and commands running in it right now will fail. Every session on this project shares that container; this session gets a note of the rebuild.',
+      title: `Rebuild the container for “${workspace.name}”?`,
+      content: 'The container is discarded and created again from the image. Files under /workspace survive; anything installed into the container does not, and commands running in it right now will fail. Every session on this workspace shares that container; this session gets a note of the rebuild.',
       confirmButtonType: 'danger',
     })) return;
     setContainerBusy(true);
     toast.info('Rebuilding the container…');
     try {
-      await api.projects.rebuildContainer(project.id, sessionId || undefined);
+      await api.workspaces.rebuildContainer(workspace.id, sessionId || undefined);
       setSandboxState('running');
       toast.success('Container rebuilt');
     } catch (e) {
@@ -209,31 +209,31 @@ export function useProjectMenu({ project, sessionId, rebuildable, hostable, runn
     }
   };
 
-  const menu: ProjectMenu | null = project ? {
+  const menu: WorkspaceMenu | null = workspace ? {
     busy: containerBusy,
     state: sandboxState,
     stateLoading,
     rebuildable,
     hostable,
-    onEnv: () => setEnvProject(project),
-    onHost: () => setHostProject(project),
+    onEnv: () => setEnvWorkspace(workspace),
+    onHost: () => setHostWorkspace(workspace),
     onStart: () => { void startSandbox(); },
     onStop: () => { void stopSandbox(); },
-    onExport: () => { void exportProject(); },
+    onExport: () => { void exportWorkspace(); },
     onRebuild: () => { void rebuildContainer(); },
-    onOpen: () => { void refreshSandboxState(project.id); },
+    onOpen: () => { void refreshSandboxState(workspace.id); },
   } : null;
 
   const dialog = (
     <>
-      {envProject && (
-        <ProjectEnvDialog
-          project={envProject}
-          sessionCount={envProject.session_count}
-          onClose={() => { setEnvProject(null); onProjectsChanged(); }}
+      {envWorkspace && (
+        <WorkspaceEnvDialog
+          workspace={envWorkspace}
+          sessionCount={envWorkspace.session_count}
+          onClose={() => { setEnvWorkspace(null); onWorkspacesChanged(); }}
         />
       )}
-      {hostProject && <ProjectHostDialog project={hostProject} onClose={() => setHostProject(null)} />}
+      {hostWorkspace && <WorkspaceHostDialog workspace={hostWorkspace} onClose={() => setHostWorkspace(null)} />}
     </>
   );
 

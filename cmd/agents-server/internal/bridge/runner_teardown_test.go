@@ -68,7 +68,7 @@ func TestSegmentPanicStillRunsTeardown(t *testing.T) {
 		t.Fatal(err)
 	}
 	runID := store.NewID()
-	seg, _, err := runner.hub.register(runID, sess.ID, "", "agent", "proj", nil)
+	seg, _, err := runner.hub.register(runID, sess.ID, "", "agent", "ws", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestSegmentPanicStillRunsTeardown(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("onDone never fired after the panic")
 	}
-	if out.ErrCode != protocol.CodeInternal || out.RunID != runID || out.AgentConfigID != "agent" || out.ProjectID != "proj" {
+	if out.ErrCode != protocol.CodeInternal || out.RunID != runID || out.AgentConfigID != "agent" || out.WorkspaceID != "ws" {
 		t.Fatalf("onDone got %+v, want an internal failure carrying the run's identity", out)
 	}
 	runner.hub.waitDone(runID, time.Now().Add(5*time.Second))

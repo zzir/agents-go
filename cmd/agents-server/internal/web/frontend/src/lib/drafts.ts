@@ -41,15 +41,15 @@ export const saveSessionAgent = (sessionId: string, agentConfigId: string): void
 export const loadLastAgent = (): string => { try { return localStorage.getItem('chat.lastAgent') || ''; } catch { return ''; } };
 export const saveLastAgent = (agentConfigId: string): void => { try { if (agentConfigId) localStorage.setItem('chat.lastAgent', agentConfigId); } catch { /* ignore */ } };
 
-// The pre-binding project choice; once the first run binds the session the
+// The pre-binding workspace choice; once the first run binds the session the
 // server value wins — invariant 27.
-export const loadSessionProject = (sessionId: string): string => loadKey('project', sessionId);
-export const saveSessionProject = (sessionId: string, projectId: string): void => saveKey('project', sessionId, projectId);
+export const loadSessionWorkspace = (sessionId: string): string => loadKey('workspace', sessionId);
+export const saveSessionWorkspace = (sessionId: string, workspaceId: string): void => saveKey('workspace', sessionId, workspaceId);
 
-// A New composer drafts its agent and project picks under the empty id; the
+// A New composer drafts its agent and workspace picks under the empty id; the
 // send that makes the session moves them to its id — invariant 77.
 export function adoptNewSessionPrefs(sessionId: string): void {
-  for (const kind of ['agent', 'project']) {
+  for (const kind of ['agent', 'workspace']) {
     const v = loadKey(kind, '');
     if (v) saveKey(kind, sessionId, v);
     saveKey(kind, '', '');
@@ -59,5 +59,5 @@ export function adoptNewSessionPrefs(sessionId: string): void {
 export function clearSessionPrefs(sessionId: string): void {
   saveKey('draft', sessionId, '');
   saveKey('agent', sessionId, '');
-  saveKey('project', sessionId, '');
+  saveKey('workspace', sessionId, '');
 }

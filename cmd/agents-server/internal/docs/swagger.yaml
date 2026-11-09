@@ -380,8 +380,6 @@ components:
           type: string
         last_seq:
           type: integer
-        project_id:
-          type: string
         run_id:
           type: string
         session_id:
@@ -390,6 +388,8 @@ components:
           $ref: '#/components/schemas/bridge.RunStatus'
         task:
           $ref: '#/components/schemas/bridge.TaskMeta'
+        workspace_id:
+          type: string
       type: object
     bridge.RunStatus:
       enum:
@@ -541,8 +541,6 @@ components:
             Kind is "" for a tool call the run paused on, ApprovalKindStep for a
             workflow step waiting to start.
           type: string
-        project_id:
-          type: string
         run_id:
           type: string
         session_id:
@@ -563,6 +561,8 @@ components:
           description: |-
             UserInput is the text of the message that started the paused turn; the UI
             shows it while the run waits.
+          type: string
+        workspace_id:
           type: string
       type: object
     handler.SessionMemoryInfo:
@@ -757,9 +757,9 @@ components:
             Plan asks the session to start this run in the planning phase (true) or
             out of it (false); absent leaves the phase as it stands.
           type: boolean
-        project_id:
+        workspace_id:
           description: |-
-            ProjectID only matters until the session's first project-carrying run
+            WorkspaceID only matters until the session's first workspace-carrying run
             permanently binds it; after that it is ignored.
           type: string
       type: object
@@ -979,97 +979,6 @@ components:
             context, checklist, or mcp:<server>.
           type: string
       type: object
-    handler.projectDeleteResp:
-      properties:
-        deleted:
-          type: boolean
-        storage_error:
-          type: string
-      type: object
-    handler.projectDetail:
-      properties:
-        created_at:
-          type: string
-        env:
-          items:
-            $ref: '#/components/schemas/store.EnvVar'
-          type: array
-          uniqueItems: false
-        id:
-          type: string
-        name:
-          description: Name is display only, unique per (owner, sandbox); a rename
-            moves nothing.
-          type: string
-        owner_id:
-          type: string
-        revision:
-          description: |-
-            Revision is the expected-revision CAS every update lands against.
-            RuntimeGen moves when the project's content or its sandbox changes; the
-            instance cache and terminals fence on it.
-          type: integer
-        sandbox_id:
-          description: |-
-            SandboxID is what the project runs on; it may move only to a sandbox of
-            the same type and destination (409 otherwise).
-          type: string
-        session_count:
-          description: SessionCount is how many sessions bind this project, filled
-            by List.
-          type: integer
-        storage_hint:
-          description: |-
-            StorageHint names where the files live (the named volume), derived per
-            response for admins only and never stored.
-          type: string
-        updated_at:
-          type: string
-      type: object
-    handler.projectHostResp:
-      properties:
-        domain:
-          type: string
-        sandbox_id:
-          type: string
-      type: object
-    handler.projectReq:
-      properties:
-        env:
-          description: |-
-            Env is the environment the project's container is created with;
-            optional, and empty means none.
-          items:
-            $ref: '#/components/schemas/store.EnvVar'
-          type: array
-          uniqueItems: false
-        name:
-          type: string
-        sandbox_id:
-          description: SandboxID is what the project runs on — the machine and the
-            image.
-          type: string
-      required:
-      - name
-      - sandbox_id
-      type: object
-    handler.projectUpdateReq:
-      properties:
-        env:
-          items:
-            $ref: '#/components/schemas/store.EnvVar'
-          type: array
-          uniqueItems: false
-        name:
-          type: string
-        revision:
-          type: integer
-        sandbox_id:
-          type: string
-      required:
-      - name
-      - sandbox_id
-      type: object
     handler.providerReq:
       properties:
         api_key:
@@ -1114,7 +1023,7 @@ components:
       properties:
         session_id:
           description: |-
-            SessionID is the caller's session, bound to this project, to leave the
+            SessionID is the caller's session, bound to this workspace, to leave the
             rebuilt note on; left out, no note is written.
           type: string
       type: object
@@ -1139,12 +1048,12 @@ components:
       properties:
         input:
           type: string
-        project_id:
-          description: |-
-            ProjectID binds a still-unbound session first, so the execution has its
-            file and command tools; a bound session ignores it.
-          type: string
         session_id:
+          type: string
+        workspace_id:
+          description: |-
+            WorkspaceID binds a still-unbound session first, so the execution has its
+            file and command tools; a bound session ignores it.
           type: string
       required:
       - session_id
@@ -1161,7 +1070,7 @@ components:
         prompt:
           description: |-
             Prompt is appended to the instructions of every agent in a session bound
-            to a project on this sandbox; an edit reaches the next run, retiring nothing.
+            to a workspace on this sandbox; an edit reaches the next run, retiring nothing.
           type: string
         revision:
           description: |-
@@ -1249,15 +1158,15 @@ components:
             Planning is the session's plan phase: the next run starts read-only until
             a plan is approved.
           type: boolean
-        project_id:
-          description: |-
-            ProjectID is the project the session is bound to, set once by the first
-            project-carrying run and never rewritten.
-          type: string
         status:
           description: Status is idle, running, requires_action or failed.
           type: string
         updated_at:
+          type: string
+        workspace_id:
+          description: |-
+            WorkspaceID is the workspace the session is bound to, set once by the first
+            workspace-carrying run and never rewritten.
           type: string
       type: object
     handler.sessionPatchReq:
@@ -1306,15 +1215,15 @@ components:
             Planning is the session's plan phase: the next run starts read-only until
             a plan is approved.
           type: boolean
-        project_id:
-          description: |-
-            ProjectID is the project the session is bound to, set once by the first
-            project-carrying run and never rewritten.
-          type: string
         status:
           description: Status is idle, running, requires_action or failed.
           type: string
         updated_at:
+          type: string
+        workspace_id:
+          description: |-
+            WorkspaceID is the workspace the session is bound to, set once by the first
+            workspace-carrying run and never rewritten.
           type: string
       type: object
     handler.setSettingReq:
@@ -1414,6 +1323,97 @@ components:
           type: string
         workflow_id:
           type: string
+      type: object
+    handler.workspaceDeleteResp:
+      properties:
+        deleted:
+          type: boolean
+        storage_error:
+          type: string
+      type: object
+    handler.workspaceDetail:
+      properties:
+        created_at:
+          type: string
+        env:
+          items:
+            $ref: '#/components/schemas/store.EnvVar'
+          type: array
+          uniqueItems: false
+        id:
+          type: string
+        name:
+          description: Name is display only, unique per (owner, sandbox); a rename
+            moves nothing.
+          type: string
+        owner_id:
+          type: string
+        revision:
+          description: |-
+            Revision is the expected-revision CAS every update lands against.
+            RuntimeGen moves when the workspace's content or its sandbox changes; the
+            instance cache and terminals fence on it.
+          type: integer
+        sandbox_id:
+          description: |-
+            SandboxID is what the workspace runs on; it may move only to a sandbox of
+            the same type and destination (409 otherwise).
+          type: string
+        session_count:
+          description: SessionCount is how many sessions bind this workspace, filled
+            by List.
+          type: integer
+        storage_hint:
+          description: |-
+            StorageHint names where the files live (the named volume), derived per
+            response for admins only and never stored.
+          type: string
+        updated_at:
+          type: string
+      type: object
+    handler.workspaceHostResp:
+      properties:
+        domain:
+          type: string
+        sandbox_id:
+          type: string
+      type: object
+    handler.workspaceReq:
+      properties:
+        env:
+          description: |-
+            Env is the environment the workspace's container is created with;
+            optional, and empty means none.
+          items:
+            $ref: '#/components/schemas/store.EnvVar'
+          type: array
+          uniqueItems: false
+        name:
+          type: string
+        sandbox_id:
+          description: SandboxID is what the workspace runs on — the machine and the
+            image.
+          type: string
+      required:
+      - name
+      - sandbox_id
+      type: object
+    handler.workspaceUpdateReq:
+      properties:
+        env:
+          items:
+            $ref: '#/components/schemas/store.EnvVar'
+          type: array
+          uniqueItems: false
+        name:
+          type: string
+        revision:
+          type: integer
+        sandbox_id:
+          type: string
+      required:
+      - name
+      - sandbox_id
       type: object
     protocol.APIError:
       properties:
@@ -2103,41 +2103,6 @@ components:
             append over the session's memory.
           type: boolean
       type: object
-    store.Project:
-      properties:
-        created_at:
-          type: string
-        id:
-          type: string
-        name:
-          description: Name is display only, unique per (owner, sandbox); a rename
-            moves nothing.
-          type: string
-        owner_id:
-          type: string
-        revision:
-          description: |-
-            Revision is the expected-revision CAS every update lands against.
-            RuntimeGen moves when the project's content or its sandbox changes; the
-            instance cache and terminals fence on it.
-          type: integer
-        sandbox_id:
-          description: |-
-            SandboxID is what the project runs on; it may move only to a sandbox of
-            the same type and destination (409 otherwise).
-          type: string
-        session_count:
-          description: SessionCount is how many sessions bind this project, filled
-            by List.
-          type: integer
-        storage_hint:
-          description: |-
-            StorageHint names where the files live (the named volume), derived per
-            response for admins only and never stored.
-          type: string
-        updated_at:
-          type: string
-      type: object
     store.PromptProfile:
       description: |-
         Prompt is what the last build put in front of the conversation; absent
@@ -2245,7 +2210,7 @@ components:
         prompt:
           description: |-
             Prompt is appended to the instructions of every agent in a session bound
-            to a project here; an edit reaches the next run.
+            to a workspace here; an edit reaches the next run.
           type: string
         revision:
           description: |-
@@ -2256,7 +2221,7 @@ components:
           $ref: '#/components/schemas/store.SandboxSupports'
         type:
           description: |-
-            Type is the backend, one of SandboxTypes; frozen while projects live on
+            Type is the backend, one of SandboxTypes; frozen while workspaces live on
             the sandbox.
           type: string
         updated_at:
@@ -2303,12 +2268,12 @@ components:
             Planning is the session's plan phase: the next run starts read-only until
             a plan is approved.
           type: boolean
-        project_id:
-          description: |-
-            ProjectID is the project the session is bound to, set once by the first
-            project-carrying run and never rewritten.
-          type: string
         updated_at:
+          type: string
+        workspace_id:
+          description: |-
+            WorkspaceID is the workspace the session is bound to, set once by the first
+            workspace-carrying run and never rewritten.
           type: string
       type: object
     store.SessionGroup:
@@ -2607,6 +2572,41 @@ components:
             it.
           type: string
       type: object
+    store.Workspace:
+      properties:
+        created_at:
+          type: string
+        id:
+          type: string
+        name:
+          description: Name is display only, unique per (owner, sandbox); a rename
+            moves nothing.
+          type: string
+        owner_id:
+          type: string
+        revision:
+          description: |-
+            Revision is the expected-revision CAS every update lands against.
+            RuntimeGen moves when the workspace's content or its sandbox changes; the
+            instance cache and terminals fence on it.
+          type: integer
+        sandbox_id:
+          description: |-
+            SandboxID is what the workspace runs on; it may move only to a sandbox of
+            the same type and destination (409 otherwise).
+          type: string
+        session_count:
+          description: SessionCount is how many sessions bind this workspace, filled
+            by List.
+          type: integer
+        storage_hint:
+          description: |-
+            StorageHint names where the files live (the named volume), derived per
+            response for admins only and never stored.
+          type: string
+        updated_at:
+          type: string
+      type: object
   securitySchemes:
     BearerAuth:
       description: Value is "Bearer <token>" — the token printed at server startup
@@ -2620,7 +2620,7 @@ externalDocs:
 info:
   description: 'REST API of agents-server, the web server over the agents-go SDK:
     sessions, runs, agents, MCP servers, memories, settings, skills, providers, workflows,
-    triggers, guardrails, sandboxes and projects. A run starts over REST (POST /sessions/{id}/runs)
+    triggers, guardrails, sandboxes and workspaces. A run starts over REST (POST /sessions/{id}/runs)
     or the WebSocket protocol and streams over either; this spec covers the HTTP surface.'
   title: agents-server API
   version: "1.0"
@@ -2888,7 +2888,8 @@ paths:
     get:
       description: Schema-only definitions (name, description, parameters, read_only,
         source) of every tool the agent would carry right now; the sandbox tools are
-        listed as a bound project would add them. Tools are never executed from here.
+        listed as a bound workspace would add them. Tools are never executed from
+        here.
       parameters:
       - description: Agent config ID
         in: path
@@ -4457,415 +4458,6 @@ paths:
       summary: Playground generate
       tags:
       - playground
-  /projects:
-    get:
-      description: Every row carries session_count. storage_hint (where the files
-        live) is reported to admins only.
-      parameters:
-      - description: 'admin: every owner''s projects'
-        in: query
-        name: all
-        schema:
-          type: boolean
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/store.Project'
-                type: array
-          description: OK
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: all=true by a member
-      security:
-      - BearerAuth: []
-      summary: List projects
-      tags:
-      - projects
-    post:
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/handler.projectReq'
-                description: Name and sandbox
-                summary: project
-        description: Name and sandbox
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.projectDetail'
-          description: Created
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: name already in use on this sandbox
-      security:
-      - BearerAuth: []
-      summary: Create project
-      tags:
-      - projects
-  /projects/{id}:
-    delete:
-      description: 'Deletes the working tree too — the container and its volume are
-        removed. The owner deletes their own; an admin deletes any. The row is gone
-        whenever this answers 200: a storage_error means the STORAGE could not be
-        reclaimed and is left for the operator, not that the project survived.'
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.projectDeleteResp'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: sessions still bound
-      security:
-      - BearerAuth: []
-      summary: Delete project
-      tags:
-      - projects
-    get:
-      description: 'The one endpoint that returns a project''s environment — names,
-        with every value masked. Listings never carry it at all. Owner only: an environment
-        is not part of an admin''s management reach.'
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.projectDetail'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-      security:
-      - BearerAuth: []
-      summary: Get project
-      tags:
-      - projects
-    put:
-      description: A value sent back as its mask keeps what is stored; any other value
-        replaces it. An environment change replaces the project's container at its
-        next run and severs its terminals; a rename does none of that.
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/handler.projectUpdateReq'
-                description: Name and environment
-                summary: project
-        description: Name and environment
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.projectDetail'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: name already in use, or the project changed concurrently —
-            re-read and retry
-      security:
-      - BearerAuth: []
-      summary: Update project
-      tags:
-      - projects
-  /projects/{id}/export:
-    get:
-      description: 'Streams /workspace as an uncompressed tar. Owner only, and audited:
-        this takes the whole tree off the machine.'
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/x-tar:
-              schema:
-                type: string
-          description: tar stream
-        "404":
-          content:
-            application/x-tar:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "502":
-          content:
-            application/x-tar:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: Export the project's working tree
-      tags:
-      - projects
-  /projects/{id}/host:
-    get:
-      description: The sandbox id and the domain a port inside the sandbox is public
-        at, as https://<port>-<sandbox_id>.<domain>. Owner only. 409 where the sandbox's
-        row does not declare supports.public_host, or where there is no sandbox to
-        address (none provisioned yet, or gone).
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.projectHostResp'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: ports not public, or no sandbox to address
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: Project sandbox public address
-      tags:
-      - projects
-  /projects/{id}/sandbox:
-    get:
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.sandboxStateResp'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: Project sandbox status
-      tags:
-      - projects
-  /projects/{id}/sandbox/rebuild:
-    post:
-      description: 'Discards the container and creates a fresh one from the current
-        sandbox and environment. Files under /workspace survive; anything installed
-        into the container does not, and commands running in it fail. Synchronous.
-        Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible):
-        export first. With a body naming session_id — the caller''s own session, bound
-        to this project and with no run live on it — the session gets a note that
-        the container was rebuilt; otherwise none is written and the rebuild still
-        succeeds.'
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/handler.rebuildReq'
-                description: The session to note the rebuild on
-                summary: body
-        description: The session to note the rebuild on
-      responses:
-        "204":
-          description: rebuilt
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: Rebuild the project's sandbox
-      tags:
-      - projects
-  /projects/{id}/sandbox/start:
-    post:
-      description: Synchronous, and can take an image pull's worth of time. Owner
-        or admin.
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "204":
-          description: running
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: Start the project's sandbox
-      tags:
-      - projects
-  /projects/{id}/sandbox/stop:
-    post:
-      description: 'Keeps the working tree. `stopped: false` means a run or terminal
-        is still using it and the stop happens when that ends. Owner or admin.'
-      parameters:
-      - description: Project id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.sandboxStopResp'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: Stop the project's sandbox
-      tags:
-      - projects
   /provider-types:
     get:
       description: The backends agents and fallback entries can select via provider_type.
@@ -5526,7 +5118,7 @@ paths:
         default account, "user"), timeout_seconds, auto_pause, allow_internet, max_read_file_bytes.
         ssh_password, api_key and the headers values are write-only, ******** mask
         semantics. Top-level optional "prompt" (both types) is appended to the agent
-        instructions of every session bound to a project on this sandbox — no project,
+        instructions of every session bound to a workspace on this sandbox — no workspace,
         no sandbox tools, no prompt; editing it reaches the next run without retiring
         the container. Every returned row carries "supports" — the type''s capability
         flags (rebuild, public_host), derived and read-only.'
@@ -5588,7 +5180,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: projects live on this sandbox
+          description: workspaces live on this sandbox
         "500":
           content:
             application/json:
@@ -5674,8 +5266,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
-          description: identity change refused (projects live on it), or the row changed
-            concurrently — re-read and retry
+          description: identity change refused (workspaces live on it), or the row
+            changed concurrently — re-read and retry
         "500":
           content:
             application/json:
@@ -6492,7 +6084,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: a run or a background task is live on the session, or it is
-            bound to a project the new owner does not own
+            bound to a workspace the new owner does not own
       security:
       - BearerAuth: []
       summary: Reassign session owner (admin)
@@ -7845,7 +7437,7 @@ paths:
           description: Conflict
       security:
       - BearerAuth: []
-      summary: Run a workflow (optionally binding the session's project first)
+      summary: Run a workflow (optionally binding the session's workspace first)
       tags:
       - workflows
   /workflows/{id}/scope:
@@ -7888,5 +7480,414 @@ paths:
       summary: Change a workflow's scope
       tags:
       - workflows
+  /workspaces:
+    get:
+      description: Every row carries session_count. storage_hint (where the files
+        live) is reported to admins only.
+      parameters:
+      - description: 'admin: every owner''s workspaces'
+        in: query
+        name: all
+        schema:
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/store.Workspace'
+                type: array
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: all=true by a member
+      security:
+      - BearerAuth: []
+      summary: List workspaces
+      tags:
+      - workspaces
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.workspaceReq'
+                description: Name and sandbox
+                summary: workspace
+        description: Name and sandbox
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.workspaceDetail'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name already in use on this sandbox
+      security:
+      - BearerAuth: []
+      summary: Create workspace
+      tags:
+      - workspaces
+  /workspaces/{id}:
+    delete:
+      description: 'Deletes the working tree too — the container and its volume are
+        removed. The owner deletes their own; an admin deletes any. The row is gone
+        whenever this answers 200: a storage_error means the STORAGE could not be
+        reclaimed and is left for the operator, not that the workspace survived.'
+      parameters:
+      - description: Workspace id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.workspaceDeleteResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: sessions still bound
+      security:
+      - BearerAuth: []
+      summary: Delete workspace
+      tags:
+      - workspaces
+    get:
+      description: 'The one endpoint that returns a workspace''s environment — names,
+        with every value masked. Listings never carry it at all. Owner only: an environment
+        is not part of an admin''s management reach.'
+      parameters:
+      - description: Workspace id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.workspaceDetail'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get workspace
+      tags:
+      - workspaces
+    put:
+      description: A value sent back as its mask keeps what is stored; any other value
+        replaces it. An environment change replaces the workspace's container at its
+        next run and severs its terminals; a rename does none of that.
+      parameters:
+      - description: Workspace id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.workspaceUpdateReq'
+                description: Name and environment
+                summary: workspace
+        description: Name and environment
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.workspaceDetail'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: name already in use, or the workspace changed concurrently
+            — re-read and retry
+      security:
+      - BearerAuth: []
+      summary: Update workspace
+      tags:
+      - workspaces
+  /workspaces/{id}/export:
+    get:
+      description: 'Streams /workspace as an uncompressed tar. Owner only, and audited:
+        this takes the whole tree off the machine.'
+      parameters:
+      - description: Workspace id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/x-tar:
+              schema:
+                type: string
+          description: tar stream
+        "404":
+          content:
+            application/x-tar:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/x-tar:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Export the workspace's working tree
+      tags:
+      - workspaces
+  /workspaces/{id}/host:
+    get:
+      description: The sandbox id and the domain a port inside the sandbox is public
+        at, as https://<port>-<sandbox_id>.<domain>. Owner only. 409 where the sandbox's
+        row does not declare supports.public_host, or where there is no sandbox to
+        address (none provisioned yet, or gone).
+      parameters:
+      - description: Workspace id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.workspaceHostResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: ports not public, or no sandbox to address
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Workspace sandbox public address
+      tags:
+      - workspaces
+  /workspaces/{id}/sandbox:
+    get:
+      parameters:
+      - description: Workspace id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.sandboxStateResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Workspace sandbox status
+      tags:
+      - workspaces
+  /workspaces/{id}/sandbox/rebuild:
+    post:
+      description: 'Discards the container and creates a fresh one from the current
+        sandbox and environment. Files under /workspace survive; anything installed
+        into the container does not, and commands running in it fail. Synchronous.
+        Owner or admin. Refused on a sandbox whose instance IS the storage (E2B-compatible):
+        export first. With a body naming session_id — the caller''s own session, bound
+        to this workspace and with no run live on it — the session gets a note that
+        the container was rebuilt; otherwise none is written and the rebuild still
+        succeeds.'
+      parameters:
+      - description: Workspace id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/handler.rebuildReq'
+                description: The session to note the rebuild on
+                summary: body
+        description: The session to note the rebuild on
+      responses:
+        "204":
+          description: rebuilt
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Rebuild the workspace's sandbox
+      tags:
+      - workspaces
+  /workspaces/{id}/sandbox/start:
+    post:
+      description: Synchronous, and can take an image pull's worth of time. Owner
+        or admin.
+      parameters:
+      - description: Workspace id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: running
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Start the workspace's sandbox
+      tags:
+      - workspaces
+  /workspaces/{id}/sandbox/stop:
+    post:
+      description: 'Keeps the working tree. `stopped: false` means a run or terminal
+        is still using it and the stop happens when that ends. Owner or admin.'
+      parameters:
+      - description: Workspace id
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.sandboxStopResp'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Not Found
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: Bad Gateway
+      security:
+      - BearerAuth: []
+      summary: Stop the workspace's sandbox
+      tags:
+      - workspaces
 servers:
 - url: /api/v1

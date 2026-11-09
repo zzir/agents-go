@@ -3,26 +3,26 @@ import { Dialog, Flash, Spinner, TextInput } from '@primer/react';
 import type { ReactElement } from 'react';
 import { api } from '@/lib/api';
 import { useCopy } from '@/lib/hooks';
-import type { Project } from '@/lib/binding';
+import type { Workspace } from '@/lib/binding';
 
-/* The bound project's sandbox address, <port> left to the reader — see decisions §5.70. */
-export function ProjectHostDialog({ project, onClose }: { project: Project; onClose: () => void }): ReactElement {
+/* The bound workspace's sandbox address, <port> left to the reader — see decisions §5.70. */
+export function WorkspaceHostDialog({ workspace, onClose }: { workspace: Workspace; onClose: () => void }): ReactElement {
   const [host, setHost] = useState<{ sandbox_id: string; domain: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { copied, copy } = useCopy();
 
   useEffect(() => {
     let live = true;
-    api.projects.sandboxHost(project.id)
+    api.workspaces.sandboxHost(workspace.id)
       .then(h => { if (live) setHost(h); })
       .catch((e: Error) => { if (live) setError(e.message || 'Could not read the sandbox address'); });
     return () => { live = false; };
-  }, [project.id]);
+  }, [workspace.id]);
 
   const url = host ? `https://<port>-${host.sandbox_id}.${host.domain}` : '';
   return (
     <Dialog
-      title={`Public URL — ${project.name}`}
+      title={`Public URL — ${workspace.name}`}
       onClose={onClose}
       width="large"
       footerButtons={[

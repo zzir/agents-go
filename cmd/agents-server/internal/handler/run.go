@@ -32,9 +32,9 @@ type createRunReq struct {
 	// send with the message; the agent must have Vision enabled.
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 	AgentConfigID string   `json:"agent_config_id"`
-	// ProjectID only matters until the session's first project-carrying run
+	// WorkspaceID only matters until the session's first workspace-carrying run
 	// permanently binds it; after that it is ignored.
-	ProjectID string `json:"project_id"`
+	WorkspaceID string `json:"workspace_id"`
 	// Plan asks the session to start this run in the planning phase (true) or
 	// out of it (false); absent leaves the phase as it stands.
 	Plan *bool `json:"plan"`
@@ -79,7 +79,7 @@ func (h *RunHandler) Create(c *gin.Context) {
 		return
 	}
 
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.ProjectID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, nil)
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.WorkspaceID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, nil)
 	if err != nil {
 		h.startError(c, err)
 		return
@@ -118,7 +118,7 @@ func preferWait(r *http.Request) (time.Duration, bool) {
 func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createRunReq, wait time.Duration) {
 	// Buffered so onDone never blocks if the client hangs up first.
 	done := make(chan *bridge.RunOutcome, 1)
-	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.ProjectID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, func(res *bridge.RunOutcome) {
+	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.WorkspaceID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, func(res *bridge.RunOutcome) {
 		done <- res
 	})
 	if err != nil {

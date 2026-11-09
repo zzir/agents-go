@@ -161,9 +161,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     fold); `foldAppendPointIn` is the definition they must agree with, field
     for field. A missing row falls back to the fold, never to "empty". Only
     `GetEntries` still folds, once per read.
-27. **A session's `project_id` binding is immutable and server-authoritative.**
-    The first project-carrying run binds it (`BindProjectIfEmpty`): no unbind,
-    rebind or PATCH, the run overrides what the client sends, and no project
+27. **A session's `workspace_id` binding is immutable and server-authoritative.**
+    The first workspace-carrying run binds it (`BindWorkspaceIfEmpty`): no unbind,
+    rebind or PATCH, the run overrides what the client sends, and no workspace
     means no sandbox tools. It binds WHICH tree, not the container's
     configuration: environment and image are content, editable while bound,
     reaching sessions at their next run (`bridge/binding.go`, `sandboxes/manager.go`; decisions §5.32, §5.33, §5.66).
@@ -250,11 +250,11 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     the same Primer `useConfirm` dialog — never `window.confirm`, never a bare
     button. Discarding an edited form is one: every form's Cancel, the dialog's
     close paths and leaving the page ask while `UnsavedForm` reports edits (`lib/unsaved.tsx`).
-42. **Ownership is sessions' owner column, configuration scope, or projects'
+42. **Ownership is sessions' owner column, configuration scope, or workspaces'
     per-user ownership — nothing invents a fourth scheme.** A hidden task
     session, a trigger or an approval takes its session's owner; configuration
     is host-owned or row-scoped — `scope` for visibility, `owner_id` for
-    authorship (decisions §5.29); a working tree is a project (§5.28). Every
+    authorship (decisions §5.29); a working tree is a workspace (§5.28). Every
     mutation re-checks the pair (`409`); the matrix: [protocol.md](../reference/protocol.md#authorization).
 43. **Shutdown is ordered, and every waiter is told.** The clock stops, then
     the maintenance loops, then every run is cancelled and waited for (its
@@ -271,21 +271,21 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 45. **A sandbox is one row, and only its identity freezes.**
     `SandboxIdentityChanged` covers the type and the destination, plus for
     e2b the fields a `/connect` resume cannot re-apply (`template_id`,
-    `auto_pause`, `allow_internet`); editing one while projects live on it is
+    `auto_pause`, `allow_internet`); editing one while workspaces live on it is
     `409`. Everything else edits freely and reaches bound sessions at their
     next run. There is no template entity — decisions §5.36.
-46. **A delete that could not reclaim the storage still deleted the project.**
-    `DELETE /projects/{id}` answers `200 {deleted, storage_error?}`: the row
+46. **A delete that could not reclaim the storage still deleted the workspace.**
+    `DELETE /workspaces/{id}` answers `200 {deleted, storage_error?}`: the row
     is gone whenever it answers, and `storage_error` names storage left for
     the operator — never an error status for a row that is gone.
 47. **Retired 2026-08-31 with port previews** — decisions §5.35.
 48. **Retired 2026-08-31 with port previews** — decisions §5.35.
 49. **The top bar re-reads the sandbox state on the edges that move it.**
-    `GET /projects/:id/sandbox` is read when the bound project changes, when
+    `GET /workspaces/:id/sandbox` is read when the bound workspace changes, when
     the menu opens, and when a run starts or ends. Each refresh carries a
-    sequence and only the newest for the current project lands; "Checking…"
+    sequence and only the newest for the current workspace lands; "Checking…"
     shows only on the first read, and a failed read keeps the last value or
-    offers Start (`ProjectControls.tsx`, `ChatTopBar.tsx`).
+    offers Start (`WorkspaceControls.tsx`, `ChatTopBar.tsx`).
 50. **Wherever the UI names an agent, `AgentAvatar` draws it.** `avatar` is a
     path into the built-in catalog (`public/avatars/`, mirrored by
     `lib/avatars.ts`); the server rejects anything else. No avatar renders as
@@ -298,9 +298,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     panels are `hidden`, the `:has(.settings-form)` narrowing is scoped per
     panel, each panel scrolls itself with `scrollbar-gutter: stable`, and a
     hidden view stands its live work down (`RunsView`'s ticker; `PanelDialog`).
-52. **A project-bound session transfers only to the project's owner.**
+52. **A workspace-bound session transfers only to the workspace's owner.**
     `PUT /sessions/{id}/owner` refuses any other target with 409: the
-    session's runs execute in the bound project's container, working tree
+    session's runs execute in the bound workspace's container, working tree
     and environment included, and reassigning a session must never hand one
     member's files and secrets to another.
 53. **A sandbox type's semantics live in the store's kind descriptor; the UI
@@ -448,9 +448,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     naming a month-old session does not carry it to the top, and unpinning
     returns it to where its last message left it (`SessionStore.UpdateFields`, `NameIfDefault`).
 77. **A New composer's picks go to the session its first message makes.**
-    The agent and project chosen before a session exists are drafted under
+    The agent and workspace chosen before a session exists are drafted under
     the empty id; the send that creates the session moves them to its id and
-    clears the empty one (`adoptNewSessionPrefs`, `lib/drafts.ts`). A project
+    clears the empty one (`adoptNewSessionPrefs`, `lib/drafts.ts`). A workspace
     is a binding the session keeps for life, so the next New never inherits
     one; it opens on the last agent picked anywhere, never the last one sent.
 78. **A name the workbench makes for a session is 40 characters at most, by one
@@ -558,10 +558,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 96. **A background command is a task of kind `command` on the exec_command
     call's card.** `exec_command` with `background: true` spawns the row
     (`Kind` command, `ToolCallID` the call's); the launcher runs it on the
-    parent's project sandbox with no agent and no hub run; a stop kills it; its
+    parent's workspace sandbox with no agent and no hub run; a stop kills it; its
     ending wakes the parent; its retry ceiling is one. The flag is offered only
     on a chat run of an agent with `behavior.background_commands` on, and a
-    sandbox stop ends the project's commands first — see decisions §5.97.
+    sandbox stop ends the workspace's commands first — see decisions §5.97.
 97. **The card that started a task is its anchor.** A card whose display
     carries a `task_id` — `spawn_task`'s, or `exec_command`'s run in the
     background — offers Inspect, wears the task's status and its result from

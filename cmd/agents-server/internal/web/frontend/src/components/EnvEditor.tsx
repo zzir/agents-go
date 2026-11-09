@@ -4,7 +4,7 @@ import { useRef, type ReactElement } from 'react';
 import { SECRET_MASK, type EnvVar } from '@/lib/binding';
 import '@/components/env-editor.css';
 
-/* The environment editor shared by the new-project dialog and a project's own
+/* The environment editor shared by the new-workspace dialog and a workspace's own
    environment dialog: one name/value row per variable.
 
    Values are write-only. What you type here is visible until it is saved and
@@ -108,10 +108,8 @@ export function EnvEditor({ vars, onChange, disabled }: EnvEditorProps): ReactEl
         />
       </div>
       <p className="env-editor-hint">
-        Optional. Set on the container, so commands, shells and terminals all see them.
-        <strong> Values are not shown again after saving</strong> — you can overwrite one, not read
-        it back. To check what a variable holds, run <code>env</code> in the project&rsquo;s terminal
-        (⋯ → Terminal panel); everything in the container can read them all.
+        Optional, set on the container. <strong>Values are not shown again after saving</strong> — check
+        one with <code>env</code> in the terminal.
       </p>
     </div>
   );

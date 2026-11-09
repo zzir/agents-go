@@ -11,21 +11,21 @@ import (
 	"github.com/zzir/agents-go/sandbox"
 )
 
-// Backend is one sandbox TYPE: build a project's sandbox (Open), destroy what
+// Backend is one sandbox TYPE: build a workspace's sandbox (Open), destroy what
 // it left behind (Reclaim), rebuild the compute keeping the storage (Rebuild)
 // and health-check the type (Check). Open is configuration, not I/O: backends
 // dial on the first command.
 type Backend interface {
 	// Open builds the Sandbox for spec.
 	Open(spec Spec) (sandbox.Sandbox, error)
-	// Reclaim destroys the project's compute AND its storage, after the row
+	// Reclaim destroys the workspace's compute AND its storage, after the row
 	// is gone — decisions §5.33.
 	Reclaim(ctx context.Context, spec Spec) error
 	// Rebuild replaces the compute from the current template, KEEPING the
 	// storage; a backend where the compute IS the storage refuses (invariant 44).
 	Rebuild(ctx context.Context, spec Spec) error
 	// Check reports whether the sandbox is reachable and runnable, touching no
-	// project and cleaning up whatever it provisioned.
+	// workspace and cleaning up whatever it provisioned.
 	Check(ctx context.Context, sb *store.Sandbox) error
 }
 

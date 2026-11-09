@@ -76,7 +76,7 @@ func (w Waker) Drain(ctx context.Context, sessionID string) {
 		payloads = append(payloads, batch[i].Payload)
 	}
 
-	if _, err := w.r.StartWakeRun(sessionID, inherit.AgentConfigID, inherit.ProjectID,
+	if _, err := w.r.StartWakeRun(sessionID, inherit.AgentConfigID, inherit.WorkspaceID,
 		strings.Join(payloads, "\n\n"), parentRunID, w.r.wakeWithheld(ctx, batch), nil); err != nil {
 		// Lost a race with a run that started meanwhile; its own boundary re-drains.
 		log.Debug("wake-up run did not start", "error", err, "session_id", sessionID)

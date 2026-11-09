@@ -27,17 +27,17 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 	}
 	// Snapshot the SPAWNING run's setup: the wake-up must use the agent the
 	// parent was talking to (invariant 32).
-	var parentAgentConfigID, parentProjectID string
+	var parentAgentConfigID, parentWorkspaceID string
 	if rid, ok := t.r.hub.ActiveRunForSession(parentSessionID); ok {
 		if info, ok := t.r.hub.Info(rid); ok {
-			parentAgentConfigID, parentProjectID = info.AgentConfigID, info.ProjectID
+			parentAgentConfigID, parentWorkspaceID = info.AgentConfigID, info.WorkspaceID
 		}
 	}
 	if parentAgentConfigID == "" {
 		if sess, err := t.r.Deps.Sessions.Get(ctx, parentSessionID); err == nil {
 			parentAgentConfigID = sess.AgentConfigID
-			if parentProjectID == "" {
-				parentProjectID = sess.ProjectID
+			if parentWorkspaceID == "" {
+				parentWorkspaceID = sess.WorkspaceID
 			}
 		}
 	}
@@ -49,7 +49,7 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 		DisplayName: cfg.Name,
 		Inherit: store.EncodeInherit(store.Inherit{
 			AgentConfigID: parentAgentConfigID,
-			ProjectID:     parentProjectID,
+			WorkspaceID:   parentWorkspaceID,
 			TaskAgentID:   cfg.ID,
 		}),
 	}, nil
@@ -69,9 +69,9 @@ func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error
 		return t.r.launchCommand(ctx, req)
 	}
 	in := store.DecodeInherit(req.Inherit)
-	// The task's own run shares the parent's project, and thereby its command-
+	// The task's own run shares the parent's workspace, and thereby its command-
 	// trust scope; the child's first run CAS-binds its hidden session with it.
-	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.ProjectID, TextInput(req.Input), "", nil, nil)
+	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.WorkspaceID, TextInput(req.Input), "", nil, nil)
 	return err
 }
 

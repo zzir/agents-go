@@ -170,7 +170,7 @@ func TestRunHubInterruptedEventIsTerminal(t *testing.T) {
 // and attached subscribers — one logical run, one event stream.
 func TestRunHubResumeSameID(t *testing.T) {
 	h := NewRunHub(context.Background())
-	if _, _, err := h.register("run1", "sess1", "", "ac", "proj", nil); err != nil {
+	if _, _, err := h.register("run1", "sess1", "", "ac", "ws", nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	h.publish("run1", env("run.started"))
@@ -192,7 +192,7 @@ func TestRunHubResumeSameID(t *testing.T) {
 	}
 
 	// Resume reopens the same record: same id, seq continues, sub still fed.
-	_, ctx, _, err := h.resume("run1", "sess1", "", "ac", "proj", nil)
+	_, ctx, _, err := h.resume("run1", "sess1", "", "ac", "ws", nil)
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}

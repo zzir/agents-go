@@ -25,7 +25,7 @@ var schemaModels = []any{
 	(*Workflow)(nil),
 	(*Trigger)(nil),
 	(*Sandbox)(nil),
-	(*Project)(nil),
+	(*Workspace)(nil),
 	(*TraceEvent)(nil),
 	(*TraceBlob)(nil),
 	(*Guardrail)(nil),
@@ -112,10 +112,10 @@ func schemaIndexes(pg bool) []schemaIndex {
 		{model: (*Memory)(nil), name: "idx_memories_scope", columns: []string{"scope_kind", "scope_id"}},
 		{model: (*Memory)(nil), name: "idx_memories_scope_key", unique: true, columns: []string{"scope_kind", "scope_id", "gen", "key"}},
 		// The session list orders by recency OF CHANGE (spec §2.5e2), per
-		// owner in the sidebar; a project's sessions are counted before its delete.
+		// owner in the sidebar; a workspace's sessions are counted before its delete.
 		{model: (*Session)(nil), name: "idx_sessions_updated_at", columns: []string{"updated_at"}},
 		{model: (*Session)(nil), name: "idx_sessions_owner_updated_at", columns: []string{"owner_id", "updated_at"}},
-		{model: (*Session)(nil), name: "idx_sessions_project_id", columns: []string{"project_id"}},
+		{model: (*Session)(nil), name: "idx_sessions_workspace_id", columns: []string{"workspace_id"}},
 		// Scoped-entity names: unique per visibility context, two partial
 		// indexes per table (decisions §5.29). HITL run state names agents by name.
 		{model: (*AgentConfig)(nil), name: "idx_agent_configs_name_global", unique: true, columns: []string{"name"}, where: "scope = 'global'"},
@@ -138,8 +138,8 @@ func schemaIndexes(pg bool) []schemaIndex {
 		// session owed one, the hourly prune for the settled ones by age.
 		{model: (*Wakeup)(nil), name: "idx_wakeups_session_state", columns: []string{"session_id", "state"}},
 		{model: (*Wakeup)(nil), name: "idx_wakeups_state_created", columns: []string{"state", "created_at"}},
-		// A project's name is how a person picks it per (owner, sandbox).
-		{model: (*Project)(nil), name: "idx_projects_owner_sandbox_name", unique: true, columns: []string{"owner_id", "sandbox_id", "name"}},
+		// A workspace's name is how a person picks it per (owner, sandbox).
+		{model: (*Workspace)(nil), name: "idx_workspaces_owner_sandbox_name", unique: true, columns: []string{"owner_id", "sandbox_id", "name"}},
 		// Accounts merge by verified email; UNIQUE also arbitrates two first
 		// logins racing to create the same account.
 		{model: (*User)(nil), name: "idx_users_email", unique: true, columns: []string{"email"}},

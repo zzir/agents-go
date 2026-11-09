@@ -18,9 +18,9 @@ import (
 // by the bridge Runner.
 type WorkflowStarter interface {
 	RunWorkflow(ctx context.Context, workflowID, sessionID, input string, origin store.WorkflowOrigin) (*bridge.TaskInfo, error)
-	// BindSessionProject gives a still-unbound session the project the start
+	// BindSessionWorkspace gives a still-unbound session the workspace the start
 	// carries, before the start; a bound session keeps its binding.
-	BindSessionProject(ctx context.Context, sessionID, projectID string) (bool, error)
+	BindSessionWorkspace(ctx context.Context, sessionID, workspaceID string) (bool, error)
 }
 
 // WorkflowHandler serves the workflow DEFINITIONS and starts executions.
@@ -42,14 +42,14 @@ func NewWorkflowHandler(s *store.WorkflowStore, agents *store.AgentConfigStore, 
 type runWorkflowReq struct {
 	SessionID string `json:"session_id" binding:"required"`
 	Input     string `json:"input"`
-	// ProjectID binds a still-unbound session first, so the execution has its
+	// WorkspaceID binds a still-unbound session first, so the execution has its
 	// file and command tools; a bound session ignores it.
-	ProjectID string `json:"project_id"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
 // Run starts an execution of the workflow for a session, with the person's brief.
 //
-//	@Summary		Run a workflow (optionally binding the session's project first)
+//	@Summary		Run a workflow (optionally binding the session's workspace first)
 //	@Description	Starts an execution as a background task of the given session, with the brief in the body (the workflow's session cannot see the conversation, so the brief is what it works from). The result comes back to the session as a notification, like any task's. 400 when the workflow has no runnable steps or an agent is gone, 404 for an unknown workflow or session, 409 when the session is at its background-task cap.
 //	@Tags			workflows
 //	@Accept			json
@@ -81,8 +81,8 @@ func (h *WorkflowHandler) Run(c *gin.Context) {
 	if !visibleRow(c, wf.Scope, wf.OwnerID) {
 		return
 	}
-	if req.ProjectID != "" {
-		if _, err := h.starter.BindSessionProject(c.Request.Context(), req.SessionID, req.ProjectID); err != nil {
+	if req.WorkspaceID != "" {
+		if _, err := h.starter.BindSessionWorkspace(c.Request.Context(), req.SessionID, req.WorkspaceID); err != nil {
 			_, invalidBinding := errors.AsType[bridge.ErrInvalidBinding](err)
 			switch {
 			case invalidBinding:
