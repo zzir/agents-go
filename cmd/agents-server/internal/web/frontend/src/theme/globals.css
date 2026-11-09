@@ -93,6 +93,13 @@ a:hover {
     --zIndex-portal: 60;    /* Primer's portal (menus, dialogs): above the mobile panel and drawer */
     --zIndex-overlay: 200;  /* zoom overlay */
     --zIndex-toast: 1100;   /* above everything, dialogs included */
+
+    /* System fonts only (no webfont is bundled); Han text falls back to Simplified Chinese faces. */
+    --fontStack-system: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial,
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+        sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+    --fontStack-sansSerif: var(--fontStack-system);
+    --fontStack-sansSerifDisplay: var(--fontStack-system);
 }
 
 .app-layout {

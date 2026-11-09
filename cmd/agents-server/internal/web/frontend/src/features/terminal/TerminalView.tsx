@@ -82,7 +82,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     setStatus('connecting');
 
     const term = new Terminal({
-      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--fontStack-monospace').trim() || 'monospace',
       fontSize: 13,
       scrollback: 5000,
       cursorBlink: true,
