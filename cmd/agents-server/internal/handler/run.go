@@ -63,6 +63,8 @@ type createRunResp struct {
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		404		{object}	ErrorResponse
 //	@Failure		409		{object}	ErrorResponse	"session already has an active run, or the sandbox config kept changing under the bind"
+//	@Failure		502		{object}	ErrorResponse	"the awaited run failed or was cancelled"
+//	@Failure		503		{object}	ErrorResponse	"the server is shutting down"
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/runs [post]
 func (h *RunHandler) Create(c *gin.Context) error {

@@ -6174,6 +6174,18 @@ paths:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: session already has an active run, or the sandbox config kept
             changing under the bind
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: the awaited run failed or was cancelled
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: the server is shutting down
       security:
       - BearerAuth: []
       summary: Start run

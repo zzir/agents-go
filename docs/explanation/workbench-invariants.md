@@ -27,7 +27,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
    failed` (`bridge.SessionStatuses`) — or boolean (`chatgpt_logged_in`). The
    frontend never reconstructs state from several fields or per-item maps.
 4. **Swagger annotations match the actual response type.** Run `make openapi`
-   after any handler change — CI diffs the generated spec (`scripts/ci.sh`).
+   after any handler change — CI diffs the generated spec (`scripts/ci.sh`),
+   and `TestRoutesMatchTheOpenAPISpec` holds the route table to its operations.
 
 **State & lifecycle**
 

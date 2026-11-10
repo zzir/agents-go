@@ -5430,6 +5430,24 @@ export interface paths {
                         "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
+                /** @description the awaited run failed or was cancelled */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description the server is shutting down */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
             };
         };
         delete?: never;
