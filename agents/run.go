@@ -235,10 +235,9 @@ type runner struct {
 	// toolsUsedBy tracks which agents have called tools (tool_choice reset), by name.
 	toolsUsedBy map[string]bool
 
-	// lastResponseID / lastStore record the final model call's response id
-	// and store setting, for session compaction after persistence.
+	// lastResponseID is the latest model response's id, stamped on the entries
+	// it produced.
 	lastResponseID string
-	lastStore      *bool
 
 	// guardrailMu guards guardrailResults: tool stages record from per-call goroutines.
 	guardrailMu      sync.Mutex
@@ -481,13 +480,6 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 		slog.Int64("input_tokens", usageOr(resp.Usage).InputTokens),
 		slog.Int64("output_tokens", usageOr(resp.Usage).OutputTokens))
 	r.lastResponseID = resp.ResponseID
-	// The settings the request carried, not the agent's; compaction reads Store
-	// off this.
-	if snapshot.Settings != nil {
-		r.lastStore = snapshot.Settings.Store
-	} else {
-		r.lastStore = nil
-	}
 	if !resumed {
 		r.lastUsage = resp.Usage
 		r.usagePending = true

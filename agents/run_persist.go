@@ -147,8 +147,6 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 		// so no-op passes don't clutter the trace.
 		var cspan *tracing.SpanHandle
 		cerr := cs.RunCompaction(ctx, session.CompactionArgs{
-			ResponseID: r.lastResponseID,
-			Store:      r.lastStore,
 			StartSpan: func() *tracing.SpanHandle {
 				cspan = r.trace.StartCompactionSpan(r.agentParentID())
 				return cspan

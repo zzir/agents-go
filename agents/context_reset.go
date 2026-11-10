@@ -58,12 +58,7 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 	switch {
 	case isCompactionAware(sess):
 		cs := sess.Storage().(session.CompactionAware)
-		cerr := cs.RunCompaction(ctx, session.CompactionArgs{
-			Force: true, Reset: true,
-			ResponseID: r.lastResponseID,
-			Store:      r.lastStore,
-			StartSpan:  startSpan,
-		})
+		cerr := cs.RunCompaction(ctx, session.CompactionArgs{Force: true, Reset: true, StartSpan: startSpan})
 		if cerr != nil {
 			startSpan().SetError(cerr.Error(), nil)
 			r.log.component("compaction").Warn(ctx, "context reset failed; continuing", slog.String("error", cerr.Error()))

@@ -167,10 +167,6 @@ func ResolveLimit(s Settings) int {
 // CompactionArgs carry what a CompactionAware storage needs to decide whether
 // and how to compact after a run.
 type CompactionArgs struct {
-	// ResponseID is the last model response's identifier.
-	ResponseID string
-	// Store reports whether that response was stored server-side; nil if unknown.
-	Store *bool
 	// Force requests compaction regardless of the session's own decision hook.
 	Force bool
 	// Reset asks for a context reset rather than a summary (spec §2.5i); a

@@ -97,9 +97,7 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 	}
 	var cspan *tracing.SpanHandle
 	cerr := cs.RunCompaction(ctx, session.CompactionArgs{
-		Force:      true,
-		ResponseID: r.lastResponseID,
-		Store:      r.lastStore,
+		Force: true,
 		StartSpan: func() *tracing.SpanHandle {
 			cspan = r.trace.StartCompactionSpan(r.agentParentID())
 			return cspan
