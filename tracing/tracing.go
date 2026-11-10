@@ -3,7 +3,6 @@
 package tracing
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"time"
@@ -61,16 +60,13 @@ type Span struct {
 func (*Span) isTraceItem() {}
 
 // Processor receives trace and span lifecycle notifications. Implementations
-// must be safe for concurrent use.
+// must be safe for concurrent use. A Tracer never flushes or closes one; that
+// is its owner's job.
 type Processor interface {
 	OnTraceStart(trace *Trace)
 	OnTraceEnd(trace *Trace)
 	OnSpanStart(span *Span)
 	OnSpanEnd(span *Span)
-	// ForceFlush blocks until buffered telemetry has been exported.
-	ForceFlush()
-	// Shutdown flushes and releases resources, honoring ctx for deadlines.
-	Shutdown(ctx context.Context)
 }
 
 // Exporter ships finished traces and spans to a destination. Export may run

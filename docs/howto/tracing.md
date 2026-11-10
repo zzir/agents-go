@@ -97,6 +97,8 @@ There is no built-in HTTP exporter: the span record is OTel-shaped — 8-byte sp
 
 Implement [`tracing.Processor`](https://pkg.go.dev/github.com/zzir/agents-go/tracing#Processor) to integrate with an existing telemetry stack — the runner only ever talks to the interface. Span callbacks can fire from concurrent goroutines (parallel tools, input guardrails), so a processor must be goroutine-safe.
 
+The interface is the four `On*` lifecycle callbacks. A processor that buffers flushes and shuts down through its own methods, and you call them — the tracer never does ([spec §2.11e](../reference/spec.md#211e-span-coverage)).
+
 ## Instrumenting your own code
 
 A subsystem the runner does not own — a custom `Model` decorator, a tool that

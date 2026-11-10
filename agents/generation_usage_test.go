@@ -14,8 +14,6 @@ func (spanCapture) OnTraceStart(*tracing.Trace) {}
 func (spanCapture) OnTraceEnd(*tracing.Trace)   {}
 func (spanCapture) OnSpanStart(*tracing.Span)   {}
 func (c spanCapture) OnSpanEnd(s *tracing.Span) { c.onEnd(s) }
-func (spanCapture) ForceFlush()                 {}
-func (spanCapture) Shutdown(context.Context)    {}
 
 func TestGenerationSpanRecordsUsage(t *testing.T) {
 	var gen *tracing.Span

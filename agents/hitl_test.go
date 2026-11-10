@@ -336,8 +336,6 @@ func (c *tracingCollector) OnSpanEnd(s *tracing.Span) {
 	c.spanNames = append(c.spanNames, s.Name)
 	c.mu.Unlock()
 }
-func (c *tracingCollector) ForceFlush()              {}
-func (c *tracingCollector) Shutdown(context.Context) {}
 
 func (c *tracingCollector) named(prefix string) int {
 	c.mu.Lock()

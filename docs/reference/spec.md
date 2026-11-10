@@ -1588,6 +1588,9 @@ nothing more: a host renders progress from the stream's own events. Beyond
   annotating from another goroutine is safe and simply drops. Writing through
   the exported `Span` field bypasses this and races, as mutating a `Trace`
   after `StartTrace` does.
+- **A `Tracer` never flushes or closes its `Processor`**: the interface is the
+  four lifecycle callbacks, and a buffering processor's flush and shutdown
+  (`BatchProcessor.ForceFlush`, `Shutdown`) are called by whoever built it.
 - **A dropped span is announced through `BatchProcessorOptions.OnDrop`**; the
   processor's queue is bounded, and the SDK never writes to `slog.Default()`
   ([§2.11c](#211c-logging)). `Dropped()` remains the cumulative counter.

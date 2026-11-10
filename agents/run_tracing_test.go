@@ -26,8 +26,6 @@ func (p *recordingProcessor) OnSpanEnd(s *tracing.Span) {
 	defer p.mu.Unlock()
 	p.spans = append(p.spans, s)
 }
-func (p *recordingProcessor) ForceFlush()              {}
-func (p *recordingProcessor) Shutdown(context.Context) {}
 
 func (p *recordingProcessor) generationSpans() []*tracing.Span {
 	return p.spansOfType(tracing.SpanTypeGeneration)

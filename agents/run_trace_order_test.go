@@ -18,8 +18,6 @@ func (r closeRecorder) OnTraceEnd(*tracing.Trace) { *r.order = append(*r.order, 
 func (closeRecorder) OnTraceStart(*tracing.Trace) {}
 func (closeRecorder) OnSpanStart(*tracing.Span)   {}
 func (closeRecorder) OnSpanEnd(*tracing.Span)     {}
-func (closeRecorder) ForceFlush()                 {}
-func (closeRecorder) Shutdown(context.Context)    {}
 
 // The trace closes before the stream's last yield, for a fresh run and a
 // resumed one alike, and closes all the same when the consumer leaves first

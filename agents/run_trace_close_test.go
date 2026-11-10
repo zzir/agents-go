@@ -19,8 +19,6 @@ func (c *traceCounter) OnTraceStart(*tracing.Trace) { c.started.Add(1) }
 func (c *traceCounter) OnTraceEnd(*tracing.Trace)   { c.ended.Add(1) }
 func (*traceCounter) OnSpanStart(*tracing.Span)     {}
 func (*traceCounter) OnSpanEnd(*tracing.Span)       {}
-func (*traceCounter) ForceFlush()                   {}
-func (*traceCounter) Shutdown(context.Context)      {}
 
 // unreadableStorage fails every history read.
 type unreadableStorage struct{ session.Storage }

@@ -1,19 +1,14 @@
 package tracing
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
 // captureProc records spans as they start.
 type captureProc struct{ spans []*Span }
 
-func (p *captureProc) OnTraceStart(*Trace)      {}
-func (p *captureProc) OnTraceEnd(*Trace)        {}
-func (p *captureProc) OnSpanStart(s *Span)      { p.spans = append(p.spans, s) }
-func (p *captureProc) OnSpanEnd(*Span)          {}
-func (p *captureProc) ForceFlush()              {}
-func (p *captureProc) Shutdown(context.Context) {}
+func (p *captureProc) OnTraceStart(*Trace) {}
+func (p *captureProc) OnTraceEnd(*Trace)   {}
+func (p *captureProc) OnSpanStart(s *Span) { p.spans = append(p.spans, s) }
+func (p *captureProc) OnSpanEnd(*Span)     {}
 
 func TestTypedSpanConstructors(t *testing.T) {
 	tr := NewTracer(&captureProc{}).StartTrace("wf")
@@ -113,8 +108,6 @@ func (p *exportingProc) OnSpanEnd(s *Span) {
 		}
 	}()
 }
-func (p *exportingProc) ForceFlush()              {}
-func (p *exportingProc) Shutdown(context.Context) {}
 
 // The finished flag is read before the write it guards, so an annotation can
 // pass the check and land after the span has been handed over. Data is a map,

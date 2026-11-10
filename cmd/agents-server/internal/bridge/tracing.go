@@ -164,9 +164,6 @@ func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 	}
 }
 
-func (p *wsProcessor) ForceFlush()              {}
-func (p *wsProcessor) Shutdown(context.Context) {}
-
 var _ tracing.Processor = (*wsProcessor)(nil)
 
 func newTracer(ctx context.Context, send func(string, any), traces *store.TraceStore, sessionID, runID, parentRunID string, elemCap int, resolve attachmentResolver) *tracing.Tracer {
