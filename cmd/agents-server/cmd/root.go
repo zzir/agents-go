@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -119,6 +121,15 @@ func run(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// Bound before the database is opened: a second start on a taken address
+	// is refused before it can sweep a live instance's tasks — invariant 63.
+	addr := net.JoinHostPort(flagHost, strconv.Itoa(flagPort))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listening on %s: %w", addr, err)
+	}
+	defer ln.Close()
+
 	// Stored credentials are sealed under one process key. Without a key they
 	// are plaintext — the single-user workbench — and the log says so once.
 	box, err := secrets.FromEnvOrFile("AGENTS_SECRET_KEY", flagSecretKeyFile)
@@ -163,6 +174,16 @@ func run(cmd *cobra.Command, _ []string) error {
 		CredentialsSealed: box != nil,
 	})
 
+	// Every flag is validated before the sweep below changes a row.
+	authSvc, err := newAuth(ctx, st, baseURL, log)
+	if err != nil {
+		return err
+	}
+	srv, err := newServer(ctx, log, authSvc, recordAudit, st, hs, baseURL)
+	if err != nil {
+		return err
+	}
+
 	// Restart reconciliation: fail the interrupted first, drain the wake-ups
 	// after the handlers — invariant 32.
 	svc.Runner.FailOrphanedTasks(ctx)
@@ -175,23 +196,12 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 	defer svc.Scheduler.Stop()
 
-	authSvc, err := newAuth(ctx, st, baseURL, log)
-	if err != nil {
-		return err
-	}
 	go bridge.RunAuthTokenCleanup(bgCtx, st.AuthTokens)
 	go bridge.RunWakeupCleanup(bgCtx, st.Wakeups)
 	go bridge.RunAttachmentReaper(bgCtx, st.SettingReader, st.Attachments)
 	go bridge.RunTaskSessionRetention(bgCtx, st.SettingReader, st.Sessions)
 
-	srv, err := newServer(ctx, log, authSvc, recordAudit, st, hs, baseURL)
-	if err != nil {
-		return err
-	}
-
-	addr := fmt.Sprintf("%s:%d", flagHost, flagPort)
 	httpSrv := &http.Server{
-		Addr:    addr,
 		Handler: srv.Engine,
 		// Slow-loris protection on headers, body and idle keep-alive; no
 		// WriteTimeout, as the streams (SSE, WebSocket) bound their own writes.
@@ -200,18 +210,23 @@ func run(cmd *cobra.Command, _ []string) error {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	serveErr := make(chan error, 1)
 	go func() {
 		log.Info("server started", "addr", addr)
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			// A dead listener leaves a process serving nobody: exit.
-			log.Error("server error", "error", err)
-			os.Exit(1)
+		if err := httpSrv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
 		}
 	}()
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	sigCtx, stopSignals := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	var serveFailed error
+	select {
+	case <-sigCtx.Done():
+	case serveFailed = <-serveErr:
+		// A dead listener leaves a process serving nobody: shut down in order.
+		log.Error("server error", "error", serveFailed)
+	}
 
 	log.Info("shutting down")
 	// Shutdown order: the clock, the maintenance loops, the drain, then the
@@ -233,7 +248,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 	// The root context ends before the deferred closes tear down what descends from it.
 	stopRoot()
-	return nil
+	return serveFailed
 }
 
 // serverTimezone names the zone cron schedules run in: the IANA name when TZ

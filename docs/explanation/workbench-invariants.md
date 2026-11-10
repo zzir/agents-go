@@ -366,10 +366,10 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     `trace_payload_retention_days` strips an idle session's (nulling `layout`/`refs`).
 63. **One instance per database, enforced at startup on PostgreSQL.**
     `AcquireInstanceLock` takes a database-wide advisory lock before the orphan
-    sweep runs, so a second instance is refused rather than failing a live
-    instance's running tasks (`store/db.go`; the multi-instance direction is
-    scope.md's Roadmap). SQLite relies on its single-file, single-process
-    assumption and the lock is a no-op there.
+    sweep, so a second instance is refused rather than failing a live one's
+    running tasks (`store/db.go`; multi-instance is scope.md's Roadmap). On
+    SQLite it is a no-op: the listen address is bound before the database is
+    opened (`cmd/root.go`), which refuses a second start on that address only.
 64. **Memory is one table by scope, and its rules have one home.** A row's
     `scope_kind` (global, agent, session) decides injection, who writes,
     whether the model writes and after what, and the limits, all from
