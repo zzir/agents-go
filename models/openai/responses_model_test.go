@@ -17,7 +17,6 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/models/modelkit"
 )
 
 // fakeSchema is a minimal OutputSchema for exercising response_format building
@@ -35,12 +34,8 @@ func (f fakeSchema) ValidateJSON(string) (any, error) { return nil, nil }
 
 func marshalParams(t *testing.T, req agents.ModelRequest) map[string]any {
 	t.Helper()
-	m := NewResponsesModel("gpt-4o", NewProvider().client.Responses)
-	params, err := m.buildParams(req)
-	if err != nil {
-		t.Fatalf("buildParams: %v", err)
-	}
-	raw, err := json.Marshal(params)
+	m := &ResponsesModel{model: "gpt-4o", client: NewProvider().client.Responses}
+	raw, err := json.Marshal(m.buildParams(req))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -380,10 +375,8 @@ func TestStreamResponseTrailingTransportErrorAfterCompletedIsIgnored(t *testing.
 	}
 }
 
-// A response the API reports failed still billed tokens: the error carries
-// them (modelkit.UsageError) so the run's accounting does not lose them, and
-// it still reads as a ModelBehaviorError through the wrapping.
-func TestRespondFailedResponseCarriesUsage(t *testing.T) {
+// A response the API reports failed is a ModelBehaviorError, not an empty success.
+func TestRespondFailedResponseIsAModelBehaviorError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"id":"resp_f","status":"failed","error":{"code":"server_error","message":"boom"},"output":[],
@@ -395,20 +388,13 @@ func TestRespondFailedResponseCarriesUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = model.Respond(context.Background(), agents.ModelRequest{Input: agents.InputItemsFromText("hi")})
-	ue, ok := errors.AsType[*modelkit.UsageError](err)
-	if !ok {
-		t.Fatalf("err = %T %v, want a *modelkit.UsageError", err, err)
-	}
-	if ue.Usage.InputTokens != 42 || ue.Usage.OutputTokens != 7 || ue.Usage.Requests != 1 {
-		t.Errorf("usage = %+v, want in 42 / out 7 / 1 request", ue.Usage)
-	}
 	if _, ok := errors.AsType[*agents.ModelBehaviorError](err); !ok {
-		t.Errorf("err = %T, want it to still read as a ModelBehaviorError", err)
+		t.Errorf("err = %T %v, want a *agents.ModelBehaviorError", err, err)
 	}
 }
 
-// The streamed terminal failure carries its usage the same way.
-func TestStreamResponseFailedEventCarriesUsage(t *testing.T) {
+// The streamed terminal failure reads the same way.
+func TestStreamResponseFailedEventIsAModelBehaviorError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_f\",\"status\":\"in_progress\",\"output\":[]}}\n\n")
@@ -425,12 +411,8 @@ func TestStreamResponseFailedEventCarriesUsage(t *testing.T) {
 			streamErr = err
 		}
 	}
-	ue, ok := errors.AsType[*modelkit.UsageError](streamErr)
-	if !ok {
-		t.Fatalf("stream err = %T %v, want a *modelkit.UsageError", streamErr, streamErr)
-	}
-	if ue.Usage.InputTokens != 42 || ue.Usage.OutputTokens != 7 {
-		t.Errorf("usage = %+v, want in 42 / out 7", ue.Usage)
+	if _, ok := errors.AsType[*agents.ModelBehaviorError](streamErr); !ok {
+		t.Errorf("stream err = %T %v, want a *agents.ModelBehaviorError", streamErr, streamErr)
 	}
 }
 

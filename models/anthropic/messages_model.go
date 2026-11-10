@@ -15,9 +15,8 @@ import (
 // MessagesModel calls a model through the Anthropic Messages API. It
 // implements agents.Model.
 type MessagesModel struct {
-	model         string
-	client        ant.MessageService
-	promptCaching bool
+	model  string
+	client ant.MessageService
 	// budgetThinking sends reasoning effort as a thinking token budget instead
 	// of adaptive thinking — see Provider.WithBudgetThinking.
 	budgetThinking bool
@@ -63,9 +62,8 @@ func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewPara
 	if req.OutputSchema != nil {
 		params.OutputConfig.Format = ant.JSONOutputFormatParam{Schema: req.OutputSchema.JSONSchema()}
 	}
-	if m.promptCaching {
-		params.CacheControl = ant.NewCacheControlEphemeralParam()
-	}
+	// The request-level marker caches the growing prefix an agent loop resends.
+	params.CacheControl = ant.NewCacheControlEphemeralParam()
 	if err := applySettings(&params, req.Settings, m.budgetThinking); err != nil {
 		return ant.MessageNewParams{}, "", err
 	}

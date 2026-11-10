@@ -21,7 +21,7 @@ import (
 )
 
 func testModel() *MessagesModel {
-	return &MessagesModel{model: "claude-test", promptCaching: true}
+	return &MessagesModel{model: "claude-test"}
 }
 
 // functionCallOutput is the function_call_output input item answering callID.
@@ -71,20 +71,11 @@ func TestBuildParamsBasics(t *testing.T) {
 		t.Errorf("system = %v", system)
 	}
 	if _, ok := wire["cache_control"]; !ok {
-		t.Error("cache_control missing — prompt caching defaults on")
+		t.Error("cache_control missing — every request carries the prefix cache marker")
 	}
 	msgs := wire["messages"].([]any)
 	if len(msgs) != 1 {
 		t.Fatalf("messages = %d, want 1", len(msgs))
-	}
-}
-
-func TestBuildParamsPromptCachingOptOut(t *testing.T) {
-	m := testModel()
-	m.promptCaching = false
-	wire := wireParams(t, m, agents.ModelRequest{Input: agents.InputItemsFromText("hi")})
-	if _, ok := wire["cache_control"]; ok {
-		t.Error("cache_control present after opting out")
 	}
 }
 

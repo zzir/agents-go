@@ -35,7 +35,7 @@ func TestRequestOptions_ExtraBodyLeadingColonKey(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	client := oai.NewClient(option.WithAPIKey("test"), option.WithBaseURL(srv.URL+"/"))
-	m := NewResponsesModel("gpt-4o", client.Responses)
+	m := &ResponsesModel{model: "gpt-4o", client: client.Responses}
 
 	req := agents.ModelRequest{
 		Input: agents.InputItemsFromText("hi"),

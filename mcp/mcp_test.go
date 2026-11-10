@@ -64,20 +64,6 @@ func TestMCP_ListAndCallTools(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolFiltering(t *testing.T) {
-	ctx := context.Background()
-	server := startInProcessServer(t)
-	server.blocked["echo"] = true
-
-	tools, err := server.ListTools(ctx, agents.NewRunContext(nil), &agents.Agent{Name: "a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tools) != 0 {
-		t.Errorf("blocked tool should be hidden, got %d tools", len(tools))
-	}
-}
-
 // fixedResultTool registers a tool that ignores its arguments and answers with
 // a fixed result, for exercising the adapted tool against exotic content blocks.
 func fixedResultTool(srv *mcpsdk.Server, name string, res *mcpsdk.CallToolResult) {

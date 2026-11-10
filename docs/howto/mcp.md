@@ -16,12 +16,14 @@ The module is tagged in lockstep with the core ([Create a project](../tutorial/q
 import (
 	"os/exec"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/zzir/agents-go/mcp"
 )
 
 // stdio: launch the server as a subprocess
-fsServer, err := mcp.NewStdioServer(ctx, "filesystem",
-	exec.Command("npx", "-y", "@modelcontextprotocol/server-filesystem", dir),
+fsServer, err := mcp.NewWithTransport(ctx, "filesystem",
+	&mcpsdk.CommandTransport{Command: exec.Command("npx", "-y", "@modelcontextprotocol/server-filesystem", dir)},
 	mcp.Options{})
 if err != nil { … }
 defer fsServer.Close()
@@ -32,11 +34,10 @@ agent := &agents.Agent{
 }
 ```
 
-Three constructors, one per transport: `mcp.NewStdioServer` (a subprocess
-over stdio), `mcp.NewStreamableHTTPServer` (streamable HTTP) and
-`mcp.NewWithTransport` (anything implementing the go-sdk `Transport` — an
-in-memory one for tests, the legacy SSE transport); signatures on
-[pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/mcp).
+`mcp.NewWithTransport` is the one constructor; the transport is the go-sdk's:
+`mcpsdk.CommandTransport` (a subprocess over stdio),
+`mcpsdk.StreamableClientTransport{Endpoint: …}` (streamable HTTP), an in-memory
+pair for tests, the legacy SSE transport.
 
 The agent lists each server's tools at the start of every turn, so servers may add or remove tools between turns.
 
@@ -44,13 +45,11 @@ The agent lists each server's tools at the start of every turn, so servers may a
 
 Every field of [`mcp.Options`](https://pkg.go.dev/github.com/zzir/agents-go/mcp#Options) is documented on pkg.go.dev; the behaviors worth knowing:
 
-- **Tool filtering**: `AllowedTools` whitelists, `BlockedTools` blacklists (blocked wins). `ToolFilter` adds a dynamic, per-call decision on top — it sees the run context and the tool's original name, and runs on every `ListTools` even when the list is cached.
-- **`CacheToolsList`**: caches the server's tool list after the first fetch so a multi-turn run does not re-issue `list_tools` each turn. The cache is invalidated automatically when the server sends a `tools/list_changed` notification; call `server.InvalidateToolsCache()` manually only for servers that change tools without notifying. Filters still run on every call.
+- **Tool filtering**: `ToolFilter` decides per call whether a tool is exposed — it sees the run context and the tool's original name, and runs on every `ListTools` even when the list is cached.
+- **`CacheToolsList`**: caches the server's tool list after the first fetch so a multi-turn run does not re-issue `list_tools` each turn. The cache is invalidated automatically when the server sends a `tools/list_changed` notification; call `server.InvalidateToolsCache()` manually only for servers that change tools without notifying. The filter still runs on every call.
 - **`ToolNamePrefix`**: prepends a prefix to each exposed tool name so several servers can expose same-named tools without colliding; the server is still called with the original name.
 - **`RequireApproval`**: decides per call whether a tool needs human approval, routing it through the [HITL](human_in_the_loop.md) flow like any `NeedsApproval` function tool. It receives the run context, the current agent (captured per `ListTools` call, so the predicate names the agent whose turn it is) and the tool's original name. For the common static list, `mcp.ApproveTools("a", "b")` builds the predicate.
 - **`MaxRetryAttempts` / `RetryBackoffBase`**: retry a failed `list_tools` or `call_tool` with exponential backoff (`0` off, `-1` unbounded); only transport failures are retried, never a JSON-RPC error the server answered with; a `call_tool` is retried only when the connection could not be made, so a tool never runs twice ([spec §2.16](../reference/spec.md#216-mcp-client-shared-connections-and-retry)).
-- **`Strict`**: rewrites each tool's input schema to the strict subset; if a server's schema cannot be made strict, the original schema is used and strict mode is disabled for that tool (never half-converted).
-- **`OAuthHandler`**: passes a `go-sdk/auth.OAuthHandler` to the streamable HTTP transport for OAuth 2.1 authorization (authorization code + PKCE, token refresh, dynamic client registration). Ignored for stdio transports. See the [OAuth section](#oauth) below.
 
 Two more behaviors are automatic:
 
@@ -59,7 +58,7 @@ Two more behaviors are automatic:
 
 ## OAuth
 
-The `mcp` package supports OAuth 2.1 for streamable HTTP servers via the go-sdk's `auth` package. Set `Options.OAuthHandler` to an `auth.OAuthHandler` implementation — the built-in `auth.NewAuthorizationCodeHandler` covers the standard authorization code + PKCE flow with optional dynamic client registration:
+OAuth 2.1 for a streamable HTTP server is the transport's: set `OAuthHandler` on the go-sdk's `StreamableClientTransport` to an `auth.OAuthHandler` — the built-in `auth.NewAuthorizationCodeHandler` covers the standard authorization code + PKCE flow with optional dynamic client registration:
 
 ```go
 import "github.com/modelcontextprotocol/go-sdk/auth"
@@ -69,9 +68,9 @@ handler, _ := auth.NewAuthorizationCodeHandler(&auth.AuthorizationCodeHandlerCon
 	AuthorizationCodeFetcher: myFetcher, // opens browser, waits for redirect
 })
 
-srv, _ := mcp.NewStreamableHTTPServer(ctx, "my-server", endpoint, mcp.Options{
-	OAuthHandler: handler,
-})
+srv, _ := mcp.NewWithTransport(ctx, "my-server",
+	&mcpsdk.StreamableClientTransport{Endpoint: endpoint, OAuthHandler: handler},
+	mcp.Options{})
 ```
 
 The workbench drives this flow from its UI — see [MCP OAuth in the workbench](mcp-oauth-troubleshooting.md).

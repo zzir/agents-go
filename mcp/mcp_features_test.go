@@ -147,16 +147,6 @@ func TestMCP_RunWithRetries_ContextCancel(t *testing.T) {
 	}
 }
 
-// --- name prefixing / truncation / dedup -----------------------------
-
-func TestMCP_ExposedNames_PlainPrefix(t *testing.T) {
-	s := newServer("srv", Options{ToolNamePrefix: "gh_"})
-	names := s.exposedNames([]*mcpsdk.Tool{{Name: "a"}, {Name: "b"}})
-	if names[0] != "gh_a" || names[1] != "gh_b" {
-		t.Fatalf("plain prefix wrong: %v", names)
-	}
-}
-
 // --- required-arg pre-validation -------------------------------------
 
 func TestMCP_RequiredArgValidation(t *testing.T) {

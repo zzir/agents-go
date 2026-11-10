@@ -27,7 +27,7 @@ func ExtraOptions[O any](s *agents.ModelSettings, header, query func(key, value 
 		opts = append(opts, query(k, v))
 	}
 	for k, v := range s.ExtraBody {
-		opts = append(opts, body(EscapeJSONPath(k), v))
+		opts = append(opts, body(escapeJSONPath(k), v))
 	}
 	return opts
 }

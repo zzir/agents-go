@@ -124,7 +124,7 @@ func (s *ConversationsSession) Entry(ctx context.Context, id string) (*session.E
 // listEntries reads the conversation as entries carrying each server item's ID:
 // the server is the id authority, and Entry must find them again (spec §2.5e2).
 func (s *ConversationsSession) listEntries(ctx context.Context, limit int) ([]session.Entry, error) {
-	id, err := s.lockedEnsureID(ctx)
+	id, err := s.ConversationID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -302,12 +302,6 @@ func (s *ConversationsSession) Clear(ctx context.Context) error {
 	}
 	s.id = ""
 	return nil
-}
-
-func (s *ConversationsSession) lockedEnsureID(ctx context.Context) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.ensureID(ctx)
 }
 
 // conversationItemToInput converts a server conversation item back into an input

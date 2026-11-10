@@ -16,8 +16,6 @@ import (
 type Provider struct {
 	client       ant.Client
 	defaultModel string
-	// promptCaching applies the request-level cache_control marker; on by default.
-	promptCaching bool
 	// budgetThinking: see WithBudgetThinking.
 	budgetThinking bool
 	// thinkingBinding: see WithThinkingBinding. On by default.
@@ -30,19 +28,13 @@ type Provider struct {
 // option.WithMaxRetries re-enables them.
 func NewProvider(opts ...option.RequestOption) *Provider {
 	all := append([]option.RequestOption{option.WithMaxRetries(0)}, opts...)
-	return &Provider{client: ant.NewClient(all...), promptCaching: true, thinkingBinding: true}
+	return &Provider{client: ant.NewClient(all...), thinkingBinding: true}
 }
 
 // WithDefaultModel sets the model used when an agent omits a model name.
 // Without it, resolving an agent that names no model is a UserError.
 func (p *Provider) WithDefaultModel(name string) *Provider {
 	p.defaultModel = name
-	return p
-}
-
-// WithPromptCaching toggles the automatic request-prefix cache_control marker.
-func (p *Provider) WithPromptCaching(enabled bool) *Provider {
-	p.promptCaching = enabled
 	return p
 }
 
@@ -70,7 +62,7 @@ func (p *Provider) Model(modelName string) (agents.Model, error) {
 	if modelName == "" {
 		return nil, agents.NewUserError("anthropic: no model specified — set Agent.Model or Provider.WithDefaultModel")
 	}
-	return &MessagesModel{model: modelName, client: p.client.Messages, promptCaching: p.promptCaching,
+	return &MessagesModel{model: modelName, client: p.client.Messages,
 		budgetThinking: p.budgetThinking, thinkingBinding: p.thinkingBinding}, nil
 }
 

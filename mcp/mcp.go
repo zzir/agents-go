@@ -1,11 +1,10 @@
 // Package mcp is a Model Context Protocol client that exposes a server's tools
 // to an agent: agents.MCPServer over the official modelcontextprotocol/go-sdk,
-// with stdio and streamable HTTP transports. It is its own module so the
-// go-sdk stays out of every build that does not speak MCP (decisions §5.7).
+// on any transport the go-sdk offers. It is its own module so the go-sdk stays
+// out of every build that does not speak MCP (decisions §5.7).
 package mcp
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,14 +13,12 @@ import (
 	"math"
 	"math/rand/v2"
 	"net"
-	"os/exec"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -31,26 +28,13 @@ import (
 
 // Options configures a Server.
 type Options struct {
-	// AllowedTools, when non-empty, restricts exposed tools to these names.
-	AllowedTools []string
-	// BlockedTools hides these tool names.
-	BlockedTools []string
-	// Strict applies OpenAI strict-mode normalization to each tool's input
-	// schema. Some servers emit schemas incompatible with strict mode; disable
-	// it if tool calls are rejected.
-	Strict bool
-	// ClientName/ClientVersion identify this client to the server.
-	ClientName    string
-	ClientVersion string
-
 	// CacheToolsList caches the server's tool list after the first fetch. The
 	// cache drops on a tools/list_changed notification; InvalidateToolsCache
 	// forces a refetch. Filters still run on every ListTools, against the cache.
 	CacheToolsList bool
 
-	// ToolFilter, when set, decides per call whether a tool is exposed, applied
-	// after the static AllowedTools/BlockedTools lists. It receives the original
-	// (unprefixed) tool name and may consult the run context.
+	// ToolFilter, when set, decides per call whether a tool is exposed. It
+	// receives the original (unprefixed) tool name and may consult the run context.
 	ToolFilter func(ctx context.Context, rc *agents.RunContext, agent *agents.Agent, toolName string) bool
 
 	// ToolNamePrefix is prepended to every exposed tool name (e.g. "github_");
@@ -77,11 +61,6 @@ type Options struct {
 	// UseStructuredContent sends a tool result's structuredContent exclusively,
 	// ignoring the content blocks. Off by default.
 	UseStructuredContent bool
-
-	// OAuthHandler, when set, is passed to the streamable HTTP transport to
-	// handle OAuth 2.1 authorization flows (authorization code + PKCE, token
-	// refresh, dynamic client registration). Ignored for stdio transports.
-	OAuthHandler auth.OAuthHandler
 
 	// Redial builds a fresh transport for a dead connection, one that can connect
 	// NOW; ctx is the connection's own, so a subprocess bound to it lives as long
@@ -115,8 +94,6 @@ type Server struct {
 	lastHealed time.Time
 	opts       Options
 	log        *slog.Logger
-	allowed    map[string]bool
-	blocked    map[string]bool
 
 	// closed flips in Close so later ListTools/CallTool report a clear error; a
 	// long-lived run can hold a *Server past a reconfiguration that closed it.
@@ -133,8 +110,8 @@ type Server struct {
 	cacheGen uint64       // bumped by InvalidateToolsCache; guards a mid-fetch invalidation from being overwritten
 }
 
-// cachedTool pairs an adapted tool with its original (unprefixed) MCP name, used
-// for static/dynamic filtering on each ListTools call.
+// cachedTool pairs an adapted tool with its original (unprefixed) MCP name,
+// which ToolFilter and RequireApproval are asked about.
 type cachedTool struct {
 	originalName string
 	tool         *agents.Tool
@@ -144,7 +121,7 @@ type cachedTool struct {
 const requestCeiling = 30 * time.Minute
 
 func newServer(name string, opts Options) *Server {
-	s := &Server{name: name, opts: opts, allowed: map[string]bool{}, blocked: map[string]bool{}, requestCeiling: requestCeiling}
+	s := &Server{name: name, opts: opts, requestCeiling: requestCeiling}
 	s.log = slog.New(slog.DiscardHandler)
 	if opts.Logger != nil {
 		s.log = opts.Logger.With(slog.String("component", "mcp"), slog.String("mcp", name))
@@ -152,12 +129,6 @@ func newServer(name string, opts Options) *Server {
 	// Rooted at Background, not at whoever connects: this context outlives
 	// every caller and must carry none of their deadlines.
 	s.rpcCtx, s.rpcStop = context.WithCancel(context.Background())
-	for _, t := range opts.AllowedTools {
-		s.allowed[t] = true
-	}
-	for _, t := range opts.BlockedTools {
-		s.blocked[t] = true
-	}
 	return s
 }
 
@@ -200,11 +171,7 @@ const (
 const redialConnectTimeout = 30 * time.Second
 
 func (s *Server) newClient() *mcpsdk.Client {
-	name := s.opts.ClientName
-	name = cmp.Or(name, "agents-go")
-	version := s.opts.ClientVersion
-	version = cmp.Or(version, "0.1.0")
-	return mcpsdk.NewClient(&mcpsdk.Implementation{Name: name, Version: version}, &mcpsdk.ClientOptions{
+	return mcpsdk.NewClient(&mcpsdk.Implementation{Name: "agents-go", Version: "0.1.0"}, &mcpsdk.ClientOptions{
 		// Drop the cached tool list on notifications/tools/list_changed, so
 		// CacheToolsList never serves a permanently stale list.
 		ToolListChangedHandler: func(context.Context, *mcpsdk.ToolListChangedRequest) {
@@ -373,34 +340,11 @@ func (s *Server) healed(ctx context.Context, err error, failed *mcpsdk.ClientSes
 	return healed
 }
 
-// NewWithTransport connects to an MCP server over an arbitrary transport. Use
-// it for custom transports or in-process testing (mcpsdk.NewInMemoryTransports).
+// NewWithTransport connects to an MCP server over a go-sdk transport:
+// mcpsdk.StreamableClientTransport, mcpsdk.CommandTransport (a stdio
+// subprocess), or mcpsdk.NewInMemoryTransports for in-process tests.
 func NewWithTransport(ctx context.Context, name string, transport mcpsdk.Transport, opts Options) (*Server, error) {
 	s := newServer(name, opts)
-	if err := s.connect(ctx, transport); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
-
-// NewStdioServer launches an MCP server subprocess and connects over stdio.
-// cmd is the command to run (e.g. exec.Command("npx", "-y", "server")).
-func NewStdioServer(ctx context.Context, name string, cmd *exec.Cmd, opts Options) (*Server, error) {
-	s := newServer(name, opts)
-	if err := s.connect(ctx, &mcpsdk.CommandTransport{Command: cmd}); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
-
-// NewStreamableHTTPServer connects to an MCP server over the streamable HTTP
-// transport at endpoint.
-func NewStreamableHTTPServer(ctx context.Context, name, endpoint string, opts Options) (*Server, error) {
-	s := newServer(name, opts)
-	transport := &mcpsdk.StreamableClientTransport{Endpoint: endpoint}
-	if opts.OAuthHandler != nil {
-		transport.OAuthHandler = opts.OAuthHandler
-	}
 	if err := s.connect(ctx, transport); err != nil {
 		return nil, err
 	}
@@ -428,19 +372,9 @@ func (s *Server) Close() error {
 	return session.Close()
 }
 
-func (s *Server) allow(toolName string) bool {
-	if s.blocked[toolName] {
-		return false
-	}
-	if len(s.allowed) > 0 {
-		return s.allowed[toolName]
-	}
-	return true
-}
-
 // ListTools implements agents.MCPServer, adapting the (possibly cached) tool
-// list into agents.Tools that proxy to CallTool; the static and dynamic filters
-// run on every call, so caching never hides a context-dependent decision.
+// list into agents.Tools that proxy to CallTool; ToolFilter runs on every
+// call, so caching never hides a context-dependent decision.
 func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *agents.Agent) ([]*agents.Tool, error) {
 	span, ctx := tracing.StartSpanFrom(ctx, "mcp.list_tools", tracing.SpanTypeMCP,
 		map[string]any{"server": s.name})
@@ -454,9 +388,6 @@ func (s *Server) ListTools(ctx context.Context, rc *agents.RunContext, agent *ag
 	span.Set("tools", len(all))
 	var tools []*agents.Tool
 	for _, ct := range all {
-		if !s.allow(ct.originalName) {
-			continue
-		}
 		if s.opts.ToolFilter != nil && !s.opts.ToolFilter(ctx, rc, agent, ct.originalName) {
 			continue
 		}
@@ -558,10 +489,9 @@ func (s *Server) toolList(ctx context.Context) ([]cachedTool, error) {
 	if err != nil {
 		return nil, agents.Classify(agents.CodeMCP, fmt.Errorf("mcp: listing tools for %q: %w", s.name, err))
 	}
-	names := s.exposedNames(tools)
 	list := make([]cachedTool, 0, len(tools))
-	for i, mt := range tools {
-		list = append(list, cachedTool{originalName: mt.Name, tool: s.toolFor(mt, names[i])})
+	for _, mt := range tools {
+		list = append(list, cachedTool{originalName: mt.Name, tool: s.toolFor(mt, s.opts.ToolNamePrefix+mt.Name)})
 	}
 	if s.opts.CacheToolsList {
 		s.mu.Lock()
@@ -679,17 +609,7 @@ func (s *Server) InvalidateToolsCache() {
 
 func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 	schema := schemaToMap(mt.InputSchema)
-	// The required-argument list, from the original (non-strict) schema.
 	required := requiredKeys(schema)
-	strict := false
-	if s.opts.Strict {
-		// EnsureStrictJSONSchema rewrites in place, so convert a deep copy: a
-		// failure must leave neither a half-rewritten schema nor a false Strict.
-		if strictSchema, err := agents.EnsureStrictJSONSchema(deepCopySchema(schema)); err == nil {
-			schema = strictSchema
-			strict = true
-		}
-	}
 	originalName := mt.Name
 	// A tool's own _meta travels with every call_tool request, overriding any
 	// resolver-produced metadata on key collisions.
@@ -698,7 +618,6 @@ func (s *Server) toolFor(mt *mcpsdk.Tool, exposedName string) *agents.Tool {
 		Name:             exposedName,
 		Description:      resolveToolDescription(mt),
 		ParamsJSONSchema: schema,
-		Strict:           strict,
 		// The server's own readOnlyHint, recorded for consumers; the plan-mode
 		// gate ignores it and admits MCP tools by name only (spec §2.12).
 		ReadOnly: mt.Annotations != nil && mt.Annotations.ReadOnlyHint,
@@ -814,16 +733,6 @@ func resolveToolDescription(mt *mcpsdk.Tool) string {
 		return mt.Annotations.Title
 	}
 	return ""
-}
-
-// exposedNames computes the public name for each listed tool: the
-// ToolNamePrefix (possibly empty) + the original name.
-func (s *Server) exposedNames(tools []*mcpsdk.Tool) []string {
-	names := make([]string, len(tools))
-	for i, mt := range tools {
-		names[i] = s.opts.ToolNamePrefix + mt.Name
-	}
-	return names
 }
 
 // schemaToMap normalizes the MCP input schema into a map this package owns:

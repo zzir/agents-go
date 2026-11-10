@@ -468,9 +468,9 @@ Decided 2026-08-24.
 
 **Decision.** `McpServerConfig` carries no transport discriminator: `Config` IS
 an `HTTPMcpConfig`, and a stdio-only server joins through a stdio→HTTP proxy the
-operator runs outside the workbench's authority. The SDK's `mcp` module keeps
-its stdio transport — an embedder spawning a subprocess is their own trust
-decision.
+operator runs outside the workbench's authority. The SDK's `mcp` module still
+speaks stdio — an embedder passing `&mcpsdk.CommandTransport{…}` to
+`NewWithTransport` (§5.116) is making their own trust decision.
 
 **Rejected.** Stored stdio servers — arbitrary command execution on the host as
 the server's process user behind one admin write, and the blocker for ever
@@ -2470,3 +2470,25 @@ replace: it clears first and owns the gap between the two writes. An
 rendering.
 
 Rules: spec §2.5c, §2.5d, §2.5e2.
+
+### 5.116 The MCP client has one constructor, and the transport is the caller's
+
+Decided 2026-11-10.
+
+**Decision.** `mcp.NewWithTransport` is the only constructor: the caller builds
+the go-sdk transport — `mcpsdk.StreamableClientTransport`,
+`mcpsdk.CommandTransport`, an in-memory pair — and what belongs to it (the
+OAuth handler, the subprocess command) is set there. `Options.ToolFilter` is
+the one tool filter, and a tool's input schema is sent as the server gave it.
+
+**Rejected.** `NewStdioServer` / `NewStreamableHTTPServer` — each wrapped one
+go-sdk struct literal, had no caller and no test, and `Options.OAuthHandler`
+existed only to feed the second. Static `AllowedTools` / `BlockedTools` beside
+`ToolFilter` — two mechanisms for one decision, the lists never set.
+`Options.Strict`, `ClientName`, `ClientVersion` — never set.
+
+**Cost accepted.** An embedder imports the go-sdk's `mcp` package to name a
+transport (the module already requires it); a static allow-list is a
+three-line `ToolFilter`.
+
+Rules: [MCP](../howto/mcp.md#connecting-a-server).
