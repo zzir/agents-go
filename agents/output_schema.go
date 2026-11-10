@@ -76,7 +76,6 @@ func isObjectLike(t reflect.Type) bool {
 	return t.Kind() == reflect.Struct || t.Kind() == reflect.Map
 }
 
-func (s *typedOutputSchema[T]) IsPlainText() bool          { return false }
 func (s *typedOutputSchema[T]) Name() string               { return "final_output" }
 func (s *typedOutputSchema[T]) JSONSchema() map[string]any { return s.schema }
 func (s *typedOutputSchema[T]) IsStrictJSONSchema() bool   { return s.strict }
@@ -110,16 +109,3 @@ func (s *typedOutputSchema[T]) ValidateJSON(jsonStr string) (any, error) {
 	}
 	return v, nil
 }
-
-// plainTextSchema is the OutputSchema used when an agent has no OutputType; the
-// model produces unstructured text.
-type plainTextSchema struct{}
-
-// PlainTextOutput returns the default OutputSchema representing free-form text.
-func PlainTextOutput() OutputSchema { return plainTextSchema{} }
-
-func (plainTextSchema) IsPlainText() bool                  { return true }
-func (plainTextSchema) Name() string                       { return "final_output" }
-func (plainTextSchema) JSONSchema() map[string]any         { return nil }
-func (plainTextSchema) IsStrictJSONSchema() bool           { return true }
-func (plainTextSchema) ValidateJSON(s string) (any, error) { return s, nil }

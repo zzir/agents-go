@@ -23,11 +23,9 @@ import (
 // fakeSchema is a minimal OutputSchema for exercising response_format building
 // without reflecting a Go type, so a test can state the shape it wants directly.
 type fakeSchema struct {
-	plain  bool
 	strict bool
 }
 
-func (f fakeSchema) IsPlainText() bool        { return f.plain }
 func (f fakeSchema) Name() string             { return "final_output" }
 func (f fakeSchema) IsStrictJSONSchema() bool { return f.strict }
 func (f fakeSchema) JSONSchema() map[string]any {
@@ -111,7 +109,7 @@ func TestBuildParams_FunctionTool(t *testing.T) {
 func TestBuildParams_StructuredOutput(t *testing.T) {
 	req := agents.ModelRequest{
 		Input:        agents.InputItemsFromText("extract"),
-		OutputSchema: fakeSchema{plain: false, strict: true},
+		OutputSchema: fakeSchema{strict: true},
 	}
 	got := marshalParams(t, req)
 
@@ -132,10 +130,7 @@ func TestBuildParams_StructuredOutput(t *testing.T) {
 }
 
 func TestBuildParams_PlainTextOutputOmitsFormat(t *testing.T) {
-	req := agents.ModelRequest{
-		Input:        agents.InputItemsFromText("hi"),
-		OutputSchema: fakeSchema{plain: true},
-	}
+	req := agents.ModelRequest{Input: agents.InputItemsFromText("hi")}
 	got := marshalParams(t, req)
 	if _, ok := got["text"]; ok {
 		t.Errorf("text config should be omitted for plain text, got %v", got["text"])

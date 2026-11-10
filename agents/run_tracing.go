@@ -106,7 +106,7 @@ func (r *runner) startGenerationSpan(agent *Agent, req ModelRequest) *tracing.Sp
 	if req.Settings != nil {
 		span.Set("model_settings", *req.Settings)
 	}
-	if req.OutputSchema != nil && !req.OutputSchema.IsPlainText() {
+	if req.OutputSchema != nil {
 		span.Set("output_schema", map[string]any{
 			"name":   req.OutputSchema.Name(),
 			"schema": req.OutputSchema.JSONSchema(),

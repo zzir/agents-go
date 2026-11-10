@@ -6,13 +6,12 @@ import (
 )
 
 // OutputSchema describes the structured output a model is asked to produce;
-// the adapter builds the response format from it and the runner validates with it.
+// the adapter builds the response format from it and the runner validates with
+// it. Plain text is a nil OutputSchema — see spec §2.3.
 type OutputSchema interface {
-	// IsPlainText reports whether the output is unstructured text (no schema).
-	IsPlainText() bool
 	// Name is the schema name sent to the provider (e.g. "final_output").
 	Name() string
-	// JSONSchema returns the JSON Schema for the output object (non-plain-text only).
+	// JSONSchema returns the JSON Schema for the output object.
 	JSONSchema() map[string]any
 	// IsStrictJSONSchema reports whether strict-mode validation is requested.
 	IsStrictJSONSchema() bool
@@ -46,7 +45,6 @@ func NewDynamicOutputSchema(name string, schema map[string]any, strict bool) (Ou
 	return s, nil
 }
 
-func (s *dynamicOutputSchema) IsPlainText() bool          { return false }
 func (s *dynamicOutputSchema) Name() string               { return s.name }
 func (s *dynamicOutputSchema) JSONSchema() map[string]any { return s.schema }
 func (s *dynamicOutputSchema) IsStrictJSONSchema() bool   { return s.strict }

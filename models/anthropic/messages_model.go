@@ -67,7 +67,7 @@ func (m *MessagesModel) buildParams(req agents.ModelRequest) (ant.MessageNewPara
 	if tc, ok := convertToolChoice(settings.ToolChoice, settings.ParallelToolCalls, hasTools); ok {
 		params.ToolChoice = tc
 	}
-	if req.OutputSchema != nil && !req.OutputSchema.IsPlainText() {
+	if req.OutputSchema != nil {
 		params.OutputConfig.Format = ant.JSONOutputFormatParam{Schema: req.OutputSchema.JSONSchema()}
 	}
 	if m.promptCaching {

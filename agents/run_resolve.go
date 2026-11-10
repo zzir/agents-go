@@ -104,13 +104,6 @@ func (r *runner) enabledHandoffs(ctx context.Context, agent *Agent) ([]Handoff, 
 	return out, nil
 }
 
-func agentOutputSchema(agent *Agent) OutputSchema {
-	if agent.OutputType != nil {
-		return agent.OutputType
-	}
-	return PlainTextOutput()
-}
-
 // sortedKeys returns a set's members in a stable order, so serialized RunState
 // does not churn between otherwise identical runs.
 func sortedKeys(m map[string]bool) []string {

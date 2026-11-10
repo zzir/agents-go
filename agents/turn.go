@@ -92,7 +92,6 @@ func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []InputI
 	if err != nil {
 		return nil, err
 	}
-	outputSchema := agentOutputSchema(agent)
 	handoffs, err := r.enabledHandoffs(ctx, agent)
 	if err != nil {
 		return nil, err
@@ -108,7 +107,7 @@ func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []InputI
 		Instructions: instructions,
 		Tools:        tools,
 		Handoffs:     handoffs,
-		OutputSchema: outputSchema,
+		OutputSchema: agent.OutputType,
 		Input:        input,
 	}, nil
 }

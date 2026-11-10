@@ -129,9 +129,6 @@ type extractResult struct {
 
 func TestOutputType_Struct(t *testing.T) {
 	schema := OutputType[extractResult]()
-	if schema.IsPlainText() {
-		t.Error("struct output should not be plain text")
-	}
 	if schema.Name() != "final_output" {
 		t.Errorf("name = %q", schema.Name())
 	}
@@ -175,17 +172,6 @@ func TestOutputType_WrappedSlice(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, []string{"a", "b"}) {
 		t.Errorf("got %v", got)
-	}
-}
-
-func TestOutputType_PlainText(t *testing.T) {
-	schema := PlainTextOutput()
-	if !schema.IsPlainText() {
-		t.Error("should be plain text")
-	}
-	v, _ := schema.ValidateJSON("just text")
-	if v != "just text" {
-		t.Errorf("plain text validate = %v", v)
 	}
 }
 

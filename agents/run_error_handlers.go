@@ -167,8 +167,8 @@ func marshalFinalOutputPayload(schema OutputSchema, v any) (string, error) {
 // validateHandlerFinalOutput validates a handler's fallback against the output
 // schema; a bad fallback is a *UserError.
 func validateHandlerFinalOutput(agent *Agent, v any) (any, error) {
-	schema := agentOutputSchema(agent)
-	if schema.IsPlainText() {
+	schema := agent.OutputType
+	if schema == nil {
 		return v, nil
 	}
 	payload, err := marshalFinalOutputPayload(schema, v)
@@ -185,8 +185,7 @@ func validateHandlerFinalOutput(agent *Agent, v any) (any, error) {
 // formatFinalOutputText renders a final output as the synthesized message's
 // text: the value for plain text, its JSON payload for structured output.
 func formatFinalOutputText(agent *Agent, v any) string {
-	schema := agentOutputSchema(agent)
-	if !schema.IsPlainText() {
+	if schema := agent.OutputType; schema != nil {
 		if payload, err := marshalFinalOutputPayload(schema, v); err == nil {
 			return payload
 		}

@@ -300,6 +300,10 @@ otherwise (plain text)
     → the message text is the final output (possibly the empty string)
 ```
 
+- **Plain text is the absence of an output schema.** `Agent.OutputType`,
+  `TurnSnapshot.OutputSchema` and `ModelRequest.OutputSchema` are nil for it;
+  no `OutputSchema` value stands for plain text.
+
 ### 2.3a The save point
 
 The **save point** is the turn boundary: the turn's assistant message and every

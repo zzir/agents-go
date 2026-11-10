@@ -50,6 +50,10 @@ func TestTurnSnapshot_DescribesTheResolvedTurn(t *testing.T) {
 	if len(snap.Input) == 0 {
 		t.Error("snapshot has no input")
 	}
+	// Plain text is the absence of a schema, in the snapshot and on the wire.
+	if snap.OutputSchema != nil || model.lastReq.OutputSchema != nil {
+		t.Errorf("output schema = %v / %v, want nil for a plain-text agent", snap.OutputSchema, model.lastReq.OutputSchema)
+	}
 }
 
 // PrepareNextTurn changes the next turn without mutating the Agent, which a

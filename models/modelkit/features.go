@@ -58,7 +58,7 @@ var featureSet = map[Feature]func(agents.ModelRequest) bool{
 	FeatureTopLogprobs:          func(r agents.ModelRequest) bool { return r.Settings != nil && r.Settings.TopLogprobs != nil },
 	FeaturePreviousResponseID:   func(r agents.ModelRequest) bool { return r.PreviousResponseID != "" },
 	FeatureConversationID:       func(r agents.ModelRequest) bool { return r.ConversationID != "" },
-	FeatureOutputSchema:         func(r agents.ModelRequest) bool { return r.OutputSchema != nil && !r.OutputSchema.IsPlainText() },
+	FeatureOutputSchema:         func(r agents.ModelRequest) bool { return r.OutputSchema != nil },
 }
 
 // Reject returns a *agents.UserError naming the first of the given unsupported

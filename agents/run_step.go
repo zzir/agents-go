@@ -366,7 +366,7 @@ func (r *runner) decideFinalOutput(
 			return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: rec.finalOutput}, nil
 		}
 	}
-	if outputSchema == nil || outputSchema.IsPlainText() {
+	if outputSchema == nil {
 		// Plain text: the message text (or "", when the model produced nothing
 		// actionable at all) is the final output.
 		return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: text}, nil
