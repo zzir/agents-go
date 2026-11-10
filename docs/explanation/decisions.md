@@ -2222,3 +2222,23 @@ A host can build an empty `RunControl` and resume under it; like any control
 passed in, it is not seeded from the state's `PendingInput`.
 
 Rules: spec §2.11b.
+
+### 5.104 A run's trace closes before its stream's last yield
+
+Decided 2026-11-10.
+
+**Decision.** A fresh run and a resumed one end through one tail, `runner.run`:
+`execute` closes the trace as it returns, and only then does `finishStream`
+yield the terminal event or error. A consumer acting on either sees a finished
+trace.
+
+**Rejected.** Closing after the last yield, as the fresh path's deferred
+finish did — the trace stayed open for as long as the consumer took over the
+completion. A tail per path — `Run` closed after the yield and `ResumeRun`
+before it, so a `Processor` acting on `OnTraceEnd` saw the two disagree.
+
+**Cost accepted.** `OnTraceEnd` runs on the consumer's goroutine ahead of the
+terminal event, so a `Processor` that blocks there delays the result by as
+long.
+
+Rules: spec §2.0.

@@ -4,66 +4,65 @@ import (
 	"cmp"
 	"context"
 	"log/slog"
+	"slices"
 
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/tracing"
 )
 
-// prepareRun builds the runner shared by Run and RunSync: validated options, run
-// context, trace, session history prepended. The returned func must be deferred.
-func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts RunOptions) (*runner, []InputItem, func(), error) {
+// newRunner builds a fresh run's runner: validated options, run context, turn
+// budget.
+func newRunner(userInput []InputItem, opts RunOptions) (*runner, error) {
+	if err := validateServerState(opts); err != nil {
+		return nil, err
+	}
+	// A negative value (MaxTurnsUnlimited) disables the budget; it passes
+	// through here and the turn check skips it.
 	maxTurns := opts.Exec.MaxTurns
 	if maxTurns == 0 {
 		maxTurns = DefaultMaxTurns
 	}
-	// A negative value (MaxTurnsUnlimited) disables the budget; it passes
-	// through here and the turn check skips it.
-
 	rc := NewRunContext(opts.Context)
 	rc.inheritedOpts = &opts
-
-	if err := validateServerState(opts); err != nil {
-		return nil, nil, nil, err
-	}
-
-	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}
-	finishTrace := r.observeRun(agent, false)
-
-	// With a session, prepend stored history to the model input.
-	modelInput := userInput
-	if opts.Conversation.Session != nil {
-		// The active branch minus what compaction folded, projected per kind —
-		// see spec §2.5b.
-		limit := session.ResolveLimit(opts.Conversation.Settings)
-		entries, herr := opts.Conversation.Session.ContextEntries(ctx, session.Cursor{Limit: -limit})
-		if herr != nil {
-			finishTrace()
-			return nil, nil, nil, herr
-		}
-		// Compact before projecting: the compactor reasons about entries, and
-		// projection turns whatever survives into model input.
-		entries, _ = r.compactContext(ctx, CompactBeforeRun, entries)
-		history, herr := session.ProjectEntries(entries, opts.Conversation.Projectors)
-		if herr != nil {
-			finishTrace()
-			return nil, nil, nil, herr
-		}
-		if len(history) > 0 {
-			modelInput = make([]InputItem, 0, len(history)+len(userInput))
-			modelInput = append(modelInput, history...)
-			modelInput = append(modelInput, userInput...)
-			// Scrub the merged history+input: a dangling call or a duplicate
-			// would 400 — see spec §2.1b.
-			modelInput = normalizeStoredInput(modelInput)
-		}
-	}
-
-	return r, modelInput, finishTrace, nil
+	return &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}, nil
 }
 
-// observeRun wires the run logger, diagnostics sink and trace before the first turn.
-// The returned func must be deferred; it is a no-op for a joined or untraced run.
-func (r *runner) observeRun(agent *Agent, resumed bool) func() {
+// startInput is what the loop starts from: a resume's carried input, or the
+// session's stored history ahead of the new input.
+func (r *runner) startInput(ctx context.Context) ([]InputItem, error) {
+	if r.resume != nil {
+		return r.resume.OriginalInput, nil
+	}
+	sess := r.opts.Conversation.Session
+	if sess == nil {
+		return r.userInput, nil
+	}
+	// The active branch minus what compaction folded, projected per kind —
+	// see spec §2.5b.
+	limit := session.ResolveLimit(r.opts.Conversation.Settings)
+	entries, err := sess.ContextEntries(ctx, session.Cursor{Limit: -limit})
+	if err != nil {
+		return nil, err
+	}
+	// Compact before projecting: the compactor reasons about entries, and
+	// projection turns whatever survives into model input.
+	entries, _ = r.compactContext(ctx, CompactBeforeRun, entries)
+	history, err := session.ProjectEntries(entries, r.opts.Conversation.Projectors)
+	if err != nil {
+		return nil, err
+	}
+	if len(history) == 0 {
+		return r.userInput, nil
+	}
+	// Scrub the merged history+input: a dangling call or a duplicate would
+	// 400 — see spec §2.1b.
+	return normalizeStoredInput(slices.Concat(history, r.userInput)), nil
+}
+
+// observeRun wires the run logger, diagnostics sink and trace before the first
+// turn. The returned func closes the trace; a no-op for a joined or untraced run.
+func (r *runner) observeRun(agent *Agent) func() {
+	resumed := r.resume != nil
 	attrs := []slog.Attr{slog.String("agent", agent.Name)}
 	if resumed {
 		attrs = append(attrs, slog.Bool("resumed", true))

@@ -35,7 +35,7 @@ A retry span is a zero-duration marker rather than a wrapper ([spec §2.11e](../
 
 Each span carries a `Type` field (one of the `tracing.SpanType*` constants) so a processor can dispatch on `span.Type` instead of parsing `span.Name`, plus structured `Data` keys (`"name"`, `"stage"`, `"response_id"`). The runner sets `Type` on the spans it opens; a span you open yourself through `StartSpanFrom` (below) names its own type, and `TraceHandle.StartSpan` / `SpanHandle.StartSpan` leave it empty.
 
-Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too; nested runs join the parent's trace rather than starting their own, and their agent spans are parented under the `function:` span of the tool call that triggered them, so the tree shows which call owns each nested run.
+Streamed runs, resumed (HITL) runs and nested agent-as-tool runs are traced too; nested runs join the parent's trace rather than starting their own, and their agent spans are parented under the `function:` span of the tool call that triggered them, so the tree shows which call owns each nested run. A top-level run's trace is finished by the time its stream yields the `RunCompletedEvent` or the terminal error ([spec §2.0](../reference/spec.md#20-entry-points)).
 
 `RunOptions.Observe.TraceGroupID` and `RunOptions.Observe.TraceMetadata` stamp the trace at start — use them to link the traces of one chat thread or attach tenant info. Set them via options rather than mutating the `Trace` afterwards, which would race with background exporting.
 

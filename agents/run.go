@@ -73,23 +73,32 @@ func runViaMiddleware(ctx context.Context, agent *Agent, input any, opts RunOpti
 	})
 }
 
-// runStream is the body shared by Run and RunSync: prepare, loop, report the
-// outcome as the stream's terminal event or error.
+// runStream is the body shared by Run and RunSync.
 func runStream(ctx context.Context, agent *Agent, input []InputItem, opts RunOptions, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) {
-	r, modelInput, finishTrace, err := prepareRun(ctx, agent, input, opts)
+	r, err := newRunner(input, opts)
 	if err != nil {
 		yield(nil, err)
 		return
 	}
-	defer finishTrace()
+	r.run(ctx, agent, ctrl, rawEvents, yield)
+}
+
+// run is the tail a fresh run and a resume share: the loop inside the run's
+// trace, then the stream's last yield against the closed trace — see spec §2.0.
+func (r *runner) run(ctx context.Context, agent *Agent, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) {
 	r.yield, r.ctrl, r.rawEvents = yield, ctrl, rawEvents
-	res, err := r.execute(ctx, agent, modelInput)
+	res, err := r.execute(ctx, agent)
 	r.finishStream(res, err)
 }
 
-// execute runs the loop under the run's diagnostics sink and cancellation
-// root (emit cancels it when the consumer leaves).
-func (r *runner) execute(ctx context.Context, agent *Agent, input []InputItem) (*RunResult, error) {
+// execute observes the run, loads its starting input and runs the loop under
+// its diagnostics sink and cancellation root; the trace closes when it returns.
+func (r *runner) execute(ctx context.Context, agent *Agent) (*RunResult, error) {
+	defer r.observeRun(agent)()
+	input, err := r.startInput(ctx)
+	if err != nil {
+		return nil, err
+	}
 	ctx = WithDiagnostics(ctx, r.diagnostics)
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)

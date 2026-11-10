@@ -13,7 +13,7 @@ import (
 // noticed", and a trace could stay open forever.
 //
 // It closes because the run executes inside the iterator: yield returning false
-// unwinds the loop, runStream returns, and its deferred finishTrace runs. There
+// unwinds the loop, execute returns, and its deferred trace finish runs. There
 // is no window in which nobody owns the trace.
 func TestTrace_ClosedWhenConsumerAbandonsStream(t *testing.T) {
 	loopTool := NewTool("loop", "loops",

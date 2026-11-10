@@ -164,25 +164,25 @@ func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions,
 }
 
 func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) {
-	r, res, err := resumeLoop(ctx, state, opts, ctrl, rawEvents, yield)
-	if r == nil {
+	r, err := newResumedRunner(state, opts)
+	if err != nil {
 		yield(nil, err)
 		return
 	}
-	r.finishStream(res, err)
+	r.run(ctx, state.CurrentAgent, ctrl, rawEvents, yield)
 }
 
-// resumeLoop is the shared body of ResumeRun and ResumeRunSync; a nil runner
-// means the failure predates one existing.
-func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) (*runner, *RunResult, error) {
+// newResumedRunner builds the runner a paused run continues on, its carried
+// state restored from state.
+func newResumedRunner(state *RunState, opts RunOptions) (*runner, error) {
 	if state == nil {
-		return nil, nil, NewUserError("ResumeRun: state must not be nil")
+		return nil, NewUserError("ResumeRun: state must not be nil")
 	}
 	if state.CurrentAgent == nil {
-		return nil, nil, NewUserError("ResumeRun: state.CurrentAgent must not be nil")
+		return nil, NewUserError("ResumeRun: state.CurrentAgent must not be nil")
 	}
 	if err := validateServerState(opts); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// The interrupted run's own budget wins; only a zero falls back to the default.
 	maxTurns := state.MaxTurns
@@ -210,10 +210,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *Run
 	rc.inheritedOpts = &opts
 	// Scrubbed like session history: a hand-edited state may carry a dangling call.
 	state.OriginalInput = normalizeStoredInput(state.OriginalInput)
-	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput, yield: yield, ctrl: ctrl, rawEvents: rawEvents}
-	// The same observation start-up a fresh run gets.
-	finishTrace := r.observeRun(state.CurrentAgent, true)
-	defer finishTrace()
+	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput}
 	for _, name := range state.DisclosedTools {
 		if r.disclosed == nil {
 			r.disclosed = map[string]bool{}
@@ -231,8 +228,7 @@ func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *Run
 			r.toolsUsedBy[name] = true
 		}
 	}
-	res, err := r.execute(ctx, state.CurrentAgent, state.OriginalInput)
-	return r, res, err
+	return r, nil
 }
 
 // --- Serialization ---

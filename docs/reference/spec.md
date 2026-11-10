@@ -126,6 +126,9 @@ renumbered — which is why the letters run out of alphabetical order in places.
 - **A trace always closes**, including when the consumer abandons the stream:
   the deferred trace finish runs when `yield` returns false, and every span it
   opened is finished and exported.
+- **The trace closes before the stream's last yield**, for `Run` and
+  `ResumeRun` alike: a consumer handling the `RunCompletedEvent` or the
+  terminal error sees a finished trace — see decisions §5.104.
 
 ### 2.0b Option grouping
 
