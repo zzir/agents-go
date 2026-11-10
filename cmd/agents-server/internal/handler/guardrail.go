@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -68,6 +69,7 @@ func (h *GuardrailHandler) Create(c *gin.Context) {
 		badRequest(c, msg)
 		return
 	}
+	g.ID, g.CreatedAt = "", time.Time{} // server-owned
 	if err := h.store.Create(c.Request.Context(), &g); err != nil {
 		saveError(c, err) // duplicate (type, name) -> 409
 		return

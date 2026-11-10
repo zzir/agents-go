@@ -94,6 +94,9 @@ func (s *UserStore) EnsureLocalUser(ctx context.Context) (*User, error) {
 
 // ByID returns one user, ErrNotFound when absent.
 func (s *UserStore) ByID(ctx context.Context, id string) (*User, error) {
+	if !IsID(id) {
+		return nil, fmt.Errorf("user %s: %w", id, ErrNotFound)
+	}
 	u := new(User)
 	if err := s.db.NewSelect().Model(u).Where("id = ?", id).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

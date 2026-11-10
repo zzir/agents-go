@@ -225,7 +225,7 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		// A foreign private agent reads as absent to a member, 403 to an admin
 		// — decisions §5.29.
 		ac, err := h.agents.Get(ctx, req.AgentConfigID)
-		if err != nil && !errors.Is(err, store.ErrNotFound) && !store.IsMalformedID(err) {
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			storeError(c, err)
 			return
 		}

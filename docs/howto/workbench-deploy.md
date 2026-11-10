@@ -160,9 +160,10 @@ trace events have no `seq` and list by id, which is append order within one
 process and nothing more. An identifier of foreign shape stays text — entry
 ids (`e<seq>`), span ids (`span_<hex>`), a model's `tool_call_id`. "Unset" is
 NULL, never `""`. The token-mode local account has the fixed id
-`00000000-0000-0000-0000-000000000001`. On PostgreSQL a malformed id in a
-path answers 400 where SQLite stores any text, which is why CI runs the store
-suite on PostgreSQL too (`AGENTS_PG_TEST_DSN`; see `scripts/ci.sh`).
+`00000000-0000-0000-0000-000000000001`. A path id that is not a UUID answers
+404 on both databases; inside a statement PostgreSQL still refuses one that
+SQLite would store as text, which is why CI runs the store suite on PostgreSQL
+too (`AGENTS_PG_TEST_DSN`; see `scripts/ci.sh`).
 
 Tables are created automatically on startup:
 

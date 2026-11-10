@@ -21,10 +21,19 @@ func TestServerRepoConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 		sessions := store.NewSessionStore(db)
+		// A session id is a UUID here: the suite's literal names become memoized ones.
+		ids := map[string]string{}
 		return sessiontest.RepoUnderTest{
 			Repo: store.NewSessionRepoAdapter(sessions, func(ref session.Ref) session.Storage {
 				return store.NewEntryStoreFor(db, ref)
 			}),
+			IDs: func(name string) string {
+				if id, ok := ids[name]; ok {
+					return id
+				}
+				ids[name] = store.NewID()
+				return ids[name]
+			},
 		}
 	})
 }

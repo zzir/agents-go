@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // Handlers is the full set of REST handlers the server mounts; Register wires
@@ -35,8 +36,17 @@ type Handlers struct {
 	Server ServerInfo
 }
 
+// wellFormedID answers 404 for an :id that is not an id: no row has one, and
+// PostgreSQL would refuse it where SQLite finds nothing.
+func wellFormedID(c *gin.Context) {
+	if id := c.Param("id"); id != "" && !store.IsID(id) {
+		notFound(c)
+	}
+}
+
 // Register mounts every REST endpoint under api.
 func (h Handlers) Register(api *gin.RouterGroup) {
+	api.Use(wellFormedID)
 	{
 		auth := api.Group("/auth")
 		// The guess budget on the credential-guess routes; the flow steps get

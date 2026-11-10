@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -202,7 +203,7 @@ func (h *WorkflowHandler) Create(c *gin.Context) {
 	if !h.bind(c, &wf) {
 		return
 	}
-	wf.ID = "" // server-owned
+	wf.ID, wf.CreatedAt = "", time.Time{} // server-owned
 	if !stampCreateScope(c, &wf.Scope, &wf.OwnerID) {
 		return
 	}

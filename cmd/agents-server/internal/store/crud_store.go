@@ -19,6 +19,13 @@ func NewID() string {
 	return uuid.NewV4().String()
 }
 
+// IsID reports whether s is an id as NewID and NewTimeID spell one. No row is
+// keyed by anything else, so a lookup by it is a miss on both dialects.
+func IsID(s string) bool {
+	u, err := uuid.Parse(s)
+	return err == nil && u.String() == s
+}
+
 // DecodeConfig decodes a stored Config payload into v; an empty payload is
 // the zero config. Unknown keys are ignored.
 func DecodeConfig(raw json.RawMessage, v any) error {
@@ -140,6 +147,9 @@ func (s *CrudStore[T]) List(ctx context.Context) ([]T, error) {
 // Get returns the row with the given id, or an ErrNotFound-wrapping error
 // when it doesn't exist.
 func (s *CrudStore[T]) Get(ctx context.Context, id string) (*T, error) {
+	if !IsID(id) {
+		return nil, fmt.Errorf("getting %s %s: %w", s.label, id, ErrNotFound)
+	}
 	m := new(T)
 	if err := s.db.NewSelect().Model(m).Where("id = ?", id).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

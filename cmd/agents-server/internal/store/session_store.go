@@ -145,6 +145,9 @@ func (s *SessionStore) ListPage(ctx context.Context, ownerID string, page Sessio
 // Get returns the session with the given id, or an ErrNotFound-wrapping error
 // when it doesn't exist.
 func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
+	if !IsID(id) {
+		return nil, fmt.Errorf("getting session %s: %w", id, ErrNotFound)
+	}
 	sess := new(Session)
 	if err := s.db.NewSelect().Model(sess).
 		Where("id = ?", id).

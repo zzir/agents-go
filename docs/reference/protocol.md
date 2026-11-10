@@ -62,6 +62,9 @@ stable machine-readable identifier, `message` human-readable detail.
 - **List** returns `[]` for an empty collection, never `null`.
 - **Delete** returns `204 No Content`.
 - A write (update or delete) against a missing resource returns `404`.
+- **Ids are the server's.** A create ignores an `id` or `created_at` in its
+  body. An `:id` that is not a UUID is `404` like any other missing resource,
+  and a body field that is not one is refused as a reference to a missing row.
 - Secret fields are write-only — see [Secret handling](#secret-handling).
 
 ### Authorization

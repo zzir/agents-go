@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -219,8 +220,8 @@ func (h *AgentConfigHandler) Create(c *gin.Context) {
 	if !bindAgentConfig(c, &ac) {
 		return
 	}
-	// id/timestamps are server-owned (BeforeAppendModel stamps them).
-	ac.ID = ""
+	// id and timestamps are server-owned: BeforeAppendModel stamps the zero ones.
+	ac.ID, ac.CreatedAt = "", time.Time{}
 	if !stampCreateScope(c, &ac.Scope, &ac.OwnerID) {
 		return
 	}

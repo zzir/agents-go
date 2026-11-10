@@ -26,11 +26,11 @@ func createSandbox(t *testing.T, r *Runner, id string) {
 
 // createWorkspace persists a workspace for LocalUserID on the given sandbox and
 // returns its id.
-func createWorkspace(t *testing.T, r *Runner, id, sandboxID string) string {
+func createWorkspace(t *testing.T, r *Runner, name, sandboxID string) string {
 	t.Helper()
-	p := &store.Workspace{ID: id, OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: id}
+	p := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: sandboxID, Name: name}
 	if err := r.Deps.Workspaces.Create(context.Background(), p); err != nil {
-		t.Fatalf("create workspace %s: %v", id, err)
+		t.Fatalf("create workspace %s: %v", name, err)
 	}
 	return p.ID
 }
