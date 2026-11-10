@@ -95,11 +95,13 @@ func (r *runner) run(ctx context.Context, agent *Agent, ctrl *RunControl, rawEve
 // its diagnostics sink and cancellation root; the trace closes when it returns.
 func (r *runner) execute(ctx context.Context, agent *Agent) (*RunResult, error) {
 	defer r.observeRun(agent)()
+	// Attached before the starting input loads: a before-run compaction pass
+	// that gives up is a diagnostic too.
+	ctx = WithDiagnostics(ctx, r.diagnostics)
 	input, err := r.startInput(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ctx = WithDiagnostics(ctx, r.diagnostics)
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	r.cancelRun = cancel
