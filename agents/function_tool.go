@@ -46,37 +46,32 @@ func newTypedTool[A any, R any](
 	if argType := reflect.TypeFor[A](); !isStructKind(argType) {
 		panic(fmt.Sprintf("agents: %s(%q): args type %s is not a struct (or pointer to struct); tool parameters must be a JSON object", ctor, name, argType))
 	}
-	regen := func(strict bool) (map[string]any, *schemaValidator) {
-		schema, err := SchemaFor[A](strict)
-		if err != nil {
-			panic(fmt.Sprintf("agents: %s(%q): schema generation failed: %v", ctor, name, err))
-		}
-		// Compiled once per tool, not per call: a schema does not change
-		// between turns.
-		return schema, newSchemaValidator(schema)
+	schema, err := SchemaFor[A](strict)
+	if err != nil {
+		panic(fmt.Sprintf("agents: %s(%q): schema generation failed: %v", ctor, name, err))
 	}
-	t := &Tool{
+	// Compiled once per tool, not per call: a schema does not change between turns.
+	validator := newSchemaValidator(schema)
+	return &Tool{
 		Name:                 name,
 		Description:          description,
+		ParamsJSONSchema:     schema,
 		Strict:               strict,
 		FailureErrorFunction: DefaultToolErrorFunction,
-		regen:                regen,
+		OnInvoke: func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error) {
+			var args A
+			if err := decodeToolArgs(name, validator, argsJSON, &args); err != nil {
+				return ToolResult{}, err
+			}
+			out, err := fn(ctx, tc, args)
+			if err != nil {
+				return ToolResult{}, err
+			}
+			// A tool that returns a ToolResult means it; anything else is wrapped,
+			// so the ordinary `return "sunny", nil` keeps working.
+			return resultFromValue(out), nil
+		},
 	}
-	t.ParamsJSONSchema, t.validator = regen(strict)
-	t.OnInvoke = func(ctx context.Context, tc *ToolContext, argsJSON string) (ToolResult, error) {
-		var args A
-		if err := decodeToolArgs(name, t.validator, argsJSON, &args); err != nil {
-			return ToolResult{}, err
-		}
-		out, err := fn(ctx, tc, args)
-		if err != nil {
-			return ToolResult{}, err
-		}
-		// A tool that returns a ToolResult means it; anything else is wrapped,
-		// so the ordinary `return "sunny", nil` keeps working.
-		return resultFromValue(out), nil
-	}
-	return t
 }
 
 // isStructKind reports whether t is a struct or a pointer to one — the only

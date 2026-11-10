@@ -271,49 +271,53 @@ func TestStrict_CyclicRefWithSiblingKeysErrors(t *testing.T) {
 	}
 }
 
-// --- NewTool non-strict validation actually relaxes required keys.
+// --- NewToolNonStrict validation actually relaxes required keys.
 
-func TestNewTool_NonStrictAllowsOmittedOptional(t *testing.T) {
+func TestNewToolNonStrict_AllowsOmittedOptional(t *testing.T) {
 	type args struct {
 		City  string `json:"city" jsonschema:"the city"`
 		Units string `json:"units,omitempty"`
 	}
-	tool := NewTool("get_weather", "",
-		func(ctx context.Context, tc *ToolContext, a args) (string, error) {
-			return a.City, nil
-		})
+	fn := func(ctx context.Context, tc *ToolContext, a args) (string, error) {
+		return a.City, nil
+	}
 	tc := &ToolContext{RunContext: NewRunContext(nil)}
 
 	// Strict (default): the strict schema marks every field required, so omitting
 	// the optional "units" is rejected as a missing-required-key error.
-	if _, err := tool.OnInvoke(context.Background(), tc, `{"city":"Paris"}`); err == nil {
+	strict := NewTool("get_weather", "", fn)
+	if _, err := strict.OnInvoke(context.Background(), tc, `{"city":"Paris"}`); err == nil {
 		t.Fatal("strict: expected missing-required-key error for omitted optional field")
 	}
 
-	// NonStrict relaxes both sides at once: the omitted ",omitempty" field is
+	// Non-strict relaxes both sides at once: the omitted ",omitempty" field is
 	// accepted by local validation, and the advertised schema stops listing it
 	// as required.
-	tool.NonStrict()
-	out, err := tool.OnInvoke(context.Background(), tc, `{"city":"Paris"}`)
-	if err != nil {
-		t.Fatalf("non-strict: omitted optional field should be accepted, got %v", err)
-	}
-	if out.ModelOutput() != "Paris" {
-		t.Errorf("out = %v, want Paris", out)
-	}
+	tool := NewToolNonStrict("get_weather", "", fn)
 	if tool.Strict {
-		t.Error("NonStrict must clear Strict")
+		t.Error("NewToolNonStrict must leave Strict false")
 	}
 	required, _ := tool.ParamsJSONSchema["required"].([]any)
 	for _, k := range required {
 		if k == "units" {
-			t.Error("NonStrict must drop optional fields from the advertised required list")
+			t.Error("NewToolNonStrict must drop optional fields from the advertised required list")
 		}
 	}
 
-	// A genuinely required field is still enforced in non-strict mode.
-	if _, err := tool.OnInvoke(context.Background(), tc, `{}`); err == nil {
-		t.Fatal("non-strict: required field 'city' should still be enforced")
+	// A copy validates exactly as the tool it was copied from (spec §2.7c).
+	cp := *tool
+	for name, tl := range map[string]*Tool{"built": tool, "copy": &cp} {
+		out, err := tl.OnInvoke(context.Background(), tc, `{"city":"Paris"}`)
+		if err != nil {
+			t.Fatalf("%s: omitted optional field should be accepted, got %v", name, err)
+		}
+		if out.ModelOutput() != "Paris" {
+			t.Errorf("%s: out = %v, want Paris", name, out)
+		}
+		// A genuinely required field is still enforced in non-strict mode.
+		if _, err := tl.OnInvoke(context.Background(), tc, `{}`); err == nil {
+			t.Fatalf("%s: required field 'city' should still be enforced", name)
+		}
 	}
 }
 

@@ -18,7 +18,7 @@ type Tool struct {
 	// ParamsJSONSchema is the JSON Schema for the tool's arguments object.
 	ParamsJSONSchema map[string]any
 	// Strict reports whether ParamsJSONSchema is strict-shaped and turns on
-	// API-side strict validation. It describes the schema; NonStrict regenerates both.
+	// API-side strict validation. It describes the schema; NewToolNonStrict builds a relaxed one.
 	Strict bool
 	// OnInvoke runs the tool on the raw JSON arguments the model emitted; nil
 	// is a configuration error reported when called. TextResult covers the common case.
@@ -61,23 +61,6 @@ type Tool struct {
 	// RetrySafe declares the tool safe to run again after a crash interrupted
 	// it (RetrySafeNames, session.RecoveryPolicy). Default unsafe.
 	RetrySafe bool
-
-	// validator is the compiled ParamsJSONSchema; nil on a hand-built literal.
-	validator *schemaValidator
-
-	// regen rebuilds schema and validator for a strictness; set by NewTool.
-	regen func(strict bool) (map[string]any, *schemaValidator)
-}
-
-// NonStrict relaxes the tool's schema (",omitempty" fields stop being required)
-// and returns the tool for chaining; call it before first use. On a tool not
-// built by NewTool it only clears Strict.
-func (t *Tool) NonStrict() *Tool {
-	if t.regen != nil {
-		t.ParamsJSONSchema, t.validator = t.regen(false)
-	}
-	t.Strict = false
-	return t
 }
 
 // needsApproval resolves one call's approval: NeedsApprovalFunc when set, else

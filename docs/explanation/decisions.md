@@ -214,10 +214,10 @@ is a bug any test surfaces at once (the `regexp.MustCompile` precedent), and
 the error return would cost chaining inside `Agent{...}` literals. Returning a
 tool that errors on every invocation, surfaced by the runner before the first
 model call — it deferred a deterministic bug to runtime and cost a field plus
-a runner check. Letting `Tool.NonStrict` rescue
-a type strict mode cannot express — it relaxes a tool that already exists,
-while the strict schema is built during construction; hence the twins
-`NewToolNonStrict` / `OutputTypeNonStrict`.
+a runner check. A `NonStrict()` method relaxing a tool after it is built — the
+strict schema is generated during construction, so it cannot rescue a type
+strict mode cannot express, and it rewrites a schema and validator a copy of
+the tool shares; hence the twins `NewToolNonStrict` / `OutputTypeNonStrict`.
 
 **Cost accepted.** `AgentAsTool` has no non-strict twin — a recorded gap, not
 a decision: no caller has needed an unconstrained field in a nested run's

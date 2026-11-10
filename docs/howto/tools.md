@@ -40,15 +40,11 @@ The schema comes from compile-time generics over the argument struct and its tag
 
 ### Strict mode
 
-Strict schema mode is on by default and the reflected schema is rewritten to the strict subset OpenAI requires (`additionalProperties:false`, all properties required, …). Chain `NonStrict()` when the model should be allowed to omit fields whose json tag carries `,omitempty` — it relaxes the advertised schema and the local argument validation together:
-
-```go
-t := agents.NewTool("lookup", "…", fn).NonStrict()
-```
+Strict schema mode is on by default and the reflected schema is rewritten to the strict subset OpenAI requires (`additionalProperties:false`, all properties required, …).
 
 `NewTool` panics if the argument type cannot be reflected into a strict schema (not a struct, a field no schema can express, or a shape strict mode cannot express at all — an `any`/`interface{}` field, a map with arbitrary keys) — a deterministic programmer error, surfaced at construction like `regexp.MustCompile`. For schemas that are runtime data, `NewRawTool` returns an error instead.
 
-That last shape is the one `NonStrict()` cannot rescue: the strict schema is generated during construction, so the panic happens before there is a tool to relax. Build those with `NewToolNonStrict`, which is `NewTool` without the strict rewrite — arguments are still validated against the schema the model was shown:
+Build the tool with `NewToolNonStrict` — `NewTool` without the strict rewrite — when the model should be allowed to omit fields whose json tag carries `,omitempty`, or when the argument type is a shape strict mode cannot express. The advertised schema and the local argument validation are relaxed together: arguments are still validated, against the schema the model was shown.
 
 ```go
 save := agents.NewToolNonStrict("save", "Store an arbitrary JSON payload.", saveFn)

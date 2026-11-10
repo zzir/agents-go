@@ -76,8 +76,7 @@ func errUnconstrainedSchema(what string, path []string) error {
 			"type (it reflects to a boolean schema, or to a typeless object when it carries a "+
 			"description tag) and cannot be expressed in strict mode; give the field a concrete "+
 			"type (a struct or a specific scalar/slice/map), or turn strict off where this "+
-			"schema was built — for a Go type that means NewToolNonStrict / OutputTypeNonStrict, "+
-			"not Tool.NonStrict, which runs after the schema is generated",
+			"schema was built — for a Go type that means NewToolNonStrict / OutputTypeNonStrict",
 		what, strings.Join(path, "/"))
 }
 
