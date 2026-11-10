@@ -96,13 +96,12 @@ func (h *TaskHandler) Retry(c *gin.Context) error {
 // retryError maps a retry failure. A refusal by the task's own state (not
 // failed, out of attempts, at a ceiling) is a 409 whose reason goes on the wire.
 func (h *TaskHandler) retryError(err error) error {
-	_, notRetryable := errors.AsType[tasks.ErrNotRetryable](err)
-	_, retryLimit := errors.AsType[tasks.ErrRetryLimit](err)
-	_, taskLimit := errors.AsType[tasks.ErrTaskLimit](err)
 	switch {
 	case errors.Is(err, tasks.ErrNotFound):
 		return errNotFound
-	case notRetryable, retryLimit, taskLimit,
+	case errors.Is(err, tasks.ErrNotRetryable),
+		errors.Is(err, tasks.ErrRetryLimit),
+		errors.Is(err, tasks.ErrTaskLimit),
 		errors.Is(err, tasks.ErrRetryConflict),
 		errors.Is(err, store.ErrBudgetExhausted),
 		errors.Is(err, store.ErrStepCeiling),

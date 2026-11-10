@@ -66,7 +66,7 @@ func TestTask_DepthIsBounded(t *testing.T) {
 	childSession := h.childOf(t, parent.TaskID)
 
 	_, err := h.m.Spawn(ctx, SpawnRequest{ParentSessionID: childSession, AgentName: "worker", Input: "again"})
-	if _, ok := errors.AsType[ErrDepthLimit](err); !ok {
+	if !errors.Is(err, ErrDepthLimit) {
 		t.Fatalf("err = %v, want ErrDepthLimit", err)
 	}
 }
@@ -90,7 +90,7 @@ func TestTask_DepthLimitIsConfigurable(t *testing.T) {
 	_, err = h.m.Spawn(ctx, SpawnRequest{
 		ParentSessionID: h.childOf(t, child.TaskID), AgentName: "worker", Input: "deeper",
 	})
-	if !errors.As(err, &ErrDepthLimit{}) {
+	if !errors.Is(err, ErrDepthLimit) {
 		t.Errorf("err = %v, want the raised limit to still bound", err)
 	}
 }
@@ -103,12 +103,11 @@ func TestTask_ConcurrencyIsCapped(t *testing.T) {
 	h.spawn(t)
 
 	_, err := h.m.Spawn(ctx, SpawnRequest{ParentSessionID: "parent", AgentName: "worker", Input: "third"})
-	var limit ErrTaskLimit
-	if !errors.As(err, &limit) {
+	if !errors.Is(err, ErrTaskLimit) {
 		t.Fatalf("err = %v, want ErrTaskLimit", err)
 	}
-	if limit.Limit != 2 {
-		t.Errorf("limit = %d, want 2", limit.Limit)
+	if !strings.Contains(err.Error(), "2 tasks running") {
+		t.Errorf("err = %v, want it to name the cap of 2", err)
 	}
 	// A finished task frees its slot.
 	live, _ := h.store.ListNonTerminal(ctx, "parent")
@@ -498,8 +497,8 @@ func TestStop_AlreadyFinalIsReportedNotRetried(t *testing.T) {
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
 
 	got, err := h.m.Stop(ctx, info.TaskID, false)
-	if _, ok := errors.AsType[ErrAlreadyFinal](err); !ok {
-		t.Fatalf("err = %v, want ErrAlreadyFinal", err)
+	if final, ok := errors.AsType[*AlreadyFinalError](err); !ok || final.Status != StatusCompleted {
+		t.Fatalf("err = %v, want AlreadyFinalError{completed}", err)
 	}
 	if got == nil || got.Status != StatusCompleted {
 		t.Errorf("info = %+v, want the terminal state reported", got)

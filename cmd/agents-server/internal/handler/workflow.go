@@ -95,11 +95,10 @@ func (h *WorkflowHandler) Run(c *gin.Context) error {
 	}
 	info, err := h.starter.RunWorkflow(c.Request.Context(), c.Param("id"), req.SessionID, strings.TrimSpace(req.Input), store.WorkflowOrigin{Kind: store.OriginPerson})
 	if err != nil {
-		_, taskLimit := errors.AsType[tasks.ErrTaskLimit](err)
 		switch {
 		case errors.Is(err, bridge.ErrWorkflowUnavailable):
 			return badRequest(err.Error())
-		case taskLimit:
+		case errors.Is(err, tasks.ErrTaskLimit):
 			return conflict(err.Error())
 		default:
 			return err // not-found (workflow or session) -> 404, anything else -> 500

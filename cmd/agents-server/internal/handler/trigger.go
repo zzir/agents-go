@@ -378,7 +378,6 @@ func (h *TriggerHandler) Fire(c *gin.Context) error {
 func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) error {
 	fired, err := h.firer.Fire(c.Request.Context(), id, payload, source)
 	if err != nil {
-		_, taskLimit := errors.AsType[tasks.ErrTaskLimit](err)
 		_, bridgeLimit := errors.AsType[bridge.ErrTaskLimit](err)
 		_, busy := errors.AsType[bridge.ErrSessionBusy](err)
 		_, deleting := errors.AsType[bridge.ErrSessionDeleting](err)
@@ -386,7 +385,7 @@ func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) error 
 		switch {
 		case errors.Is(err, bridge.ErrWorkflowUnavailable), errors.Is(err, bridge.ErrTriggerTarget):
 			return badRequest(err.Error())
-		case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrSessionAwaitingApproval), taskLimit, bridgeLimit, busy, deleting:
+		case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrSessionAwaitingApproval), errors.Is(err, tasks.ErrTaskLimit), bridgeLimit, busy, deleting:
 			return conflict(err.Error())
 		case draining:
 			return unavailable(err.Error())

@@ -29,9 +29,9 @@ func TestRetryErrorMapping(t *testing.T) {
 		want     int
 		contains string
 	}{
-		{"not failed", tasks.ErrNotRetryable{Status: tasks.StatusCompleted}, http.StatusConflict, "only a failed task"},
-		{"out of attempts", tasks.ErrRetryLimit{Limit: 3}, http.StatusConflict, "3 attempts"},
-		{"parent at the cap", tasks.ErrTaskLimit{Limit: 6}, http.StatusConflict, "6 tasks running"},
+		{"not failed", fmt.Errorf("%w: the task is completed", tasks.ErrNotRetryable), http.StatusConflict, "not retryable: the task is completed"},
+		{"out of attempts", fmt.Errorf("%w: used its 3 attempts", tasks.ErrRetryLimit), http.StatusConflict, "retry limit reached: used its 3 attempts"},
+		{"parent at the cap", fmt.Errorf("%w: 6 tasks running", tasks.ErrTaskLimit), http.StatusConflict, "task limit reached: 6 tasks running"},
 		// A workflow execution its budget or step ceiling stopped is refused
 		// before a run — a refusal, with its reason, not a fault.
 		{"budget spent", fmt.Errorf("%w: 3 of 3 steps", store.ErrBudgetExhausted), http.StatusConflict, "budget exhausted: 3 of 3 steps"},

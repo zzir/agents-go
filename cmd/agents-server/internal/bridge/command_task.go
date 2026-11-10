@@ -236,7 +236,7 @@ func (r *Runner) StopWorkspaceCommands(ctx context.Context, workspaceID string) 
 	runs := r.commands.ofWorkspace(workspaceID)
 	for _, run := range runs {
 		if _, err := r.tasks.Stop(ctx, run.taskID, false); err != nil {
-			if _, final := errors.AsType[tasks.ErrAlreadyFinal](err); !final {
+			if _, final := errors.AsType[*tasks.AlreadyFinalError](err); !final {
 				logging.Ctx(ctx).Warn("stopping a background command before a sandbox stop", "error", err, "task_id", run.taskID)
 			}
 		}

@@ -210,7 +210,7 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 			if err != nil {
 				// Already finished is news, not a failure: the model hears the
 				// terminal state.
-				if _, ok := errors.AsType[ErrAlreadyFinal](err); info != nil && ok {
+				if _, ok := errors.AsType[*AlreadyFinalError](err); info != nil && ok {
 					r := m.toolResult(info)
 					r.IsError = true
 					return r, nil

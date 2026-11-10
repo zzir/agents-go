@@ -127,12 +127,11 @@ func TestRetry_RefusesEveryStatusButFailed(t *testing.T) {
 			}
 
 			got, err := h.m.Retry(ctx, info.TaskID)
-			var refusal ErrNotRetryable
-			if !errors.As(err, &refusal) {
+			if !errors.Is(err, ErrNotRetryable) {
 				t.Fatalf("err = %v, want ErrNotRetryable", err)
 			}
-			if refusal.Status != before.Status {
-				t.Errorf("refusal names %s, want %s", refusal.Status, before.Status)
+			if !strings.Contains(err.Error(), "the task is "+string(before.Status)) {
+				t.Errorf("refusal = %v, want it to name %s", err, before.Status)
 			}
 			// The state travels with the refusal so a caller can show what the
 			// task actually is, not only that it said no.
@@ -160,12 +159,11 @@ func TestRetry_StopsAtTheAttemptLimit(t *testing.T) {
 	h.fail(t, info.TaskID, "boom again")
 
 	_, err := h.m.Retry(ctx, info.TaskID)
-	var limit ErrRetryLimit
-	if !errors.As(err, &limit) {
+	if !errors.Is(err, ErrRetryLimit) {
 		t.Fatalf("err = %v, want ErrRetryLimit", err)
 	}
-	if limit.Limit != 2 {
-		t.Errorf("limit = %d, want 2", limit.Limit)
+	if !strings.Contains(err.Error(), "its 2 attempts") {
+		t.Errorf("err = %v, want it to name the limit of 2", err)
 	}
 	if got := h.get(t, info.TaskID).AttemptNo(); got != 2 {
 		t.Errorf("attempt = %d, want it to stay at 2", got)
@@ -180,7 +178,7 @@ func TestRetry_LimitOfOneDisablesRetrying(t *testing.T) {
 	info := h.spawn(t)
 	h.fail(t, info.TaskID, "boom")
 
-	if _, err := h.m.Retry(ctx, info.TaskID); !errors.As(err, new(ErrRetryLimit)) {
+	if _, err := h.m.Retry(ctx, info.TaskID); !errors.Is(err, ErrRetryLimit) {
 		t.Fatalf("err = %v, want ErrRetryLimit", err)
 	}
 }
@@ -197,7 +195,7 @@ func TestRetry_TakesAConcurrencySlot(t *testing.T) {
 	h.spawn(t)
 
 	_, err := h.m.Retry(ctx, first.TaskID)
-	if !errors.As(err, new(ErrTaskLimit)) {
+	if !errors.Is(err, ErrTaskLimit) {
 		t.Fatalf("err = %v, want ErrTaskLimit", err)
 	}
 	if got := h.get(t, first.TaskID).Status; got != StatusFailed {
@@ -877,7 +875,7 @@ func TestRetryable_IsAboutTheTaskNotTheParentsCapacity(t *testing.T) {
 	h.spawn(t)
 	h.spawn(t) // the parent is now full
 
-	if _, err := h.m.Retry(ctx, first.TaskID); !errors.As(err, new(ErrTaskLimit)) {
+	if _, err := h.m.Retry(ctx, first.TaskID); !errors.Is(err, ErrTaskLimit) {
 		t.Fatalf("err = %v, want the capacity refusal to arrive at call time", err)
 	}
 	if h.m.MaxAttempts() != DefaultMaxAttemptsPerTask {
@@ -906,9 +904,8 @@ func TestRetry_CeilingCanDependOnTheTask(t *testing.T) {
 	launches, finished := len(h.launcher.all()), len(h.reportedFinished())
 
 	_, err = h.m.Retry(ctx, once.TaskID)
-	var limit ErrRetryLimit
-	if !errors.As(err, &limit) || limit.Limit != 1 {
-		t.Fatalf("err = %v, want ErrRetryLimit{1}", err)
+	if !errors.Is(err, ErrRetryLimit) || !strings.Contains(err.Error(), "its 1 attempts") {
+		t.Fatalf("err = %v, want ErrRetryLimit naming a limit of 1", err)
 	}
 	after := h.get(t, once.TaskID)
 	if after.Status != StatusFailed || after.RunID != before.RunID || after.Result != before.Result || after.AttemptNo() != 1 {

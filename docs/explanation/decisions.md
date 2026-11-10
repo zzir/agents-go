@@ -2242,3 +2242,24 @@ terminal event, so a `Processor` that blocks there delays the result by as
 long.
 
 Rules: spec §2.0.
+
+### 5.105 A task refusal is a sentinel; the one whose field is read is a type
+
+Decided 2026-11-10.
+
+**Decision.** `agents/tasks` names its errors the way Go does: a refusal whose
+fields no caller reads is a sentinel `ErrX`, returned wrapped so the limit or
+status is in its message; `AlreadyFinalError` stays a type because a host reads
+its `Status`.
+
+**Rejected.** Struct types under `Err*` names — the name promises `errors.Is`,
+so one switch mixed `errors.Is` and `errors.AsType`. Renaming all five to
+`XError` types — four would export a field nothing reads. Five sentinels — a
+finished task's status would then travel only in the `*Info` returned beside
+the error, which a caller that returns early on `err != nil` never looks at.
+
+**Cost accepted.** A refusal states its limit in the message only; a caller
+that wants the number reads its own configuration (`Manager.MaxAttempts`, the
+`MaxConcurrentPerParent` it supplied).
+
+Rules: spec §2.13.

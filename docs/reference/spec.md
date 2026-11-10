@@ -1779,6 +1779,11 @@ A task is a sub-agent that outlives the turn that started it
 - **The ceiling may depend on the task.** `Config.MaxAttemptsFor` answers for
   one task, `MaxAttemptsPerTask` for the rest; a refusal by it comes before the
   claim, so no attempt is spent and nothing is reported.
+- **A refusal is a sentinel, matched with `errors.Is`**: `ErrTaskLimit`,
+  `ErrDepthLimit`, `ErrNotRetryable`, `ErrRetryLimit`, `ErrRetryConflict`,
+  `ErrNotFound`. The limit or status behind one is in its message only.
+- **A stop of a finished task is `*AlreadyFinalError`**, the one typed error:
+  it carries the `Status`. — see decisions §5.105
 
 **Multi-run jobs**
 

@@ -157,7 +157,7 @@ func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 	}
 	info, err := r.tasks.Stop(r.hub.rootCtx, taskID, graceful)
 	if err != nil {
-		if final, ok := errors.AsType[tasks.ErrAlreadyFinal](err); ok {
+		if final, ok := errors.AsType[*tasks.AlreadyFinalError](err); ok {
 			return nil, &TaskFinalError{Status: string(final.Status)}
 		}
 		return nil, err

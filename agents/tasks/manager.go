@@ -33,44 +33,33 @@ const (
 	DefaultMaxContinuations = 50
 )
 
-// ErrTaskLimit reports that a parent session already has its maximum tasks in
-// flight.
-type ErrTaskLimit struct{ Limit int }
+// Refusals, matched with errors.Is. One caused by a limit or a status arrives
+// wrapped, with that limit or status in its message.
+var (
+	// ErrTaskLimit reports that a parent session already has its maximum tasks
+	// in flight.
+	ErrTaskLimit = errors.New("tasks: task limit reached")
+	// ErrDepthLimit reports that a task tried to spawn a task too deep.
+	ErrDepthLimit = errors.New("tasks: depth limit reached")
+	// ErrNotRetryable reports a retry of a task that is not failed.
+	ErrNotRetryable = errors.New("tasks: not retryable")
+	// ErrRetryLimit reports a task that has used every attempt it is allowed.
+	ErrRetryLimit = errors.New("tasks: retry limit reached")
+	// ErrRetryConflict reports a retry that lost its claim to another writer
+	// between the read and the compare-and-set. Trying again is the remedy;
+	// hosts map it to 409.
+	ErrRetryConflict = errors.New("tasks: another writer claimed this task first; try again")
+)
 
-func (e ErrTaskLimit) Error() string {
-	return fmt.Sprintf("tasks: this conversation already has %d tasks running; wait for one to finish", e.Limit)
+// AlreadyFinalError reports a stop of a task that had already finished.
+type AlreadyFinalError struct{ Status Status }
+
+func (e *AlreadyFinalError) Error() string { return "tasks: task already " + string(e.Status) }
+
+// taskLimitError is ErrTaskLimit naming the cap that was hit.
+func taskLimitError(limit int) error {
+	return fmt.Errorf("%w: this conversation already has %d tasks running; wait for one to finish", ErrTaskLimit, limit)
 }
-
-// ErrDepthLimit reports that a task tried to spawn a task too deep.
-type ErrDepthLimit struct{ Limit int }
-
-func (e ErrDepthLimit) Error() string {
-	return fmt.Sprintf("tasks: cannot spawn from a task at depth %d", e.Limit)
-}
-
-// ErrAlreadyFinal reports a stop of a task that had already finished.
-type ErrAlreadyFinal struct{ Status Status }
-
-func (e ErrAlreadyFinal) Error() string { return "tasks: task already " + string(e.Status) }
-
-// ErrNotRetryable reports a retry of a task that is not failed.
-type ErrNotRetryable struct{ Status Status }
-
-func (e ErrNotRetryable) Error() string {
-	return fmt.Sprintf("tasks: cannot retry a task that is %s; only a failed task can be retried", e.Status)
-}
-
-// ErrRetryLimit reports a task that has used every attempt it is allowed.
-type ErrRetryLimit struct{ Limit int }
-
-func (e ErrRetryLimit) Error() string {
-	return fmt.Sprintf("tasks: this task has already used its %d attempts; start a new task instead", e.Limit)
-}
-
-// ErrRetryConflict reports a retry that lost its claim to another writer
-// between the read and the compare-and-set. Trying again is the remedy; hosts
-// map it to 409.
-var ErrRetryConflict = errors.New("tasks: another writer claimed this task first; try again")
 
 // Config configures a Manager. Store, Sessions, Resolver and Launcher are
 // required.
@@ -279,7 +268,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 	if isTask {
 		depth = meta.Depth + 1
 		if depth > m.cfg.MaxDepth {
-			return nil, ErrDepthLimit{Limit: meta.Depth}
+			return nil, fmt.Errorf("%w: cannot spawn from a task at depth %d", ErrDepthLimit, meta.Depth)
 		}
 	}
 
@@ -292,7 +281,7 @@ func (m *Manager) Spawn(ctx context.Context, req SpawnRequest) (*Info, error) {
 		return nil, fmt.Errorf("tasks: counting live tasks: %w", err)
 	}
 	if limit := m.maxConcurrentPerParent(); len(live) >= limit {
-		return nil, ErrTaskLimit{Limit: limit}
+		return nil, taskLimitError(limit)
 	}
 
 	spec, err := m.cfg.Resolver(ctx, req.ParentSessionID, req.AgentName)
@@ -410,7 +399,7 @@ func (m *Manager) Retry(ctx context.Context, taskID string) (*Info, error) {
 	}
 	if limit := m.maxConcurrentPerParent(); len(live) >= limit {
 		// A retry takes a concurrency slot like a spawn — see spec §2.13.
-		return infoFrom(t, ""), ErrTaskLimit{Limit: limit}
+		return infoFrom(t, ""), taskLimitError(limit)
 	}
 
 	// Read before the claim clears the failure: it is the next attempt's reason.
@@ -469,10 +458,10 @@ func (m *Manager) maxAttemptsFor(t *Task) int {
 // notRetryable explains why a task cannot be retried, or returns nil.
 func (m *Manager) notRetryable(t *Task) error {
 	if t.Status != StatusFailed {
-		return ErrNotRetryable{Status: t.Status}
+		return fmt.Errorf("%w: the task is %s; only a failed task can be retried", ErrNotRetryable, t.Status)
 	}
 	if limit := m.maxAttemptsFor(t); t.AttemptNo() >= limit {
-		return ErrRetryLimit{Limit: limit}
+		return fmt.Errorf("%w: this task has already used its %d attempts; start a new task instead", ErrRetryLimit, limit)
 	}
 	return nil
 }
@@ -683,7 +672,7 @@ func (m *Manager) Stop(ctx context.Context, taskID string, graceful bool) (*Info
 				// The first pass lost the CAS to an ending, which stands.
 				return infoFrom(t, ""), nil
 			}
-			return infoFrom(t, ""), ErrAlreadyFinal{Status: t.Status}
+			return infoFrom(t, ""), &AlreadyFinalError{Status: t.Status}
 		}
 
 		verdict, err := m.stopAttempt(ctx, t, graceful, pass == 1)
@@ -1059,7 +1048,7 @@ func (m *Manager) StopTree(ctx context.Context, sessionID string) error {
 	var errs []error
 	for i := range live {
 		if _, err := m.Stop(ctx, live[i].ID, false); err != nil {
-			if _, ok := errors.AsType[ErrAlreadyFinal](err); ok {
+			if _, ok := errors.AsType[*AlreadyFinalError](err); ok {
 				continue
 			}
 			errs = append(errs, err)

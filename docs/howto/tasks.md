@@ -185,6 +185,30 @@ A lookup that failed is not "this is not a task" — collapsing the two would ma
 one transient store error a way past the depth limit. `Spawn` refuses past
 `MaxDepth` (default 1) as the backstop.
 
+## Telling a refusal from a fault
+
+An endpoint of your own that calls `Spawn`, `Retry` or `Stop` matches a
+refusal with `errors.Is`; the message says which limit or status it was:
+
+```go
+info, err := mgr.Retry(ctx, taskID)
+switch {
+case errors.Is(err, tasks.ErrNotFound):
+	// unknown id
+case errors.Is(err, tasks.ErrNotRetryable), errors.Is(err, tasks.ErrRetryLimit),
+	errors.Is(err, tasks.ErrTaskLimit), errors.Is(err, tasks.ErrRetryConflict):
+	// refused — err.Error() is the reason, info the task as it stands
+}
+
+_, err = mgr.Stop(ctx, taskID, false)
+if final, ok := errors.AsType[*tasks.AlreadyFinalError](err); ok {
+	// nothing to stop — final.Status is how it ended
+}
+```
+
+`Spawn` refuses with `ErrTaskLimit` or `ErrDepthLimit`
+([spec §2.13](../reference/spec.md#213-background-tasks)).
+
 ## Delivering results — the host's half
 
 Waking the parent is yours — the Manager reports endings, it does not deliver

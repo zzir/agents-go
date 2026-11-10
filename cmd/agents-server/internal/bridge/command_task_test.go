@@ -156,7 +156,7 @@ func TestBackgroundCommandRunsAsATask(t *testing.T) {
 
 	if _, err := f.runner.RetryTask(row.ID); err == nil {
 		t.Error("a command task was retried; want the one-attempt refusal")
-	} else if _, ok := errors.AsType[tasks.ErrRetryLimit](err); !ok {
+	} else if !errors.Is(err, tasks.ErrRetryLimit) {
 		t.Errorf("retry refused with %v, want ErrRetryLimit", err)
 	}
 	if got := f.runner.MaxTaskAttempts(store.TaskKindCommand); got != 1 {

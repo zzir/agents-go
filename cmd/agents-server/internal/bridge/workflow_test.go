@@ -505,7 +505,7 @@ func TestWorkflowRefusesPastTheBackgroundBudget(t *testing.T) {
 	if err == nil {
 		t.Fatal("a workflow past the background budget must be refused")
 	}
-	if !errors.As(err, new(tasks.ErrTaskLimit)) {
+	if !errors.Is(err, tasks.ErrTaskLimit) {
 		t.Fatalf("err = %v, want the task cap's refusal", err)
 	}
 }
@@ -747,7 +747,7 @@ func TestRetryWorkflowResumesFromTheFailedStep(t *testing.T) {
 
 	// Completed executions never retry — re-running a success repeats its side
 	// effects.
-	if _, err := runner.RetryTask(info.TaskID); !errors.As(err, new(tasks.ErrNotRetryable)) {
+	if _, err := runner.RetryTask(info.TaskID); !errors.Is(err, tasks.ErrNotRetryable) {
 		t.Fatalf("retry of a completed execution = %v, want ErrNotRetryable", err)
 	}
 }
