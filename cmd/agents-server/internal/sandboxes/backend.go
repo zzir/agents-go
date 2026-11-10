@@ -62,7 +62,7 @@ var ErrHealthCommandFailed = errors.New("the health command ran and did not succ
 func checkExec(ctx context.Context, sb sandbox.Sandbox) error {
 	runCtx, cancel := context.WithTimeout(ctx, sandbox.DefaultTimeout+5*time.Second)
 	defer cancel()
-	res, err := sb.Exec(runCtx, sandbox.ExecRequest{Cmd: checkHealthCmd, Timeout: sandbox.DefaultTimeout})
+	res, err := sandbox.Exec(runCtx, sb, sandbox.ExecRequest{Cmd: checkHealthCmd, Timeout: sandbox.DefaultTimeout})
 	if err != nil {
 		return err // unreachable: the service could not run the command
 	}

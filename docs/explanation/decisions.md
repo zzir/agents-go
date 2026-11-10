@@ -2011,8 +2011,8 @@ Rules: spec §2.7v.
 Decided 2026-11-03.
 
 **Decision.** `exec_command` gains `background: true` only where the host set
-`CodeToolConfig.Background`: the tool decodes, policy-checks and lets the
-approval gate run as for any call, then hands the host a `Command` and returns
+`CodeToolConfig.Background`: the tool decodes and lets the approval gate run
+as for any call, then hands the host a `Command` and returns
 whatever the host answers. `Command.Run` is the one way to run it: `exec` to
 two files under `SpillDir` inside the sandbox, read back by size afterwards, a
 verdict line first so a 300-rune summary carries the outcome. A non-zero exit
@@ -2383,3 +2383,67 @@ handoff has no direct spelling: `Tool.IsEnabled` and dynamic instructions are
 evaluated per turn, and the model is the agent's.
 
 Rules: spec §2.2 (step 1, retired), §2.3a, §2.3b.
+
+### 5.112 A sandbox runs a command one way
+
+Decided 2026-11-10.
+
+**Decision.** `Sandbox.ExecStream` is the one way a backend runs a command:
+output goes to the caller's writers as it arrives. `sandbox.Exec` is that call
+into two buffers capped at `ExecRequest.MaxOutputBytes`, written once for
+every backend.
+
+**Rejected.** `Exec` on the interface with `ExecStreamer` as an optional
+capability — all three backends implemented both, each with the same wrapper,
+and `exec_command` type-asserted for an interface nothing lacked. A second,
+buffered path in docker's ephemeral mode (wait, then read the stored log) — it
+duplicated the follow-the-log path and its timeout handling, and the two
+disagreed about a broken log read.
+
+**Cost accepted.** A backend that can only return output after the fact writes
+it to the writers at the end. In docker's ephemeral mode a log read that
+breaks on a command that exited is now an error for a streaming caller too,
+where it used to cost only the missing output.
+
+Rules: spec §2.7m.
+
+### 5.113 The local sandbox always has a working directory
+
+Decided 2026-11-10.
+
+**Decision.** `LocalSandbox` is configured as a struct literal. With no
+`WorkDir` it works in one temp directory, made on first use, shared by every
+command and file operation, and removed by `Close`. The child environment is
+PATH, HOME and TMPDIR plus the request's, with no opt-out.
+
+**Rejected.** A fresh temp directory per command with the file operations
+refusing (`ErrNoWorkDir`) — two modes in a development backend, and a model
+whose `write_file` failed where `exec_command` worked. `NewLocal` plus
+`NewLocalWithOptions(LocalOptions{…})` — two constructors and an options type
+for two fields. `InheritHostEnv` — a switch to leak the host environment into
+model-run code, set by one test.
+
+**Cost accepted.** Files a command leaves behind are visible to the next
+command of the same sandbox; a caller that wants a clean directory per
+command makes a sandbox per command. A sandbox that is never closed leaves
+its temp directory.
+
+Rules: spec §2.7q.
+
+### 5.114 exec_command has no command filter of its own
+
+Decided 2026-11-10.
+
+**Decision.** `CodeTool` refuses nothing by pattern. What a person is asked
+about is `NeedsApprovalFunc`'s decision; what a command can reach is the
+backend's.
+
+**Rejected.** `CodeToolConfig.Policy`, allow and deny regular expressions
+checked before the approval gate — a text match blind to shell semantics, so
+never a boundary, and no caller set one: the workbench gates commands through
+the approval function, which already sees the same arguments.
+
+**Cost accepted.** A caller that wants a static deny list writes it inside
+its `NeedsApprovalFunc`, or wraps the tool's `OnInvoke`.
+
+Rules: spec §2.7j (retired), §2.7l.

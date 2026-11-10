@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
+	"path"
 
 	"github.com/zzir/agents-go/sandbox"
 )
@@ -47,20 +47,7 @@ func (e processEvent) exitCode() int {
 	return int(n)
 }
 
-// Exec runs a command and returns its captured output.
-func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.ExecResult, error) {
-	stdout := &sandbox.CappedBuffer{Max: req.EffectiveMaxOutputBytes()}
-	stderr := &sandbox.CappedBuffer{Max: req.EffectiveMaxOutputBytes()}
-	res, err := s.ExecStream(ctx, req, stdout, stderr)
-	if err != nil {
-		return nil, err
-	}
-	res.Stdout, res.Stderr = stdout.String(), stderr.String()
-	return res, nil
-}
-
-// ExecStream runs a command, writing its output to the caller's writers as it
-// arrives.
+// ExecStream implements sandbox.Sandbox.
 func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdout, stderr io.Writer) (*sandbox.ExecResult, error) {
 	if len(req.Cmd) == 0 {
 		return nil, errors.New("e2b: ExecRequest.Cmd is empty")
@@ -85,7 +72,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 
 	// The timeout is the CALLER's deadline, enforced here: envd's Start carries
 	// none. When it fires the stream is cancelled and the process signalled.
-	runCtx, cancel := withTimeout(ctx, req.EffectiveTimeout())
+	runCtx, cancel := context.WithTimeout(ctx, req.EffectiveTimeout())
 	defer cancel()
 
 	var pid uint32
@@ -183,7 +170,7 @@ func (s *Sandbox) ExportTar(ctx context.Context) (io.ReadCloser, error) {
 	go func() {
 		// -C the parent and name the leaf, so the archive carries one top
 		// directory rather than absolute paths.
-		script := "tar -cf - -C " + sandbox.ShellQuote(parentOf(dir)) + " " + sandbox.ShellQuote(leafOf(dir))
+		script := "tar -cf - -C " + sandbox.ShellQuote(path.Dir(dir)) + " " + sandbox.ShellQuote(path.Base(dir))
 		res, err := s.ExecStream(ctx, sandbox.ExecRequest{
 			Cmd: []string{"sh", "-c", script},
 			// An export is not a command with a 30-second answer.
@@ -199,19 +186,4 @@ func (s *Sandbox) ExportTar(ctx context.Context) (io.ReadCloser, error) {
 		}
 	}()
 	return pr, nil
-}
-
-func parentOf(p string) string {
-	if i := strings.LastIndex(strings.TrimSuffix(p, "/"), "/"); i > 0 {
-		return p[:i]
-	}
-	return "/"
-}
-
-func leafOf(p string) string {
-	p = strings.TrimSuffix(p, "/")
-	if i := strings.LastIndex(p, "/"); i >= 0 {
-		return p[i+1:]
-	}
-	return p
 }

@@ -75,9 +75,10 @@ func WriteAndClose(f *os.File, content []byte) error {
 // Sandbox executes commands and performs file operations in an isolated
 // environment.
 type Sandbox interface {
-	// Exec writes req.Files into the working directory, runs req.Cmd there,
-	// and returns the captured output capped at req.MaxOutputBytes.
-	Exec(ctx context.Context, req ExecRequest) (*ExecResult, error)
+	// ExecStream writes req.Files into the working directory, runs req.Cmd
+	// there and writes its output to stdout and stderr as it arrives. The
+	// result carries the exit code and TimedOut; its Stdout and Stderr are empty.
+	ExecStream(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error)
 	// ReadFile reads a file from the sandbox's persistent working directory.
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	// WriteFile writes a file in the sandbox, creating parent directories.
@@ -97,6 +98,19 @@ type Sandbox interface {
 	Close() error
 }
 
+// Exec runs req on sb and returns its output buffered, each stream capped at
+// req.MaxOutputBytes — see decisions §5.112.
+func Exec(ctx context.Context, sb Sandbox, req ExecRequest) (*ExecResult, error) {
+	maxOut := req.EffectiveMaxOutputBytes()
+	stdout, stderr := &cappedBuffer{max: maxOut}, &cappedBuffer{max: maxOut}
+	res, err := sb.ExecStream(ctx, req, stdout, stderr)
+	if err != nil {
+		return nil, err
+	}
+	res.Stdout, res.Stderr = stdout.buf.String(), stderr.buf.String()
+	return res, nil
+}
+
 // ExecRequest describes one execution.
 type ExecRequest struct {
 	// Cmd is the command and arguments to run in the working directory.
@@ -105,12 +119,12 @@ type ExecRequest struct {
 	// are written before Cmd runs.
 	Files map[string]string
 	// Env sets environment variables for the process, over the sandbox's own.
-	// The host environment is never passed through (see LocalOptions.InheritHostEnv).
+	// The host environment is never passed through.
 	Env map[string]string
 	// Timeout bounds the execution; zero means DefaultTimeout.
 	Timeout time.Duration
-	// MaxOutputBytes caps how many bytes of each output stream are kept; excess
-	// is discarded, not buffered. Zero means DefaultMaxOutputBytes.
+	// MaxOutputBytes caps how many bytes of each output stream Exec keeps;
+	// excess is discarded, not buffered. Zero means DefaultMaxOutputBytes.
 	MaxOutputBytes int64
 }
 
@@ -146,6 +160,7 @@ func (r ExecRequest) EffectiveMaxOutputBytes() int64 {
 
 // ExecResult is the outcome of an execution.
 type ExecResult struct {
+	// Stdout and Stderr are filled by Exec; ExecStream leaves them empty.
 	Stdout   string
 	Stderr   string
 	ExitCode int
@@ -164,28 +179,19 @@ type Limits struct {
 	PIDs int64
 }
 
-// CappedBuffer is an io.Writer that keeps at most Max bytes and silently
+// cappedBuffer is an io.Writer that keeps at most max bytes and silently
 // discards the rest, so a runaway process cannot exhaust memory.
-type CappedBuffer struct {
+type cappedBuffer struct {
 	buf bytes.Buffer
-	Max int64
+	max int64
 }
 
-func (b *CappedBuffer) Write(p []byte) (int, error) {
-	if remain := b.Max - int64(b.buf.Len()); remain > 0 {
-		if int64(len(p)) > remain {
-			b.buf.Write(p[:remain])
-		} else {
-			b.buf.Write(p)
-		}
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if remain := b.max - int64(b.buf.Len()); remain > 0 {
+		b.buf.Write(p[:min(int64(len(p)), remain)])
 	}
 	return len(p), nil
 }
-
-func (b *CappedBuffer) String() string { return b.buf.String() }
-
-// Full reports whether the buffer has reached its cap.
-func (b *CappedBuffer) Full() bool { return int64(b.buf.Len()) >= b.Max }
 
 // DirEntry describes one entry returned by Sandbox.ListDir.
 type DirEntry struct {
@@ -203,11 +209,3 @@ var ErrNoWorkDir = errors.New("sandbox: no persistent working directory configur
 // path outside the working directory; only docker's bind-mount mode raises it
 // — see decisions §5.14.
 var ErrOutsideWorkDir = errors.New("sandbox: path outside the working directory")
-
-// ExecStreamer is optionally implemented by Sandbox backends that support
-// streaming command output. Output is written to stdout/stderr as it arrives;
-// the returned ExecResult contains ExitCode and TimedOut but its Stdout and
-// Stderr fields are empty.
-type ExecStreamer interface {
-	ExecStream(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error)
-}

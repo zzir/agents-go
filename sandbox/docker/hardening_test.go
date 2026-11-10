@@ -1,9 +1,7 @@
 package docker
 
 import (
-	"errors"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -150,46 +148,6 @@ func TestPersistentConfig_ExplicitUser(t *testing.T) {
 	if cfg.User != "root" {
 		t.Errorf("user = %q, want root", cfg.User)
 	}
-}
-
-// demuxLogs must hand back whatever it collected even when the source dies
-// mid-stream with a non-EOF error — the timeout path surfaces that partial
-// output to the model.
-func TestDemuxLogs_PartialOutputOnError(t *testing.T) {
-	var mux strings.Builder
-	// One valid stdout frame, then garbage cut off by a failing reader.
-	hdr := []byte{1, 0, 0, 0, 0, 0, 0, 5}
-	mux.Write(hdr)
-	mux.WriteString("hello")
-
-	stdout, stderr, err := demuxLogs(&failAfterReader{data: []byte(mux.String())}, 1<<20)
-	if err == nil {
-		t.Fatal("expected the injected read error to surface")
-	}
-	if stdout != "hello" {
-		t.Errorf("stdout = %q, want partial output preserved alongside the error", stdout)
-	}
-	if stderr != "" {
-		t.Errorf("stderr = %q, want empty", stderr)
-	}
-}
-
-// failAfterReader yields its data, then fails with a non-EOF error (like a
-// force-closed hijacked connection does).
-type failAfterReader struct {
-	data []byte
-	off  int
-}
-
-var errReaderClosed = errors.New("use of closed network connection")
-
-func (r *failAfterReader) Read(p []byte) (int, error) {
-	if r.off >= len(r.data) {
-		return 0, errReaderClosed
-	}
-	n := copy(p, r.data[r.off:])
-	r.off += n
-	return n, nil
 }
 
 // The fingerprint of an env-less config is FROZEN: a changed hash makes

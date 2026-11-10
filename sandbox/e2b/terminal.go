@@ -21,24 +21,13 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions
 	if _, err := s.ensureFor(ctx, time.Duration(s.timeout())*time.Second); err != nil {
 		return nil, err
 	}
-	shell := opts.Shell
-	if len(shell) == 0 {
-		// Prefer bash when the image ships it (as the docker backend does): the
-		// e2b image's /bin/sh is dash, which chokes on bash-style login profiles.
-		shell = []string{"/bin/sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l || exec sh -l"}
-	}
-	envs := map[string]string{"TERM": opts.EffectiveTerm()}
-	for k, v := range s.opts.Env {
-		envs[k] = v
-	}
-	for k, v := range opts.Env {
-		envs[k] = v
-	}
 	start := map[string]any{
 		"process": map[string]any{
-			"cmd":  shell[0],
-			"args": shell[1:],
-			"envs": envs,
+			// Prefer bash when the image ships it (as the docker backend does): the
+			// e2b image's /bin/sh is dash, which chokes on bash-style login profiles.
+			"cmd":  "/bin/sh",
+			"args": []string{"-c", "command -v bash >/dev/null 2>&1 && exec bash -l || exec sh -l"},
+			"envs": sandbox.MergeEnv(map[string]string{"TERM": sandbox.DefaultTerminalTerm}, s.opts.Env),
 			"cwd":  s.workDir(),
 		},
 		"pty": map[string]any{

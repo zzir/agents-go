@@ -17,11 +17,11 @@ import (
 // backgrounded by a successfully-exiting command survives Exec.
 // (local_unix_test.go covers the inverse: on timeout the group IS killed.)
 func TestLocalSandbox_NormalExitDoesNotKillProcessGroup(t *testing.T) {
-	sb := NewLocal()
+	sb := &LocalSandbox{}
 	// The shell prints the backgrounded grandchild's pid and exits 0
 	// immediately; only the grandchild keeps the pipes open, which WaitDelay
 	// unblocks after ~2s.
-	res, err := sb.Exec(context.Background(), ExecRequest{
+	res, err := Exec(context.Background(), sb, ExecRequest{
 		Cmd:     []string{"sh", "-c", "sleep 30 & echo $!"},
 		Timeout: 20 * time.Second,
 	})

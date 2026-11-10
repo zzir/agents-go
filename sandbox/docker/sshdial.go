@@ -25,7 +25,7 @@ const defaultSSHSocket = "/var/run/docker.sock"
 const defaultSSHConnectTimeout = 15 * time.Second
 
 // SSHAuth configures the SSH connection behind an ssh:// Host: authentication
-// (tried in order: agent, key, password; at least one must be set) and host-key
+// (tried in order: agent, key file, password; at least one must be set) and host-key
 // verification (the zero value checks ~/.ssh/known_hosts).
 type SSHAuth struct {
 	// UseAgent authenticates using the local SSH agent (SSH_AUTH_SOCK).
@@ -33,10 +33,6 @@ type SSHAuth struct {
 	// KeyFile is the path to a PEM-encoded private key. "~" is expanded to
 	// the user's home directory.
 	KeyFile string
-	// KeyBytes is a PEM-encoded private key (alternative to KeyFile).
-	KeyBytes []byte
-	// Passphrase decrypts an encrypted KeyFile/KeyBytes when set.
-	Passphrase string
 	// Password authenticates with a password.
 	Password string
 	// KnownHostsFile is an OpenSSH known_hosts file. Defaults to
@@ -118,32 +114,26 @@ func newSSHDialer(hostURL string, auth SSHAuth) (*sshDialer, error) {
 // DialContext opens one channel to the remote daemon socket, (re)connecting
 // the SSH transport as needed; a transport failure retries once on a fresh one.
 func (d *sshDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
-	return d.dialThrough(ctx, "unix", d.socket)
-}
-
-// dialThrough opens one channel of any kind over the shared transport — the
-// daemon socket, or a TCP address inside the remote's networks.
-func (d *sshDialer) dialThrough(ctx context.Context, network, addr string) (net.Conn, error) {
 	client, err := d.connect(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := client.Dial(network, addr)
+	conn, err := client.Dial("unix", d.socket)
 	if err == nil {
 		return conn, nil
 	}
-	// A rejected channel open (the target port not listening yet) arrives on a
-	// healthy transport: reconnecting would sever every stream multiplexed on it.
+	// A rejected channel open arrives on a healthy transport: reconnecting
+	// would sever every stream multiplexed on it — see decisions §5.27.
 	if _, ok := errors.AsType[*ssh.OpenChannelError](err); ok {
-		return nil, fmt.Errorf("docker sandbox: dialing %s %s over ssh: %w", network, addr, err)
+		return nil, fmt.Errorf("docker sandbox: dialing %s over ssh: %w", d.socket, err)
 	}
 	client, rerr := d.connect(ctx, client)
 	if rerr != nil {
 		return nil, fmt.Errorf("docker sandbox: ssh reconnect after %v: %w", err, rerr)
 	}
-	conn, err = client.Dial(network, addr)
+	conn, err = client.Dial("unix", d.socket)
 	if err != nil {
-		return nil, fmt.Errorf("docker sandbox: dialing %s %s over ssh: %w", network, addr, err)
+		return nil, fmt.Errorf("docker sandbox: dialing %s over ssh: %w", d.socket, err)
 	}
 	return conn, nil
 }
@@ -223,7 +213,7 @@ func (d *sshDialer) Close() error {
 	return nil
 }
 
-// buildSSHAuthMethods orders auth: agent, then private key, then password. With
+// buildSSHAuthMethods orders auth: agent, then key file, then password. With
 // UseAgent the returned net.Conn is the agent socket, closed with the dialer.
 func buildSSHAuthMethods(cfg SSHAuth) ([]ssh.AuthMethod, net.Conn, error) {
 	var methods []ssh.AuthMethod
@@ -242,26 +232,16 @@ func buildSSHAuthMethods(cfg SSHAuth) ([]ssh.AuthMethod, net.Conn, error) {
 		methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
 	}
 
-	if cfg.KeyFile != "" || len(cfg.KeyBytes) > 0 {
-		keyBytes := cfg.KeyBytes
-		if cfg.KeyFile != "" {
-			path, err := expandHome(cfg.KeyFile)
-			if err != nil {
-				return nil, nil, err
-			}
-			var err2 error
-			keyBytes, err2 = os.ReadFile(path)
-			if err2 != nil {
-				return nil, nil, fmt.Errorf("docker sandbox: read key file: %w", err2)
-			}
+	if cfg.KeyFile != "" {
+		path, err := expandHome(cfg.KeyFile)
+		if err != nil {
+			return nil, nil, err
 		}
-		var signer ssh.Signer
-		var err error
-		if cfg.Passphrase != "" {
-			signer, err = ssh.ParsePrivateKeyWithPassphrase(keyBytes, []byte(cfg.Passphrase))
-		} else {
-			signer, err = ssh.ParsePrivateKey(keyBytes)
+		keyBytes, err := os.ReadFile(path)
+		if err != nil {
+			return nil, nil, fmt.Errorf("docker sandbox: read key file: %w", err)
 		}
+		signer, err := ssh.ParsePrivateKey(keyBytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("docker sandbox: parse private key: %w", err)
 		}
@@ -273,7 +253,7 @@ func buildSSHAuthMethods(cfg SSHAuth) ([]ssh.AuthMethod, net.Conn, error) {
 	}
 
 	if len(methods) == 0 {
-		return nil, nil, errors.New("docker sandbox: no SSH authentication method configured (set UseAgent, KeyFile, KeyBytes or Password)")
+		return nil, nil, errors.New("docker sandbox: no SSH authentication method configured (set UseAgent, KeyFile or Password)")
 	}
 	return methods, agentConn, nil
 }

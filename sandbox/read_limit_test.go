@@ -71,7 +71,7 @@ func TestLocalSandbox_ReadFileLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: dir, MaxReadFileBytes: 16})
+	sb := &LocalSandbox{WorkDir: dir, MaxReadFileBytes: 16}
 	ctx := context.Background()
 
 	if _, err := sb.ReadFile(ctx, "big.bin"); !errors.Is(err, ErrReadLimitExceeded) {
@@ -92,7 +92,7 @@ func TestLocalSandbox_ReadFileDefaultLimit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("default ok"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: dir})
+	sb := &LocalSandbox{WorkDir: dir}
 	data, err := sb.ReadFile(context.Background(), "f.txt")
 	if err != nil {
 		t.Fatal(err)

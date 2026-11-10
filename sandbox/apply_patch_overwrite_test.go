@@ -12,7 +12,7 @@ import (
 // RemoveFile the clobbered original outright.
 func TestApplyPatchAddExistingFails(t *testing.T) {
 	ctx := context.Background()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 	seed(t, sb, "exists.txt", "ORIGINAL\n")
 
 	patch := "*** Begin Patch\n" +
@@ -35,7 +35,7 @@ func TestApplyPatchAddExistingFails(t *testing.T) {
 // destination.
 func TestApplyPatchMoveOntoExistingFails(t *testing.T) {
 	ctx := context.Background()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 	seed(t, sb, "src.go", "package src\n")
 	seed(t, sb, "dst.go", "package dst\n")
 

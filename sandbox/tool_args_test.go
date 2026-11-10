@@ -41,7 +41,7 @@ func TestLenientString_UnmarshalJSON(t *testing.T) {
 // string field with a zero-value sentinel (session_id: 0). That decodes as its
 // literal text instead of failing the call.
 func TestCodeTool_LenientArgs(t *testing.T) {
-	tool := CodeTool(NewLocal(), CodeToolConfig{})
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{})
 	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{},
 		`{"cmd":"echo lenient ok","timeout_seconds":0,"workdir":null,"session_id":0}`)
 	if err != nil {
@@ -62,7 +62,7 @@ func TestCodeTool_LenientArgs(t *testing.T) {
 func TestCodeTool_LenientArgs_NumericSessionName(t *testing.T) {
 	// A real Exec backend under the fake: session_id 0 decodes to "" and runs
 	// in a fresh shell (plain Exec), which the terminal-only fake cannot serve.
-	sb := &fakeTerminalSandbox{Sandbox: NewLocal(), started: make(chan struct{}, 8)}
+	sb := &fakeTerminalSandbox{Sandbox: &LocalSandbox{}, started: make(chan struct{}, 8)}
 	tool := CodeTool(sb, CodeToolConfig{Sessions: true})
 	ctx := context.Background()
 	tc := &agents.ToolContext{}
@@ -83,11 +83,11 @@ func TestCodeTool_LenientArgs_NumericSessionName(t *testing.T) {
 	}
 }
 
-// Arguments that cannot decode at all are refused as model-visible text, like
-// a policy veto — not returned as an error, which would abort the run (CodeTool
-// sets no FailureErrorFunction).
+// Arguments that cannot decode at all are refused as model-visible text — not
+// returned as an error, which would abort the run (CodeTool sets no
+// FailureErrorFunction).
 func TestCodeTool_InvalidArgsRefusedAsText(t *testing.T) {
-	tool := CodeTool(NewLocal(), CodeToolConfig{})
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{})
 	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{},
 		`{"cmd":42,"timeout_seconds":0,"workdir":"","session_id":""}`)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestCodeTool_InvalidArgsRefusedAsText(t *testing.T) {
 // A call OnInvoke will refuse as text must not consume a human approval.
 func TestCodeTool_InvalidArgsSkipApproval(t *testing.T) {
 	innerCalled := false
-	tool := CodeTool(NewLocal(), CodeToolConfig{
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{
 		NeedsApprovalFunc: func(context.Context, *agents.RunContext, string, string) (bool, error) {
 			innerCalled = true
 			return true, nil
@@ -126,7 +126,7 @@ func TestCodeTool_InvalidArgsSkipApproval(t *testing.T) {
 // The lenient decoding is invisible in the schema: the model is still told
 // these fields are plain strings.
 func TestCodeTool_LenientArgsSchemaIsString(t *testing.T) {
-	tool := CodeTool(NewLocal(), CodeToolConfig{Sessions: true})
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{Sessions: true})
 	props, _ := tool.ParamsJSONSchema["properties"].(map[string]any)
 	if props == nil {
 		t.Fatalf("schema has no properties: %v", tool.ParamsJSONSchema)
@@ -145,7 +145,7 @@ func TestCodeTool_LenientArgsSchemaIsString(t *testing.T) {
 // Without Sessions the schema must not mention session_id at all — not in
 // properties, and (strict mode makes every property required) not in required.
 func TestCodeTool_SchemaOmitsSessionIDWithoutSessions(t *testing.T) {
-	tool := CodeTool(NewLocal(), CodeToolConfig{})
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{})
 	raw, err := json.Marshal(tool.ParamsJSONSchema)
 	if err != nil {
 		t.Fatal(err)

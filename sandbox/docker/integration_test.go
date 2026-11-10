@@ -21,7 +21,7 @@ func TestDockerSandbox_RunsPython(t *testing.T) {
 	}
 	defer sb.Close()
 
-	res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+	res, err := sandbox.Exec(context.Background(), sb, sandbox.ExecRequest{
 		Files: map[string]string{"main.py": "print('hello from docker')"},
 		Cmd:   []string{"python", "main.py"},
 	})
@@ -46,7 +46,7 @@ func TestDockerSandbox_WritableWorkdirAndTmp(t *testing.T) {
 	// The process runs as the image's own user (spec §2.7o) with a read-only
 	// root fs: the working directory and /tmp must still be writable,
 	// including nested dirs.
-	res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+	res, err := sandbox.Exec(context.Background(), sb, sandbox.ExecRequest{
 		Files: map[string]string{
 			"main.py":         "import pkg.helper\nopen('out.txt','w').write('cwd')\nopen('/tmp/t','w').write('tmp')\nprint('writable ok')",
 			"pkg/helper.py":   "open('pkg/nested.txt','w').write('n')",
@@ -72,7 +72,7 @@ func TestDockerSandbox_Timeout(t *testing.T) {
 	}
 	defer sb.Close()
 
-	res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+	res, err := sandbox.Exec(context.Background(), sb, sandbox.ExecRequest{
 		Files:   map[string]string{"main.py": "import time; print('started', flush=True); time.sleep(30)"},
 		Cmd:     []string{"python", "main.py"},
 		Timeout: 2 * time.Second,
@@ -93,7 +93,7 @@ func TestDockerSandbox_NetworkIsolated(t *testing.T) {
 	sb, _ := New(Options{Image: "python:3.12-slim"})
 	defer sb.Close()
 	// With networking disabled, a socket connection should fail.
-	res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+	res, err := sandbox.Exec(context.Background(), sb, sandbox.ExecRequest{
 		Files: map[string]string{"main.py": "import socket; socket.create_connection(('1.1.1.1',53),timeout=3)"},
 		Cmd:   []string{"python", "main.py"},
 	})
@@ -115,7 +115,7 @@ func TestDockerSandbox_DetachHandsTheContainerOver(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = RemoveManaged(ctx, opts, opts.ContainerName) })
-	if _, err := first.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"true"}}); err != nil {
+	if _, err := sandbox.Exec(ctx, first, sandbox.ExecRequest{Cmd: []string{"true"}}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := New(opts)
@@ -123,7 +123,7 @@ func TestDockerSandbox_DetachHandsTheContainerOver(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	if _, err := second.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"true"}}); err != nil {
+	if _, err := sandbox.Exec(ctx, second, sandbox.ExecRequest{Cmd: []string{"true"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := first.Detach(); err != nil {
@@ -132,7 +132,7 @@ func TestDockerSandbox_DetachHandsTheContainerOver(t *testing.T) {
 	if st, err := second.Status(ctx); err != nil || st != sandbox.StateRunning {
 		t.Fatalf("status after the first's Detach = %v, %v; want running", st, err)
 	}
-	if res, err := second.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"echo", "still here"}}); err != nil || !strings.Contains(res.Stdout, "still here") {
+	if res, err := sandbox.Exec(ctx, second, sandbox.ExecRequest{Cmd: []string{"echo", "still here"}}); err != nil || !strings.Contains(res.Stdout, "still here") {
 		t.Fatalf("exec after the hand-over = %+v, %v", res, err)
 	}
 }

@@ -19,7 +19,7 @@ func TestAddressReadsTheServiceDomain(t *testing.T) {
 		t.Fatal("Address provisioned a sandbox")
 	}
 	f.domain = "sandboxes.example"
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	id, domain, err := sb.Address(t.Context())

@@ -13,7 +13,7 @@ import (
 	"github.com/zzir/agents-go/tracing"
 )
 
-// Command is one exec_command call decoded, policy-checked and approved, for
+// Command is one exec_command call decoded and approved, for
 // the host to run in the background (spec §2.7w).
 type Command struct {
 	// Line is the shell line as exec_command would run it, workdir applied.
@@ -47,7 +47,7 @@ func (c *Command) Run(ctx context.Context, sb Sandbox) (agents.ToolResult, error
 	script := spillScript(c.cfg.SpillDir, c.cfg.SpillRetention) +
 		"; exec >" + ShellQuote(outPath) + " 2>" + ShellQuote(errPath) + " || exit 125; " + c.Line
 	start := time.Now()
-	res, err := sb.Exec(ctx, ExecRequest{Cmd: []string{"bash", "-c", script}, Timeout: c.Timeout})
+	res, err := Exec(ctx, sb, ExecRequest{Cmd: []string{"bash", "-c", script}, Timeout: c.Timeout})
 	if err != nil {
 		return fail(err)
 	}
@@ -108,7 +108,7 @@ func (c *Command) readBack(ctx context.Context, sb Sandbox, outPath, errPath str
 		fmt.Fprintf(&b, "if [ -e %s ]; then if [ $(($(wc -c < %s))) -le %d ]; then cat %s; else head -c %d %s; tail -c %d %s; fi; fi; ",
 			q, q, limit, q, head, q, tail, q)
 	}
-	res, err := sb.Exec(ctx, ExecRequest{
+	res, err := Exec(ctx, sb, ExecRequest{
 		Cmd:            []string{"sh", "-c", b.String()},
 		Timeout:        DefaultTimeout,
 		MaxOutputBytes: int64(2*limit + 256),

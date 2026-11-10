@@ -78,7 +78,7 @@ func (s *Sandbox) authenticate(req *http.Request) {
 // health asks the daemon whether it answers. Only a 5xx says stopped: it is
 // the gateway of a paused sandbox (502 on E2B, 500 on Bailian).
 func (s *Sandbox) health(ctx context.Context, id string) (sandbox.State, error) {
-	ctx, cancel := withTimeout(ctx, controlCallTimeout)
+	ctx, cancel := context.WithTimeout(ctx, controlCallTimeout)
 	defer cancel()
 	req, err := s.envdRequestAt(ctx, s.envdHost(id), http.MethodGet, "/health", nil)
 	if err != nil {
@@ -175,7 +175,7 @@ func (s *Sandbox) CreateExclusive(ctx context.Context, p string, content []byte)
 	full := s.resolvePath(p)
 	script := "set -C; mkdir -p " + sandbox.ShellQuote(path.Dir(full)) +
 		" && : > " + sandbox.ShellQuote(full)
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
+	res, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", script}})
 	if err != nil {
 		return err
 	}

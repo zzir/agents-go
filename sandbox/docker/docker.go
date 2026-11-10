@@ -32,9 +32,6 @@ const (
 	// workDir is the working directory inside the container (the Dockerfile
 	// WORKDIR); ephemeral mode mounts an anonymous volume here for a read-only root.
 	workDir = "/workspace"
-	// logReadTimeout bounds reading the container logs after a timeout, when
-	// the request's own context is already spent.
-	logReadTimeout = 10 * time.Second
 	// logMaxSize caps the json-file container log on the daemon's disk; output
 	// returned to the caller is capped separately, well below this.
 	logMaxSize = "10m"
@@ -133,8 +130,8 @@ type Sandbox struct {
 	pullMu   sync.Mutex
 	pullDone bool
 
-	// sshDial is set for an ssh:// Host and closed with the sandbox.
-	sshDial *sshDialer
+	// disconnect releases the daemon client and, for an ssh:// host, its tunnel.
+	disconnect func()
 
 	// persistent container state
 	mu          sync.Mutex
@@ -152,30 +149,11 @@ func New(opts Options) (*Sandbox, error) {
 	if opts.HostDir != "" && opts.Host != "" {
 		return nil, fmt.Errorf("docker sandbox: HostDir needs the local daemon; use VolumeName with Host %q", opts.Host)
 	}
-	// API-version negotiation is on by default in the moby client.
-	clientOpts := []client.Opt{client.FromEnv}
-	var sshDial *sshDialer
-	switch {
-	case strings.HasPrefix(opts.Host, "ssh://"):
-		d, err := newSSHDialer(opts.Host, opts.SSH)
-		if err != nil {
-			return nil, err
-		}
-		sshDial = d
-		// The host is a placeholder: every request rides the dialer's channel
-		// to the remote socket (the connhelper pattern).
-		clientOpts = append(clientOpts, client.WithHost("http://docker.invalid"), client.WithDialContext(d.DialContext))
-	case opts.Host != "":
-		clientOpts = append(clientOpts, client.WithHost(opts.Host))
-	}
-	cli, err := client.New(clientOpts...)
+	cli, disconnect, err := dial(opts)
 	if err != nil {
-		if sshDial != nil {
-			_ = sshDial.Close()
-		}
-		return nil, fmt.Errorf("docker sandbox: %w", err)
+		return nil, err
 	}
-	return &Sandbox{cli: cli, opts: opts, sshDial: sshDial}, nil
+	return &Sandbox{cli: cli, opts: opts, disconnect: disconnect}, nil
 }
 
 // ensureImage pulls the image if it is not available locally. Unlike sync.Once,
@@ -366,30 +344,7 @@ func (s *Sandbox) adoptNamed(ctx context.Context) (string, error) {
 // from an older configuration: safe to replace, unlike a foreign holder.
 var errStaleOurs = errors.New("held by our container from a different configuration")
 
-// Exec implements sandbox.Sandbox.
-func (s *Sandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (*sandbox.ExecResult, error) {
-	if err := s.prepareExec(ctx, req); err != nil {
-		return nil, err
-	}
-	if !s.opts.Persistent {
-		// Ephemeral mode reads the container log once the process has exited,
-		// so it fills the result's Stdout/Stderr itself.
-		return s.execEphemeral(ctx, req)
-	}
-	// Persistent mode has a single core shared with ExecStream: capped buffers
-	// stand in for the caller's writers, as in the local backend.
-	maxOut := req.EffectiveMaxOutputBytes()
-	stdout := &sandbox.CappedBuffer{Max: maxOut}
-	stderr := &sandbox.CappedBuffer{Max: maxOut}
-	res, err := s.execPersistent(ctx, req, stdout, stderr)
-	if err != nil {
-		return nil, err
-	}
-	res.Stdout, res.Stderr = stdout.String(), stderr.String()
-	return res, nil
-}
-
-// ExecStream implements sandbox.ExecStreamer.
+// ExecStream implements sandbox.Sandbox.
 func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdout, stderr io.Writer) (*sandbox.ExecResult, error) {
 	if err := s.prepareExec(ctx, req); err != nil {
 		return nil, err
@@ -397,9 +352,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, req sandbox.ExecRequest, stdou
 	if s.opts.Persistent {
 		return s.execPersistent(ctx, req, stdout, stderr)
 	}
-	// Ephemeral mode is where Exec and ExecStream cannot share a core: Exec reads
-	// the stored log after exit, streaming follows it live (see streamEphemeral).
-	return s.streamEphemeral(ctx, req, stdout, stderr)
+	return s.execEphemeral(ctx, req, stdout, stderr)
 }
 
 // prepareExec makes the image available and rejects requests no mode supports.
@@ -519,60 +472,9 @@ func copyAttached(ctx context.Context, r io.Reader, sever func(), stdout, stderr
 	return nil
 }
 
-// execEphemeral runs req in a throw-away container and returns its buffered
-// output; unlike the persistent core it fills Stdout/Stderr from the log.
-func (s *Sandbox) execEphemeral(ctx context.Context, req sandbox.ExecRequest) (*sandbox.ExecResult, error) {
-	id, remove, err := s.startEphemeral(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	defer remove()
-
-	timeout := req.EffectiveTimeout()
-	wctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	res := &sandbox.ExecResult{}
-	wait := s.cli.ContainerWait(wctx, id, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
-	statusCh, errCh := wait.Result, wait.Error
-	select {
-	case status := <-statusCh:
-		if status.Error != nil {
-			return nil, fmt.Errorf("docker sandbox: wait: %s", status.Error.Message)
-		}
-		res.ExitCode = int(status.StatusCode)
-	case werr := <-errCh:
-		if cerr := ctx.Err(); cerr != nil {
-			return nil, cerr
-		}
-		if wctx.Err() == context.DeadlineExceeded {
-			res.TimedOut = true
-			res.ExitCode = -1
-			_, _ = s.cli.ContainerKill(context.WithoutCancel(ctx), id, client.ContainerKillOptions{Signal: "KILL"})
-		} else if werr != nil {
-			return nil, fmt.Errorf("docker sandbox: wait: %w", werr)
-		}
-	}
-
-	lctx := ctx
-	if res.TimedOut {
-		var lcancel context.CancelFunc
-		lctx, lcancel = context.WithTimeout(context.WithoutCancel(ctx), logReadTimeout)
-		defer lcancel()
-	}
-	stdout, stderr, lerr := s.readLogs(lctx, id, req.EffectiveMaxOutputBytes())
-	res.Stdout, res.Stderr = stdout, stderr
-	if lerr != nil && !res.TimedOut {
-		return nil, lerr
-	}
-	// On timeout a broken log read costs only output, never the TimedOut
-	// verdict — that came from ContainerWait, as in streamEphemeral.
-	return res, nil
-}
-
-// streamEphemeral runs req in a throw-away container, following its log so the
+// execEphemeral runs req in a throw-away container, following its log so the
 // writers see output as it is produced.
-func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, stdout, stderr io.Writer) (*sandbox.ExecResult, error) {
+func (s *Sandbox) execEphemeral(ctx context.Context, req sandbox.ExecRequest, stdout, stderr io.Writer) (*sandbox.ExecResult, error) {
 	id, remove, err := s.startEphemeral(ctx, req)
 	if err != nil {
 		return nil, err
@@ -593,12 +495,11 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 	}
 	defer rc.Close()
 
-	// A copy error costs output, not correctness: the exit status comes from
-	// ContainerWait below (the persistent core cannot be as relaxed).
-	_, _ = stdcopy.StdCopy(stdout, stderr, rc)
+	// A broken read never costs the TimedOut verdict, which comes from tctx and
+	// ContainerWait below; on a clean exit it is an error (see the return).
+	_, copyErr := stdcopy.StdCopy(stdout, stderr, rc)
 
-	// The caller's ending is checked before tctx's, as in execEphemeral — see
-	// spec §2.7m.
+	// The caller's ending is checked before tctx's — see spec §2.7m.
 	res := &sandbox.ExecResult{}
 	if cerr := ctx.Err(); cerr != nil {
 		return nil, cerr
@@ -630,6 +531,10 @@ func (s *Sandbox) streamEphemeral(ctx context.Context, req sandbox.ExecRequest, 
 		} else if werr != nil {
 			return nil, fmt.Errorf("docker sandbox: wait: %w", werr)
 		}
+	}
+	// The process exited, so output the writers did not get is simply missing.
+	if !res.TimedOut && copyErr != nil && !errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, io.ErrUnexpectedEOF) {
+		return nil, fmt.Errorf("docker sandbox: read logs: %w", copyErr)
 	}
 	return res, nil
 }
@@ -740,49 +645,6 @@ func (s *Sandbox) buildPersistentConfig() (*container.Config, *container.HostCon
 	return cfg, hostCfg
 }
 
-// readLogs fetches the container output, capping each stream at max bytes;
-// like demuxLogs, output collected so far is returned even with a non-nil err.
-func (s *Sandbox) readLogs(ctx context.Context, id string, maxBytes int64) (string, string, error) {
-	rc, err := s.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
-	if err != nil {
-		return "", "", fmt.Errorf("docker sandbox: logs: %w", err)
-	}
-	defer rc.Close()
-	stdout, stderr, derr := demuxLogs(rc, maxBytes)
-	if derr != nil {
-		return stdout, stderr, fmt.Errorf("docker sandbox: read logs: %w", derr)
-	}
-	return stdout, stderr, nil
-}
-
-// demuxLogs splits a multiplexed, FINISHED log into stdout and stderr, capped
-// each; reading stops only once both are full, and partial output survives err.
-func demuxLogs(r io.Reader, maxBytes int64) (string, string, error) {
-	stdout := &sandbox.CappedBuffer{Max: maxBytes}
-	stderr := &sandbox.CappedBuffer{Max: maxBytes}
-	src := &stopWhenFull{r: r, full: func() bool { return stdout.Full() && stderr.Full() }}
-	// A cut mid-frame surfaces as ErrUnexpectedEOF, which just means "truncated".
-	if _, err := stdcopy.StdCopy(stdout, stderr, src); err != nil &&
-		!errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return stdout.String(), stderr.String(), err
-	}
-	return stdout.String(), stderr.String(), nil
-}
-
-// stopWhenFull reads from r until full() reports both sinks are at capacity,
-// then ends the stream early.
-type stopWhenFull struct {
-	r    io.Reader
-	full func() bool
-}
-
-func (s *stopWhenFull) Read(p []byte) (int, error) {
-	if s.full() {
-		return 0, io.EOF
-	}
-	return s.r.Read(p)
-}
-
 // execMarkerEnv tags each persistent-mode exec so a timed-out process can be
 // found inside the container: ExecInspect's PID is a host-namespace PID.
 const execMarkerEnv = "AGENTS_SANDBOX_EXEC"
@@ -822,13 +684,13 @@ func (s *Sandbox) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), terminalOpTimeout)
 		defer cancel()
 		if s.opts.Persistent && s.opts.KeepOnClose {
-			timeout := 10
-			_, _ = s.cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &timeout})
+			_ = stopContainer(ctx, s.cli, id)
 		} else {
 			_, _ = s.cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 		}
 	}
-	return s.disconnect()
+	s.disconnect()
+	return nil
 }
 
 // Detach implements sandbox.Detacher: the connection goes, the container stays
@@ -837,16 +699,8 @@ func (s *Sandbox) Detach() error {
 	s.mu.Lock()
 	s.containerID = ""
 	s.mu.Unlock()
-	return s.disconnect()
-}
-
-// disconnect releases the daemon client and, for an ssh:// host, its tunnel.
-func (s *Sandbox) disconnect() error {
-	err := s.cli.Close()
-	if s.sshDial != nil {
-		_ = s.sshDial.Close()
-	}
-	return err
+	s.disconnect()
+	return nil
 }
 
 // containerEnv is the environment an EPHEMERAL container is created with:
@@ -870,5 +724,4 @@ func envSlice(env map[string]string) []string {
 }
 
 var _ sandbox.Sandbox = (*Sandbox)(nil)
-var _ sandbox.ExecStreamer = (*Sandbox)(nil)
 var _ sandbox.Detacher = (*Sandbox)(nil)

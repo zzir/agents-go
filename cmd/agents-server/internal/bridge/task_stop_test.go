@@ -214,7 +214,7 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 	// table), so the docker config's build is overridden with the SDK local
 	// sandbox — the test is about run cancellation, not the backend.
 	runner.Deps.SandboxManager.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
-		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workspace}), nil
+		return &sandbox.LocalSandbox{WorkDir: workspace}, nil
 	})
 	tg := &store.Sandbox{ID: store.NewID(), Name: "host", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := runner.Deps.Sandboxes.Create(ctx, tg); err != nil {

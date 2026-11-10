@@ -546,7 +546,7 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool, background Backg
 	fileCfg := sandbox.FileToolConfig{MaxOutputBytes: fileToolMaxOutputBytes}
 	tools := []*agents.Tool{sandbox.CodeTool(sb, codeCfg)}
 	tools = append(tools, sandbox.FileTools(sb, fileCfg)...)
-	tools = append(tools, sandbox.ApplyPatchTool(sb, fileCfg))
+	tools = append(tools, sandbox.ApplyPatchTool(sb))
 	releaseTools := func() {
 		for _, p := range pools {
 			_ = p.Close()
@@ -561,7 +561,7 @@ func (m *Manager) SandboxTools(spec Spec, commandApproval bool, background Backg
 func ToolSurface() []*agents.Tool {
 	tools := []*agents.Tool{sandbox.CodeTool(nil, sandbox.CodeToolConfig{})}
 	tools = append(tools, sandbox.FileTools(nil, sandbox.FileToolConfig{})...)
-	return append(tools, sandbox.ApplyPatchTool(nil, sandbox.FileToolConfig{}))
+	return append(tools, sandbox.ApplyPatchTool(nil))
 }
 
 // buildSandbox hands spec to its target type's backend, with the callback a

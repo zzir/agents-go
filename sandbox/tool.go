@@ -26,11 +26,8 @@ type CodeToolConfig struct {
 	// used when empty.
 	Description string
 	// Timeout is the default per-execution timeout; zero means DefaultTimeout.
-	// The model overrides it per call via timeout_seconds, capped at MaxTimeout.
+	// The model overrides it per call via timeout_seconds, capped at 10 minutes.
 	Timeout time.Duration
-	// MaxTimeout caps the per-command timeout the model may request. Zero
-	// means 10 minutes.
-	MaxTimeout time.Duration
 	// MaxOutputBytes truncates each of stdout and stderr sent to the model, on
 	// a rune boundary. Defaults to 8192.
 	MaxOutputBytes int
@@ -45,14 +42,12 @@ type CodeToolConfig struct {
 	// calls, pooled per TOOL (spec §2.7k). Needs a terminal backend and RegisterCloser.
 	Sessions bool
 	// Background, when set, enables the background argument: a call asking for
-	// it is handed here after decoding, the policy and the approval, and what it
-	// returns is the call's result (spec §2.7w). Requires SpillDir.
+	// it is handed here after decoding and the approval, and what it returns is
+	// the call's result (spec §2.7w). Requires SpillDir.
 	Background func(ctx context.Context, tc *agents.ToolContext, cmd *Command) (agents.ToolResult, error)
 	// BackgroundMaxTimeout caps a background command; zero means 60 minutes. A
 	// call whose timeout_seconds is 0 gets the cap.
 	BackgroundMaxTimeout time.Duration
-	// Policy filters commands before the approval gate (spec §2.7j).
-	Policy Policy
 	// NeedsApprovalFunc, when set, is the tool's per-call approval gate, given
 	// the command's argsJSON and the model-assigned callID; nil never gates.
 	NeedsApprovalFunc func(ctx context.Context, rc *agents.RunContext, argsJSON string, callID string) (bool, error)
@@ -63,28 +58,21 @@ type CodeToolConfig struct {
 }
 
 const (
-	defaultMaxTimeout           = 10 * time.Minute
+	// maxTimeout caps the timeout_seconds a foreground call may request.
+	maxTimeout                  = 10 * time.Minute
 	defaultBackgroundMaxTimeout = 60 * time.Minute
-)
 
-// DefaultDescription is what an empty Description falls back to.
-func (CodeToolConfig) DefaultDescription() string {
-	return "Execute a shell command in a sandboxed environment and return its stdout, stderr and exit code. " +
+	defaultCodeToolDescription = "Execute a shell command in a sandboxed environment and return its stdout, stderr and exit code. " +
 		"The command is run via bash -c. " +
 		"Use timeout_seconds to override the default timeout for long-running commands. " +
 		"Use workdir to run the command in a specific directory (relative paths are resolved from /workspace)."
-}
+)
 
 func (c CodeToolConfig) withDefaults() CodeToolConfig {
 	c.Name = cmp.Or(c.Name, "exec_command")
-	if c.Description == "" {
-		c.Description = c.DefaultDescription()
-	}
+	c.Description = cmp.Or(c.Description, defaultCodeToolDescription)
 	if c.MaxOutputBytes <= 0 {
 		c.MaxOutputBytes = 8192
-	}
-	if c.MaxTimeout <= 0 {
-		c.MaxTimeout = defaultMaxTimeout
 	}
 	if c.BackgroundMaxTimeout <= 0 {
 		c.BackgroundMaxTimeout = defaultBackgroundMaxTimeout
@@ -187,24 +175,15 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 		}
 		cfg.SpillDir = clean
 	}
-	// Compiled once and shared read-only by both closures: the runner runs a
-	// turn's tool calls in parallel. The zero Policy refuses nothing.
-	compiled, policyErr := cfg.Policy.compile()
-	checkPolicy := func(cmd string) error {
-		if policyErr != nil {
-			return policyErr // an uncompilable policy refuses everything (spec §2.7j)
-		}
-		return compiled.check(cmd)
-	}
-	// A call OnInvoke will refuse as text — a policy veto or malformed
-	// arguments — reports "no approval needed" (spec §2.7j, §2.7l).
+	// Malformed arguments, which OnInvoke refuses as text, report "no approval
+	// needed" (spec §2.7l).
 	needsApproval := cfg.NeedsApprovalFunc
 	if needsApproval != nil {
 		inner := needsApproval
 		needsApproval = func(ctx context.Context, rc *agents.RunContext, argsJSON, callID string) (bool, error) {
 			var args codeToolArgs
-			if json.Unmarshal([]byte(argsJSON), &args) != nil || checkPolicy(args.Cmd) != nil {
-				return false, nil //nolint:nilerr // the veto is deliberate: OnInvoke refuses this call as text
+			if json.Unmarshal([]byte(argsJSON), &args) != nil {
+				return false, nil //nolint:nilerr // deliberate: OnInvoke refuses this call as text
 			}
 			return inner(ctx, rc, argsJSON, callID)
 		}
@@ -226,13 +205,7 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 
 			timeout := cmp.Or(cfg.Timeout, DefaultTimeout)
 			if args.TimeoutSeconds > 0 {
-				timeout = min(time.Duration(args.TimeoutSeconds)*time.Second, cfg.MaxTimeout)
-			}
-
-			// Refused as TEXT naming the rule, not an error (spec §2.7j).
-			if err := checkPolicy(args.Cmd); err != nil {
-				return agents.TextResult(err.Error()).WithDisplay("terminal").
-					WithDetails(map[string]any{"command": args.Cmd, "refused": true}), nil
+				timeout = min(time.Duration(args.TimeoutSeconds)*time.Second, maxTimeout)
 			}
 
 			cmd := args.Cmd
@@ -276,26 +249,15 @@ func CodeTool(sb Sandbox, cfg CodeToolConfig) *agents.Tool {
 					}), nil
 			}
 
+			// Streamed as progress events; the model still gets only the final
+			// result, built from the head-and-tail capture (spec §2.7v).
 			req := ExecRequest{Cmd: []string{"bash", "-c", cmd}, Timeout: timeout}
-			var res *ExecResult
-			var stdout, stderr captured
-			var err error
-			if streamer, ok := sb.(ExecStreamer); ok && tc != nil {
-				// Streamed as progress events; the model still gets only the
-				// final result, built from the head-and-tail capture (spec §2.7v).
-				maxOut := int(req.EffectiveMaxOutputBytes())
-				outBuf, errBuf := newHeadTail(maxOut), newHeadTail(maxOut)
-				w := &progressWriter{tc: tc, cmd: cmd}
-				res, err = streamer.ExecStream(ctx,
-					req, io.MultiWriter(outBuf, w), io.MultiWriter(errBuf, w))
-				w.flush()
-				stdout, stderr = outBuf.captured(), errBuf.captured()
-			} else {
-				res, err = sb.Exec(ctx, req)
-				if res != nil {
-					stdout, stderr = whole(res.Stdout), whole(res.Stderr)
-				}
-			}
+			maxOut := int(req.EffectiveMaxOutputBytes())
+			outBuf, errBuf := newHeadTail(maxOut), newHeadTail(maxOut)
+			w := &progressWriter{tc: tc, cmd: cmd}
+			res, err := sb.ExecStream(ctx, req, io.MultiWriter(outBuf, w), io.MultiWriter(errBuf, w))
+			w.flush()
+			stdout, stderr := outBuf.captured(), errBuf.captured()
 			if err != nil {
 				span.SetError(err.Error(), nil)
 				return agents.ToolResult{}, agents.Classify(agents.CodeSandboxExec, fmt.Errorf("code tool %q: %w", cfg.Name, err))

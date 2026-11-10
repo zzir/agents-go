@@ -37,7 +37,7 @@ func newCommandFixture(t *testing.T, url string) *commandFixture {
 	runner.Deps.Workspaces = store.NewWorkspaceStore(runner.db)
 	runner.Deps.SandboxManager = sandboxes.NewManager()
 	runner.Deps.SandboxManager.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
-		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: dir}), nil
+		return &sandbox.LocalSandbox{WorkDir: dir}, nil
 	})
 	tg := &store.Sandbox{ID: store.NewID(), Name: "host", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := runner.Deps.Sandboxes.Create(ctx, tg); err != nil {

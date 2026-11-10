@@ -16,7 +16,7 @@ func TestHeadersReachBothPlanes(t *testing.T) {
 		o.Headers = map[string]string{"Authorization": "Bearer bailian-key"}
 	})
 	f.requireHeader = [2]string{"Authorization", "Bearer bailian-key"}
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatalf("exec with the header: %v", err)
 	}
 	if err := sb.WriteFile(t.Context(), "h.txt", []byte("x")); err != nil {
@@ -29,7 +29,7 @@ func TestHeadersReachBothPlanes(t *testing.T) {
 	// Without it the very first control-plane call is refused.
 	bare, f2 := fakeBackedSandbox(t)
 	f2.requireHeader = [2]string{"Authorization", "Bearer bailian-key"}
-	if _, err := bare.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err == nil {
+	if _, err := sandbox.Exec(t.Context(), bare, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err == nil {
 		t.Fatal("a request without the required header was accepted")
 	}
 
@@ -40,7 +40,7 @@ func TestHeadersReachBothPlanes(t *testing.T) {
 		o.Headers = map[string]string{"X-API-Key": "override"}
 	})
 	f3.requireHeader = [2]string{"X-API-Key", "key"}
-	if _, err := own.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), own, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatalf("Options.Headers replaced the client's own credential: %v", err)
 	}
 }

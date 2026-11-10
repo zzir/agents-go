@@ -39,13 +39,12 @@ const applyPatchDesc = "Apply a patch to one or more files in the sandbox. Forma
 // ApplyPatchTool returns a tool that applies a Codex-style patch to files in
 // the sandbox, all of them atomically: content is computed in memory first, and
 // a write that fails mid-commit is rolled back from a snapshot (decisions §5.48).
-func ApplyPatchTool(sb Sandbox, cfg FileToolConfig) *agents.Tool {
-	cfg = cfg.withDefaults()
+func ApplyPatchTool(sb Sandbox) *agents.Tool {
 	return agents.NewTool(
 		"apply_patch",
 		applyPatchDesc,
 		func(ctx context.Context, _ *agents.ToolContext, args applyPatchArgs) (string, error) {
-			ctx, cancel := context.WithTimeout(ctx, cfg.effectiveTimeout())
+			ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
 			defer cancel()
 			// Serialize all apply_patch commits process-wide (see applyPatchSem), via
 			// select so the timeout covers queueing and a cancelled run does not wait.

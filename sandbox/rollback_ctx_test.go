@@ -46,7 +46,7 @@ func (s *slowCreateSandbox) RemoveFile(ctx context.Context, p string) error {
 // context so undo operations actually execute — rather than silently failing on
 // the cancelled ctx and leaving a half-applied patch reported as rolled back.
 func TestApplyPatchRollbackUsesDetachedContext(t *testing.T) {
-	base := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	base := &LocalSandbox{WorkDir: t.TempDir()}
 	sb := &slowCreateSandbox{Sandbox: base, blockNth: 2}
 	patch := "*** Begin Patch\n*** Add File: a.txt\n+aaa\n*** Add File: b.txt\n+bbb\n*** End Patch\n"
 

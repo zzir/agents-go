@@ -37,7 +37,7 @@ func TestCodeTool_SchemaOffersOnlyWhatIsEnabled(t *testing.T) {
 		if tc.background {
 			cfg.Background = noopBackground
 		}
-		schema := CodeTool(NewLocal(), cfg).ParamsJSONSchema
+		schema := CodeTool(&LocalSandbox{}, cfg).ParamsJSONSchema
 		props, _ := schema["properties"].(map[string]any)
 		got := slices.Sorted(func(yield func(string) bool) {
 			for k := range props {
@@ -65,14 +65,14 @@ func TestCodeTool_BackgroundNeedsSpillDir(t *testing.T) {
 			t.Error("Background without SpillDir was accepted")
 		}
 	}()
-	CodeTool(NewLocal(), CodeToolConfig{Background: noopBackground})
+	CodeTool(&LocalSandbox{}, CodeToolConfig{Background: noopBackground})
 }
 
-// A background call is handed over after the policy and the decode, with the
-// line as the foreground would run it and the timeout capped for the background.
+// A background call is handed over after the decode, with the line as the
+// foreground would run it and the timeout capped for the background.
 func TestCodeTool_BackgroundHandsTheCommandToTheHost(t *testing.T) {
 	var got *Command
-	tool := CodeTool(NewLocal(), CodeToolConfig{
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{
 		SpillDir:             "spill",
 		BackgroundMaxTimeout: time.Hour,
 		Background: func(_ context.Context, tc *agents.ToolContext, cmd *Command) (agents.ToolResult, error) {
@@ -104,15 +104,12 @@ func TestCodeTool_BackgroundHandsTheCommandToTheHost(t *testing.T) {
 	}
 }
 
-// The policy and the approval gate see a background call like any other.
-func TestCodeTool_BackgroundIsPolicyCheckedAndGated(t *testing.T) {
-	handed := false
+// The approval gate sees a background call like any other.
+func TestCodeTool_BackgroundIsGated(t *testing.T) {
 	var gated string
-	tool := CodeTool(NewLocal(), CodeToolConfig{
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{
 		SpillDir: "spill",
-		Policy:   Policy{Deny: []string{"rm -rf"}},
 		Background: func(context.Context, *agents.ToolContext, *Command) (agents.ToolResult, error) {
-			handed = true
 			return agents.TextResult("started"), nil
 		},
 		NeedsApprovalFunc: func(_ context.Context, _ *agents.RunContext, argsJSON, _ string) (bool, error) {
@@ -120,14 +117,6 @@ func TestCodeTool_BackgroundIsPolicyCheckedAndGated(t *testing.T) {
 			return true, nil
 		},
 	})
-	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{},
-		`{"cmd":"rm -rf /","timeout_seconds":0,"workdir":"","background":true}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if handed || out.Details["refused"] != true {
-		t.Errorf("a vetoed command reached the host: handed=%v details=%v", handed, out.Details)
-	}
 	args := `{"cmd":"make","timeout_seconds":0,"workdir":"","background":true}`
 	if need, _ := tool.NeedsApprovalFunc(context.Background(), nil, args, "c"); !need || gated != args {
 		t.Errorf("gate: need=%v args=%q", need, gated)
@@ -137,7 +126,7 @@ func TestCodeTool_BackgroundIsPolicyCheckedAndGated(t *testing.T) {
 // background: true is refused as text where the host offers no background, and
 // together with a session: neither is silently run in the foreground.
 func TestCodeTool_BackgroundRefusals(t *testing.T) {
-	off := CodeTool(NewLocal(), CodeToolConfig{})
+	off := CodeTool(&LocalSandbox{}, CodeToolConfig{})
 	out, err := off.OnInvoke(context.Background(), &agents.ToolContext{},
 		`{"cmd":"sleep 0","timeout_seconds":0,"workdir":"","background":true}`)
 	if err != nil {
@@ -155,7 +144,7 @@ func TestCodeTool_BackgroundRefusals(t *testing.T) {
 		}
 	}
 
-	on := CodeTool(&fakeTerminalSandbox{Sandbox: NewLocal(), started: make(chan struct{}, 8)},
+	on := CodeTool(&fakeTerminalSandbox{Sandbox: &LocalSandbox{}, started: make(chan struct{}, 8)},
 		CodeToolConfig{Sessions: true, SpillDir: "spill", Background: noopBackground})
 	out, err = on.OnInvoke(context.Background(), &agents.ToolContext{},
 		`{"cmd":"make","timeout_seconds":0,"workdir":"","session_id":"build","background":true}`)
@@ -185,7 +174,7 @@ func TestLenientBool(t *testing.T) {
 func backgroundCommand(t *testing.T, dir, line string, timeout time.Duration) (*Command, *LocalSandbox) {
 	t.Helper()
 	var got *Command
-	tool := CodeTool(NewLocalWithOptions(LocalOptions{WorkDir: dir}), CodeToolConfig{
+	tool := CodeTool(&LocalSandbox{WorkDir: dir}, CodeToolConfig{
 		MaxOutputBytes: 1024, SpillDir: ".agents/exec",
 		BackgroundMaxTimeout: timeout,
 		Background: func(_ context.Context, _ *agents.ToolContext, cmd *Command) (agents.ToolResult, error) {
@@ -197,7 +186,7 @@ func backgroundCommand(t *testing.T, dir, line string, timeout time.Duration) (*
 	if _, err := tool.OnInvoke(context.Background(), &agents.ToolContext{ToolCallID: "call_x"}, string(raw)); err != nil {
 		t.Fatal(err)
 	}
-	return got, NewLocalWithOptions(LocalOptions{WorkDir: dir})
+	return got, &LocalSandbox{WorkDir: dir}
 }
 
 // Run redirects both streams to files inside the sandbox and reports the
@@ -260,7 +249,7 @@ func TestCommand_RunFilesStayUnderTheDefaultDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got *Command
-	tool := CodeTool(NewLocalWithOptions(LocalOptions{WorkDir: dir}), CodeToolConfig{
+	tool := CodeTool(&LocalSandbox{WorkDir: dir}, CodeToolConfig{
 		SpillDir: ".agents/exec",
 		Background: func(_ context.Context, _ *agents.ToolContext, cmd *Command) (agents.ToolResult, error) {
 			got = cmd
@@ -271,7 +260,7 @@ func TestCommand_RunFilesStayUnderTheDefaultDirectory(t *testing.T) {
 		`{"cmd":"pwd","timeout_seconds":0,"workdir":"sub","background":true}`); err != nil {
 		t.Fatal(err)
 	}
-	res, err := got.Run(context.Background(), NewLocalWithOptions(LocalOptions{WorkDir: dir}))
+	res, err := got.Run(context.Background(), &LocalSandbox{WorkDir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}

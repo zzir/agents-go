@@ -11,7 +11,7 @@ import (
 // tool, so a caller can gate execution per call from the command in argsJSON.
 func TestCodeToolForwardsNeedsApprovalFunc(t *testing.T) {
 	var gotArgs string
-	tool := CodeTool(NewLocal(), CodeToolConfig{
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{
 		NeedsApprovalFunc: func(_ context.Context, _ *agents.RunContext, argsJSON, _ string) (bool, error) {
 			gotArgs = argsJSON
 			return true, nil
@@ -27,7 +27,7 @@ func TestCodeToolForwardsNeedsApprovalFunc(t *testing.T) {
 	}
 
 	// Unset → the tool has no gate (nil func), i.e. never approval-gated here.
-	plain := CodeTool(NewLocal(), CodeToolConfig{})
+	plain := CodeTool(&LocalSandbox{}, CodeToolConfig{})
 	if plain.NeedsApprovalFunc != nil {
 		t.Fatal("unset NeedsApprovalFunc should leave the tool ungated")
 	}

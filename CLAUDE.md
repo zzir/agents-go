@@ -124,8 +124,9 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 - **MCP** — `mcp/`: a client bridged into the runner by `agents/mcp.go`. Its
   own module — `agents.MCPServer` is the inversion that keeps the go-sdk out
   of the core, so never import `mcp` from `agents`.
-- **Sandbox** — `sandbox/`: `Sandbox` interface, wrapped as a tool via
-  `sandbox/tool.go`; `policy.go` filters commands before the approval gate.
+- **Sandbox** — `sandbox/`: `Sandbox` interface with one exec method,
+  `ExecStream` (`sandbox.Exec` buffers it), wrapped as a tool via
+  `sandbox/tool.go`.
 - **Background tasks** — `agents/tasks/`: sub-agents that outlive the turn that
   spawned them. The wake-up debt is a persisted state machine, and terminal
   state is claimed by compare-and-set.

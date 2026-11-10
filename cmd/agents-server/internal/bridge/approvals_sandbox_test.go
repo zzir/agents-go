@@ -99,7 +99,7 @@ func TestResumeBuildsTheAgentOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	mgr := sandboxes.NewManager()
-	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil })
+	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) { return &sandbox.LocalSandbox{}, nil })
 	// Every Acquire ends in exactly one release, and a release reads the idle
 	// window before anything else — so the window provider counts holders.
 	var releases atomic.Int32

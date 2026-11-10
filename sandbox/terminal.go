@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-// DefaultTerminalTerm is the TERM value used when TerminalOptions.Term is empty.
+// DefaultTerminalTerm is the TERM value every backend's terminal shell sees.
 const DefaultTerminalTerm = "xterm-256color"
 
 // Default PTY dimensions used when TerminalOptions leaves Cols/Rows zero.
@@ -24,14 +24,6 @@ type TerminalOptions struct {
 	// Cols and Rows set the initial PTY size. Zero values default to
 	// DefaultTerminalCols x DefaultTerminalRows.
 	Cols, Rows int
-	// Term is the TERM environment variable value seen by the shell; empty
-	// means DefaultTerminalTerm.
-	Term string
-	// Shell overrides the command started in the PTY. Empty selects the
-	// backend default: bash when the image ships it, otherwise /bin/sh.
-	Shell []string
-	// Env sets additional environment variables for the shell.
-	Env map[string]string
 }
 
 // EffectiveCols returns the configured column count or DefaultTerminalCols.
@@ -48,14 +40,6 @@ func (o TerminalOptions) EffectiveRows() int {
 		return DefaultTerminalRows
 	}
 	return o.Rows
-}
-
-// EffectiveTerm returns the configured TERM value or DefaultTerminalTerm.
-func (o TerminalOptions) EffectiveTerm() string {
-	if o.Term == "" {
-		return DefaultTerminalTerm
-	}
-	return o.Term
 }
 
 // Terminal is a live interactive shell session inside a sandbox: Read returns

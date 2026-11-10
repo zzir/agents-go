@@ -105,7 +105,7 @@ func TestCaptured_TrimRightKeepsTheTotalHonest(t *testing.T) {
 // Through the streamed path, a command writing past the capture cap shows the
 // model the LAST line it printed and the number of bytes it actually wrote.
 func TestCodeTool_StreamedOutputKeepsTheRealTail(t *testing.T) {
-	tool := CodeTool(NewLocal(), CodeToolConfig{MaxOutputBytes: 4096})
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{MaxOutputBytes: 4096})
 	const n = 3_000_000 // past DefaultMaxOutputBytes
 	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{},
 		fmt.Sprintf(`{"cmd":"yes | head -c %d; echo; echo LAST-LINE","timeout_seconds":0,"workdir":""}`, n))

@@ -41,7 +41,7 @@ func (cfg CodeToolConfig) spill(ctx context.Context, sb Sandbox, span *tracing.S
 	if len(files) == 0 {
 		return
 	}
-	res, err := sb.Exec(ctx, ExecRequest{
+	res, err := Exec(ctx, sb, ExecRequest{
 		Cmd:     []string{"sh", "-c", spillScript(cfg.SpillDir, cfg.SpillRetention)},
 		Files:   files,
 		Timeout: DefaultTimeout,

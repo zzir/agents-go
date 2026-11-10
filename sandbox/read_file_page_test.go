@@ -76,9 +76,9 @@ func TestPageLinesStopsAtTheOutputLimit(t *testing.T) {
 }
 
 func TestReadFileTool_PagesAndRefusesNegatives(t *testing.T) {
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 	tool := ReadFileTool(sb, FileToolConfig{})
-	if out := invokeTool(t, WriteFileTool(sb, FileToolConfig{}), `{"path":"f.txt","content":"a\nb\nc\n"}`); !strings.Contains(out, "wrote") {
+	if out := invokeTool(t, WriteFileTool(sb), `{"path":"f.txt","content":"a\nb\nc\n"}`); !strings.Contains(out, "wrote") {
 		t.Fatal(out)
 	}
 	if got := invokeTool(t, tool, `{"path":"f.txt","offset":2,"limit":1}`); got != "lines 2-2 of 3 (continue with offset=3)\n2\tb\n" {

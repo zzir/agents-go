@@ -77,7 +77,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7h](#27h-schema-validation) | Schema validation | Where arguments, handoff input and structured output are validated |
 | [§2.7i](#27i-progressive-tool-disclosure) | Progressive tool disclosure | Retired |
 | [§2.7g](#27g-tool-progress) | Tool progress | `ToolContext.Emit` streams a partial result to the consumer |
-| [§2.7j](#27j-sandbox-command-policy) | Sandbox command policy | `Policy` filters commands before the approval gate |
+| [§2.7j](#27j-sandbox-command-policy) | Sandbox command policy | Retired |
 | [§2.7k](#27k-persistent-shells) | Persistent shells | When `exec_command` may reuse a named shell |
 | [§2.7l](#27l-sandbox-tool-argument-decoding) | Sandbox tool argument decoding | `exec_command` decodes its own arguments, leniently |
 | [§2.7m](#27m-a-sandbox-reports-its-own-timeout-never-the-callers-ending) | A sandbox reports its own timeout, never the caller's ending | `TimedOut` means the sandbox killed it — never the caller's deadline |
@@ -1118,20 +1118,10 @@ field is ignored. See decisions §5.88.
 
 ### 2.7j Sandbox command policy
 
-`CodeToolConfig.Policy` filters commands **before** the approval gate.
-
-- **Before, not after**: the veto wraps the tool's own `NeedsApprovalFunc`, so
-  a policy-refused command answers "no approval needed" and is refused as text
-  by the tool itself — a person is never asked about a command that was never
-  going to be allowed.
-- **`Deny` is checked after `Allow`, so a deny always wins.**
-- **A refusal is a tool result naming the rule**, not an error.
-- **The zero value allows everything; a policy whose patterns do not compile
-  refuses everything.**
-- **It is a filter on approval noise, not a security boundary.** A pattern
-  matches the TEXT of a command and is blind to shell semantics
-  ([howto/sandbox.md](../howto/sandbox.md)); containment is the sandbox
-  backend's job.
+Retired 2026-11-10. Was `CodeToolConfig.Policy`, allow and deny patterns that
+refused a command as text before the approval gate. Because nothing set one:
+the gate itself (`NeedsApprovalFunc`) decides what a person is asked about.
+See decisions §5.114.
 
 ### 2.7k Persistent shells
 
@@ -1167,18 +1157,16 @@ an activated environment survive between calls.
 `NewTool` wrapper, so nothing upstream of `OnInvoke` catches a malformed call.
 
 - **Malformed arguments are refused as text, not returned as an error.** The
-  refusal is an `IsError` result carrying the decode error, the same shape as a
-  policy veto; an error return stays reserved for sandbox *infrastructure*
-  failure (a dead daemon, a broken connection), which aborts the run
-  ([§2.7](#27-tools)).
+  refusal is an `IsError` result carrying the decode error; an error return
+  stays reserved for sandbox *infrastructure* failure (a dead daemon, a broken
+  connection), which aborts the run ([§2.7](#27-tools)).
 - **The optional string arguments (`workdir`, `session_id`) accept only the
   zero-value sentinels** `null`, `0` and `false`, each decoding to `""`; any
   other non-string scalar is refused as text. The schema still advertises plain
   `string`, and `cmd` stays an ordinary string
   ([howto/sandbox.md](../howto/sandbox.md)).
-- **The approval gate treats undecodable arguments like a policy veto**
-  ([§2.7j](#27j-sandbox-command-policy)): a call `OnInvoke` will refuse as text
-  never reaches a human.
+- **The approval gate answers "no approval needed" for undecodable
+  arguments**: a call `OnInvoke` will refuse as text never reaches a human.
 
 ### 2.7m A sandbox reports its own timeout, never the caller's ending
 
@@ -1192,6 +1180,9 @@ an activated environment survive between calls.
 - **A timed-out result carries whatever output was collected before the
   kill**; a failure reading the tail costs output, never the `TimedOut`
   verdict.
+- **A backend runs a command one way, `ExecStream`**, writing output to the
+  caller's writers as it arrives; `sandbox.Exec` is that call into two buffers,
+  each capped at `ExecRequest.MaxOutputBytes` — see decisions §5.112.
 
 ### 2.7n A sandbox's environment is part of its container identity
 
@@ -1254,6 +1245,9 @@ an activated environment survive between calls.
   daemon, `sandbox/e2b` does it itself on the sandbox it created.
 - **It is done on the FIRST use, not on every one**: a resumed sandbox already
   has the directory, and a caller that removed it meant to.
+- **`LocalSandbox` always has one.** With no `WorkDir` it is a single temp
+  directory, made on first use, shared by every command and file operation and
+  removed by `Close` — see decisions §5.113.
 
 ### 2.7s apply_patch locates hunks by whole lines
 
@@ -1375,7 +1369,7 @@ run, and the model gets its handle at once.
   it offers `session_id` only with Sessions ([§2.7k](#27k-persistent-shells));
   a `background: true` sent anyway is refused as text, never run in the
   foreground instead. `Background` requires `SpillDir`.
-- **A background call is decoded, policy-checked and approved like any other**,
+- **A background call is decoded and approved like any other**,
   then handed over as a `Command` instead of run; one naming a `session_id` is
   refused as text. The approval sees the same arguments, so a trust granted in
   the foreground holds in the background.

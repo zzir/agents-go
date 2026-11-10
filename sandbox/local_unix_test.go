@@ -11,12 +11,12 @@ import (
 )
 
 func TestLocalSandbox_TimeoutKillsProcessGroup(t *testing.T) {
-	sb := NewLocal()
+	sb := &LocalSandbox{}
 	start := time.Now()
 	// The shell prints the backgrounded grandchild's pid, then keeps running in
 	// the foreground past the deadline. The timeout must kill the whole process
 	// group: both the direct child and the backgrounded sleep.
-	res, err := sb.Exec(context.Background(), ExecRequest{
+	res, err := Exec(context.Background(), sb, ExecRequest{
 		Cmd:     []string{"sh", "-c", "sleep 30 & echo $!; sleep 30"},
 		Timeout: 300 * time.Millisecond,
 	})

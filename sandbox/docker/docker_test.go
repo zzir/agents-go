@@ -160,39 +160,6 @@ func muxWrite(buf *bytes.Buffer, stream stdcopy.StdType, p []byte) {
 	buf.Write(p)
 }
 
-func TestDemuxLogs_CapsEachStream(t *testing.T) {
-	var mux bytes.Buffer
-	for range 100 {
-		muxWrite(&mux, stdcopy.Stdout, bytes.Repeat([]byte("o"), 1024))
-		muxWrite(&mux, stdcopy.Stderr, []byte("e"))
-	}
-
-	stdout, stderr, err := demuxLogs(&mux, 4096)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stdout) != 4096 {
-		t.Errorf("stdout = %d bytes, want capped at 4096", len(stdout))
-	}
-	if len(stderr) == 0 || len(stderr) > 4096 {
-		t.Errorf("stderr = %d bytes, want >0 and <= 4096", len(stderr))
-	}
-}
-
-func TestDemuxLogs_SmallOutputUnchanged(t *testing.T) {
-	var mux bytes.Buffer
-	muxWrite(&mux, stdcopy.Stdout, []byte("hello"))
-	muxWrite(&mux, stdcopy.Stderr, []byte("oops"))
-
-	stdout, stderr, err := demuxLogs(&mux, 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stdout != "hello" || stderr != "oops" {
-		t.Errorf("stdout = %q, stderr = %q", stdout, stderr)
-	}
-}
-
 // The full command must run via Entrypoint so an image ENTRYPOINT cannot turn
 // req.Cmd into mere arguments, and the image CMD is not appended.
 func TestBuildConfig_CommandRunsAsEntrypoint(t *testing.T) {
@@ -222,8 +189,7 @@ func TestCopyAttached_KeepsReadingWhenSinksAreFull(t *testing.T) {
 		// has merely stopped talking.
 	}()
 
-	stdout := &sandbox.CappedBuffer{Max: 8}
-	stderr := &sandbox.CappedBuffer{Max: 8}
+	stdout, stderr := &cappedSink{max: 8}, &cappedSink{max: 8}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -248,6 +214,18 @@ func TestCopyAttached_KeepsReadingWhenSinksAreFull(t *testing.T) {
 	if stdout.String() != strings.Repeat("o", 8) || stderr.String() != strings.Repeat("e", 8) {
 		t.Errorf("stdout = %q, stderr = %q; want each capped at 8 bytes", stdout.String(), stderr.String())
 	}
+}
+
+// cappedSink keeps the first max bytes and accepts the rest, like the buffers
+// sandbox.Exec hands a backend.
+type cappedSink struct {
+	strings.Builder
+	max int
+}
+
+func (c *cappedSink) Write(p []byte) (int, error) {
+	c.Builder.Write(p[:min(len(p), c.max-c.Len())])
+	return len(p), nil
 }
 
 // refusingWriter is a sink that rejects every write — a caller's writer whose
@@ -351,30 +329,7 @@ func TestCopyAttached_TruncatedStreamIsNotAnError(t *testing.T) {
 	}
 }
 
-// A flooding stdout must not starve a later, short stderr: reading stops only
-// once BOTH streams are full.
-func TestDemuxLogs_LateStderrNotStarved(t *testing.T) {
-	var mux bytes.Buffer
-	// stdout floods far past its cap first...
-	for range 100 {
-		muxWrite(&mux, stdcopy.Stdout, bytes.Repeat([]byte("o"), 1024))
-	}
-	// ...then a short stderr arrives at the very end of the stream.
-	muxWrite(&mux, stdcopy.Stderr, []byte("boom"))
-
-	stdout, stderr, err := demuxLogs(&mux, 4096)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stdout) != 4096 {
-		t.Errorf("stdout len = %d, want capped at 4096", len(stdout))
-	}
-	if stderr != "boom" {
-		t.Errorf("stderr = %q, want %q (must not be starved by stdout volume)", stderr, "boom")
-	}
-}
-
-// fakeEphemeralDaemon serves the API slice streamEphemeral touches. Its wait
+// fakeEphemeralDaemon serves the API slice execEphemeral touches. Its wait
 // endpoint never answers, and its log stream ends early with the container
 // still "running"; kills are recorded.
 func fakeEphemeralDaemon(t *testing.T) (host string, acted *[]string) {
@@ -418,7 +373,7 @@ func fakeEphemeralDaemon(t *testing.T) (host string, acted *[]string) {
 // When the follow-log stream ends early with the container still running, the
 // wait must ride the request timeout — killing the container and reporting
 // TimedOut — never hang on the caller's ctx (spec §2.7m).
-func TestStreamEphemeralWaitHonorsTimeout(t *testing.T) {
+func TestExecEphemeralWaitHonorsTimeout(t *testing.T) {
 	host, acted := fakeEphemeralDaemon(t)
 	sb, err := New(Options{Host: host, Image: "img"})
 	if err != nil {
@@ -506,7 +461,7 @@ func TestExecEphemeralTimeoutKeepsPartialLogs(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sb.Close() })
 
-	res, err := sb.Exec(t.Context(), sandbox.ExecRequest{
+	res, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{
 		Cmd:     []string{"sleep", "infinity"},
 		Timeout: 300 * time.Millisecond,
 	})
@@ -534,7 +489,7 @@ func TestExecEphemeralLogReadFailureIsAnError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sb.Close() })
 
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"true"}}); err == nil ||
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"true"}}); err == nil ||
 		!strings.Contains(err.Error(), "read logs") {
 		t.Errorf("Exec err = %v, want the log-read failure surfaced", err)
 	}

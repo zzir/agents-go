@@ -11,10 +11,10 @@ import (
 )
 
 func TestLocalSandbox_Exec(t *testing.T) {
-	sb := NewLocal()
+	sb := &LocalSandbox{}
 	defer sb.Close()
 
-	res, err := sb.Exec(context.Background(), ExecRequest{
+	res, err := Exec(context.Background(), sb, ExecRequest{
 		Files: map[string]string{"hello.txt": "world"},
 		Cmd:   []string{"cat", "hello.txt"},
 	})
@@ -30,8 +30,8 @@ func TestLocalSandbox_Exec(t *testing.T) {
 }
 
 func TestLocalSandbox_NonZeroExit(t *testing.T) {
-	sb := NewLocal()
-	res, err := sb.Exec(context.Background(), ExecRequest{Cmd: []string{"sh", "-c", "echo oops >&2; exit 3"}})
+	sb := &LocalSandbox{}
+	res, err := Exec(context.Background(), sb, ExecRequest{Cmd: []string{"sh", "-c", "echo oops >&2; exit 3"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,8 +44,8 @@ func TestLocalSandbox_NonZeroExit(t *testing.T) {
 }
 
 func TestLocalSandbox_Timeout(t *testing.T) {
-	sb := NewLocal()
-	res, err := sb.Exec(context.Background(), ExecRequest{
+	sb := &LocalSandbox{}
+	res, err := Exec(context.Background(), sb, ExecRequest{
 		Cmd:     []string{"sleep", "5"},
 		Timeout: 100 * time.Millisecond,
 	})
@@ -58,13 +58,13 @@ func TestLocalSandbox_Timeout(t *testing.T) {
 }
 
 func TestLocalSandbox_BackgroundChildDoesNotBlockSuccess(t *testing.T) {
-	sb := NewLocal()
+	sb := &LocalSandbox{}
 	start := time.Now()
 	// The shell exits 0 immediately and only the backgrounded grandchild keeps
 	// the stdout/stderr pipes open (the verified repro blocked Exec for the
 	// full 30s). WaitDelay must unblock Wait, and the successful exit must not
 	// be reported as a timeout.
-	res, err := sb.Exec(context.Background(), ExecRequest{
+	res, err := Exec(context.Background(), sb, ExecRequest{
 		Cmd:     []string{"sh", "-c", "sleep 30 & echo hi"},
 		Timeout: 10 * time.Second,
 	})
@@ -87,8 +87,8 @@ func TestLocalSandbox_BackgroundChildDoesNotBlockSuccess(t *testing.T) {
 
 func TestLocalSandbox_MinimalEnvByDefault(t *testing.T) {
 	t.Setenv("SANDBOX_TEST_SECRET", "leaked-host-secret")
-	sb := NewLocal()
-	res, err := sb.Exec(context.Background(), ExecRequest{
+	sb := &LocalSandbox{}
+	res, err := Exec(context.Background(), sb, ExecRequest{
 		Cmd: []string{"sh", "-c", `echo "secret=[$SANDBOX_TEST_SECRET] path=[$PATH] extra=[$EXTRA]"`},
 		Env: map[string]string{"EXTRA": "added"},
 	})
@@ -106,23 +106,9 @@ func TestLocalSandbox_MinimalEnvByDefault(t *testing.T) {
 	}
 }
 
-func TestLocalSandbox_InheritHostEnvOptIn(t *testing.T) {
-	t.Setenv("SANDBOX_TEST_SECRET", "host-value")
-	sb := NewLocalWithOptions(LocalOptions{InheritHostEnv: true})
-	res, err := sb.Exec(context.Background(), ExecRequest{
-		Cmd: []string{"sh", "-c", `echo "secret=[$SANDBOX_TEST_SECRET]"`},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(res.Stdout, "secret=[host-value]") {
-		t.Errorf("InheritHostEnv should pass the host environment through: %q", res.Stdout)
-	}
-}
-
 func TestLocalSandbox_OutputCapped(t *testing.T) {
-	sb := NewLocal()
-	res, err := sb.Exec(context.Background(), ExecRequest{
+	sb := &LocalSandbox{}
+	res, err := Exec(context.Background(), sb, ExecRequest{
 		Cmd:            []string{"sh", "-c", "yes x | head -c 100000; echo BIGDONE >&2"},
 		MaxOutputBytes: 1024,
 	})
@@ -180,7 +166,7 @@ func TestShellQuote(t *testing.T) {
 }
 
 func TestCodeTool_WiringWithLocalSandbox(t *testing.T) {
-	sb := NewLocal()
+	sb := &LocalSandbox{}
 	tool := CodeTool(sb, CodeToolConfig{
 		Name: "run_sh",
 	})
@@ -206,14 +192,14 @@ func TestCodeTool_WiringWithLocalSandbox(t *testing.T) {
 }
 
 func TestCodeTool_DefaultConfig(t *testing.T) {
-	tool := CodeTool(NewLocal(), CodeToolConfig{})
+	tool := CodeTool(&LocalSandbox{}, CodeToolConfig{})
 	if tool.Name != "exec_command" {
 		t.Errorf("default name = %q, want exec_command", tool.Name)
 	}
 }
 
 func TestFileTools_ReadWriteList(t *testing.T) {
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 	tools := FileTools(sb, FileToolConfig{})
 
 	if len(tools) != 3 {
@@ -264,7 +250,7 @@ func TestFileTools_ReadWriteList(t *testing.T) {
 }
 
 func TestReadFileTool_NotFound(t *testing.T) {
-	sb := NewLocal()
+	sb := &LocalSandbox{}
 	rt := ReadFileTool(sb, FileToolConfig{})
 	out, err := rt.OnInvoke(context.Background(), &agents.ToolContext{}, `{"path":"/nonexistent/file","offset":0,"limit":0}`)
 	if err != nil {

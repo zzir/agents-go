@@ -56,7 +56,7 @@ func TestPersistentExecTimeout(t *testing.T) {
 	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
 
 	start := time.Now()
-	res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+	res, err := sandbox.Exec(context.Background(), sb, sandbox.ExecRequest{
 		// exec keeps it a single process so the post-timeout kill is
 		// pid-exact; "started" proves pre-timeout output is preserved.
 		Cmd:     []string{"sh", "-c", "echo started; exec sleep 20"},
@@ -84,7 +84,7 @@ func TestPersistentExecTimeout(t *testing.T) {
 	waitGone(t, sb, "sleep 20")
 
 	// The persistent container stays usable after a timed-out exec.
-	res2, err := sb.Exec(context.Background(), sandbox.ExecRequest{Cmd: []string{"echo", "still-alive"}})
+	res2, err := sandbox.Exec(context.Background(), sb, sandbox.ExecRequest{Cmd: []string{"echo", "still-alive"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestPersistentExecStreamTimeout(t *testing.T) {
 func TestPersistentExecFloodedStreamsKeepRunning(t *testing.T) {
 	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
 
-	res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+	res, err := sandbox.Exec(context.Background(), sb, sandbox.ExecRequest{
 		// Both streams overshoot MaxOutputBytes, then the process goes quiet
 		// without exiting.
 		Cmd:            []string{"sh", "-c", "yes o | head -c 20000; yes e | head -c 20000 >&2; exec sleep 20"},
@@ -177,7 +177,7 @@ func TestPersistentReadFileDirAndSymlink(t *testing.T) {
 	sb := newPersistentSandbox(t, Options{Image: testImage, Persistent: true})
 	ctx := t.Context()
 
-	res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c",
+	res, err := sandbox.Exec(ctx, sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c",
 		"mkdir -p adir && printf hi > real.txt && ln -s real.txt l1 && ln -s l1 l2 && ln -s loop-b loop-a && ln -s loop-a loop-b"}})
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestPersistentFileToolsSeeTmpfs(t *testing.T) {
 	ctx := t.Context()
 
 	// exec writes under the tmpfs; the file tool must read it back.
-	if res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "printf hello > /tmp/probe.txt"}}); err != nil || res.ExitCode != 0 {
+	if res, err := sandbox.Exec(ctx, sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "printf hello > /tmp/probe.txt"}}); err != nil || res.ExitCode != 0 {
 		t.Fatalf("seed exec: %v, exit %d", err, res.ExitCode)
 	}
 	if got, err := sb.ReadFile(ctx, "/tmp/probe.txt"); err != nil || string(got) != "hello" {
@@ -218,7 +218,7 @@ func TestPersistentFileToolsSeeTmpfs(t *testing.T) {
 	if err := sb.WriteFile(ctx, "/tmp/w.txt", []byte("wrote-via-tool")); err != nil {
 		t.Fatalf("WriteFile(/tmp/w.txt): %v", err)
 	}
-	if res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"cat", "/tmp/w.txt"}}); err != nil || res.ExitCode != 0 {
+	if res, err := sandbox.Exec(ctx, sb, sandbox.ExecRequest{Cmd: []string{"cat", "/tmp/w.txt"}}); err != nil || res.ExitCode != 0 {
 		t.Fatalf("read-back exec: %v, exit %d, stderr %q", err, res.ExitCode, res.Stderr)
 	} else if res.Stdout != "wrote-via-tool" {
 		t.Errorf("exec cat /tmp/w.txt = %q, want the tool-written content", res.Stdout)
@@ -239,7 +239,7 @@ func TestPersistentWriteFileKeepsParentDirMetadata(t *testing.T) {
 
 	mustExec := func(cmd string) string {
 		t.Helper()
-		res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cmd}})
+		res, err := sandbox.Exec(ctx, sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cmd}})
 		if err != nil {
 			t.Fatalf("%s: %v", cmd, err)
 		}
@@ -286,7 +286,7 @@ func waitGone(t *testing.T, sb *Sandbox, needle string) {
 	t.Helper()
 	deadline := time.Now().Add(8 * time.Second)
 	for {
-		res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+		res, err := sandbox.Exec(context.Background(), sb, sandbox.ExecRequest{
 			Cmd: []string{"sh", "-c", `for f in /proc/[0-9]*/cmdline; do tr '\0' ' ' <"$f" 2>/dev/null; echo; done`},
 		})
 		if err != nil {

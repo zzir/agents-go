@@ -99,7 +99,7 @@ func TestApproveAllResumesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	mgr := sandboxes.NewManager()
-	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil })
+	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) { return &sandbox.LocalSandbox{}, nil })
 	runner := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr })
 	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
 	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {

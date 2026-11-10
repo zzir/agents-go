@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,7 +35,7 @@ func savedPath(t *testing.T, out string) string {
 // and the directory keeps git out.
 func TestCodeTool_SpillsTruncatedOutput(t *testing.T) {
 	dir := t.TempDir()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: dir})
+	sb := &LocalSandbox{WorkDir: dir}
 	tool := CodeTool(sb, CodeToolConfig{MaxOutputBytes: 1024, SpillDir: ".agents/exec"})
 	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{ToolCallID: "call_abc/../x"},
 		`{"cmd":"seq 1 2000","timeout_seconds":0,"workdir":""}`)
@@ -70,7 +71,7 @@ func TestCodeTool_SpillsTruncatedOutput(t *testing.T) {
 // file say so instead of calling it the full output.
 func TestCodeTool_SpillPastTheCaptureCapIsHonest(t *testing.T) {
 	dir := t.TempDir()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: dir})
+	sb := &LocalSandbox{WorkDir: dir}
 	tool := CodeTool(sb, CodeToolConfig{MaxOutputBytes: 1024, SpillDir: "out"})
 	const n = 3_000_000
 	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{ToolCallID: "c1"},
@@ -102,7 +103,7 @@ func TestCodeTool_SpillPastTheCaptureCapIsHonest(t *testing.T) {
 // Under the limit nothing is written: no exec, no directory.
 func TestCodeTool_NoSpillUnderTheLimit(t *testing.T) {
 	dir := t.TempDir()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: dir})
+	sb := &LocalSandbox{WorkDir: dir}
 	tool := CodeTool(sb, CodeToolConfig{MaxOutputBytes: 1024, SpillDir: ".agents/exec"})
 	if _, err := tool.OnInvoke(context.Background(), &agents.ToolContext{ToolCallID: "c"},
 		`{"cmd":"echo fits","timeout_seconds":0,"workdir":""}`); err != nil {
@@ -116,17 +117,17 @@ func TestCodeTool_NoSpillUnderTheLimit(t *testing.T) {
 // failingFiles is a sandbox whose exec cannot take files: the spill's write fails.
 type failingFiles struct{ *LocalSandbox }
 
-func (f failingFiles) Exec(ctx context.Context, req ExecRequest) (*ExecResult, error) {
+func (f failingFiles) ExecStream(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error) {
 	if len(req.Files) > 0 {
 		return nil, fmt.Errorf("disk full")
 	}
-	return f.LocalSandbox.Exec(ctx, req)
+	return f.LocalSandbox.ExecStream(ctx, req, stdout, stderr)
 }
 
 // A spill that fails costs the model nothing but the pointer: the result still
 // comes back truncated, and never as an error.
 func TestCodeTool_SpillFailureKeepsTheResult(t *testing.T) {
-	sb := failingFiles{NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})}
+	sb := failingFiles{&LocalSandbox{WorkDir: t.TempDir()}}
 	tool := CodeTool(sb, CodeToolConfig{MaxOutputBytes: 512, SpillDir: "spill"})
 	out, err := tool.OnInvoke(context.Background(), &agents.ToolContext{ToolCallID: "c"},
 		`{"cmd":"seq 1 1000","timeout_seconds":0,"workdir":""}`)
@@ -147,7 +148,7 @@ func TestCodeTool_SessionSpills(t *testing.T) {
 	dir := t.TempDir()
 	body := floodBody()
 	sb := &fakeTerminalSandbox{
-		Sandbox: NewLocalWithOptions(LocalOptions{WorkDir: dir}),
+		Sandbox: &LocalSandbox{WorkDir: dir},
 		started: make(chan struct{}, 8),
 		respond: func(cmd string) (string, int) {
 			if cmd == "flood" {
@@ -218,7 +219,7 @@ func TestCodeTool_SpillDirMustBeRelative(t *testing.T) {
 					t.Errorf("SpillDir %q was accepted", dir)
 				}
 			}()
-			CodeTool(NewLocal(), CodeToolConfig{SpillDir: dir})
+			CodeTool(&LocalSandbox{}, CodeToolConfig{SpillDir: dir})
 		}()
 	}
 }

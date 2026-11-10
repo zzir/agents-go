@@ -45,7 +45,7 @@ func run() error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
-	sb := sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workDir})
+	sb := &sandbox.LocalSandbox{WorkDir: workDir}
 	defer sb.Close()
 
 	repo := session.NewInMemoryRepo()

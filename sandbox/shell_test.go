@@ -146,7 +146,7 @@ func (f *fakeTerminal) Close() error {
 func (f *fakeTerminal) Resize(int, int) error { return nil }
 func (f *fakeTerminal) Wait() (int, error)    { return 0, nil }
 
-func newSession(t *testing.T, respond func(string) (string, int)) (*ShellSession, *fakeTerminal) {
+func newSession(t *testing.T, respond func(string) (string, int)) (*shellSession, *fakeTerminal) {
 	t.Helper()
 	term := newFakeTerminal(respond)
 	s := newShellSession(term)

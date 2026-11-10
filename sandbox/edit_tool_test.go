@@ -32,7 +32,7 @@ func mustRead(t *testing.T, sb Sandbox, path string) string {
 // (local) sandbox.
 func TestApplyPatchEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 	seed(t, sb, "main.go", "package main\n\nfunc main() {\n\tprintln(\"hi\")\n}\n")
 	seed(t, sb, "old.go", "package old\n")
 
@@ -72,7 +72,7 @@ func TestApplyPatchEndToEnd(t *testing.T) {
 // duplicate-section conflict.
 func TestApplyPatchDegenerateMoveIsPlainUpdate(t *testing.T) {
 	ctx := context.Background()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 	seed(t, sb, "f.go", "old\n")
 
 	patch := "*** Begin Patch\n" +
@@ -93,7 +93,7 @@ func TestApplyPatchDegenerateMoveIsPlainUpdate(t *testing.T) {
 // nothing — the earlier Add is never committed.
 func TestApplyPatchValidationAtomic(t *testing.T) {
 	ctx := context.Background()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 	seed(t, sb, "exist.txt", "real content\n")
 
 	patch := "*** Begin Patch\n" +
@@ -158,7 +158,7 @@ func (f *failingSandbox) WriteFile(ctx context.Context, path string, content []b
 // Add is undone from the in-memory snapshot.
 func TestApplyPatchCommitRollback(t *testing.T) {
 	ctx := context.Background()
-	local := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	local := &LocalSandbox{WorkDir: t.TempDir()}
 	sb := &failingSandbox{Sandbox: local, failCreateAt: 2}
 
 	patch := "*** Begin Patch\n" +
@@ -187,7 +187,7 @@ func TestApplyPatchCommitRollback(t *testing.T) {
 // over a truncated file.
 func TestApplyPatchRestoresPartiallyWrittenFile(t *testing.T) {
 	ctx := context.Background()
-	local := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	local := &LocalSandbox{WorkDir: t.TempDir()}
 	const orig = "one\ntwo\nthree\n"
 	if err := local.WriteFile(ctx, "a.txt", []byte(orig)); err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestApplyPatchRestoresPartiallyWrittenFile(t *testing.T) {
 func TestApplyPatchDeleteLargeFileParks(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: dir, MaxReadFileBytes: 16})
+	sb := &LocalSandbox{WorkDir: dir, MaxReadFileBytes: 16}
 	big := bytes.Repeat([]byte("x"), 64)
 	if err := os.WriteFile(filepath.Join(dir, "big.bin"), big, 0o644); err != nil {
 		t.Fatal(err)

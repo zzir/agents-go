@@ -78,7 +78,7 @@ func run() error {
 		}),
 	}
 	tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)
-	tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{}))
+	tools = append(tools, sandbox.ApplyPatchTool(sb))
 
 	agent := &agents.Agent{
 		Name: "coder",

@@ -59,7 +59,7 @@ when it bears on this project, not a review of every release:
 | 2026-08-19 | openai-agents-python | v0.22.0 | A terminal tool output an output guardrail refuses is redacted from stored state | adapted | A turn `ToolResult.Terminate` ended is saved with its outputs withheld (4f891891; decisions §5.79); a `ShouldStopAfterTurn` stop is not covered |
 | 2026-08-19 | openai-agents-python | v0.22.0 | A `failed` or `incomplete` response is an error on the blocking path | ported | Already present: spec §2.7e |
 | 2026-09-08 | openai-agents-python | v0.22.1 | MCP server-wide guardrails | deferred | A guardrail's tool stages already cover MCP calls; binding one to a server has no caller |
-| 2026-09-08 | openai-agents-python | v0.22.1 | Unix-local environment isolation | ported | Already present: `LocalSandbox` passes `PATH`, `HOME` and `TMPDIR` unless `InheritHostEnv` |
+| 2026-09-08 | openai-agents-python | v0.22.1 | Unix-local environment isolation | ported | Already present: `LocalSandbox` passes only `PATH`, `HOME` and `TMPDIR` |
 | 2026-09-08 | openai-agents-python | v0.22.1 | The runner closes the providers it created | declined | scope §3: a `Model` has no lifecycle the runner manages |
 | 2026-09-17 | openai-agents-python | v0.22.3 | Conditional approvals see validated tool arguments | deferred | `NeedsApprovalFunc` receives the arguments as the model sent them, before the tool validates |
 | 2026-10-02 | openai-agents-python | v0.23.0 | Default tool failure details redacted | deferred | The default error text is what the model corrects itself from; a redacted default waits for a caller |

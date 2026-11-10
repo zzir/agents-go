@@ -2,16 +2,16 @@ package sandbox
 
 import (
 	"context"
-	"errors"
+	"os"
+	"strings"
 	"testing"
 )
 
 // RemoveFile and Rename operate within the working directory: Rename creates
-// the destination's parent dirs and moves the file, RemoveFile deletes it, and
-// both report ErrNoWorkDir when no working directory is configured.
+// the destination's parent dirs and moves the file, RemoveFile deletes it.
 func TestLocalRemoveAndRename(t *testing.T) {
 	ctx := context.Background()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 
 	if err := sb.WriteFile(ctx, "a/x.txt", []byte("hi")); err != nil {
 		t.Fatalf("write: %v", err)
@@ -33,13 +33,25 @@ func TestLocalRemoveAndRename(t *testing.T) {
 	if _, err := sb.ReadFile(ctx, "b/y.txt"); err == nil {
 		t.Fatal("removed file should not read")
 	}
+}
 
-	// Without a working directory both ops are ErrNoWorkDir, not a silent no-op.
-	bare := NewLocal()
-	if err := bare.RemoveFile(ctx, "x"); !errors.Is(err, ErrNoWorkDir) {
-		t.Fatalf("RemoveFile no workdir: err = %v, want ErrNoWorkDir", err)
+// Without WorkDir the sandbox works in ONE temp directory — exec and the file
+// operations share it across calls — and Close removes it.
+func TestLocalTempDirIsSharedAndRemovedByClose(t *testing.T) {
+	ctx := context.Background()
+	sb := &LocalSandbox{}
+	if err := sb.WriteFile(ctx, "note.txt", []byte("kept")); err != nil {
+		t.Fatalf("write: %v", err)
 	}
-	if err := bare.Rename(ctx, "x", "y"); !errors.Is(err, ErrNoWorkDir) {
-		t.Fatalf("Rename no workdir: err = %v, want ErrNoWorkDir", err)
+	res, err := Exec(ctx, sb, ExecRequest{Cmd: []string{"sh", "-c", "cat note.txt && pwd"}})
+	if err != nil || res.ExitCode != 0 || !strings.HasPrefix(res.Stdout, "kept") {
+		t.Fatalf("exec did not see the file the file op wrote: %+v, %v", res, err)
+	}
+	dir := sb.tmp
+	if err := sb.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("temp working directory %s survives Close: %v", dir, err)
 	}
 }

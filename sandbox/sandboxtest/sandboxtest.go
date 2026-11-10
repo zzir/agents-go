@@ -51,7 +51,7 @@ func sb(t *testing.T, open Backend) sandbox.Sandbox {
 //nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testExec(t *testing.T, open Backend) {
 	s := sb(t, open)
-	res, err := s.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "echo out; echo err >&2"}})
+	res, err := sandbox.Exec(t.Context(), s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "echo out; echo err >&2"}})
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
@@ -75,7 +75,7 @@ func testExec(t *testing.T, open Backend) {
 //nolint:thelper // a subtest BODY, not a helper: t.Helper() would attribute every failure to the caller's dispatch line instead of the assertion that failed.
 func testExecFailure(t *testing.T, open Backend) {
 	s := sb(t, open)
-	res, err := s.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "exit 3"}})
+	res, err := sandbox.Exec(t.Context(), s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "exit 3"}})
 	if err != nil {
 		t.Fatalf("Exec of a failing command returned an error: %v", err)
 	}
@@ -168,14 +168,14 @@ func testExecSeesFiles(t *testing.T, open Backend) {
 	if err := s.WriteFile(ctx, "shared.txt", []byte("from-the-file-tool")); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "cat shared.txt"}})
+	res, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "cat shared.txt"}})
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
 	if !strings.Contains(res.Stdout, "from-the-file-tool") {
 		t.Errorf("exec cannot see the written file: stdout = %q, stderr = %q", res.Stdout, res.Stderr)
 	}
-	if _, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "echo from-exec > back.txt"}}); err != nil {
+	if _, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "echo from-exec > back.txt"}}); err != nil {
 		t.Fatalf("Exec write: %v", err)
 	}
 	got, err := s.ReadFile(ctx, "back.txt")

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
 
@@ -22,9 +21,10 @@ type ManagedContainer struct {
 	Created time.Time `json:"created"`
 }
 
-// managedClient dials the daemon opts describes — the same connection New
-// makes, without a Sandbox around it.
-func managedClient(opts Options) (*client.Client, func(), error) {
+// dial connects to the daemon opts describes; the returned func releases the
+// client and, for an ssh:// host, its tunnel.
+func dial(opts Options) (*client.Client, func(), error) {
+	// API-version negotiation is on by default in the moby client.
 	clientOpts := []client.Opt{client.FromEnv}
 	var sshDial *sshDialer
 	switch {
@@ -34,6 +34,8 @@ func managedClient(opts Options) (*client.Client, func(), error) {
 			return nil, nil, err
 		}
 		sshDial = d
+		// The host is a placeholder: every request rides the dialer's channel
+		// to the remote socket (the connhelper pattern).
 		clientOpts = append(clientOpts, client.WithHost("http://docker.invalid"), client.WithDialContext(d.DialContext))
 	case opts.Host != "":
 		clientOpts = append(clientOpts, client.WithHost(opts.Host))
@@ -45,20 +47,29 @@ func managedClient(opts Options) (*client.Client, func(), error) {
 		}
 		return nil, nil, fmt.Errorf("docker sandbox: %w", err)
 	}
-	closeAll := func() {
+	return cli, func() {
 		_ = cli.Close()
 		if sshDial != nil {
 			_ = sshDial.Close()
 		}
-	}
-	return cli, closeAll, nil
+	}, nil
+}
+
+// stopTimeoutSeconds is the grace a container gets between SIGTERM and SIGKILL.
+const stopTimeoutSeconds = 10
+
+// stopContainer stops a container by id, keeping it and its volumes.
+func stopContainer(ctx context.Context, cli *client.Client, id string) error {
+	timeout := stopTimeoutSeconds
+	_, err := cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &timeout})
+	return err
 }
 
 // ListManaged lists this package's containers on the daemon opts describes —
 // running and stopped alike, matched by the fingerprint label so foreign
 // containers never appear. Only Host/SSH of opts are used.
 func ListManaged(ctx context.Context, opts Options) ([]ManagedContainer, error) {
-	cli, done, err := managedClient(opts)
+	cli, done, err := dial(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -91,9 +102,7 @@ func ListManaged(ctx context.Context, opts Options) ([]ManagedContainer, error) 
 // refusing one this package did not create.
 func StopManaged(ctx context.Context, opts Options, name string) error {
 	return withManaged(ctx, opts, name, func(cli *client.Client, id string) error {
-		timeout := 10
-		_, err := cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &timeout})
-		return err
+		return stopContainer(ctx, cli, id)
 	})
 }
 
@@ -120,7 +129,7 @@ func RemoveManagedVolume(ctx context.Context, opts Options, name string) error {
 	if !strings.HasPrefix(name, ManagedNamePrefix) {
 		return fmt.Errorf("docker sandbox: %q is not a managed volume name", name)
 	}
-	cli, done, err := managedClient(opts)
+	cli, done, err := dial(opts)
 	if err != nil {
 		return err
 	}
@@ -141,34 +150,39 @@ var ErrContainerNotFound = errors.New("container not found")
 // withManaged verifies ownership (the fingerprint label) before act runs, and
 // hands act the inspected ID, never the name: IDs are not reused under a race.
 func withManaged(ctx context.Context, opts Options, name string, act func(cli *client.Client, id string) error) error {
-	cli, done, err := managedClient(opts)
+	cli, done, err := dial(opts)
 	if err != nil {
 		return err
 	}
 	defer done()
+	id, _, found, err := inspectOwned(ctx, cli, name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("docker sandbox: %s: %w", name, ErrContainerNotFound)
+	}
+	return act(cli, id)
+}
+
+// inspectOwned is the ownership boundary the by-name entry points share: found
+// is false when nothing holds the name, and a holder without this package's
+// fingerprint label is FOREIGN, an error.
+func inspectOwned(ctx context.Context, cli *client.Client, name string) (id string, running, found bool, err error) {
 	info, err := cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if err != nil {
 		if cerrdefs.IsNotFound(err) {
-			return fmt.Errorf("docker sandbox: %s: %w", name, ErrContainerNotFound)
+			return "", false, false, nil
 		}
-		return fmt.Errorf("docker sandbox: %w", err)
+		return "", false, false, fmt.Errorf("docker sandbox: inspecting %s: %w", name, err)
 	}
 	c := info.Container
-	if err := ensureOwned(c.Config, name); err != nil {
-		return err
-	}
-	return act(cli, c.ID)
-}
-
-// ensureOwned is the ownership boundary the by-name entry points share: a
-// container without this package's fingerprint label is foreign. cfg is nil-safe.
-func ensureOwned(cfg *container.Config, name string) error {
 	var labels map[string]string
-	if cfg != nil {
-		labels = cfg.Labels
+	if c.Config != nil {
+		labels = c.Config.Labels
 	}
 	if _, ours := labels[fingerprintLabel]; !ours {
-		return fmt.Errorf("docker sandbox: container %q was not created by this package", name)
+		return "", false, false, fmt.Errorf("docker sandbox: container %q was not created by this package", name)
 	}
-	return nil
+	return c.ID, c.State != nil && c.State.Running, true, nil
 }

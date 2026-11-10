@@ -37,17 +37,13 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts sandbox.TerminalOptions
 	// Tag the shell with a marker (as execPersistent does) so Close can kill the
 	// whole process tree; dropping the attach alone leaves e.g. `top` alive.
 	marker := newExecMarker()
-	shell := opts.Shell
-	if len(shell) == 0 {
-		// Prefer bash when the image ships it, else POSIX sh; `command -v` works in
-		// dash and busybox ash alike.
-		shell = []string{"sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l || exec sh -l"}
-	}
 	size := client.ConsoleSize{Height: uint(opts.EffectiveRows()), Width: uint(opts.EffectiveCols())}
 	created, err := s.cli.ExecCreate(ctx, id, client.ExecCreateOptions{
-		Cmd:          shell,
+		// Prefer bash when the image ships it, else POSIX sh; `command -v` works in
+		// dash and busybox ash alike.
+		Cmd:          []string{"sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l || exec sh -l"},
 		WorkingDir:   workDir,
-		Env:          append(envSlice(opts.Env), "TERM="+opts.EffectiveTerm(), execMarkerEnv+"="+marker),
+		Env:          []string{"TERM=" + sandbox.DefaultTerminalTerm, execMarkerEnv + "=" + marker},
 		TTY:          true,
 		ConsoleSize:  size,
 		AttachStdin:  true,

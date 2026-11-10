@@ -37,7 +37,7 @@ func TestBuildFullAgentAppendsSandboxPrompt(t *testing.T) {
 
 	mgr := sandboxes.NewManager()
 	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
-		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: t.TempDir()}), nil
+		return &sandbox.LocalSandbox{WorkDir: t.TempDir()}, nil
 	})
 	deps := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr }).Deps
 
@@ -87,7 +87,7 @@ func TestBuildFullAgentNoSandboxPromptWhenEmpty(t *testing.T) {
 
 	mgr := sandboxes.NewManager()
 	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
-		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: t.TempDir()}), nil
+		return &sandbox.LocalSandbox{WorkDir: t.TempDir()}, nil
 	})
 	deps := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr }).Deps
 

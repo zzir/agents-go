@@ -96,7 +96,7 @@ func TestSSHDialTimeoutCoversHandshake(t *testing.T) {
 
 // startRejectingSSHD runs a minimal sshd that completes handshakes (counting
 // them) but rejects every channel open — a healthy transport whose target
-// port is not listening.
+// socket is not there.
 func startRejectingSSHD(t *testing.T) (addr string, handshakes *atomic.Int32) {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -132,7 +132,7 @@ func startRejectingSSHD(t *testing.T) (addr string, handshakes *atomic.Int32) {
 				count.Add(1)
 				go ssh.DiscardRequests(reqs)
 				for nc := range chans {
-					_ = nc.Reject(ssh.ConnectionFailed, "port not listening")
+					_ = nc.Reject(ssh.ConnectionFailed, "socket not there")
 				}
 				_ = sconn.Close()
 			}()
@@ -141,11 +141,10 @@ func startRejectingSSHD(t *testing.T) (addr string, handshakes *atomic.Int32) {
 	return ln.Addr().String(), count
 }
 
-// A refused direct-tcpip channel rides a HEALTHY transport (the container port
-// is not listening yet): dialThrough must surface it without reconnecting, or
-// the teardown severs every in-flight stream multiplexed on the shared client.
-// A transport-level failure still reconnects.
-func TestDialThroughChannelRejectionKeepsTransport(t *testing.T) {
+// A refused channel open rides a HEALTHY transport: DialContext must surface it
+// without reconnecting, or the teardown severs every in-flight stream
+// multiplexed on the shared client. A transport-level failure still reconnects.
+func TestDialChannelRejectionKeepsTransport(t *testing.T) {
 	addr, handshakes := startRejectingSSHD(t)
 	d, err := newSSHDialer("ssh://u@"+addr, SSHAuth{
 		Password:              "pw",
@@ -159,9 +158,9 @@ func TestDialThroughChannelRejectionKeepsTransport(t *testing.T) {
 
 	ctx := t.Context()
 	for range 2 {
-		_, err := d.dialThrough(ctx, "tcp", "127.0.0.1:1")
+		_, err := d.DialContext(ctx, "", "")
 		if _, ok := errors.AsType[*ssh.OpenChannelError](err); !ok {
-			t.Fatalf("dialThrough err = %v, want the channel rejection", err)
+			t.Fatalf("DialContext err = %v, want the channel rejection", err)
 		}
 	}
 	if n := handshakes.Load(); n != 1 {
@@ -173,8 +172,8 @@ func TestDialThroughChannelRejectionKeepsTransport(t *testing.T) {
 	c := d.client
 	d.mu.Unlock()
 	_ = c.Close()
-	if _, err := d.dialThrough(ctx, "tcp", "127.0.0.1:1"); err == nil {
-		t.Fatal("dialThrough after a severed transport: want the channel rejection, got nil")
+	if _, err := d.DialContext(ctx, "", ""); err == nil {
+		t.Fatal("DialContext after a severed transport: want the channel rejection, got nil")
 	}
 	if n := handshakes.Load(); n != 2 {
 		t.Fatalf("handshakes = %d, want 2: a severed transport must reconnect", n)

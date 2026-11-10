@@ -84,7 +84,7 @@ func trustFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *stor
 	runner.Deps.SandboxManager = sandboxes.NewManager()
 	workspace := t.TempDir()
 	runner.Deps.SandboxManager.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
-		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workspace}), nil
+		return &sandbox.LocalSandbox{WorkDir: workspace}, nil
 	})
 	tg := &store.Sandbox{ID: store.NewID(), Name: "host", Type: "docker", Config: []byte(`{"image":"i"}`)}
 	if err := runner.Deps.Sandboxes.Create(ctx, tg); err != nil {

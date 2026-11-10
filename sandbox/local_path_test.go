@@ -13,7 +13,7 @@ import (
 func TestLocalFilePathsShellSemantics(t *testing.T) {
 	ctx := context.Background()
 	wd := t.TempDir()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: wd})
+	sb := &LocalSandbox{WorkDir: wd}
 
 	abs := func(parts ...string) string {
 		return filepath.Join(append([]string{wd}, parts...)...)

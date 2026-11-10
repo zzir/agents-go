@@ -7,60 +7,57 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
-// localWaitDelay bounds how long Exec waits for the output pipes after exit; a
-// backgrounded grandchild holding them would otherwise block Wait.
+// localWaitDelay bounds how long ExecStream waits for the output pipes after
+// exit; a backgrounded grandchild holding them would otherwise block Wait.
 const localWaitDelay = 2 * time.Second
 
-// LocalOptions configures LocalSandbox.
-type LocalOptions struct {
-	// InheritHostEnv passes the entire host environment to the command; by
-	// default only PATH, HOME and TMPDIR reach it, plus ExecRequest.Env.
-	InheritHostEnv bool
-
-	// WorkDir, when non-empty, is the working directory of every execution
-	// instead of a fresh temp directory; request files land in it, and it is kept.
+// LocalSandbox runs commands directly on the host with NO isolation beyond a
+// minimal environment: PATH, HOME and TMPDIR plus the request's. Development
+// and trusted code only; docker or e2b isolate for real.
+type LocalSandbox struct {
+	// WorkDir is the working directory of every execution and file operation.
+	// Empty means one temp directory, made on first use and removed by Close
+	// (decisions §5.113).
 	WorkDir string
-
 	// MaxReadFileBytes caps ReadFile; a larger file fails with
 	// ErrReadLimitExceeded. Zero (or negative) means DefaultMaxReadFileBytes.
 	MaxReadFileBytes int64
+
+	mu  sync.Mutex
+	tmp string // the temp working directory, once made
 }
 
-// LocalSandbox runs commands directly on the host with NO isolation beyond a
-// minimal default environment (see LocalOptions). Development and trusted code
-// only; docker or e2b isolate for real.
-type LocalSandbox struct {
-	opts LocalOptions
+// dir returns the working directory, making the temp one on first use.
+func (s *LocalSandbox) dir() (string, error) {
+	if s.WorkDir != "" {
+		return s.WorkDir, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tmp == "" {
+		tmp, err := os.MkdirTemp("", "agents-sandbox-")
+		if err != nil {
+			return "", err
+		}
+		s.tmp = tmp
+	}
+	return s.tmp, nil
 }
 
-// NewLocal returns a LocalSandbox with default options.
-func NewLocal() *LocalSandbox { return &LocalSandbox{} }
-
-// NewLocalWithOptions returns a LocalSandbox with the given options.
-func NewLocalWithOptions(opts LocalOptions) *LocalSandbox { return &LocalSandbox{opts: opts} }
-
-// exec runs req.Cmd in a working directory, streaming to the writers. The
-// command leads its own process group (Unix), killed whole when the timeout fires.
-func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error) {
+// ExecStream implements Sandbox. The command leads its own process group
+// (Unix), killed whole when the timeout fires.
+func (s *LocalSandbox) ExecStream(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error) {
 	if len(req.Cmd) == 0 {
 		return nil, errors.New("sandbox: ExecRequest.Cmd is empty")
 	}
-
-	var dir string
-	if s.opts.WorkDir != "" {
-		dir = s.opts.WorkDir
-	} else {
-		tmp, err := os.MkdirTemp("", "agents-sandbox-")
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = os.RemoveAll(tmp) }()
-		dir = tmp
+	dir, err := s.dir()
+	if err != nil {
+		return nil, err
 	}
-
 	for name, content := range req.Files {
 		full := filepath.Join(dir, filepath.Clean("/"+name))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -76,7 +73,7 @@ func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr
 
 	cmd := exec.CommandContext(cctx, req.Cmd[0], req.Cmd[1:]...)
 	cmd.Dir = dir
-	cmd.Env = s.buildEnv(req.Env)
+	cmd.Env = buildEnv(req.Env)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	// Lead a new process group and kill the whole group on cancellation.
@@ -116,55 +113,40 @@ func (s *LocalSandbox) exec(ctx context.Context, req ExecRequest, stdout, stderr
 	return res, nil
 }
 
-// Exec runs a command and returns its buffered output.
-func (s *LocalSandbox) Exec(ctx context.Context, req ExecRequest) (*ExecResult, error) {
-	maxOut := req.EffectiveMaxOutputBytes()
-	stdoutBuf := &CappedBuffer{Max: maxOut}
-	stderrBuf := &CappedBuffer{Max: maxOut}
-	res, err := s.exec(ctx, req, stdoutBuf, stderrBuf)
+// resolve maps a model-supplied path with shell semantics, mirroring exec: an
+// absolute path as-is, a relative one under the working directory (spec §2.7t).
+func (s *LocalSandbox) resolve(p string) (string, error) {
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p), nil
+	}
+	dir, err := s.dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, p), nil
+}
+
+// ReadFile implements Sandbox; a file over MaxReadFileBytes fails with
+// ErrReadLimitExceeded.
+func (s *LocalSandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
+	full, err := s.resolve(p)
 	if err != nil {
 		return nil, err
 	}
-	res.Stdout = stdoutBuf.String()
-	res.Stderr = stderrBuf.String()
-	return res, nil
-}
-
-// ExecStream implements ExecStreamer by streaming output to the provided writers.
-func (s *LocalSandbox) ExecStream(ctx context.Context, req ExecRequest, stdout, stderr io.Writer) (*ExecResult, error) {
-	return s.exec(ctx, req, stdout, stderr)
-}
-
-// resolve maps a model-supplied path with shell semantics, mirroring exec: an
-// absolute path as-is, a relative one under WorkDir (spec §2.7t).
-func (s *LocalSandbox) resolve(p string) string {
-	if filepath.IsAbs(p) {
-		return filepath.Clean(p)
-	}
-	return filepath.Join(s.opts.WorkDir, p)
-}
-
-// ReadFile reads a file relative to the sandbox working directory. Files
-// larger than LocalOptions.MaxReadFileBytes (default DefaultMaxReadFileBytes)
-// fail with ErrReadLimitExceeded.
-func (s *LocalSandbox) ReadFile(_ context.Context, p string) ([]byte, error) {
-	if s.opts.WorkDir == "" {
-		return nil, ErrNoWorkDir
-	}
-	f, err := os.Open(s.resolve(p))
+	f, err := os.Open(full)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return ReadAllLimited(f, s.opts.MaxReadFileBytes)
+	return ReadAllLimited(f, s.MaxReadFileBytes)
 }
 
-// WriteFile writes a file relative to the sandbox working directory.
+// WriteFile implements Sandbox.
 func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) error {
-	if s.opts.WorkDir == "" {
-		return ErrNoWorkDir
+	full, err := s.resolve(p)
+	if err != nil {
+		return err
 	}
-	full := s.resolve(p)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
@@ -174,10 +156,10 @@ func (s *LocalSandbox) WriteFile(_ context.Context, p string, content []byte) er
 // CreateExclusive implements Sandbox with O_EXCL, so two creates of one path
 // cannot both succeed.
 func (s *LocalSandbox) CreateExclusive(_ context.Context, p string, content []byte) error {
-	if s.opts.WorkDir == "" {
-		return ErrNoWorkDir
+	full, err := s.resolve(p)
+	if err != nil {
+		return err
 	}
-	full := s.resolve(p)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
@@ -192,34 +174,38 @@ func (s *LocalSandbox) CreateExclusive(_ context.Context, p string, content []by
 	return nil
 }
 
-// RemoveFile removes a file relative to the sandbox working directory.
+// RemoveFile implements Sandbox.
 func (s *LocalSandbox) RemoveFile(_ context.Context, p string) error {
-	if s.opts.WorkDir == "" {
-		return ErrNoWorkDir
+	full, err := s.resolve(p)
+	if err != nil {
+		return err
 	}
-	return os.Remove(s.resolve(p))
+	return os.Remove(full)
 }
 
-// Rename moves a file within the sandbox working directory, creating the
-// destination's parent directories.
+// Rename implements Sandbox.
 func (s *LocalSandbox) Rename(_ context.Context, oldPath, newPath string) error {
-	if s.opts.WorkDir == "" {
-		return ErrNoWorkDir
+	from, err := s.resolve(oldPath)
+	if err != nil {
+		return err
 	}
-	from := s.resolve(oldPath)
-	to := s.resolve(newPath)
+	to, err := s.resolve(newPath)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 		return err
 	}
 	return os.Rename(from, to)
 }
 
-// ListDir lists entries in a directory relative to the sandbox working directory.
+// ListDir implements Sandbox.
 func (s *LocalSandbox) ListDir(_ context.Context, p string) ([]DirEntry, error) {
-	if s.opts.WorkDir == "" {
-		return nil, ErrNoWorkDir
+	full, err := s.resolve(p)
+	if err != nil {
+		return nil, err
 	}
-	entries, err := os.ReadDir(s.resolve(p))
+	entries, err := os.ReadDir(full)
 	if err != nil {
 		return nil, err
 	}
@@ -235,17 +221,13 @@ func (s *LocalSandbox) ListDir(_ context.Context, p string) ([]DirEntry, error) 
 	return result, nil
 }
 
-// buildEnv assembles the child environment: the full host environment when
-// InheritHostEnv is set, otherwise PATH/HOME/TMPDIR; plus the request's Env.
-func (s *LocalSandbox) buildEnv(reqEnv map[string]string) []string {
+// buildEnv is the child environment: the host's PATH, HOME and TMPDIR, plus
+// the request's Env.
+func buildEnv(reqEnv map[string]string) []string {
 	env := make([]string, 0, 3+len(reqEnv))
-	if s.opts.InheritHostEnv {
-		env = append(env, os.Environ()...)
-	} else {
-		for _, k := range []string{"PATH", "HOME", "TMPDIR"} {
-			if v, ok := os.LookupEnv(k); ok {
-				env = append(env, k+"="+v)
-			}
+	for _, k := range []string{"PATH", "HOME", "TMPDIR"} {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
 		}
 	}
 	for k, v := range reqEnv {
@@ -254,8 +236,16 @@ func (s *LocalSandbox) buildEnv(reqEnv map[string]string) []string {
 	return env
 }
 
-// Close implements Sandbox.
-func (s *LocalSandbox) Close() error { return nil }
+// Close implements Sandbox, removing the temp working directory if one was made.
+func (s *LocalSandbox) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tmp == "" {
+		return nil
+	}
+	tmp := s.tmp
+	s.tmp = ""
+	return os.RemoveAll(tmp)
+}
 
 var _ Sandbox = (*LocalSandbox)(nil)
-var _ ExecStreamer = (*LocalSandbox)(nil)

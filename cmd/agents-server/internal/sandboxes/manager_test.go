@@ -520,7 +520,7 @@ func TestSandboxManagerAcquireWaitsOutIdleExpiry(t *testing.T) {
 // it.
 func TestSandboxManagerKeysByWorkspaceGeneration(t *testing.T) {
 	m := NewManager()
-	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil }
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return &sandbox.LocalSandbox{}, nil }
 
 	a1, r1, err := m.Acquire(specGen("p", "", 1))
 	if err != nil {
@@ -551,7 +551,7 @@ func TestSandboxManagerKeysByWorkspaceGeneration(t *testing.T) {
 // Retiring one workspace leaves its siblings' instances alone.
 func TestRetireWorkspaceSparesSiblings(t *testing.T) {
 	m := NewManager()
-	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil }
+	m.buildOverride = func(Spec) (sandbox.Sandbox, error) { return &sandbox.LocalSandbox{}, nil }
 
 	mine, r1, err := m.Acquire(testSpec("p1"))
 	if err != nil {

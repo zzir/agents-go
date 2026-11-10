@@ -24,7 +24,7 @@ func invokeTool(t *testing.T, tool *agents.Tool, args string) string {
 
 func TestFileToolErrors_NoHostPathLeak(t *testing.T) {
 	dir := t.TempDir()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: dir, MaxReadFileBytes: 8})
+	sb := &LocalSandbox{WorkDir: dir, MaxReadFileBytes: 8}
 	if err := os.WriteFile(filepath.Join(dir, "big.bin"), make([]byte, 64), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -57,29 +57,19 @@ func TestFileToolErrors_NoHostPathLeak(t *testing.T) {
 }
 
 func TestFileToolErrors_IncludeRequestPath(t *testing.T) {
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 	out := invokeTool(t, ReadFileTool(sb, FileToolConfig{}), `{"path":"sub/wanted.txt","offset":0,"limit":0}`)
 	if !strings.Contains(out, "sub/wanted.txt") {
 		t.Errorf("output = %q, want it to echo the requested path", out)
 	}
 }
 
-func TestFileToolErrors_NoWorkDir(t *testing.T) {
-	sb := NewLocal() // no WorkDir: every file op fails with ErrNoWorkDir
-	for name, tc := range map[string]struct {
-		tool *agents.Tool
-		args string
-	}{
-		"read":  {ReadFileTool(sb, FileToolConfig{}), `{"path":"a.txt","offset":0,"limit":0}`},
-		"write": {WriteFileTool(sb, FileToolConfig{}), `{"path":"a.txt","content":"x"}`},
-		"list":  {ListFilesTool(sb, FileToolConfig{}), `{"path":""}`},
-	} {
-		t.Run(name, func(t *testing.T) {
-			out := invokeTool(t, tc.tool, tc.args)
-			if !strings.Contains(out, "no persistent working directory") {
-				t.Errorf("output = %q, want the no-workdir kind", out)
-			}
-		})
+// ErrNoWorkDir (ephemeral docker without a bind mount) renders as its own kind.
+func TestFileToolError_NoWorkDir(t *testing.T) {
+	got := fileToolError("read", "a.txt", ErrNoWorkDir)
+	want := "error: read a.txt: no persistent working directory configured"
+	if got != want {
+		t.Errorf("fileToolError = %q, want %q", got, want)
 	}
 }
 

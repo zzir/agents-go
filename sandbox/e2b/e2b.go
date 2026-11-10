@@ -20,14 +20,14 @@ import (
 // Defaults for the fields Options leaves empty.
 const (
 	DefaultAPIURL = "https://api.e2b.app"
-	DefaultDomain = "e2b.app"
-	// EnvdPort is the port envd — the daemon inside every sandbox — listens
+	defaultDomain = "e2b.app"
+	// envdPort is the port envd — the daemon inside every sandbox — listens
 	// on. It is part of the host name, not a URL path.
-	EnvdPort = 49983
-	// DefaultUser is the account E2B sandboxes run commands as.
-	DefaultUser = "user"
-	// DefaultWorkDir matches the workbench's contract everywhere else.
-	DefaultWorkDir = "/workspace"
+	envdPort = 49983
+	// defaultUser is the account E2B sandboxes run commands as.
+	defaultUser = "user"
+	// defaultWorkDir matches the workbench's contract everywhere else.
+	defaultWorkDir = "/workspace"
 	// DefaultTimeout is the sandbox TTL requested at creation, in seconds: a
 	// LEASE, refreshed while the sandbox is in use (decisions §5.34).
 	DefaultTimeout = 300
@@ -64,7 +64,7 @@ type Options struct {
 	APIURL string
 	// Domain is the suffix a sandbox's hosts are built from:
 	// "<port>-<sandbox id>.<domain>". A domain the create response carries
-	// takes precedence; empty means DefaultDomain.
+	// takes precedence; empty means "e2b.app".
 	Domain string
 	// APIKey authenticates the control plane (X-API-Key). Required.
 	APIKey string
@@ -91,10 +91,9 @@ type Options struct {
 	Metadata map[string]string
 	// Env is the environment every command sees.
 	Env map[string]string
-	// WorkDir is the working directory commands run in; empty means
-	// DefaultWorkDir.
+	// WorkDir is the working directory commands run in; empty means /workspace.
 	WorkDir string
-	// User is the account commands run as; empty means DefaultUser.
+	// User is the account commands run as; empty means "user".
 	User string
 	// DataPlaneAuth selects the envd credential; empty means AuthAuto.
 	DataPlaneAuth DataPlaneAuth
@@ -232,21 +231,21 @@ func (s *Sandbox) sandboxDomain() string {
 	if s.opts.Domain != "" {
 		return s.opts.Domain
 	}
-	return DefaultDomain
+	return defaultDomain
 }
 
 func (s *Sandbox) user() string {
 	if s.opts.User != "" {
 		return s.opts.User
 	}
-	return DefaultUser
+	return defaultUser
 }
 
 func (s *Sandbox) workDir() string {
 	if s.opts.WorkDir != "" {
 		return s.opts.WorkDir
 	}
-	return DefaultWorkDir
+	return defaultWorkDir
 }
 
 func (s *Sandbox) timeout() int {
@@ -254,11 +253,6 @@ func (s *Sandbox) timeout() int {
 		return s.opts.TimeoutSeconds
 	}
 	return DefaultTimeout
-}
-
-// hostFor builds the host a port inside the sandbox is reachable at.
-func (s *Sandbox) hostFor(id string, port int) string {
-	return strconv.Itoa(port) + "-" + id + "." + s.sandboxDomain()
 }
 
 // envdBase is the base URL of the sandbox's daemon.
@@ -273,8 +267,9 @@ func (s *Sandbox) envdBase(ctx context.Context) (string, error) {
 	return s.envdHost(id), nil
 }
 
+// envdHost is where envd answers: "<port>-<sandbox id>.<domain>".
 func (s *Sandbox) envdHost(id string) string {
-	return "https://" + s.hostFor(id, EnvdPort)
+	return "https://" + strconv.Itoa(envdPort) + "-" + id + "." + s.sandboxDomain()
 }
 
 // ensureWorkDir creates a fresh sandbox's working directory (spec §2.7q) once
@@ -319,12 +314,4 @@ func (s *Sandbox) resolvePath(p string) string {
 		return s.workDir()
 	}
 	return s.workDir() + "/" + p
-}
-
-// withTimeout turns a request timeout into a context; d <= 0 means no deadline.
-func withTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	if d <= 0 {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, d)
 }

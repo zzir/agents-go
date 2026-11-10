@@ -169,7 +169,7 @@ func TestDockerSandbox_TerminalCloseKillsShell(t *testing.T) {
 	countShells := `n=0; for d in /proc/[0-9]*; do c=$(cat "$d/comm" 2>/dev/null); if [ "$c" = "sh" ] || [ "$c" = "bash" ]; then n=$((n+1)); fi; done; echo "$n"`
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		res, err := sb.Exec(context.Background(), sandbox.ExecRequest{
+		res, err := sandbox.Exec(context.Background(), sb, sandbox.ExecRequest{
 			Cmd: []string{"sh", "-c", countShells},
 		})
 		if err != nil {

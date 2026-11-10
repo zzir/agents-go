@@ -37,15 +37,14 @@ func (s *Sandbox) Stop(ctx context.Context) error {
 	}
 	// Ownership first, like every by-name entry point (withManaged), and the stop
 	// then acts on the id, not the name — an id is not reused.
-	id, _, ok, err := s.inspectOwned(ctx)
+	id, _, ok, err := inspectOwned(ctx, s.cli, s.opts.ContainerName)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return nil // nothing provisioned: already as stopped as it gets
 	}
-	timeout := 10
-	if _, err := s.cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
+	if err := stopContainer(ctx, s.cli, id); err != nil {
 		if cerrdefs.IsNotFound(err) {
 			return nil
 		}
@@ -65,7 +64,7 @@ func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 	if err := s.requirePersistent(); err != nil {
 		return sandbox.StateAbsent, err
 	}
-	_, running, ok, err := s.inspectOwned(ctx)
+	_, running, ok, err := inspectOwned(ctx, s.cli, s.opts.ContainerName)
 	if err != nil {
 		return sandbox.StateAbsent, err
 	}
@@ -76,23 +75,6 @@ func (s *Sandbox) Status(ctx context.Context) (sandbox.State, error) {
 		return sandbox.StateRunning, nil
 	}
 	return sandbox.StateStopped, nil
-}
-
-// inspectOwned inspects the named container and confirms this package created
-// it; ok is false when nothing holds the name, a FOREIGN holder is an error.
-func (s *Sandbox) inspectOwned(ctx context.Context) (id string, running, ok bool, err error) {
-	info, err := s.cli.ContainerInspect(ctx, s.opts.ContainerName, client.ContainerInspectOptions{})
-	if err != nil {
-		if cerrdefs.IsNotFound(err) {
-			return "", false, false, nil
-		}
-		return "", false, false, fmt.Errorf("docker sandbox: inspecting %s: %w", s.opts.ContainerName, err)
-	}
-	c := info.Container
-	if err := ensureOwned(c.Config, s.opts.ContainerName); err != nil {
-		return "", false, false, err
-	}
-	return c.ID, c.State != nil && c.State.Running, true, nil
 }
 
 // ExportTar streams the working directory out of the container as a tar

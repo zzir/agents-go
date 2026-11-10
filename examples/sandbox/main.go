@@ -32,7 +32,7 @@ func run() error {
 
 	// Host-local, unisolated. MaxReadFileBytes caps one read_file (0 = the 8
 	// MiB default).
-	sb := sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: workDir, MaxReadFileBytes: 1 << 20})
+	sb := &sandbox.LocalSandbox{WorkDir: workDir, MaxReadFileBytes: 1 << 20}
 	defer sb.Close()
 
 	// exec_command, the file tools and apply_patch all share the sandbox filesystem.
@@ -43,7 +43,7 @@ func run() error {
 		}),
 	}
 	tools = append(tools, sandbox.FileTools(sb, sandbox.FileToolConfig{})...)
-	tools = append(tools, sandbox.ApplyPatchTool(sb, sandbox.FileToolConfig{}))
+	tools = append(tools, sandbox.ApplyPatchTool(sb))
 
 	agent := &agents.Agent{
 		Name: "coder",

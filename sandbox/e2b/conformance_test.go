@@ -105,7 +105,7 @@ func TestE2BConformance(t *testing.T) {
 func TestE2BProvisionsOnce(t *testing.T) {
 	sb, f := fakeBackedSandbox(t)
 	for range 3 {
-		if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+		if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -136,7 +136,7 @@ func TestE2BRecordsTheSandboxID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	if recorded == "" {
@@ -213,7 +213,7 @@ func TestE2BStatusConfirmsRunningThroughTheDaemon(t *testing.T) {
 // rather than failing every command against a dead id.
 func TestE2BDestroyThenReprovision(t *testing.T) {
 	sb, f := fakeBackedSandbox(t)
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sb.Destroy(t.Context()); err != nil {
@@ -222,7 +222,7 @@ func TestE2BDestroyThenReprovision(t *testing.T) {
 	if got, _ := sb.Status(t.Context()); got != sandbox.StateAbsent {
 		t.Fatalf("Status after Destroy = %v, want absent", got)
 	}
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
@@ -284,7 +284,7 @@ func leasedAtLeast(calls []int, secs int) bool {
 func TestE2BExportExtendsTheLease(t *testing.T) {
 	sb, f := fakeBackedSandbox(t)
 	// Provision first, so the export's ensure takes the refresh path.
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	rc, err := sb.ExportTar(t.Context())
@@ -304,10 +304,10 @@ func TestE2BExportExtendsTheLease(t *testing.T) {
 // its own deadline first.
 func TestE2BLongExecExtendsTheLease(t *testing.T) {
 	sb, f := fakeBackedSandbox(t)
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}, Timeout: 20 * time.Minute}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}, Timeout: 20 * time.Minute}); err != nil {
 		t.Fatal(err)
 	}
 	if calls := connectCalls(f); !leasedAtLeast(calls, 1200) {
@@ -319,7 +319,7 @@ func TestE2BLongExecExtendsTheLease(t *testing.T) {
 // least starts it from a freshly refreshed full lease.
 func TestE2BOpenTerminalRefreshesTheLease(t *testing.T) {
 	sb, f := fakeBackedSandbox(t)
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	term, err := sb.OpenTerminal(t.Context(), sandbox.TerminalOptions{})
@@ -375,7 +375,7 @@ func TestE2BRollbackKillCarriesADeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err == nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err == nil {
 		t.Fatal("a create nobody could record must fail")
 	}
 	rec.mu.Lock()
@@ -393,7 +393,7 @@ func TestE2BRollbackKillCarriesADeadline(t *testing.T) {
 // propagate rather than being sniffed into success.
 func TestE2BMakeDirFailureMentioningExistsPropagates(t *testing.T) {
 	sb, f := fakeBackedSandbox(t)
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
@@ -409,7 +409,7 @@ func TestE2BMakeDirFailureMentioningExistsPropagates(t *testing.T) {
 // sandbox.
 func TestE2BDestroyRetriesAfterAFailedKill(t *testing.T) {
 	sb, f := fakeBackedSandbox(t)
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
@@ -479,7 +479,7 @@ func TestE2BConcurrentFirstCommandsWaitForTheWorkDir(t *testing.T) {
 	errs := make([]error, 4)
 	for i := range errs {
 		wg.Go(func() {
-			_, errs[i] = sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}})
+			_, errs[i] = sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}})
 		})
 	}
 	wg.Wait()
@@ -495,7 +495,7 @@ func TestE2BConcurrentFirstCommandsWaitForTheWorkDir(t *testing.T) {
 // file the exclusive create made first is removed again.
 func TestE2BCreateExclusiveUploadFailureLeavesNoFile(t *testing.T) {
 	sb, f := fakeBackedSandbox(t)
-	if _, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
+	if _, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
@@ -541,7 +541,7 @@ func TestE2BOnSandboxIDMayReenterStatus(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := sb.Exec(t.Context(), sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}})
+		_, err := sandbox.Exec(t.Context(), sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "true"}})
 		done <- err
 	}()
 	select {
@@ -566,7 +566,7 @@ func TestE2BCallerCancelReturnsBareContextError(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		cancel()
 	}()
-	res, err := sb.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "sleep 5"}, Timeout: 10 * time.Second})
+	res, err := sandbox.Exec(ctx, sb, sandbox.ExecRequest{Cmd: []string{"sh", "-c", "sleep 5"}, Timeout: 10 * time.Second})
 	if err != context.Canceled { //nolint:errorlint // the contract is the bare error, not a wrapped one
 		t.Fatalf("Exec = %v, %v; want the bare context.Canceled", res, err)
 	}

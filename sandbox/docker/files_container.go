@@ -52,7 +52,7 @@ func (s *Sandbox) readFileContainer(ctx context.Context, p string) ([]byte, erro
 	// The exec cap sits above base64's 4/3 inflation so a file at the limit is
 	// never cut mid-stream; the timeout grows with the limit for remote daemons.
 	timeout := sandbox.DefaultTimeout + time.Duration(limit>>20)*time.Second
-	res, err := s.Exec(ctx, sandbox.ExecRequest{
+	res, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{
 		Cmd:            []string{"sh", "-c", readFileScript(s.containerPath(p), limit)},
 		Timeout:        timeout,
 		MaxOutputBytes: limit + limit/2 + 1024,
@@ -113,7 +113,7 @@ func (s *Sandbox) writeFileContainer(ctx context.Context, p string, content []by
 	stageAbs := path.Join(workDir, stageName)
 	script := fmt.Sprintf("mkdir -p -- %s && cat -- %s > %s; rc=$?; rm -f -- %s; exit $rc",
 		sandbox.ShellQuote(path.Dir(full)), sandbox.ShellQuote(stageAbs), sandbox.ShellQuote(full), sandbox.ShellQuote(stageAbs))
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Files: map[string]string{stageName: string(content)}, Cmd: []string{"sh", "-c", script}})
+	res, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{Files: map[string]string{stageName: string(content)}, Cmd: []string{"sh", "-c", script}})
 	if err != nil {
 		return err
 	}
@@ -139,13 +139,13 @@ func (s *Sandbox) createExclusiveContainer(ctx context.Context, p string, conten
 	_, _ = rand.Read(buf) // never fails as of Go 1.24
 	tmpPath := path.Join(path.Dir(full), ".ap."+hex.EncodeToString(buf))
 	createScript, cleanupScript, rmTmpScript := exclusiveCreateScripts(full, tmpPath, b64)
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", createScript}})
+	res, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", createScript}})
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancelCleanup()
 	// A hard error or a timeout is outcome-unknown: ln may have published the
 	// target. The inode-checked cleanup makes a returned error mean "not created".
 	if err != nil || res.TimedOut {
-		cres, cerr := s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cleanupScript}})
+		cres, cerr := sandbox.Exec(cleanupCtx, s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", cleanupScript}})
 		if cerr != nil || cres.TimedOut || cres.ExitCode != 0 {
 			return fmt.Errorf("docker sandbox: create %q outcome unknown; cleanup unconfirmed, the target may still exist", p)
 		}
@@ -156,7 +156,7 @@ func (s *Sandbox) createExclusiveContainer(ctx context.Context, p string, conten
 	}
 	// Exec ran to completion; drop the temp link (a published target keeps its
 	// own hard link). A tmp-remove failure only leaks the temp file.
-	_, _ = s.Exec(cleanupCtx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", rmTmpScript}})
+	_, _ = sandbox.Exec(cleanupCtx, s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", rmTmpScript}})
 	if res.ExitCode != 0 {
 		if res.ExitCode == exitTargetExists {
 			return fmt.Errorf("docker sandbox: create %q: %w", p, fs.ErrExist)
@@ -177,7 +177,7 @@ func removeFileScript(full string) string {
 }
 
 func (s *Sandbox) removeFileContainer(ctx context.Context, p string) error {
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", removeFileScript(s.containerPath(p))}})
+	res, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", removeFileScript(s.containerPath(p))}})
 	if err != nil {
 		return err
 	}
@@ -195,13 +195,13 @@ func (s *Sandbox) renameContainer(ctx context.Context, oldPath, newPath string) 
 	oc := s.containerPath(oldPath)
 	nc := s.containerPath(newPath)
 	if parent := path.Dir(nc); parent != "/" {
-		if res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"mkdir", "-p", "--", parent}}); err != nil {
+		if res, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{Cmd: []string{"mkdir", "-p", "--", parent}}); err != nil {
 			return err
 		} else if res.ExitCode != 0 {
 			return fmt.Errorf("docker sandbox: mkdir %s: %s", parent, res.Stderr)
 		}
 	}
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"mv", "--", oc, nc}})
+	res, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{Cmd: []string{"mv", "--", oc, nc}})
 	if err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func (s *Sandbox) listDirContainer(ctx context.Context, p string) ([]sandbox.Dir
 	if err := s.ensureImage(ctx); err != nil {
 		return nil, err
 	}
-	res, err := s.Exec(ctx, sandbox.ExecRequest{Cmd: []string{"sh", "-c", listDirScript(s.containerPath(p))}})
+	res, err := sandbox.Exec(ctx, s, sandbox.ExecRequest{Cmd: []string{"sh", "-c", listDirScript(s.containerPath(p))}})
 	if err != nil {
 		return nil, err
 	}

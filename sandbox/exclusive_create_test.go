@@ -15,7 +15,7 @@ import (
 // write, and one's rollback could RemoveFile the other's file.
 func TestCreateExclusiveConcurrentOnlyOneWins(t *testing.T) {
 	ctx := context.Background()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 
 	const n = 20
 	var wg sync.WaitGroup
@@ -50,7 +50,7 @@ func TestCreateExclusiveConcurrentOnlyOneWins(t *testing.T) {
 // an existing path fails with fs.ErrExist and does not overwrite.
 func TestCreateExclusiveRejectsExistingAndKeepsContent(t *testing.T) {
 	ctx := context.Background()
-	sb := NewLocalWithOptions(LocalOptions{WorkDir: t.TempDir()})
+	sb := &LocalSandbox{WorkDir: t.TempDir()}
 
 	if err := sb.CreateExclusive(ctx, "x.txt", []byte("first")); err != nil {
 		t.Fatalf("first create: %v", err)

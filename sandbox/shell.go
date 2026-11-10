@@ -14,9 +14,9 @@ import (
 	"time"
 )
 
-// ShellSession is a shell that stays alive between commands; completion is
+// shellSession is a shell that stays alive between commands; completion is
 // detected with a sentinel printed after each command (spec §2.7k).
-type ShellSession struct {
+type shellSession struct {
 	term Terminal
 	// sentinel is what appears in the OUTPUT; head and tail are the two halves
 	// the command line carries. See newSentinel.
@@ -47,14 +47,14 @@ type ShellSession struct {
 	closed  bool
 }
 
-// OpenShellSession starts a persistent shell in the sandbox, which must
+// openShellSession starts a persistent shell in the sandbox, which must
 // implement TerminalOpener.
-func OpenShellSession(ctx context.Context, sb Sandbox, opts TerminalOptions) (*ShellSession, error) {
+func openShellSession(ctx context.Context, sb Sandbox) (*shellSession, error) {
 	opener, ok := sb.(TerminalOpener)
 	if !ok {
 		return nil, fmt.Errorf("sandbox: %T does not support shell sessions", sb)
 	}
-	term, err := opener.OpenTerminal(ctx, opts)
+	term, err := opener.OpenTerminal(ctx, TerminalOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: opening shell session: %w", err)
 	}
@@ -70,9 +70,9 @@ func OpenShellSession(ctx context.Context, sb Sandbox, opts TerminalOptions) (*S
 }
 
 // newShellSession builds a session with a fresh sentinel and starts its reader.
-func newShellSession(term Terminal) *ShellSession {
+func newShellSession(term Terminal) *shellSession {
 	head, tail := newSentinel()
-	s := &ShellSession{
+	s := &shellSession{
 		term:     term,
 		sentinel: head + tail,
 		head:     head,
@@ -87,7 +87,7 @@ func newShellSession(term Terminal) *ShellSession {
 
 // readLoop feeds chunks until the terminal ends; Close ends it by closing the
 // terminal, which returns the blocked Read.
-func (s *ShellSession) readLoop() {
+func (s *shellSession) readLoop() {
 	defer close(s.chunks)
 	buf := make([]byte, 4096)
 	for {
@@ -121,20 +121,20 @@ func newSentinel() (head, tail string) {
 
 // settle runs one no-op command so the session is at a known state, discarding
 // anything the shell printed before it.
-func (s *ShellSession) settle(ctx context.Context) error {
+func (s *shellSession) settle(ctx context.Context) error {
 	_, _, err := s.Run(ctx, ":", 10*time.Second)
 	return err
 }
 
 // Run executes one command and returns its output and exit status.
-func (s *ShellSession) Run(ctx context.Context, cmd string, timeout time.Duration) (output string, exitCode int, err error) {
+func (s *shellSession) Run(ctx context.Context, cmd string, timeout time.Duration) (output string, exitCode int, err error) {
 	out, code, err := s.runCaptured(ctx, cmd, timeout)
 	return out.Head + out.Tail, code, err
 }
 
 // runCaptured is Run keeping the capture's shape: a middle capBuf dropped is a
 // hole between Head and Tail, not a seam (spec §2.7v).
-func (s *ShellSession) runCaptured(ctx context.Context, cmd string, timeout time.Duration) (captured, int, error) {
+func (s *shellSession) runCaptured(ctx context.Context, cmd string, timeout time.Duration) (captured, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -171,7 +171,7 @@ const sessionHeadKeep = sessionBufCap * 3 / 5 // truncateWithInfo's head/tail sp
 
 // readUntilSentinel reads until the token appears, returning the output before
 // it and the exit status after it; every failure carries the partial output.
-func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Duration) (captured, int, error) {
+func (s *shellSession) readUntilSentinel(ctx context.Context, timeout time.Duration) (captured, int, error) {
 	partial := func() captured { return s.capture(s.buf) }
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -215,7 +215,7 @@ func (s *ShellSession) readUntilSentinel(ctx context.Context, timeout time.Durat
 
 // capBuf drops the middle of s.buf once it doubles sessionBufCap and returns
 // scanFrom remapped; the cut stays below the scan window (spec §2.7k).
-func (s *ShellSession) capBuf(scanFrom int) int {
+func (s *shellSession) capBuf(scanFrom int) int {
 	cut := len(s.buf) - (sessionBufCap - sessionHeadKeep)
 	if len(s.buf) <= 2*sessionBufCap || cut > scanFrom {
 		return scanFrom
@@ -227,7 +227,7 @@ func (s *ShellSession) capBuf(scanFrom int) int {
 
 // capture echo-strips raw and, when capBuf cut a middle out of it, splits it
 // where the cut was; the echo came off the front, so the boundary moves by as much.
-func (s *ShellSession) capture(raw []byte) captured {
+func (s *shellSession) capture(raw []byte) captured {
 	out := trimEcho(string(raw), s.lastLine)
 	if s.dropped == 0 {
 		return whole(out)
@@ -254,7 +254,7 @@ func trimEcho(out, written string) string {
 
 // Close ends the session. The terminal closes BEFORE s.mu is taken, so a
 // command in flight is preempted rather than waited out (spec §2.7k).
-func (s *ShellSession) Close() error {
+func (s *shellSession) Close() error {
 	err := s.closeTerm()
 	s.mu.Lock()
 	s.closed = true
@@ -262,7 +262,7 @@ func (s *ShellSession) Close() error {
 	return err
 }
 
-func (s *ShellSession) closeLocked() error {
+func (s *shellSession) closeLocked() error {
 	if s.closed {
 		return nil
 	}
@@ -272,7 +272,7 @@ func (s *ShellSession) closeLocked() error {
 
 // closeTerm closes the terminal once, releasing the reader goroutine and with
 // it any Run blocked on the sentinel.
-func (s *ShellSession) closeTerm() error {
+func (s *shellSession) closeTerm() error {
 	s.closeOnce.Do(func() {
 		close(s.done)
 		s.closeErr = s.term.Close()
@@ -287,7 +287,7 @@ type sessionPool struct {
 	// closed is final: the open runs outside the lock (see session), and a
 	// shell landing after Close would otherwise be held by nobody.
 	closed   bool
-	sessions map[string]*ShellSession
+	sessions map[string]*shellSession
 }
 
 // errSessionPoolClosed is what a named command gets once the pool's owner has
@@ -295,7 +295,7 @@ type sessionPool struct {
 var errSessionPoolClosed = errors.New("sandbox: session pool is closed")
 
 func newSessionPool() *sessionPool {
-	return &sessionPool{sessions: map[string]*ShellSession{}}
+	return &sessionPool{sessions: map[string]*shellSession{}}
 }
 
 // run executes cmd in the named session, opening it on first use. A session
@@ -320,7 +320,7 @@ func (p *sessionPool) run(ctx context.Context, sb Sandbox, name, cmd string, tim
 
 // session returns the named session, opening one on first use OUTSIDE p.mu;
 // the loser of a race takes the winner's (spec §2.7k).
-func (p *sessionPool) session(ctx context.Context, sb Sandbox, name string) (*ShellSession, error) {
+func (p *sessionPool) session(ctx context.Context, sb Sandbox, name string) (*shellSession, error) {
 	p.mu.Lock()
 	s, ok := p.sessions[name]
 	closed := p.closed
@@ -332,7 +332,7 @@ func (p *sessionPool) session(ctx context.Context, sb Sandbox, name string) (*Sh
 		return s, nil
 	}
 
-	opened, err := OpenShellSession(ctx, sb, TerminalOptions{})
+	opened, err := openShellSession(ctx, sb)
 	if err != nil {
 		return nil, err
 	}
