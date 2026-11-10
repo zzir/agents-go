@@ -85,32 +85,10 @@ func (s *Session) Entry(ctx context.Context, id string) (*Entry, error) {
 	return s.storage.Entry(ctx, id)
 }
 
-// State folds the active branch into the state it implies: last agent, last
-// response id, tool calls awaiting outputs — spec §2.5c.
-func (s *Session) State(ctx context.Context) (DerivedState, error) {
-	entries, err := s.ContextEntries(ctx, Cursor{})
-	if err != nil {
-		return DerivedState{}, err
-	}
-	return ReduceState(entries), nil
-}
-
-// Stats summarizes the session.
-func (s *Session) Stats(ctx context.Context) (Stats, error) {
-	entries, err := s.storage.Entries(ctx, Cursor{})
-	if err != nil {
-		return Stats{}, err
-	}
-	return StatsOf(entries), nil
-}
-
 // Metadata describes the session without reading its contents.
 func (s *Session) Metadata(ctx context.Context) (Metadata, error) {
 	return s.storage.Metadata(ctx)
 }
-
-// Clear removes every entry.
-func (s *Session) Clear(ctx context.Context) error { return s.storage.Clear(ctx) }
 
 // ErrNotFound is what a repo reports for an id it does not hold — spec §2.5e.
 var ErrNotFound = errors.New("agents: session not found")

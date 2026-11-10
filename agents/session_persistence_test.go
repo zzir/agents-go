@@ -314,16 +314,16 @@ func TestInMemorySession(t *testing.T) {
 	agent := &Agent{Name: "a", ModelImpl: model}
 
 	// First run.
-	if _, err := RunSync(ctx, agent, "hello", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}}); err != nil {
+	if _, err := RunSync(ctx, agent, "hello", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
 		t.Fatal(err)
 	}
-	items, _ := session.NewSession(sess).ContextItems(ctx, session.Cursor{})
+	items, _ := sess.ContextItems(ctx, session.Cursor{})
 	if len(items) < 2 {
 		t.Fatalf("session should have user input + assistant msg, got %d", len(items))
 	}
 
 	// Second run: history must be prepended to the model input.
-	if _, err := RunSync(ctx, agent, "what did I say?", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}}); err != nil {
+	if _, err := RunSync(ctx, agent, "what did I say?", RunOptions{Conversation: ConversationOptions{Session: sess}}); err != nil {
 		t.Fatal(err)
 	}
 	// The second call's input should include the prior turn's items plus both

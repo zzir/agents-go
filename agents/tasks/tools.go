@@ -10,9 +10,6 @@ import (
 	"github.com/zzir/agents-go/agents"
 )
 
-// SessionIDFrom reads the tools' session from the run context, never from the model.
-type SessionIDFrom func(rc *agents.RunContext) string
-
 // parentRunKey is the context key WithParentRunID writes.
 type parentRunKey struct{}
 
@@ -28,7 +25,8 @@ func ParentRunID(ctx context.Context) string {
 	return id
 }
 
-// DefaultSessionID reads the session id as a plain string RunContext.Context.
+// DefaultSessionID reads the session id as a plain string RunContext.Context:
+// where the task tools take their session from, never from the model.
 func DefaultSessionID(rc *agents.RunContext) string {
 	if rc == nil {
 		return ""
@@ -59,24 +57,21 @@ type retryArgs struct {
 
 // Tools returns spawn_task, task_status, task_retry and task_stop: SpawnTool
 // followed by TaskTools. A task's own run must not be given these (MetaFor);
-// nil sessionID uses DefaultSessionID — see spec §2.13.
-func (m *Manager) Tools(sessionID SessionIDFrom) []*agents.Tool {
-	return append([]*agents.Tool{m.SpawnTool(sessionID)}, m.TaskTools(sessionID)...)
+// the session is DefaultSessionID's — see spec §2.13.
+func (m *Manager) Tools() []*agents.Tool {
+	return append([]*agents.Tool{m.SpawnTool()}, m.TaskTools()...)
 }
 
 // SpawnTool is spawn_task alone: start a plain background task as the
 // spawning agent or one of its handoff targets (SpawnTarget).
-func (m *Manager) SpawnTool(sessionID SessionIDFrom) *agents.Tool {
-	if sessionID == nil {
-		sessionID = DefaultSessionID
-	}
+func (m *Manager) SpawnTool() *agents.Tool {
 	return agents.NewTool("spawn_task",
 		"Start a background task: an agent works on the input while you continue — you, or one of the agents you can hand off to (agent_name). "+
 			"Returns a task_id immediately. When the task finishes you are notified automatically in a later turn — "+
 			"after spawning, finish your reply and END YOUR TURN instead of polling. "+
 			"Only reach for task_status when the user explicitly asks for progress (use its wait_seconds rather than a polling loop); task_stop cancels.",
 		func(ctx context.Context, tc *agents.ToolContext, args spawnArgs) (agents.ToolResult, error) {
-			parent := sessionID(tc.RunContext)
+			parent := DefaultSessionID(tc.RunContext)
 			if parent == "" {
 				return agents.ToolResult{}, fmt.Errorf("spawn_task: no session in the run context")
 			}
@@ -144,11 +139,7 @@ func sameAgentName(a, b string) bool {
 
 // TaskTools are the three tools that name an existing task: task_status,
 // task_retry and task_stop.
-func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
-	if sessionID == nil {
-		sessionID = DefaultSessionID
-	}
-
+func (m *Manager) TaskTools() []*agents.Tool {
 	status := agents.NewTool("task_status",
 		"Check a background task started with spawn_task. Statuses: working, input_required (waiting for a human approval), completed, failed, cancelled. "+
 			"For finished tasks the result field carries the FULL final output — the wake-up notification only shows a truncated summary. "+
@@ -156,7 +147,7 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 			"With no task_id it lists this conversation's tasks — the way back to an id you no longer have.",
 		func(ctx context.Context, tc *agents.ToolContext, args statusArgs) (agents.ToolResult, error) {
 			if args.TaskID == "" {
-				parent := sessionID(tc.RunContext)
+				parent := DefaultSessionID(tc.RunContext)
 				if parent == "" {
 					return agents.ToolResult{}, fmt.Errorf("task_status: no session in the run context")
 				}
@@ -166,7 +157,7 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 				}
 				return agents.TextResult(m.describeList(infos)), nil
 			}
-			if err := m.ownedBy(ctx, sessionID(tc.RunContext), args.TaskID); err != nil {
+			if err := m.ownedBy(ctx, DefaultSessionID(tc.RunContext), args.TaskID); err != nil {
 				return agents.ToolResult{}, err
 			}
 			info, err := m.Status(ctx, args.TaskID, time.Duration(args.WaitSeconds)*time.Second)
@@ -182,7 +173,7 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 			"a new task starts from nothing and pays again for everything this one already did. "+
 			"Only a failed task can be resumed, and only a limited number of times; when the failure is one a rerun cannot fix, spawn a new task instead.",
 		func(ctx context.Context, tc *agents.ToolContext, args retryArgs) (agents.ToolResult, error) {
-			if err := m.ownedBy(ctx, sessionID(tc.RunContext), args.TaskID); err != nil {
+			if err := m.ownedBy(ctx, DefaultSessionID(tc.RunContext), args.TaskID); err != nil {
 				return agents.ToolResult{}, err
 			}
 			info, err := m.Retry(ctx, args.TaskID)
@@ -203,7 +194,7 @@ func (m *Manager) TaskTools(sessionID SessionIDFrom) []*agents.Tool {
 	stop := agents.NewTool("task_stop",
 		"Stop a background task started with spawn_task.",
 		func(ctx context.Context, tc *agents.ToolContext, args stopArgs) (agents.ToolResult, error) {
-			if err := m.ownedBy(ctx, sessionID(tc.RunContext), args.TaskID); err != nil {
+			if err := m.ownedBy(ctx, DefaultSessionID(tc.RunContext), args.TaskID); err != nil {
 				return agents.ToolResult{}, err
 			}
 			info, err := m.Stop(ctx, args.TaskID, args.Graceful)

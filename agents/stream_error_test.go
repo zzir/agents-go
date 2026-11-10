@@ -204,7 +204,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 	t.Run("blocking leaves nothing behind", func(t *testing.T) {
 		sess := session.NewInMemorySession()
 		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-		stream, _ := Run(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}})
+		stream, _ := Run(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: sess}})
 		_, _, err := streamRun(stream)
 		tripped(t, err)
 
@@ -223,7 +223,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 	t.Run("racing persists the input", func(t *testing.T) {
 		sess := session.NewInMemorySession()
 		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-		stream, _ := Run(context.Background(), newAgent(model, false), "hi", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}})
+		stream, _ := Run(context.Background(), newAgent(model, false), "hi", RunOptions{Conversation: ConversationOptions{Session: sess}})
 		_, _, err := streamRun(stream)
 		tripped(t, err)
 
@@ -237,7 +237,7 @@ func TestInputGuardrailTripwire_PersistenceDependsOnBlocking(t *testing.T) {
 	t.Run("RunSync agrees", func(t *testing.T) {
 		sess := session.NewInMemorySession()
 		model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "unused"))}}
-		_, err := RunSync(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}})
+		_, err := RunSync(context.Background(), newAgent(model, true), "hi", RunOptions{Conversation: ConversationOptions{Session: sess}})
 		tripped(t, err)
 
 		if items, _ := sess.ContextItems(context.Background(), session.Cursor{}); len(items) != 0 {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
@@ -162,33 +161,16 @@ func TestStreaming_EventsAndFinalResult(t *testing.T) {
 	events, res := agentstest.CollectRun(t, stream)
 	agentstest.AssertFinalOutput(t, res, "it is sunny")
 
-	kinds := agentstest.RunItemKinds(events)
+	var kinds []agents.ItemKind
+	for _, ev := range events {
+		if e, ok := ev.(*agents.RunItemStreamEvent); ok {
+			kinds = append(kinds, e.Item.Kind)
+		}
+	}
 	for _, want := range []agents.ItemKind{agents.ItemToolCall, agents.ItemToolCallOutput, agents.ItemMessage} {
 		if !slices.Contains(kinds, want) {
 			t.Errorf("stream missing a %q event; got %v", want, kinds)
 		}
-	}
-}
-
-func TestStreamTextDeltas(t *testing.T) {
-	model := agentstest.TextModel("hey")
-	model.StreamTextDeltas = true
-	agent := &agents.Agent{Name: "a", ModelImpl: model}
-
-	stream, _ := agents.Run(context.Background(), agent, "hi", agents.RunOptions{})
-	var delta strings.Builder
-	for ev, err := range stream {
-		if err != nil {
-			t.Fatal(err)
-		}
-		raw, ok := ev.(*agents.RawResponsesStreamEvent)
-		if !ok || raw.Data.Type != "response.output_text.delta" {
-			continue
-		}
-		delta.WriteString(raw.Data.AsResponseOutputTextDelta().Delta)
-	}
-	if delta.String() != "hey" {
-		t.Errorf("assembled deltas = %q, want %q", delta.String(), "hey")
 	}
 }
 
@@ -209,18 +191,6 @@ func TestRaw_UnknownItemTypeIsKept(t *testing.T) {
 	agentstest.AssertFinalOutput(t, res, "done anyway")
 	if got := agentstest.ItemTypes(res.NewItems); !slices.Equal(got, []string{"unknown", "message_output"}) {
 		t.Errorf("item types = %v, want the unknown item kept alongside the message", got)
-	}
-}
-
-func TestMessageTexts(t *testing.T) {
-	model := agentstest.TextModel("first")
-	agent := &agents.Agent{Name: "a", ModelImpl: model}
-	res, err := agents.RunSync(context.Background(), agent, "hi", agents.RunOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := agentstest.MessageTexts(res.NewItems); !slices.Equal(got, []string{"first"}) {
-		t.Errorf("message texts = %v", got)
 	}
 }
 

@@ -433,8 +433,9 @@ checkpoint, terminal output).
 - **The kind vocabulary is open.** A build that meets a kind it does not know
   ignores the entry rather than failing.
 - **Projection decides what the model reads.** Items and compaction checkpoints
-  project by default; annotations, terminal output and custom entries do not.
-  `RunOptions.Conversation.Projectors` overrides this per kind.
+  project by default; annotations and terminal output do not.
+  `RunOptions.Conversation.Projectors` overrides this per kind, a checkpoint's
+  rendering excepted: that is structural ([§2.5f](#25f-compaction)).
 - **A compaction summary projects as a *system* message**, never a user one.
 - **A checkpoint copies nothing**; what it holds and how it projects is
   [§2.5f](#25f-compaction).
@@ -467,10 +468,9 @@ Rules across the layers:
 
 - **Reads page on sequence numbers, not offsets.** An offset shifts under a
   concurrent append. A negative `Cursor.Limit` takes the most recent N.
-- **Derived state is a fold, never a stored field.** `State` and `Stats`
-  recompute from the entries. `State` folds the ACTIVE BRANCH — the view
-  recovery reads — so a dangling call on an abandoned attempt is not pending;
-  `Stats` stays whole-log.
+- **Derived state is a fold, never a stored field.** The calls recovery finds
+  unfinished ([§2.5h](#25h-crash-recovery)) are recomputed from the ACTIVE
+  BRANCH, so a dangling call on an abandoned attempt is not pending.
 - **`ContextEntries` is the active branch minus what compaction folded**
   ([§2.5f](#25f-compaction)); `ProjectEntries` applies the same exclusions
   again wherever it is called, so a view built without the filter still cannot
@@ -480,11 +480,10 @@ Rules across the layers:
   `ContextEntries` reads every entry and pages afterwards; a `Cursor` passed in
   saves nothing on the way in. The cost grows with the conversation and
   compaction does not reduce it — an accepted ceiling.
-- **Capabilities a store may or may not have are optional interfaces**, not
-  required methods: `AtomicReplacer`, `CompactionAware`.
-- **A wrapper that claims a capability delivers its contract or refuses.**
-  Delegating `AtomicReplacer` to a wrapped store without it returns an error
-  before touching anything, never a non-atomic Clear+Append.
+- **A capability a store may or may not have is an optional interface**, not a
+  required method: `CompactionAware`.
+- **A wrapper that claims a capability delivers its contract or refuses**
+  before touching anything, never a weaker stand-in.
 
 ### 2.5d Sessions are trees
 
@@ -502,15 +501,15 @@ An entry names its parent, so a session is a walk rather than a pile.
   through it.** Entries with no parent ids and no leaf moves (a pre-branching
   session, a server-held store) cannot be off-branch; the walk to the leaf is
   extended over the linkless prefix ahead of its root. Every branch-scoped view
-  (`ContextEntries`, `PathEntries`) shares this rule through `ActiveBranchOf`.
+  (`ContextEntries`, a host's own) shares this rule through `ActiveBranchOf`.
 - **A walk does NOT stop at a compaction checkpoint.** The walk answers "which
   entries are on this branch"; what the model sees is projection's question. A
   missing parent ends the walk, and a repeated id does too, so a corrupt
   session reads short instead of hanging.
-- **Fork extracts a branch; branch moves within one session.** A fork carries
-  entry ids across unchanged, so an update entry naming one still finds its
-  target, and writes through `session.ReplaceEntries`, so an `AtomicReplacer`
-  never shows a cleared-but-unfilled fork target.
+- **The SDK moves within one session and copies none.** `Branch` is the one
+  tree operation; `session.Fork` and the whole-history replace it wrote
+  through were retired 2026-11-10. A host that copies a branch out reads it
+  with `ActiveBranchOf` and appends it, ids kept — see decisions §5.115.
 
 ### 2.5e Session lifecycles
 
@@ -572,12 +571,8 @@ when its answer is right.
 - **Monotonic within a session**, and the ONLY order a backend reads history
   in — a row's own time-ordered key (a UUIDv7) is not.
 - **Never reused**, including after the entry holding it is removed.
-- **Never moved for an entry that stays.** The one exception is a
-  `ReplaceEntries` that re-adds an entry: ids are kept, numbers are fresh, so a
-  consumer tailing with `AfterSeq` sees it again under a new number and
-  deduplicates by id.
-- **`Clear` and `ReplaceEntries` do not restart it.** A cursor outlives the
-  entries it pointed at.
+- **Never moved for an entry that stays.**
+- **`Clear` does not restart it.** A cursor outlives the entries it pointed at.
 - **One value per entry, whichever API returns it.** *All shared, but for the
   backend below.*
 - **A server-held conversation numbers best-effort.**
@@ -673,7 +668,7 @@ belong to the run.
   first surviving entry after it). Kept entries are read from the session,
   never from a copy inside the checkpoint.
 - **Folded entries stay in the session untouched**, so a reader can offer to
-  expand them and a fork from before the checkpoint still finds its full
+  expand them and a branch from before the checkpoint still finds its full
   history. `ContextEntries` leaves them out and `ProjectEntries` renders each
   live checkpoint's summary up front, so the next run reads the shorter context
   without recomputing the pass.

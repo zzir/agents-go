@@ -38,7 +38,7 @@ func main() {
 			"Answer in one sentence. Each request ends with a context budget line; mention how much is left. " +
 				"Use history_search when asked about something said earlier. " +
 				"After each answer, memory_append the capital you named to the session memory key capitals.md."),
-		Tools: append(append(history.Tools(history.For(sess), history.Options{}), memory.Tools(scopes, memory.Static(notes))...),
+		Tools: append(append(history.Tools(history.For(sess), ""), memory.Tools(scopes, memory.Static(notes))...),
 			agents.NewContextTool()),
 	}
 

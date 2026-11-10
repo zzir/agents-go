@@ -4,6 +4,7 @@
 package history
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -29,7 +30,7 @@ type Source interface {
 
 // Resolver opens the source a call reads. scope is the call's scope argument:
 // "" for the conversation itself, else whatever the host documented through
-// Options.ScopeHint (a task id, say). An error reaches the model as the
+// Tools' scopeHint (a task id, say). An error reaches the model as the
 // tool's failure.
 type Resolver func(ctx context.Context, tc *agents.ToolContext, scope string) (Source, error)
 
@@ -41,13 +42,6 @@ func For(sess *session.Session) Resolver {
 		}
 		return sess, nil
 	}
-}
-
-// Options tunes the tools' descriptions.
-type Options struct {
-	// ScopeHint, when set, tells the model what the scope argument may name.
-	// Empty documents the argument as unsupported.
-	ScopeHint string
 }
 
 // The arguments are optional, so the tools are non-strict — see decisions §5.99.
@@ -68,11 +62,10 @@ type readArgs struct {
 }
 
 // Tools returns history_search and history_read over what resolve opens.
-func Tools(resolve Resolver, opts Options) []*agents.Tool {
-	scope := "The scope argument is unsupported here; omit it."
-	if opts.ScopeHint != "" {
-		scope = opts.ScopeHint
-	}
+// scopeHint tells the model what the scope argument may name; empty documents
+// the argument as unsupported.
+func Tools(resolve Resolver, scopeHint string) []*agents.Tool {
+	scope := cmp.Or(scopeHint, "The scope argument is unsupported here; omit it.")
 	search := agents.NewToolNonStrict("history_search",
 		"Search this conversation's whole history, including turns that compaction folded out of your context. "+
 			"Case-insensitive literal substring over messages, tool calls and tool outputs; an empty query lists the newest items. "+

@@ -28,8 +28,6 @@ const (
 	EntryKindUpdate EntryKind = "update"
 	// EntryKindLeaf moves the session's active branch. See LeafPayload.
 	EntryKindLeaf EntryKind = "leaf"
-	// EntryKindCustom is the extension point; CustomType names the subtype.
-	EntryKindCustom EntryKind = "custom"
 )
 
 // Entry is one record in a session's history. Entries are append-only: a later
@@ -44,8 +42,6 @@ type Entry struct {
 	ParentID string `json:"parent_id,omitzero"`
 	// Kind says what this entry holds.
 	Kind EntryKind `json:"kind"`
-	// CustomType names the subtype when Kind is EntryKindCustom.
-	CustomType string `json:"custom_type,omitzero"`
 	// Source records who produced the entry.
 	Source Source `json:"source,omitzero"`
 	// AgentName is the agent that produced it, when one did.
@@ -233,7 +229,6 @@ func (e Entry) Equal(other Entry) bool {
 		e.Seq != other.Seq,
 		e.ParentID != other.ParentID,
 		e.Kind != other.Kind,
-		e.CustomType != other.CustomType,
 		e.Source != other.Source,
 		e.AgentName != other.AgentName,
 		e.ResponseID != other.ResponseID:

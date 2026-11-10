@@ -31,7 +31,6 @@ run knew about it, or something that is not a Responses item at all:
 | `compaction` | A checkpoint: a summary standing in for the entries it folded |
 | `terminal` | Interactive terminal output |
 | `update` | An amendment to an earlier entry's display ([below](#entries-are-append-only)) |
-| `custom` | The extension point; `CustomType` names the subtype |
 
 The vocabulary is open: an unknown kind is ignored, not an error
 ([spec §2.5b](../reference/spec.md#25b-session-entries)).
@@ -46,18 +45,6 @@ page2, _ := sess.Entries(ctx, session.Cursor{AfterSeq: page1[len(page1)-1].Seq, 
 A sequence number does not move under a concurrent append; a **negative** limit
 takes the most recent N. `ContextEntries` is the active branch minus what
 compaction folded ([spec §2.5c](../reference/spec.md#25c-session-layering)).
-
-## Derived state
-
-`State` and `Stats` are folds over the entries, never fields kept beside them
-([spec §2.5c](../reference/spec.md#25c-session-layering)):
-
-```go
-st, _ := sess.State(ctx)
-st.LastAgent        // who spoke last
-st.LastResponseID   // what server-managed conversation state chains from
-st.PendingCallIDs   // tool calls recorded without outputs — a paused run
-```
 
 Two smaller reads work on items: `session.ItemText` returns one input item's
 readable text (content arrives as a bare string or an array of parts — the one
@@ -82,9 +69,8 @@ that does not exist is `session.ErrNotFound`, never an empty session.
 
 ## Optional storage capabilities
 
-`AtomicReplacer` (swap the whole history in one step — what a fork uses) and
-`CompactionAware` (compact its own history after a run) are optional
-interfaces a store may implement; a wrapper that claims one delivers it or
+`CompactionAware` (compact its own history after a run) is an optional
+interface a store may implement; a wrapper that claims it delivers it or
 refuses ([spec §2.5c](../reference/spec.md#25c-session-layering)). A store of
 your own runs `agents/session/sessiontest` from its tests
 ([Testing](testing.md)).
@@ -203,8 +189,7 @@ strategy := &compaction.PipelineStrategy{Strategies: []compaction.Strategy{
 opts.Compaction = agents.CompactionOptions{Compactor: compaction.New(strategy)}
 ```
 
-`compaction.ContextWindowStrategy` derives both thresholds from the model's own
-limits. `TruncationStrategy` drops from the oldest end but skips system groups
+`TruncationStrategy` drops from the oldest end but skips system groups
 whatever their age; set `DropSystem: true` when the instructions are re-sent on
 every run anyway.
 
@@ -259,7 +244,7 @@ calls and tool outputs, newest first, folded history included; and
 `history_read`, one item in full by id.
 
 ```go
-agent.Tools = append(agent.Tools, history.Tools(history.For(sess), history.Options{})...)
+agent.Tools = append(agent.Tools, history.Tools(history.For(sess), "")...)
 ```
 
 They read the log, not the projection, so a compaction pass can fold freely:
@@ -360,7 +345,7 @@ is the counterpart of [`RunState`](human_in_the_loop.md), not a replacement
 - History is loaded once at run start; new items are saved incrementally — the user input just before the first model call, then each turn as it completes — so a cancelled or failed run keeps every completed turn ([spec §2.5](../reference/spec.md#25-session-persistence-boundaries)). A save that leaves nothing behind is announced on the stream as `agents.ItemsPersistedEvent` ([Streaming](streaming.md#the-persistence-event)).
 - When a run pauses for [tool approval](human_in_the_loop.md), the completed part of the turn is already saved; the pending, output-less tool calls are held back (they would break replay) and saved together with their outputs once the resumed run continues. Pass the same `Session` to `ResumeRun`.
 - [Handoff input filters](handoffs.md#input-filters) do not affect what is saved: the session keeps the unfiltered conversation.
-- Corrections (letting a user edit an earlier question) are a branch, not a deletion: fork the session from the entry before the question, or append the corrected turn — the projection decides what the model reads.
+- Corrections (letting a user edit an earlier question) are a branch, not a deletion: [branch](#branching) from the entry before the question, or append the corrected turn — the projection decides what the model reads.
 - What the model reads out of the loaded history is shaped by [projection](#projection-what-the-model-reads) and [compaction](#run-level-compaction), not by rewriting the load. One knob bounds how much of it a run hands the model: `Conversation.HistoryLimit: 50` keeps the most recent N entries of the active branch; the store is still read whole and the cursor only trims the answer ([spec §2.5c](../reference/spec.md#25c-session-layering)). Anything not positive (the zero value included) means no bound, and the setting is ignored when no `Session` is set.
 
 ## Branching
@@ -383,36 +368,32 @@ An **empty item list** is what makes that a regeneration rather than a repeat �
 `[]agents.InputItem{}`, not `""`, which appends an empty user message.
 
 ```go
-leaf, _ := sess.Leaf(ctx)               // the active tip
-path, _ := sess.PathEntries(ctx)        // root → leaf, the active branch only
 all, _ := sess.Entries(ctx, session.Cursor{}) // everything, abandoned attempts included
+leaf := session.LeafOf(all)                   // the active tip
+path := session.ActiveBranchOf(all)           // root → leaf, the active branch only
 ```
 
-`PathEntries` is what the model reads; `Entries` is the whole log, abandoned
-attempts included, which is what a UI needs to offer the other answers.
+The active branch is what the model reads (less what compaction folded);
+`Entries` is the whole log, abandoned attempts included, which is what a UI
+needs to offer the other answers.
 Switching is itself an append (a leaf entry), the walk does not stop at a
 compaction checkpoint, and a missing parent ends it rather than failing. A
 runnable program is [examples/branching](../../examples/branching/main.go).
 
-## Forking sessions
+## Copying a branch into another session
 
-A fork copies history into a **separate session**; a [branch](#branching) keeps
-both attempts in the *same* one. `session.Fork` clones the active branch between
-any two backends — a SQLite session into an in-memory one, for instance:
+The SDK keeps both attempts in the *same* session and copies none
+([decisions §5.115](../explanation/decisions.md)). A host that wants a
+separate session reads the branch and appends it; entry ids are kept, so an
+update entry still finds its target:
 
 ```go
-// Full clone — dst becomes an exact copy of src's active branch.
-dst := session.NewInMemorySession()
-session.Fork(ctx, src, dst)
-
-// Point-in-time fork — compose the exported pieces: cut the branch at an
-// entry, then replace the destination's contents with it.
-entries, _ := src.Entries(ctx, session.Cursor{})
-path := session.PathToLeaf(entries, "sess-1-e5")
-session.ReplaceEntries(ctx, dst.Storage(), path...)
+all, _ := src.Entries(ctx, session.Cursor{})
+path := session.PathToLeaf(all, "sess-1-e5") // or session.ActiveBranchOf(all)
+dst.Append(ctx, path...)                     // dst: a fresh session
 ```
 
-The fork point is an **entry id**, not a position: positions shift when
+The cut point is an **entry id**, not a position: positions shift when
 compaction folds entries away or a branch switch appends a leaf. Ids are
 assigned by storage on append and reported by `Entries` (`e.ID`).
 

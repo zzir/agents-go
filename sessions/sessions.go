@@ -33,7 +33,7 @@ type entry struct {
 	// empty is the direct scope, a scope like any other, not a wildcard.
 	Gen string `bun:"gen,notnull"`
 	// Seq is the entry's cursor position (session.PrepareAppend), session-local
-	// so it survives a fork or an export between stores.
+	// so it survives an export between stores.
 	Seq      int64  `bun:"seq,notnull"`
 	EntryID  string `bun:"entry_id,notnull"`
 	ParentID string `bun:"parent_id"`
@@ -163,12 +163,8 @@ func CreateSchema(ctx context.Context, db *bun.DB) error {
 
 // Entries implements session.Storage, paginating by cursor.
 func (s *Session) Entries(ctx context.Context, cur session.Cursor) ([]session.Entry, error) {
-	return s.entriesIn(ctx, s.db, cur)
-}
-
-func (s *Session) entriesIn(ctx context.Context, db bun.IDB, cur session.Cursor) ([]session.Entry, error) {
 	var rows []entry
-	q := s.scoped(db.NewSelect().Model(&rows))
+	q := s.scoped(s.db.NewSelect().Model(&rows))
 	if cur.AfterSeq > 0 {
 		q = q.Where("seq > ?", cur.AfterSeq)
 	}
@@ -274,44 +270,8 @@ func (s *Session) Clear(ctx context.Context) error {
 	})
 }
 
-// ReplaceEntries implements session.AtomicReplacer: delete and insert run in
-// one transaction, so a failed rewrite rolls back to the previous history. The
-// high-water mark is read inside it — see lockForWrite.
-func (s *Session) ReplaceEntries(ctx context.Context, entries ...session.Entry) error {
-	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		return s.replaceIn(ctx, tx, entries)
-	})
-}
-
-// replaceIn swaps this session's rows for entries on the caller's transaction.
-func (s *Session) replaceIn(ctx context.Context, tx bun.Tx, entries []session.Entry) error {
-	if err := s.lockForWrite(ctx, tx); err != nil {
-		return err
-	}
-	// A replace does not restart the numbering — a cursor outlives the entries it
-	// pointed at — so the high-water mark carries over while the branch starts fresh.
-	at, err := s.appendPointIn(ctx, tx)
-	if err != nil {
-		return err
-	}
-	rows, err := s.encodeEntries(entries, session.AppendPoint{LastSeq: at.LastSeq})
-	if err != nil {
-		return err
-	}
-	if _, err := tx.NewDelete().Model((*entry)(nil)).
-		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).Exec(ctx); err != nil {
-		return err
-	}
-	if len(rows) > 0 {
-		if _, err := tx.NewInsert().Model(&rows).Exec(ctx); err != nil {
-			return err
-		}
-	}
-	return s.touchIn(ctx, tx)
-}
-
 // encodeEntries prepares entries for insertion, filling in the store-owned
-// fields; a caller-supplied id is kept so a fork or replace preserves identity.
+// fields; a caller-supplied id is kept.
 func (s *Session) encodeEntries(entries []session.Entry, at session.AppendPoint) ([]entry, error) {
 	prepared := session.PrepareAppend(entries, at)
 	rows := make([]entry, 0, len(prepared))
@@ -363,10 +323,7 @@ func decodeEntry(r entry) (session.Entry, error) {
 	return e, nil
 }
 
-var (
-	_ session.Storage        = (*Session)(nil)
-	_ session.AtomicReplacer = (*Session)(nil)
-)
+var _ session.Storage = (*Session)(nil)
 
 // Metadata implements session.Storage. It counts rather than loading, and
 // merges in the session row when one exists (a session created through a repo).

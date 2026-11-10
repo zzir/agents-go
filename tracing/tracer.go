@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// Now is the clock used for span timing. Tests may override it for determinism.
-var Now = time.Now
-
 // Tracer creates traces and spans and notifies a Processor of their lifecycle.
 // A nil Tracer is a no-op.
 type Tracer struct {
@@ -38,27 +35,14 @@ type SpanHandle struct {
 	mu sync.Mutex
 }
 
-// TraceOption customizes a Trace before it reaches the processor; mutating one
-// after StartTrace races the export (spec §2.11e).
-type TraceOption func(*Trace)
-
-// WithGroupID links this trace to a group of related traces (e.g. one chat thread).
-func WithGroupID(id string) TraceOption { return func(tr *Trace) { tr.GroupID = id } }
-
-// WithMetadata attaches user metadata to the trace.
-func WithMetadata(md map[string]any) TraceOption { return func(tr *Trace) { tr.Metadata = md } }
-
-// StartTrace begins a new trace for the given workflow. Finish it with Finish.
-func (t *Tracer) StartTrace(workflowName string, opts ...TraceOption) *TraceHandle {
+// StartTrace begins a new trace for the given workflow; groupID links related
+// traces (one chat thread) and metadata is the caller's, both optional. A Trace
+// mutated after StartTrace races the export (spec §2.11e). Finish it with Finish.
+func (t *Tracer) StartTrace(workflowName, groupID string, metadata map[string]any) *TraceHandle {
 	if t == nil || t.proc == nil {
 		return &TraceHandle{}
 	}
-	tr := &Trace{TraceID: NewTraceID(), WorkflowName: workflowName}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(tr)
-		}
-	}
+	tr := &Trace{TraceID: NewTraceID(), WorkflowName: workflowName, GroupID: groupID, Metadata: metadata}
 	t.proc.OnTraceStart(tr)
 	return &TraceHandle{Trace: tr, tracer: t}
 }
@@ -71,30 +55,30 @@ func (h *TraceHandle) Finish() {
 	h.tracer.proc.OnTraceEnd(h.Trace)
 }
 
-// startSpan is the shared constructor for StartSpan and the typed helpers.
-func (h *TraceHandle) startSpan(name, parentID, spanType string, data map[string]any) *SpanHandle {
-	if h == nil || h.tracer == nil || h.Trace == nil {
-		return &SpanHandle{}
-	}
+// newSpan is the one span constructor; it copies data, so the caller's map
+// stays the caller's.
+func (t *Tracer) newSpan(traceID, parentID, name, spanType string, data map[string]any) *SpanHandle {
 	d := map[string]any{}
 	maps.Copy(d, data)
 	sp := &Span{
-		TraceID:   h.Trace.TraceID,
+		TraceID:   traceID,
 		SpanID:    NewSpanID(),
 		ParentID:  parentID,
 		Name:      name,
 		Type:      spanType,
-		StartedAt: Now(),
+		StartedAt: time.Now(),
 		Data:      d,
 	}
-	h.tracer.proc.OnSpanStart(sp)
-	return &SpanHandle{Span: sp, tracer: h.tracer}
+	t.proc.OnSpanStart(sp)
+	return &SpanHandle{Span: sp, tracer: t}
 }
 
-// StartSpan begins an untyped span under this trace, nested under parentID when
-// non-empty; prefer a typed constructor where one fits.
-func (h *TraceHandle) StartSpan(name, parentID string) *SpanHandle {
-	return h.startSpan(name, parentID, "", nil)
+// startSpan begins a span under this trace, nested under parentID when non-empty.
+func (h *TraceHandle) startSpan(name, parentID, spanType string, data map[string]any) *SpanHandle {
+	if h == nil || h.tracer == nil || h.Trace == nil {
+		return &SpanHandle{}
+	}
+	return h.tracer.newSpan(h.Trace.TraceID, parentID, name, spanType, data)
 }
 
 // StartAgentSpan begins a span for an agent turn (Type SpanTypeAgent).
@@ -126,23 +110,6 @@ func (h *TraceHandle) StartHandoffSpan(name, parentID string) *SpanHandle {
 // (Type SpanTypeGuardrail).
 func (h *TraceHandle) StartGuardrailSpan(stage, parentID string) *SpanHandle {
 	return h.startSpan("guardrail:"+stage, parentID, SpanTypeGuardrail, map[string]any{"stage": stage})
-}
-
-// StartSpan begins a span nested under this span.
-func (h *SpanHandle) StartSpan(name string) *SpanHandle {
-	if h == nil || h.tracer == nil || h.Span == nil {
-		return &SpanHandle{}
-	}
-	sp := &Span{
-		TraceID:   h.Span.TraceID,
-		SpanID:    NewSpanID(),
-		ParentID:  h.Span.SpanID,
-		Name:      name,
-		StartedAt: Now(),
-		Data:      map[string]any{},
-	}
-	h.tracer.proc.OnSpanStart(sp)
-	return &SpanHandle{Span: sp, tracer: h.tracer}
 }
 
 // Set attaches a key/value to the span's data; after Finish it is ignored, safely
@@ -182,7 +149,7 @@ func (h *SpanHandle) Finish() {
 	}
 	// Under mu: an annotation in flight lands before the handover or is dropped.
 	h.mu.Lock()
-	h.Span.EndedAt = Now()
+	h.Span.EndedAt = time.Now()
 	h.mu.Unlock()
 	h.tracer.proc.OnSpanEnd(h.Span)
 }
@@ -193,17 +160,5 @@ func (h *SpanHandle) StartTypedSpan(name, spanType string, data map[string]any) 
 	if h == nil || h.tracer == nil || h.Span == nil {
 		return &SpanHandle{}
 	}
-	d := map[string]any{}
-	maps.Copy(d, data)
-	sp := &Span{
-		TraceID:   h.Span.TraceID,
-		SpanID:    NewSpanID(),
-		ParentID:  h.Span.SpanID,
-		Name:      name,
-		Type:      spanType,
-		StartedAt: Now(),
-		Data:      d,
-	}
-	h.tracer.proc.OnSpanStart(sp)
-	return &SpanHandle{Span: sp, tracer: h.tracer}
+	return h.tracer.newSpan(h.Span.TraceID, h.Span.SpanID, name, spanType, data)
 }

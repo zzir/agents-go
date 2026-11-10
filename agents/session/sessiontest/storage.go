@@ -22,8 +22,6 @@ var storageChecks = []struct {
 	run  func(t *testing.T, st session.Storage)
 }{
 	{"SeqIsMonotonic", checkSeqMonotonic},
-	{"SeqSurvivesAReplace", checkSeqSurvivesReplace},
-	{"AReplaceKeepsTheIDsItIsGiven", checkReplaceKeepsIDs},
 	{"SeqDoesNotMoveOnRead", checkSeqStableOnRead},
 	{"EntryIDsAreUniqueAndNotReused", checkEntryIDsUnique},
 	{"CursorReturnsWhatItHasNotShown", checkCursorCompleteness},
@@ -76,62 +74,6 @@ func checkSeqMonotonic(t *testing.T, st session.Storage) {
 			t.Fatalf("entry %d has Seq %d, not past its predecessor's %d",
 				i, got[i].Seq, got[i-1].Seq)
 		}
-	}
-}
-
-// Clearing or replacing a history does not restart the numbering: a cursor
-// outlives the entries it pointed at.
-func checkSeqSurvivesReplace(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	replacer, ok := st.(session.AtomicReplacer)
-	if !ok {
-		t.Skip("this store does not replace its history")
-	}
-	storageWrite(t, st, "one", "two")
-	highest := storageEntries(t, st)[1].Seq
-
-	if err := replacer.ReplaceEntries(ctx, storageItem(t, "replacement")); err != nil {
-		t.Fatalf("replace: %v", err)
-	}
-
-	got := storageEntries(t, st)
-	if len(got) != 1 {
-		t.Fatalf("after a replace the session holds %d entries, want 1", len(got))
-	}
-	if got[0].Seq <= highest {
-		t.Fatalf("the replacement has Seq %d, at or before the %d already issued — a cursor would skip it",
-			got[0].Seq, highest)
-	}
-}
-
-// A replace keeps the ids it is given: a rewrite carries entries over as read,
-// and an update names its target by id, so a re-minting store strands it (spec §2.5e2).
-func checkReplaceKeepsIDs(t *testing.T, st session.Storage) {
-	t.Helper()
-	ctx := context.Background()
-	replacer, ok := st.(session.AtomicReplacer)
-	if !ok {
-		t.Skip("this store does not replace its history")
-	}
-	storageWrite(t, st, "one", "two")
-	kept := storageEntries(t, st)[1]
-
-	// As a rewrite hands it back: identity intact, store-owned fields cleared.
-	carried := kept
-	carried.ParentID, carried.Seq = "", 0
-	if err := replacer.ReplaceEntries(ctx, carried); err != nil {
-		t.Fatalf("replace: %v", err)
-	}
-	got := storageEntries(t, st)
-	if len(got) != 1 {
-		t.Fatalf("after a replace the session holds %d entries, want 1", len(got))
-	}
-	if got[0].ID != kept.ID {
-		t.Fatalf("the replace re-minted the entry id: %q came back as %q", kept.ID, got[0].ID)
-	}
-	if got[0].Seq <= kept.Seq {
-		t.Fatalf("the carried entry has Seq %d, at or before the %d already issued", got[0].Seq, kept.Seq)
 	}
 }
 

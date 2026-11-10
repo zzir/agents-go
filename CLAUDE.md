@@ -110,7 +110,7 @@ Core type: `agents.Agent` (a plain struct); everything orbits the runner.
   `InMemoryStorage` in core, SQL in the `sessions` module, server-side variants in `openai` (Conversations, Compaction,
   `UsePreviousResponseID` / `ConversationID`).
 - **Entries are append-only** — `agents/session/entry.go`. A session is a TREE:
-  `ParentID` links, `Branch`/`PathEntries` walk it, and a display that settles
+  `ParentID` links, `Branch`/`ActiveBranchOf` walk it, and a display that settles
   late is a new UPDATE entry folded in at read time, never a rewrite.
 - **Compaction** — `agents/compaction_points.go` drives it at three points;
   `agents/compaction/` holds the strategies. A checkpoint is appended, never a

@@ -17,7 +17,7 @@ func TokensExceed(n int) Trigger {
 
 // GroupsExceed fires when more than n groups are still included.
 func GroupsExceed(n int) Trigger {
-	return func(idx *Index) bool { return idx.Counts().IncludedGroups > n }
+	return func(idx *Index) bool { return idx.includedGroups() > n }
 }
 
 // Any fires when at least one trigger does.

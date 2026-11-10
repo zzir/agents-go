@@ -139,7 +139,7 @@ func main() {
 			"Delegate research to the researcher as a background task with spawn_task, then finish your turn. " +
 				"Do not poll — you will be notified when a task finishes."),
 		Handoffs: []agents.Handoff{agents.HandoffTo(researcher)},
-		Tools:    mgr.Tools(nil),
+		Tools:    mgr.Tools(),
 	}
 
 	fmt.Println("parent turn — the coordinator may delegate…")

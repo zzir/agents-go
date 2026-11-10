@@ -14,13 +14,11 @@ const (
 	imageChars = 4800
 )
 
-// CharEstimator sizes entries by their content length when no provider number
-// is available; deliberately crude, as a real tokenizer over the whole history
-// every turn costs more than compaction saves.
-type CharEstimator struct{}
-
-// Estimate returns e's size in tokens; zero for a kind the model is not sent.
-func (CharEstimator) Estimate(e session.Entry) int {
+// EstimateTokens sizes an entry by its content length, for when no provider
+// number is available; zero for a kind the model is not sent. Deliberately
+// crude: a real tokenizer over the whole history every turn costs more than
+// compaction saves.
+func EstimateTokens(e session.Entry) int {
 	switch e.Kind {
 	case session.EntryKindItem:
 	case session.EntryKindCompaction:

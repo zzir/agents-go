@@ -398,7 +398,7 @@ func TestErrorHandlers_RecoveredMessagePersistsToSession(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "not valid json"))}}
 	agent := &Agent{Name: "a", OutputType: OutputType[sentiment](), ModelImpl: model}
 
-	opts := RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}, Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Conversation: ConversationOptions{Session: sess}, Exec: ExecOptions{ErrorHandlers: RunErrorHandlers{
 		InvalidFinalOutput: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: sentiment{Label: "fallback", Score: 1}}, nil
 		},
@@ -432,7 +432,7 @@ func TestErrorHandlers_MaxTurnsRecoveryPersistsToSession(t *testing.T) {
 	}}
 	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
 
-	opts := RunOptions{Conversation: ConversationOptions{Session: session.NewSession(sess)}, Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
+	opts := RunOptions{Conversation: ConversationOptions{Session: sess}, Exec: ExecOptions{MaxTurns: 1, ErrorHandlers: RunErrorHandlers{
 		MaxTurns: func(ctx context.Context, in RunErrorHandlerInput) (*RunErrorHandlerResult, error) {
 			return &RunErrorHandlerResult{FinalOutput: "budget spent"}, nil
 		},

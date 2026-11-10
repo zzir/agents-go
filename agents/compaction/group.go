@@ -48,9 +48,6 @@ func (k GroupKind) String() string {
 type Group struct {
 	Kind    GroupKind
 	Entries []session.Entry
-	// TurnIndex is the conversation turn this group belongs to, counted from user
-	// messages; nil for system content and entries outside the conversation.
-	TurnIndex *int
 	// Tokens is the group's estimated size.
 	Tokens int
 

@@ -174,13 +174,6 @@ func (m *Manager) lockParent(parentSessionID string) (release func()) {
 	}
 }
 
-// spawnLockCount reports how many per-parent locks are live. Test-only.
-func (m *Manager) spawnLockCount() int {
-	m.spawnMu.Lock()
-	defer m.spawnMu.Unlock()
-	return len(m.spawning)
-}
-
 // New returns a Manager; it panics on a Config missing a required field.
 func New(cfg Config) *Manager {
 	switch {
@@ -479,26 +472,36 @@ func (m *Manager) retryLaunchFailed(ctx context.Context, t *Task, runID string, 
 			slog.String("task_id", t.ID), slog.String("error", err.Error()))
 	}
 	if won {
-		m.finished(t.ID)
+		m.finishedTask(ctx, m.reportClaimed(ctx, t, runID, StatusFailed, summary, full, nil))
 	}
 	wrapped := fmt.Errorf("tasks: restarting task run: %w", cause)
-	// The report carries the released values in hand, never a re-read — see spec §2.13.
-	rel := *t
-	rel.RunID, rel.Status, rel.Summary, rel.Result = runID, StatusFailed, summary, full
-	rel.UpdatedAt = time.Now().UTC()
 	cur, gerr := m.cfg.Store.Get(ctx, t.ID)
-	if gerr == nil {
-		m.notifyUpdate(ctx, cur)
-	} else if won {
-		m.notifyUpdate(ctx, &rel)
-	}
-	if won {
-		m.finishedTask(ctx, &rel)
-	}
 	if gerr != nil {
 		return nil, wrapped
 	}
+	if !won {
+		m.notifyUpdate(ctx, cur)
+	}
 	return infoFrom(cur, ""), wrapped
+}
+
+// reportClaimed wakes the waiters of a transition this manager just won and
+// freshens the card. It returns the claimed snapshot, never a re-read, for the
+// caller's report — see spec §2.13.
+func (m *Manager) reportClaimed(ctx context.Context, t *Task, runID string, status Status, summary, result string, state json.RawMessage) *Task {
+	m.finished(t.ID)
+	done := *t
+	done.RunID, done.Status, done.Summary, done.Result = runID, status, summary, result
+	if state != nil {
+		done.State = state
+	}
+	done.UpdatedAt = time.Now().UTC()
+	if cur, err := m.cfg.Store.Get(ctx, t.ID); err == nil {
+		m.notifyUpdate(ctx, cur)
+	} else {
+		m.notifyUpdate(ctx, &done)
+	}
+	return &done
 }
 
 // retryPrompt tells a retried run why it woke up; the session already holds
@@ -936,26 +939,13 @@ func (m *Manager) OnRunFinished(ctx context.Context, sessionID string, out RunOu
 		// Another finalizer owned the transition; its state stands.
 		return
 	}
-	m.finished(task.ID)
-	// The report is the claimed snapshot, never a re-read; the re-read below
-	// only freshens the card — see spec §2.13.
-	done := *task
-	done.RunID, done.Status, done.Summary, done.Result = runID, status, summary, full
-	if finalState != nil {
-		done.State = finalState
-	}
-	done.UpdatedAt = time.Now().UTC()
-	if t, gerr := m.cfg.Store.Get(ctx, task.ID); gerr == nil {
-		m.notifyUpdate(ctx, t)
-	} else {
-		m.notifyUpdate(ctx, &done)
-	}
+	done := m.reportClaimed(ctx, task, runID, status, summary, full, finalState)
 	// A cancellation is delivered, not finished — see spec §2.13.
 	if status == StatusCancelled {
-		m.resultDelivered(ctx, &done)
+		m.resultDelivered(ctx, done)
 		return
 	}
-	m.finishedTask(ctx, &done)
+	m.finishedTask(ctx, done)
 }
 
 // errAdvanceLost is an Advance that found the row no longer working on the run
@@ -1010,16 +1000,7 @@ func (m *Manager) launchFailed(ctx context.Context, t *Task, reason string) {
 	if !won {
 		return
 	}
-	m.finished(t.ID)
-	done := *t
-	done.Status, done.Summary, done.Result = StatusFailed, summary, reason
-	done.UpdatedAt = time.Now().UTC()
-	if cur, gerr := m.cfg.Store.Get(ctx, t.ID); gerr == nil {
-		m.notifyUpdate(ctx, cur)
-	} else {
-		m.notifyUpdate(ctx, &done)
-	}
-	m.finishedTask(ctx, &done)
+	m.finishedTask(ctx, m.reportClaimed(ctx, t, t.RunID, StatusFailed, summary, reason, nil))
 }
 
 // FailOrphans fails every task still recorded as working and reports each

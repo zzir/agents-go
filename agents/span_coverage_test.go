@@ -91,7 +91,7 @@ func TestSpans_ToolWorkNestsUnderTheFunctionSpan(t *testing.T) {
 
 func TestSpans_TypedChildCarriesItsType(t *testing.T) {
 	proc := &recordingProcessor{}
-	tr := tracing.NewTracer(proc).StartTrace("w")
+	tr := tracing.NewTracer(proc).StartTrace("w", "", nil)
 	parent := tr.StartAgentSpan("a", "")
 	child := parent.StartTypedSpan("mcp.call_tool", tracing.SpanTypeMCP, map[string]any{"server": "s1"})
 	child.Finish()

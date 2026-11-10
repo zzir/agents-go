@@ -7,7 +7,6 @@ import (
 	"slices"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/tracing"
 )
 
 // newRunner builds a fresh run's runner: validated options, run context, turn
@@ -81,14 +80,7 @@ func (r *runner) observeRun(agent *Agent) func() {
 		if resumed {
 			workflow += " (resumed)"
 		}
-		var topts []tracing.TraceOption
-		if r.opts.Observe.TraceGroupID != "" {
-			topts = append(topts, tracing.WithGroupID(r.opts.Observe.TraceGroupID))
-		}
-		if r.opts.Observe.TraceMetadata != nil {
-			topts = append(topts, tracing.WithMetadata(r.opts.Observe.TraceMetadata))
-		}
-		r.trace = r.opts.Observe.Tracer.StartTrace(workflow, topts...)
+		r.trace = r.opts.Observe.Tracer.StartTrace(workflow, r.opts.Observe.TraceGroupID, r.opts.Observe.TraceMetadata)
 		finishTrace = r.trace.Finish
 	}
 	r.rc.activeTrace = r.trace

@@ -42,7 +42,7 @@ mgr := tasks.New(tasks.Config{
 	OnResultDelivered: func(ctx context.Context, t *tasks.Task) { myWaker.Cancel(ctx, t) }, // the model already has it
 })
 
-agent.Tools = append(agent.Tools, mgr.Tools(nil)...)
+agent.Tools = append(agent.Tools, mgr.Tools()...)
 ```
 
 A complete host — agents as a map, launching as a goroutine, waking whenever
@@ -177,7 +177,7 @@ if err != nil {
 	return err // could not tell — withhold the tools rather than guess
 }
 if !isTask {
-	agent.Tools = append(agent.Tools, mgr.Tools(nil)...)
+	agent.Tools = append(agent.Tools, mgr.Tools()...)
 }
 ```
 

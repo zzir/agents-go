@@ -33,7 +33,7 @@ func TestAgentToolSessionPassthrough(t *testing.T) {
 	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	items, err := session.NewSession(sess).ContextItems(context.Background(), session.Cursor{})
+	items, err := sess.ContextItems(context.Background(), session.Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}

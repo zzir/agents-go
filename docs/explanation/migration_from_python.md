@@ -124,7 +124,7 @@ needed yet** (open to contribution). Each entry says which it is.
 ## Beyond the Python SDK
 
 - **Hooks can veto**: any hook returning an error aborts the run (Python hooks are observe-only)
-- **Session forking** (`session.Fork`) across any `Session` backend pair; Python's closest is `AdvancedSQLiteSession`'s backend-bound branches ([Sessions](../howto/sessions.md#forking-sessions))
+- **Session branching** (`Session.Branch`) on any `Storage` backend: regenerate or go back within one session, the abandoned attempt kept; Python's closest is `AdvancedSQLiteSession`'s backend-bound branches ([Sessions](../howto/sessions.md#branching))
 - **Run-level compaction** (`RunOptions.Compaction` + `agents/compaction`): provider-agnostic, grouped, triggered at three points, append-only ([Sessions](../howto/sessions.md#run-level-compaction))
 - **Provider-level decorators**: `NewRetryProvider` / `NewFallbackProvider` wrap a `ModelProvider` so every model it produces retries or falls back ([Models](../howto/models.md#retries-fallback-and-multiple-providers))
 - **Stream-only backend adaptation**: `NewStreamOnlyModel` / `NewStreamOnlyProvider` serve blocking calls via an internal stream ([Models](../howto/models.md#retries-fallback-and-multiple-providers))

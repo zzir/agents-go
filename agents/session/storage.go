@@ -151,46 +151,7 @@ func (s *InMemoryStorage) Clear(context.Context) error {
 	return nil
 }
 
-// ReplaceEntries implements AtomicReplacer: the swap happens under one lock.
-func (s *InMemoryStorage) ReplaceEntries(_ context.Context, entries ...Entry) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.checkLive(); err != nil {
-		return err
-	}
-	s.replaceLocked(entries)
-	return nil
-}
-
-// replaceLocked swaps the whole history, carrying the high-water mark over.
-// Callers hold s.mu.
-func (s *InMemoryStorage) replaceLocked(entries []Entry) {
-	prepared := PrepareAppend(entries, AppendPoint{LastSeq: s.seq})
-	s.entries = prepared
-	if n := len(prepared); n > 0 {
-		s.seq = prepared[n-1].Seq
-	}
-	s.updatedAt = time.Now().UTC()
-}
-
-// SetHidden marks the session as serving another one.
-func (s *InMemoryStorage) SetHidden(hidden bool) {
-	s.mu.Lock()
-	s.hidden = hidden
-	s.mu.Unlock()
-}
-
-// SetTitle sets the session's human-facing name.
-func (s *InMemoryStorage) SetTitle(title string) {
-	s.mu.Lock()
-	s.title = title
-	s.mu.Unlock()
-}
-
-var (
-	_ Storage        = (*InMemoryStorage)(nil)
-	_ AtomicReplacer = (*InMemoryStorage)(nil)
-)
+var _ Storage = (*InMemoryStorage)(nil)
 
 // PageEntries applies a cursor to entries already in append order; every
 // backend pages through it.
@@ -210,23 +171,4 @@ func PageEntries(entries []Entry, cur Cursor) []Entry {
 		out = out[len(out)+cur.Limit:]
 	}
 	return append([]Entry(nil), out...)
-}
-
-// ReplaceEntries swaps a store's whole history: through AtomicReplacer when the
-// store has it, else Clear then Append — spec §2.5c.
-func ReplaceEntries(ctx context.Context, s Storage, entries ...Entry) error {
-	if r, ok := s.(AtomicReplacer); ok {
-		return r.ReplaceEntries(ctx, entries...)
-	}
-	if err := s.Clear(ctx); err != nil {
-		return err
-	}
-	return s.Append(ctx, entries...)
-}
-
-// AtomicReplacer is an optional Storage capability: replace the whole history
-// in one step (a file rename, a transaction), so a failed rewrite cannot leave
-// it empty.
-type AtomicReplacer interface {
-	ReplaceEntries(ctx context.Context, entries ...Entry) error
 }

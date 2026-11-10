@@ -136,7 +136,7 @@ func run() error {
 		Instructions: agents.StaticInstructions(
 			"You run shell commands for the person. A command that takes more than a few seconds " +
 				"goes in the background; then end your turn and wait to be told the result."),
-		Tools: append([]*agents.Tool{tool}, mgr.Tools(nil)...),
+		Tools: append([]*agents.Tool{tool}, mgr.Tools()...),
 	}
 	opts := agents.RunOptions{Model: agents.ModelOptions{Provider: provider}, Context: "parent"}
 

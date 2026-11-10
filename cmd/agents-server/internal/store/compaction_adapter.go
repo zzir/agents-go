@@ -467,7 +467,7 @@ func ActiveContextTokens(sizes []ContextSize) int {
 }
 
 // estimateFold sizes the context on either side of the pass for the
-// checkpoint to report. Estimates by construction (CharEstimator), not a bill.
+// checkpoint to report. Estimates by construction (compaction.EstimateTokens), not a bill.
 func estimateFold(active, folded []entryRow, summaryText string) (before, after int) {
 	for i := range active {
 		before += active[i].EstTokens

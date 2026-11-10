@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -30,7 +31,7 @@ func (s *InMemoryStore) List(_ context.Context, scope Scope) ([]Info, error) {
 	for key, e := range s.data[scope] {
 		out = append(out, Info{Key: key, Bytes: len(e.text), UpdatedAt: e.updated})
 	}
-	sortInfos(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out, nil
 }
 

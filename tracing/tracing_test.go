@@ -70,7 +70,7 @@ func TestBatchProcessor_ExportsTraceOnStart(t *testing.T) {
 	defer p.Shutdown(context.Background())
 
 	tr := NewTracer(p)
-	trace := tr.StartTrace("wf")
+	trace := tr.StartTrace("wf", "", nil)
 	// The trace row must be exportable before the trace finishes, so a crash
 	// mid-run does not orphan its spans.
 	p.ForceFlush()
@@ -191,9 +191,9 @@ func TestTracer_SpanHierarchy(t *testing.T) {
 	p := NewBatchProcessor(col, BatchProcessorOptions{FlushInterval: time.Hour})
 	tr := NewTracer(p)
 
-	trace := tr.StartTrace("test-workflow")
-	span := trace.StartSpan("agent", "")
-	child := span.StartSpan("generation")
+	trace := tr.StartTrace("test-workflow", "", nil)
+	span := trace.StartAgentSpan("a", "")
+	child := span.StartTypedSpan("generation", SpanTypeGeneration, nil)
 	child.Set("model", "gpt-4o")
 	child.Finish()
 	span.Finish()
@@ -226,8 +226,8 @@ func TestTracer_SpanHierarchy(t *testing.T) {
 func TestNilTracerIsNoop(_ *testing.T) {
 	var tr *Tracer
 	// Must not panic.
-	h := tr.StartTrace("x")
-	s := h.StartSpan("y", "")
+	h := tr.StartTrace("x", "", nil)
+	s := h.StartAgentSpan("y", "")
 	s.Set("k", "v")
 	s.Finish()
 	h.Finish()

@@ -11,7 +11,7 @@ func (p *captureProc) OnSpanStart(s *Span) { p.spans = append(p.spans, s) }
 func (p *captureProc) OnSpanEnd(*Span)     {}
 
 func TestTypedSpanConstructors(t *testing.T) {
-	tr := NewTracer(&captureProc{}).StartTrace("wf")
+	tr := NewTracer(&captureProc{}).StartTrace("wf", "", nil)
 	defer tr.Finish()
 
 	cases := []struct {
@@ -37,21 +37,16 @@ func TestTypedSpanConstructors(t *testing.T) {
 			t.Errorf("%s span Data[%q] = %v, want %q", c.wantType, c.key, got, c.keyVal)
 		}
 	}
-
-	// The untyped StartSpan leaves Type empty.
-	if u := tr.StartSpan("custom", ""); u.Span.Type != "" {
-		t.Errorf("untyped span Type = %q, want empty", u.Span.Type)
-	}
 }
 
 // Both span constructors copy the caller's data, so whether a map may still be
 // touched afterwards does not depend on which one was used.
 func TestStartTypedSpan_CopiesCallerData(t *testing.T) {
-	tr := NewTracer(&captureProc{}).StartTrace("wf")
+	tr := NewTracer(&captureProc{}).StartTrace("wf", "", nil)
 	defer tr.Finish()
 
 	data := map[string]any{"server": "fs"}
-	sp := tr.StartSpan("mcp", "").StartTypedSpan("list_tools", "mcp_tools", data)
+	sp := tr.StartAgentSpan("a", "").StartTypedSpan("list_tools", "mcp_tools", data)
 	data["server"] = "changed"
 
 	if got := sp.Span.Data["server"]; got != "fs" {
@@ -62,7 +57,7 @@ func TestStartTypedSpan_CopiesCallerData(t *testing.T) {
 // A finished span belongs to the processor, whose exporter goroutine reads its
 // Data map; a late Set is dropped rather than raced.
 func TestSpanHandle_IgnoresWritesAfterFinish(t *testing.T) {
-	tr := NewTracer(&captureProc{}).StartTrace("wf")
+	tr := NewTracer(&captureProc{}).StartTrace("wf", "", nil)
 	defer tr.Finish()
 
 	sp := tr.StartGenerationSpan("gpt-4o", "")
@@ -116,7 +111,7 @@ func (p *exportingProc) OnSpanEnd(s *Span) {
 // the assertion.
 func TestSpanHandle_AnnotatingRacesFinish(t *testing.T) {
 	proc := &exportingProc{got: make(chan *Span, 1), stop: make(chan struct{}), done: make(chan struct{})}
-	tr := NewTracer(proc).StartTrace("wf")
+	tr := NewTracer(proc).StartTrace("wf", "", nil)
 	defer tr.Finish()
 	sp := tr.StartAgentSpan("a", "")
 	sp.Set("before", 1)

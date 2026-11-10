@@ -47,8 +47,6 @@ type ToolResultStrategy struct {
 	// MinimumPreservedGroups keeps this many groups at the end untouched.
 	// Defaults to 2.
 	MinimumPreservedGroups int
-	// Formatter renders a folded group. Nil uses DefaultToolCallFormatter.
-	Formatter func(*Group) string
 }
 
 // Compact implements Strategy.
@@ -59,10 +57,6 @@ func (s *ToolResultStrategy) Compact(_ context.Context, idx *Index) (bool, error
 	preserve := s.MinimumPreservedGroups
 	if preserve <= 0 {
 		preserve = 2
-	}
-	format := s.Formatter
-	if format == nil {
-		format = DefaultToolCallFormatter
 	}
 
 	changed := false
@@ -77,7 +71,7 @@ func (s *ToolResultStrategy) Compact(_ context.Context, idx *Index) (bool, error
 		if reachedTarget(s.Target, s.Trigger, idx) {
 			break
 		}
-		summary := format(g)
+		summary := formatToolCalls(g)
 		g.Excluded = true
 		g.ExcludeReason = "tool_result"
 		if summary != "" {
@@ -92,9 +86,9 @@ func (s *ToolResultStrategy) Compact(_ context.Context, idx *Index) (bool, error
 	return changed, nil
 }
 
-// DefaultToolCallFormatter renders a tool-call group as one line per tool with
-// its results beneath, keeping the tool names and dropping the payloads.
-func DefaultToolCallFormatter(g *Group) string {
+// formatToolCalls renders a tool-call group as one line per tool with its
+// results beneath, keeping the tool names and dropping the payloads.
+func formatToolCalls(g *Group) string {
 	byTool := map[string][]string{}
 	var order []string
 	for _, e := range g.Entries {
@@ -228,50 +222,4 @@ func (s *TruncationStrategy) Compact(_ context.Context, idx *Index) (bool, error
 		changed = true
 	}
 	return changed, nil
-}
-
-// ContextWindowStrategy derives its thresholds from the model's own limits:
-// tool results fold at ToolEvictionThreshold of the input budget, whole groups
-// drop at TruncationThreshold.
-type ContextWindowStrategy struct {
-	// MaxContextWindowTokens is the model's context window.
-	MaxContextWindowTokens int
-	// MaxOutputTokens is what must stay free for the answer.
-	MaxOutputTokens int
-	// ToolEvictionThreshold is the fraction of the input budget at which tool
-	// results fold. Defaults to 0.5.
-	ToolEvictionThreshold float64
-	// TruncationThreshold is the fraction at which whole groups drop. Defaults to 0.8.
-	TruncationThreshold float64
-	// MinimumPreservedGroups is passed to both stages. Defaults to 2.
-	MinimumPreservedGroups int
-}
-
-// Compact implements Strategy.
-func (s *ContextWindowStrategy) Compact(ctx context.Context, idx *Index) (bool, error) {
-	budget := s.MaxContextWindowTokens - s.MaxOutputTokens
-	if budget <= 0 {
-		return false, fmt.Errorf("compaction: context window %d leaves no room for %d output tokens",
-			s.MaxContextWindowTokens, s.MaxOutputTokens)
-	}
-	evict := s.ToolEvictionThreshold
-	if evict <= 0 {
-		evict = 0.5
-	}
-	truncate := s.TruncationThreshold
-	if truncate <= 0 {
-		truncate = 0.8
-	}
-
-	pipeline := &PipelineStrategy{Strategies: []Strategy{
-		&ToolResultStrategy{
-			Trigger:                TokensExceed(int(float64(budget) * evict)),
-			MinimumPreservedGroups: s.MinimumPreservedGroups,
-		},
-		&TruncationStrategy{
-			Trigger:                TokensExceed(int(float64(budget) * truncate)),
-			MinimumPreservedGroups: s.MinimumPreservedGroups,
-		},
-	}}
-	return pipeline.Compact(ctx, idx)
 }

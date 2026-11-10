@@ -25,7 +25,7 @@ func TestRunPersistsEntriesWithProvenanceAndDisplay(t *testing.T) {
 	}}}
 
 	if _, err := RunSync(context.Background(), agent, "hi", RunOptions{
-		Conversation: ConversationOptions{Session: session.NewSession(sess)},
+		Conversation: ConversationOptions{Session: sess},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,11 @@ func TestRecovery_RetrySafeToolIsLeftDangling(t *testing.T) {
 	if len(report.Retryable) != 1 || len(report.Repaired) != 0 {
 		t.Fatalf("report = %+v, want the call left for a retry", report)
 	}
-	if state := mustState(t, sess); len(state.PendingCallIDs) != 1 {
+	again, err := session.Recover(ctx, sess, session.RecoveryPolicy{RetrySafe: RetrySafeNames(tools)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.UnfinishedCalls) != 1 {
 		t.Error("a retry-safe call was repaired instead of left dangling")
 	}
 }
@@ -138,14 +142,4 @@ func crashedSession(t *testing.T) *session.Session {
 		t.Fatal(err)
 	}
 	return sess
-}
-
-// mustState folds the session to its derived state, failing the test on error.
-func mustState(t *testing.T, sess *session.Session) session.DerivedState {
-	t.Helper()
-	state, err := sess.State(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state
 }

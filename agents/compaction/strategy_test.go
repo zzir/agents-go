@@ -172,34 +172,6 @@ func TestPipeline_TriesTheCheapThingFirst(t *testing.T) {
 	}
 }
 
-// Thresholds come from the model's own limits rather than numbers a caller has
-// to guess.
-func TestContextWindowStrategy_DerivesThresholds(t *testing.T) {
-	idx := NewIndex(conversation(t))
-	tokens := idx.ContextTokens()
-
-	s := &ContextWindowStrategy{
-		// An input budget the conversation already exceeds by a lot.
-		MaxContextWindowTokens: tokens,
-		MaxOutputTokens:        tokens / 2,
-		MinimumPreservedGroups: 2,
-	}
-	changed, err := s.Compact(context.Background(), idx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("an over-budget conversation was not compacted")
-	}
-
-	// A window that leaves no room at all is a configuration error, not a
-	// silent no-op.
-	bad := &ContextWindowStrategy{MaxContextWindowTokens: 100, MaxOutputTokens: 100}
-	if _, err := bad.Compact(context.Background(), NewIndex(conversation(t))); err == nil {
-		t.Error("a context window with no input budget should be an error")
-	}
-}
-
 // A trigger that never fires does nothing, and a nil one is not "always".
 func TestTriggers(t *testing.T) {
 	idx := NewIndex(conversation(t))

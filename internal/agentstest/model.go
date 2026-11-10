@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"strings"
 	"sync"
 
 	"github.com/zzir/agents-go/agents"
@@ -38,10 +37,6 @@ type FakeModel struct {
 	turns    []Turn
 	idx      int
 	requests []agents.ModelRequest
-
-	// StreamTextDeltas emits per-character output_text deltas for message items
-	// during streaming; off by default, as deltas make transcripts noisy.
-	StreamTextDeltas bool
 }
 
 // NewFakeModel returns a model that replays the given turns in order; prefer
@@ -105,14 +100,20 @@ func (m *FakeModel) Remaining() int {
 	return max(0, len(m.turns)-m.idx)
 }
 
+// resolveUsage is the usage a turn bills: the default when the script says
+// nothing, nothing for zeroTurnUsage.
+func resolveUsage(u agents.RequestUsage) agents.RequestUsage {
+	switch u {
+	case agents.RequestUsage{}:
+		return defaultTurnUsage
+	case zeroTurnUsage:
+		return agents.RequestUsage{}
+	}
+	return u
+}
+
 func (t Turn) response(seq int) *agents.ModelResponse {
-	u := t.Usage
-	if u == (agents.RequestUsage{}) {
-		u = defaultTurnUsage
-	}
-	if u == zeroTurnUsage {
-		u = agents.RequestUsage{}
-	}
+	u := resolveUsage(t.Usage)
 	id := t.ResponseID
 	if id == "" {
 		id = fmt.Sprintf("resp_%d", seq)
@@ -145,7 +146,7 @@ func (m *FakeModel) Respond(_ context.Context, req agents.ModelRequest) (*agents
 }
 
 // StreamResponse implements [agents.Model]: one response.output_item.done per
-// item, then response.completed, plus output_text deltas when StreamTextDeltas is set.
+// item, then response.completed.
 func (m *FakeModel) StreamResponse(_ context.Context, req agents.ModelRequest) iter.Seq2[*agents.ResponseStreamEvent, error] {
 	return func(yield func(*agents.ResponseStreamEvent, error) bool) {
 		turn, ok := m.next(req)
@@ -160,29 +161,14 @@ func (m *FakeModel) StreamResponse(_ context.Context, req agents.ModelRequest) i
 			yield(nil, turn.Err)
 			return
 		}
-		seq := 0
-		emit := func(ev agents.ResponseStreamEvent) bool {
-			seq++
-			return yield(&ev, nil)
-		}
 		for i, item := range turn.Items {
-			if m.StreamTextDeltas {
-				for _, ev := range textDeltaEvents(i, item) {
-					if !emit(ev) {
-						return
-					}
-				}
-			}
-			if !emit(outputItemDoneEvent(i, item)) {
+			ev := outputItemDoneEvent(i, item)
+			if !yield(&ev, nil) {
 				return
 			}
 		}
-		resp := turn.response(m.Calls())
-		u := turn.Usage
-		if u == (agents.RequestUsage{}) {
-			u = defaultTurnUsage
-		}
-		emit(completedEvent(turn.Items, resp.ResponseID, u))
+		ev := completedEvent(turn.Items, turn.response(m.Calls()).ResponseID, turn.Usage)
+		yield(&ev, nil)
 	}
 }
 
@@ -202,12 +188,7 @@ func outputItemDoneEvent(index int, item agents.OutputItem) agents.ResponseStrea
 }
 
 func completedEvent(items []agents.OutputItem, respID string, u agents.RequestUsage) agents.ResponseStreamEvent {
-	if u == (agents.RequestUsage{}) {
-		u = defaultTurnUsage
-	}
-	if u == zeroTurnUsage {
-		u = agents.RequestUsage{}
-	}
+	u = resolveUsage(u)
 	return mustEvent(modelkit.CompletedEvent(modelkit.FinalResponse{
 		ID:     respID,
 		Output: items,
@@ -220,27 +201,4 @@ func completedEvent(items []agents.OutputItem, respID string, u agents.RequestUs
 			ReasoningTokens:  u.OutputTokensDetails.ReasoningTokens,
 		},
 	}))
-}
-
-// textDeltaEvents produces per-rune output_text deltas for a message item; none
-// for other items.
-func textDeltaEvents(index int, item agents.OutputItem) []agents.ResponseStreamEvent {
-	if item.Type != "message" {
-		return nil
-	}
-	var text strings.Builder
-	for _, part := range item.AsMessage().Content {
-		if t := part.AsOutputText(); t.Text != "" {
-			text.WriteString(t.Text)
-		}
-	}
-	if text.Len() == 0 {
-		return nil
-	}
-	itemID := item.ID
-	events := make([]agents.ResponseStreamEvent, 0, len([]rune(text.String()))+1)
-	for _, r := range text.String() {
-		events = append(events, mustEvent(modelkit.OutputTextDeltaEvent(itemID, index, string(r))))
-	}
-	return events
 }

@@ -12,12 +12,7 @@ import (
 // none means the model does not see the entry.
 type Projector func(Entry) ([]InputItem, error)
 
-// defaultProjectors is the projection every run starts from: items only.
-// Checkpoints are absent on purpose — ProjectEntries applies them structurally.
-var defaultProjectors = map[EntryKind]Projector{
-	EntryKindItem: projectItem,
-}
-
+// projectItem is the default projection: an item entry is its item.
 func projectItem(e Entry) ([]InputItem, error) {
 	item, err := e.InputItem()
 	if err != nil {
@@ -116,64 +111,51 @@ func FoldedEntryIDs(entries []Entry) map[string]bool {
 	return folded
 }
 
-// projectorFor resolves the projector for a kind; a caller's override wins over
-// the default.
-func projectorFor(overrides map[EntryKind]Projector, kind EntryKind) (Projector, bool) {
-	if p, ok := overrides[kind]; ok {
-		return p, p != nil
-	}
-	p, ok := defaultProjectors[kind]
-	return p, ok
-}
-
 // ProjectEntries turns one branch's entries into model input: updates fold into
 // their targets, and each live checkpoint drops its ExcludedIDs and renders its
-// summary and folds; an EntryKindCompaction override takes over only the
-// rendering — spec §2.5c.
+// summary and folds. An override replaces a kind's projection (nil hides the
+// kind); checkpoints are always rendered structurally — spec §2.5c.
 func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]InputItem, error) {
 	folded := FoldedEntryIDs(entries)
-	_, checkpointOverridden := overrides[EntryKindCompaction]
 
 	// The render plan: summaries and anchorless stand-ins up front, anchored ones
 	// keyed by the entry they precede. Only live checkpoints render.
 	var front []InputItem
 	var inserts map[string][]InputItem
-	if !checkpointOverridden {
-		present := make(map[string]bool, len(entries))
-		for _, e := range entries {
-			present[e.ID] = true
+	present := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		present[e.ID] = true
+	}
+	for _, e := range entries {
+		if e.Kind != EntryKindCompaction || folded[e.ID] {
+			continue
 		}
-		for _, e := range entries {
-			if e.Kind != EntryKindCompaction || folded[e.ID] {
-				continue
-			}
-			p, err := e.CompactionPayload()
-			if err != nil {
-				return nil, err
-			}
-			if p.Summary != "" {
-				// A system message, never a user one — spec §2.5b.
-				front = append(front, systemTextItems(p.Summary)...)
-			}
-			for fi, f := range p.Folds {
-				items := make([]InputItem, 0, len(f.Items))
-				for i, raw := range f.Items {
-					item, uerr := UnmarshalInputItem(raw)
-					if uerr != nil {
-						return nil, fmt.Errorf("decoding fold %d item %d of entry %q: %w", fi, i, e.ID, uerr)
-					}
-					items = append(items, item)
+		p, err := e.CompactionPayload()
+		if err != nil {
+			return nil, err
+		}
+		if p.Summary != "" {
+			// A system message, never a user one — spec §2.5b.
+			front = append(front, systemTextItems(p.Summary)...)
+		}
+		for fi, f := range p.Folds {
+			items := make([]InputItem, 0, len(f.Items))
+			for i, raw := range f.Items {
+				item, uerr := UnmarshalInputItem(raw)
+				if uerr != nil {
+					return nil, fmt.Errorf("decoding fold %d item %d of entry %q: %w", fi, i, e.ID, uerr)
 				}
-				if f.Before != "" && present[f.Before] {
-					if inserts == nil {
-						inserts = make(map[string][]InputItem)
-					}
-					inserts[f.Before] = append(inserts[f.Before], items...)
-				} else {
-					// Anchor absent from this view: front the stand-in, its content
-					// over its position.
-					front = append(front, items...)
+				items = append(items, item)
+			}
+			if f.Before != "" && present[f.Before] {
+				if inserts == nil {
+					inserts = make(map[string][]InputItem)
 				}
+				inserts[f.Before] = append(inserts[f.Before], items...)
+			} else {
+				// Anchor absent from this view: front the stand-in, its content
+				// over its position.
+				front = append(front, items...)
 			}
 		}
 	}
@@ -184,16 +166,16 @@ func ProjectEntries(entries []Entry, overrides map[EntryKind]Projector) ([]Input
 		if ins, ok := inserts[e.ID]; ok {
 			out = append(out, ins...)
 		}
-		if folded[e.ID] || e.Kind == EntryKindUpdate {
+		if folded[e.ID] || e.Kind == EntryKindUpdate || e.Kind == EntryKindCompaction {
 			continue
 		}
-		if e.Kind == EntryKindCompaction && !checkpointOverridden {
-			continue
+		project, overridden := overrides[e.Kind]
+		if !overridden && e.Kind == EntryKindItem {
+			project = projectItem
 		}
-		project, ok := projectorFor(overrides, e.Kind)
-		if !ok {
-			// A kind nobody projects (an annotation, an unknown kind) is
-			// skipped, not an error — spec §2.5b.
+		if project == nil {
+			// A kind nobody projects (an annotation, an unknown kind, one an
+			// override hid) is skipped, not an error — spec §2.5b.
 			continue
 		}
 		items, err := project(e)

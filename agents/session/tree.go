@@ -84,15 +84,6 @@ func ActiveBranchOf(entries []Entry) []Entry {
 	return append(out, path...)
 }
 
-// Leaf returns the id of the session's active branch tip.
-func (s *Session) Leaf(ctx context.Context) (string, error) {
-	entries, err := s.storage.Entries(ctx, Cursor{})
-	if err != nil {
-		return "", err
-	}
-	return LeafOf(entries), nil
-}
-
 // Branch moves the active branch to entryID, so the next append continues from
 // there; everything after the old tip stays recorded — spec §2.5d.
 func (s *Session) Branch(ctx context.Context, entryID string) error {
@@ -113,14 +104,4 @@ func (s *Session) Branch(ctx context.Context, entryID string) error {
 		return err
 	}
 	return s.storage.Append(ctx, leaf)
-}
-
-// PathEntries returns the entries on the active branch, oldest first (see
-// ActiveBranchOf).
-func (s *Session) PathEntries(ctx context.Context) ([]Entry, error) {
-	entries, err := s.storage.Entries(ctx, Cursor{})
-	if err != nil {
-		return nil, err
-	}
-	return ActiveBranchOf(entries), nil
 }

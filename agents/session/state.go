@@ -2,58 +2,15 @@ package session
 
 import "encoding/json"
 
-// DerivedState is what a session's entries add up to, folded from them and
-// never stored — spec §2.5c.
-type DerivedState struct {
-	// LastAgent is the agent that produced the most recent entry.
-	LastAgent string
-	// LastResponseID is the most recent model call's identifier.
-	LastResponseID string
-	// PendingCallIDs are tool calls recorded without their outputs (a paused or
-	// a crashed run).
-	PendingCallIDs []string
-	// Usage totals the token usage the entries carry; Requests counts the
-	// entries that carried it.
-	Usage    RequestUsage
-	Requests int
-}
-
-// Stats summarizes a session cheaply enough to show in a list.
-type Stats struct {
-	// Entries is the total number of entries.
-	Entries int
-	// Items is how many of those are conversation items.
-	Items int
-	// Annotations is how many are display-only.
-	Annotations int
-	// Compactions is how many compaction checkpoints the session holds.
-	Compactions int
-	// Usage totals the token usage across the session.
-	Usage    RequestUsage
-	Requests int
-}
-
-// ReduceState folds entries into the state they imply; a pure function of the entries.
-func ReduceState(entries []Entry) DerivedState {
-	var st DerivedState
+// pendingCallIDs returns, in call order, the tool calls entries record without
+// an output (a paused or a crashed run).
+func pendingCallIDs(entries []Entry) []string {
 	open := map[string]bool{}
 	var order []string
-
 	for _, e := range entries {
-		if e.AgentName != "" {
-			st.LastAgent = e.AgentName
-		}
-		if e.ResponseID != "" {
-			st.LastResponseID = e.ResponseID
-		}
-		if e.Usage != nil {
-			AddRequestUsage(&st.Usage, e.Usage)
-			st.Requests++
-		}
 		if e.Kind != EntryKindItem {
 			continue
 		}
-		// A call is pending until its output lands.
 		callID, isCall, isOutput := entryCallID(e)
 		switch {
 		case isCall && callID != "":
@@ -65,33 +22,13 @@ func ReduceState(entries []Entry) DerivedState {
 			open[callID] = false
 		}
 	}
-
+	var pending []string
 	for _, id := range order {
 		if open[id] {
-			st.PendingCallIDs = append(st.PendingCallIDs, id)
+			pending = append(pending, id)
 		}
 	}
-	return st
-}
-
-// StatsOf summarizes entries without decoding their payloads.
-func StatsOf(entries []Entry) Stats {
-	st := Stats{Entries: len(entries)}
-	for _, e := range entries {
-		switch e.Kind {
-		case EntryKindItem:
-			st.Items++
-		case EntryKindAnnotation:
-			st.Annotations++
-		case EntryKindCompaction:
-			st.Compactions++
-		}
-		if e.Usage != nil {
-			AddRequestUsage(&st.Usage, e.Usage)
-			st.Requests++
-		}
-	}
-	return st
+	return pending
 }
 
 // AddRequestUsage accumulates src into dst, field by field: the one definition

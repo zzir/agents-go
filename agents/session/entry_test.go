@@ -20,7 +20,6 @@ func TestProjectEntries_OnlyContextKindsReachTheModel(t *testing.T) {
 		item,
 		NewAnnotationEntry(ItemDisplay{Kind: DisplayMessage, Text: "run cancelled"}, Source{}),
 		{Kind: EntryKindTerminal, Payload: json.RawMessage(`{"output":"ls -la"}`)},
-		{Kind: EntryKindCustom, CustomType: "sticky_note", Payload: json.RawMessage(`{}`)},
 		{Kind: "a_kind_from_the_future", Payload: json.RawMessage(`{}`)},
 	}
 

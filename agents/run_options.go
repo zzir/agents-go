@@ -110,8 +110,8 @@ type ConversationOptions struct {
 	// Responses API `conversation` parameter); only new items are sent each turn.
 	ConversationID string
 
-	// Projectors overrides how each entry kind becomes model input. The defaults
-	// send items and compaction checkpoints; nil suppresses a kind.
+	// Projectors overrides how each entry kind becomes model input; nil
+	// suppresses a kind. Compaction checkpoints always render structurally.
 	Projectors map[session.EntryKind]session.Projector
 }
 

@@ -93,3 +93,10 @@ func TestSpawnLockTableSurvivesConcurrentSpawns(t *testing.T) {
 		t.Fatalf("lock table holds %d entries after every spawn returned, want 0", got)
 	}
 }
+
+// spawnLockCount reports how many per-parent locks are live.
+func (m *Manager) spawnLockCount() int {
+	m.spawnMu.Lock()
+	defer m.spawnMu.Unlock()
+	return len(m.spawning)
+}

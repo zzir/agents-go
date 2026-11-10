@@ -211,14 +211,13 @@ func TestAppendLiftsUsageAndEstimate(t *testing.T) {
 	if err := db.NewSelect().Model(&rows).Where("session_id = ?", id("s1")).OrderExpr("id ASC").Scan(ctx); err != nil {
 		t.Fatalf("read rows: %v", err)
 	}
-	est := compaction.CharEstimator{}
 	priced := 0
 	for _, row := range rows {
 		var e session.Entry
 		if err := json.Unmarshal([]byte(row.Entry), &e); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if want := est.Estimate(e); row.EstTokens != want {
+		if want := compaction.EstimateTokens(e); row.EstTokens != want {
 			t.Fatalf("entry %s: column says %d, the estimator says %d", row.EntryID, row.EstTokens, want)
 		}
 		if e.Usage == nil {

@@ -45,16 +45,13 @@ func AllowTools(names ...string) ApprovalPolicy {
 type Approval struct {
 	// Policy decides; nil settles nothing, so every interruption reaches the caller.
 	Policy ApprovalPolicy
-	// MaxResumes bounds how many times the middleware resumes one run; zero means 25.
-	MaxResumes int
 }
+
+// maxApprovalResumes bounds how many times Approval resumes one run.
+const maxApprovalResumes = 25
 
 // Run implements agents.RunMiddleware.
 func (a Approval) Run(ctx context.Context, next agents.RunFunc, in agents.RunInput) agents.RunStream {
-	limit := a.MaxResumes
-	if limit <= 0 {
-		limit = 25
-	}
 	return func(yield func(agents.StreamEvent, error) bool) {
 		res, live, err := collect(next(ctx, in), yield)
 		if !live {
@@ -66,7 +63,7 @@ func (a Approval) Run(ctx context.Context, next agents.RunFunc, in agents.RunInp
 		}
 
 		for resumes := 0; res != nil && len(res.Interruptions) > 0; resumes++ {
-			if a.Policy == nil || resumes >= limit {
+			if a.Policy == nil || resumes >= maxApprovalResumes {
 				break
 			}
 			if !a.decide(ctx, res) {

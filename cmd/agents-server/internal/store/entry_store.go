@@ -38,7 +38,7 @@ type entryRow struct {
 	Entry string `bun:"entry,type:text,notnull" json:"-"`
 	// SourceModel records which model produced the entry (replay adapts across models).
 	SourceModel string `bun:"source_model" json:"-"`
-	// Usage (RequestUsage as JSON) and EstTokens (CharEstimator's size) are
+	// Usage (RequestUsage as JSON) and EstTokens (compaction.EstimateTokens' size) are
 	// lifted out: a session is sized without reading bodies.
 	Usage     string `bun:"usage,nullzero" json:"-"`
 	EstTokens int    `bun:"est_tokens"     json:"-"`
@@ -271,7 +271,7 @@ func (s *EntryStore) appendTo(ctx context.Context, db bun.IDB, entries ...sessio
 }
 
 // liftedFields are what an entry carries in columns beside its body: its usage
-// as JSON (empty when it carries none) and CharEstimator's size for it.
+// as JSON (empty when it carries none) and compaction.EstimateTokens' size for it.
 func liftedFields(e session.Entry) (usageJSON string, estTokens int, err error) {
 	if e.Usage != nil {
 		raw, err := json.Marshal(e.Usage)
@@ -280,7 +280,7 @@ func liftedFields(e session.Entry) (usageJSON string, estTokens int, err error) 
 		}
 		usageJSON = string(raw)
 	}
-	return usageJSON, compaction.CharEstimator{}.Estimate(e), nil
+	return usageJSON, compaction.EstimateTokens(e), nil
 }
 
 // appendPointAfter reports where the session stands once prepared is written (a

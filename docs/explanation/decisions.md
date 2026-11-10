@@ -2447,3 +2447,26 @@ the approval function, which already sees the same arguments.
 its `NeedsApprovalFunc`, or wraps the tool's `OnInvoke`.
 
 Rules: spec §2.7j (retired), §2.7l.
+
+### 5.115 The SDK branches a session and copies none
+
+Decided 2026-11-10.
+
+**Decision.** `Session.Branch` is the SDK's one tree operation. Copying a
+branch into another session is the host's: read it with `ActiveBranchOf` or
+`PathToLeaf` and `Append` it to a fresh session, entry ids kept.
+
+**Rejected.** `session.Fork` — no caller outside its tests; the workbench
+forks inside its own store, in one transaction with the rows that follow a
+session. Keeping `ReplaceEntries` and the optional `AtomicReplacer` without
+it — the whole-history replace existed only so a fork target was never seen
+cleared but unfilled, and it was the one write that re-issued sequence numbers
+to entries that stayed. `Session.PathEntries`, `Leaf`, `State` and `Stats` —
+forwarders over `ActiveBranchOf`, `LeafOf` and folds nothing read.
+
+**Cost accepted.** A host's copy into a NON-empty session is an append, not a
+replace: it clears first and owns the gap between the two writes. An
+`EntryKindCompaction` projector override no longer replaces a checkpoint's
+rendering.
+
+Rules: spec §2.5c, §2.5d, §2.5e2.

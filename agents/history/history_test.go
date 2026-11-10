@@ -65,7 +65,7 @@ func TestHistoryToolsReadWhatCompactionFolded(t *testing.T) {
 		Text("Ada.").
 		Build()
 	agent := &agents.Agent{Name: "a", ModelImpl: model,
-		Tools: history.Tools(history.For(sess), history.Options{})}
+		Tools: history.Tools(history.For(sess), "")}
 	res, err := agents.RunSync(ctx, agent, "Remind me who wrote the parser.", agents.RunOptions{
 		Conversation: agents.ConversationOptions{Session: sess},
 	})
@@ -112,7 +112,7 @@ func TestHistoryReadWindowsOneItem(t *testing.T) {
 		Text("done").
 		Build()
 	agent := &agents.Agent{Name: "a", ModelImpl: model,
-		Tools: history.Tools(history.For(sess), history.Options{})}
+		Tools: history.Tools(history.For(sess), "")}
 	res, err := agents.RunSync(ctx, agent, "go", agents.RunOptions{
 		Conversation: agents.ConversationOptions{Session: sess},
 	})
@@ -135,7 +135,7 @@ func TestHistoryReadWindowsOneItem(t *testing.T) {
 }
 
 func TestHistoryToolsAreReadOnly(t *testing.T) {
-	for _, tool := range history.Tools(history.For(session.NewInMemorySession()), history.Options{ScopeHint: "scope: a task id"}) {
+	for _, tool := range history.Tools(history.For(session.NewInMemorySession()), "scope: a task id") {
 		if !tool.ReadOnly {
 			t.Fatalf("%s is not read-only", tool.Name)
 		}
@@ -149,7 +149,7 @@ func TestHistoryToolsAreReadOnly(t *testing.T) {
 // arguments is not refused — see decisions §5.99.
 func TestHistoryToolsRequireOnlyTheReadID(t *testing.T) {
 	want := map[string]string{"history_search": "null", "history_read": `["id"]`}
-	for _, tool := range history.Tools(history.For(session.NewInMemorySession()), history.Options{}) {
+	for _, tool := range history.Tools(history.For(session.NewInMemorySession()), "") {
 		req, _ := json.Marshal(tool.ParamsJSONSchema["required"])
 		if tool.Strict || string(req) != want[tool.Name] {
 			t.Errorf("%s: strict %v, required %s; want non-strict, required %s", tool.Name, tool.Strict, req, want[tool.Name])

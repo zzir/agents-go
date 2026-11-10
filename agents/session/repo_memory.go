@@ -35,8 +35,7 @@ func (r *InMemoryRepo) Create(_ context.Context, opts CreateOptions) (*Session, 
 		return nil, fmt.Errorf("session: session %q already exists", id)
 	}
 	st := NewInMemoryStorage(id)
-	st.SetTitle(opts.Title)
-	st.SetHidden(opts.Hidden)
+	st.title, st.hidden = opts.Title, opts.Hidden
 	r.sessions[id] = st
 	r.order = append(r.order, id)
 	return NewSession(st), nil

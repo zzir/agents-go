@@ -10,11 +10,9 @@ import (
 // strategy needs; Update groups only what arrived since the last pass.
 type Index struct {
 	Groups []*Group
-
-	turn int
 }
 
-// NewIndex groups entries; token counts are CharEstimator's.
+// NewIndex groups entries; token counts are EstimateTokens'.
 func NewIndex(entries []session.Entry) *Index {
 	idx := &Index{}
 	idx.Update(entries)
@@ -27,7 +25,6 @@ func (idx *Index) Update(entries []session.Entry) {
 	start, ok := idx.prefixMatches(entries)
 	if !ok {
 		idx.Groups = nil
-		idx.turn = 0
 		start = 0
 	}
 	if start >= len(entries) {
@@ -81,9 +78,6 @@ func (idx *Index) group(entries []session.Entry) {
 			continue
 		}
 
-		if kind == GroupUser {
-			idx.turn++
-		}
 		idx.add(kind, entries[i:i+1])
 		i++
 	}
@@ -145,25 +139,21 @@ func nextConversational(entries []session.Entry, from int) int {
 
 func (idx *Index) add(kind GroupKind, entries []session.Entry) {
 	g := &Group{Kind: kind, Entries: append([]session.Entry(nil), entries...)}
-	if kind != GroupSystem && kind != GroupOther {
-		turn := idx.turn
-		g.TurnIndex = &turn
-	}
 	for _, e := range entries {
-		g.Tokens += CharEstimator{}.Estimate(e)
+		g.Tokens += EstimateTokens(e)
 	}
 	idx.Groups = append(idx.Groups, g)
 }
 
-// IncludedGroups returns the groups still in the context.
-func (idx *Index) IncludedGroups() []*Group {
-	out := make([]*Group, 0, len(idx.Groups))
+// includedGroups counts the groups still in the context.
+func (idx *Index) includedGroups() int {
+	n := 0
 	for _, g := range idx.Groups {
 		if !g.Excluded {
-			out = append(out, g)
+			n++
 		}
 	}
-	return out
+	return n
 }
 
 // IncludedEntries projects the index back to the entries that make up the
@@ -179,34 +169,6 @@ func (idx *Index) IncludedEntries() []session.Entry {
 		out = append(out, g.Entries...)
 	}
 	return out
-}
-
-// Counts describes an index, for triggers and for reporting.
-type Counts struct {
-	Groups, IncludedGroups   int
-	Entries, IncludedEntries int
-	Turns                    int
-	Tokens                   int
-}
-
-// Counts summarizes the index.
-func (idx *Index) Counts() Counts {
-	c := Counts{Tokens: idx.ContextTokens()}
-	seenTurns := map[int]bool{}
-	for _, g := range idx.Groups {
-		c.Groups++
-		c.Entries += len(g.Entries)
-		if g.Excluded {
-			continue
-		}
-		c.IncludedGroups++
-		c.IncludedEntries += len(g.Entries)
-		if g.TurnIndex != nil {
-			seenTurns[*g.TurnIndex] = true
-		}
-	}
-	c.Turns = len(seenTurns)
-	return c
 }
 
 // ContextTokens estimates the included context's size: the newest measured usage,
@@ -230,7 +192,7 @@ func (idx *Index) ContextTokens() int {
 	if usageGroup < 0 {
 		total := 0
 		for _, e := range idx.IncludedEntries() {
-			total += CharEstimator{}.Estimate(e)
+			total += EstimateTokens(e)
 		}
 		return total
 	}
@@ -242,7 +204,7 @@ func (idx *Index) ContextTokens() int {
 		if g.Excluded && !g.settled {
 			total -= g.Tokens
 			for _, re := range g.Replacement {
-				total += CharEstimator{}.Estimate(re)
+				total += EstimateTokens(re)
 			}
 		}
 	}
@@ -251,17 +213,17 @@ func (idx *Index) ContextTokens() int {
 	}
 	// Everything after the measured entry is estimated on top of it.
 	for _, e := range idx.Groups[usageGroup].Entries[usageEntry+1:] {
-		total += CharEstimator{}.Estimate(e)
+		total += EstimateTokens(e)
 	}
 	for _, g := range idx.Groups[usageGroup+1:] {
 		if g.Excluded {
 			for _, re := range g.Replacement {
-				total += CharEstimator{}.Estimate(re)
+				total += EstimateTokens(re)
 			}
 			continue
 		}
 		for _, e := range g.Entries {
-			total += CharEstimator{}.Estimate(e)
+			total += EstimateTokens(e)
 		}
 	}
 	return total

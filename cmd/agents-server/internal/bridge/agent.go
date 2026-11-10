@@ -263,7 +263,7 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, workspa
 		// 34); an agent may opt out (behavior.subagents=false).
 		mark := len(result.Agent.Tools)
 		result.Agent.Tools = append(result.Agent.Tools, deps.SpawnTool(ctx, ownerID, result))
-		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.TaskTools(nil)...)
+		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.TaskTools()...)
 		bucketToolsSince(result.Agent, mark, store.ToolSourceTasks, &result.Profile)
 	}
 	// Workflow authoring is opt-in per agent and chat-only — invariant 39.

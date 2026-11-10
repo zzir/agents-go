@@ -57,25 +57,6 @@ func ToolCallNames(items []*agents.RunItem) []string {
 	return out
 }
 
-// MessageTexts returns the text of every assistant message item, in order.
-func MessageTexts(items []*agents.RunItem) []string {
-	var out []string
-	for _, it := range items {
-		if it.Kind == agents.ItemMessage {
-			out = append(out, it.Text())
-		}
-	}
-	return out
-}
-
-// CollectEvents drives a run stream to completion and returns its events minus
-// the terminal completion; a stream error fails the test.
-func CollectEvents(tb testing.TB, stream agents.RunStream) []agents.StreamEvent {
-	tb.Helper()
-	events, _ := CollectRun(tb, stream)
-	return events
-}
-
 // CollectRun drives a run stream to completion and returns its events and
 // result; a stream error or a missing result fails the test.
 func CollectRun(tb testing.TB, stream agents.RunStream) ([]agents.StreamEvent, *agents.RunResult) {
@@ -96,15 +77,4 @@ func CollectRun(tb testing.TB, stream agents.RunStream) ([]agents.StreamEvent, *
 		tb.Fatal("the run stream ended without a result")
 	}
 	return events, res
-}
-
-// RunItemKinds returns the kind of every run-item event in a stream, in order.
-func RunItemKinds(events []agents.StreamEvent) []agents.ItemKind {
-	var out []agents.ItemKind
-	for _, ev := range events {
-		if e, ok := ev.(*agents.RunItemStreamEvent); ok {
-			out = append(out, e.Item.Kind)
-		}
-	}
-	return out
 }

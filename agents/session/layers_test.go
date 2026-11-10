@@ -136,61 +136,27 @@ func TestContextEntries_DropFoldedHistory(t *testing.T) {
 	}
 }
 
-// State is a fold over the log, not a field kept beside it: given the same
-// entries it gives the same answer, with no cache to invalidate.
-func TestReduceState(t *testing.T) {
-	ctx := context.Background()
-	sess := NewInMemorySession()
-
-	callItem, err := UnmarshalInputItem([]byte(`{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`))
+// A call is pending until its output lands; the fold reads it off the entries.
+func TestPendingCallIDs(t *testing.T) {
+	var items []InputItem
+	for _, raw := range []string{
+		`{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`,
+		`{"type":"function_call","call_id":"c2","name":"f","arguments":"{}"}`,
+		`{"type":"function_call_output","call_id":"c2","output":"done"}`,
+	} {
+		item, err := UnmarshalInputItem([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		items = append(items, item)
+	}
+	entries, err := NewItemEntries(items, Source{})
 	if err != nil {
 		t.Fatal(err)
-	}
-	paired, err := UnmarshalInputItem([]byte(`{"type":"function_call","call_id":"c2","name":"f","arguments":"{}"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	output, err := UnmarshalInputItem([]byte(`{"type":"function_call_output","call_id":"c2","output":"done"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	entries, err := NewItemEntries([]InputItem{callItem, paired, output}, Source{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries[0].AgentName = "first"
-	entries[2].AgentName = "second"
-	entries[2].ResponseID = "resp_9"
-	entries[2].Usage = &RequestUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15}
-	if err := sess.Append(ctx, entries...); err != nil {
-		t.Fatal(err)
-	}
-
-	st, err := sess.State(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.LastAgent != "second" {
-		t.Errorf("LastAgent = %q, want the most recent", st.LastAgent)
-	}
-	if st.LastResponseID != "resp_9" {
-		t.Errorf("LastResponseID = %q", st.LastResponseID)
 	}
 	// c1 never got its output; c2 did.
-	if len(st.PendingCallIDs) != 1 || st.PendingCallIDs[0] != "c1" {
-		t.Errorf("PendingCallIDs = %v, want [c1]", st.PendingCallIDs)
-	}
-	if st.Usage.TotalTokens != 15 || st.Requests != 1 {
-		t.Errorf("usage = %+v, requests = %d", st.Usage, st.Requests)
-	}
-
-	stats, err := sess.Stats(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.Entries != 3 || stats.Items != 3 {
-		t.Errorf("stats = %+v", stats)
+	if got := pendingCallIDs(entries); len(got) != 1 || got[0] != "c1" {
+		t.Errorf("pending = %v, want [c1]", got)
 	}
 }
 

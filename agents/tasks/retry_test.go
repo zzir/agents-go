@@ -326,7 +326,7 @@ func TestRetry_LaunchFailureDebtFollowsTheCaller(t *testing.T) {
 		h.fail(t, info.TaskID, "boom")
 		h.launcher.err = errors.New("nope")
 
-		res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
+		res, err := invoke(t, toolNamed(h.m.Tools(), "task_retry"), "parent",
 			`{"task_id":"`+info.TaskID+`"}`)
 		if err != nil {
 			t.Fatal(err)
@@ -691,7 +691,7 @@ func TestTools_FastFinishReportsDeliveryOnlyForTheModel(t *testing.T) {
 		h.fail(t, info.TaskID, "boom")
 		finishOnLaunch(h)
 
-		res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
+		res, err := invoke(t, toolNamed(h.m.Tools(), "task_retry"), "parent",
 			`{"task_id":"`+info.TaskID+`"}`)
 		if err != nil {
 			t.Fatal(err)

@@ -238,27 +238,28 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID string, st tasks.Sta
 	if state != nil {
 		q = q.Set("state = ?", string(state))
 	}
+	return s.cas(ctx, q, id, "finalizing")
+}
+
+// cas runs a conditional UPDATE and reports whether it won. A miss is
+// classified: an absent id is ErrNotFound, a present one a lost claim (false,
+// nil). Every store answers alike.
+func (s *TaskStore) cas(ctx context.Context, q *bun.UpdateQuery, id, doing string) (bool, error) {
 	res, err := q.Exec(ctx)
 	if err != nil {
-		return false, fmt.Errorf("finalizing task %q: %w", id, err)
+		return false, fmt.Errorf("%s task %q: %w", doing, id, err)
 	}
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return true, nil
 	}
-	return false, s.casMiss(ctx, id)
-}
-
-// casMiss classifies a CAS that changed no row: an absent id is ErrNotFound,
-// a present one a lost claim (nil, for won=false). Every store answers alike.
-func (s *TaskStore) casMiss(ctx context.Context, id string) error {
 	exists, err := s.db.NewSelect().Model((*taskRow)(nil)).Where("id = ?", id).Exists(ctx)
 	if err != nil {
-		return fmt.Errorf("looking up task %q: %w", id, err)
+		return false, fmt.Errorf("looking up task %q: %w", id, err)
 	}
 	if !exists {
-		return tasks.ErrNotFound
+		return false, tasks.ErrNotFound
 	}
-	return nil
+	return false, nil
 }
 
 // RetryClaim implements tasks.Store as one conditional UPDATE, so the attempt
@@ -279,14 +280,7 @@ func (s *TaskStore) RetryClaim(ctx context.Context, id, newRunID string, maxAtte
 	if maxAttempts > 0 {
 		q = q.Where("CASE WHEN attempt < 1 THEN 1 ELSE attempt END < ?", maxAttempts)
 	}
-	res, err := q.Exec(ctx)
-	if err != nil {
-		return false, fmt.Errorf("claiming a retry of task %q: %w", id, err)
-	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return true, nil
-	}
-	return false, s.casMiss(ctx, id)
+	return s.cas(ctx, q, id, "claiming a retry of")
 }
 
 // Advance implements tasks.Store as one conditional UPDATE: the run moves and
@@ -303,21 +297,14 @@ func (s *TaskStore) Advance(ctx context.Context, id, runID, nextRunID string, st
 	if state != nil {
 		q = q.Set("state = ?", string(state))
 	}
-	res, err := q.Exec(ctx)
-	if err != nil {
-		return false, fmt.Errorf("advancing task %q: %w", id, err)
-	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return true, nil
-	}
-	return false, s.casMiss(ctx, id)
+	return s.cas(ctx, q, id, "advancing")
 }
 
 // ReleaseRetryClaim implements tasks.Store as one conditional UPDATE bound to
 // the claimed run id, like Finalize. The attempt rolls back: the claimed run
 // never launched, and attempt counts runs the task has HAD (floor as AttemptNo).
 func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (bool, error) {
-	res, err := s.db.NewUpdate().Model((*taskRow)(nil)).
+	q := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(tasks.StatusFailed)).
 		Set("attempt = CASE WHEN attempt <= 1 THEN 1 ELSE attempt - 1 END").
 		Set("summary = ?", summary).
@@ -325,15 +312,8 @@ func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, r
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Where("run_id = ?", runID).
-		Where("status = ?", string(tasks.StatusWorking)).
-		Exec(ctx)
-	if err != nil {
-		return false, fmt.Errorf("releasing the retry claim of task %q: %w", id, err)
-	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return true, nil
-	}
-	return false, s.casMiss(ctx, id)
+		Where("status = ?", string(tasks.StatusWorking))
+	return s.cas(ctx, q, id, "releasing the retry claim of")
 }
 
 // MarkInputRequired implements tasks.Store, bound to the current attempt like
@@ -357,20 +337,13 @@ func (s *TaskStore) MarkInputRequired(ctx context.Context, id, runID string) err
 // approval (its attempt retried past) must lose the claim, not resume over
 // the newer run.
 func (s *TaskStore) ReclaimWorking(ctx context.Context, id, runID string) (bool, error) {
-	res, err := s.db.NewUpdate().Model((*taskRow)(nil)).
+	q := s.db.NewUpdate().Model((*taskRow)(nil)).
 		Set("status = ?", string(tasks.StatusWorking)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Where("run_id = ?", runID).
-		Where("status = ?", string(tasks.StatusInputRequired)).
-		Exec(ctx)
-	if err != nil {
-		return false, fmt.Errorf("reclaiming task %q: %w", id, err)
-	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return true, nil
-	}
-	return false, s.casMiss(ctx, id)
+		Where("status = ?", string(tasks.StatusInputRequired))
+	return s.cas(ctx, q, id, "reclaiming")
 }
 
 // FailOrphans implements tasks.Store as ONE statement, so the rows reported are

@@ -34,8 +34,8 @@ func TestRecovery_RepairsADanglingCall(t *testing.T) {
 	sess := crashedSession(t)
 
 	// Before: the history cannot be replayed.
-	if state := mustState(t, sess); len(state.PendingCallIDs) != 1 {
-		t.Fatalf("pending = %v, want the dangling call", state.PendingCallIDs)
+	if pending := mustPending(t, sess); len(pending) != 1 {
+		t.Fatalf("pending = %v, want the dangling call", pending)
 	}
 
 	report, err := Recover(ctx, sess, RecoveryPolicy{})
@@ -45,8 +45,8 @@ func TestRecovery_RepairsADanglingCall(t *testing.T) {
 	if !report.NeedsRecovery() || len(report.Repaired) != 1 {
 		t.Fatalf("report = %+v, want one repaired call", report)
 	}
-	if state := mustState(t, sess); len(state.PendingCallIDs) != 0 {
-		t.Errorf("pending after recovery = %v, want none", state.PendingCallIDs)
+	if pending := mustPending(t, sess); len(pending) != 0 {
+		t.Errorf("pending after recovery = %v, want none", pending)
 	}
 
 	// The synthesized output tells the model what happened, rather than
@@ -132,11 +132,11 @@ func TestRecovery_NoOpOnAHealthySession(t *testing.T) {
 	}
 }
 
-func mustState(t *testing.T, sess *Session) DerivedState {
+func mustPending(t *testing.T, sess *Session) []string {
 	t.Helper()
-	st, err := sess.State(context.Background())
+	entries, err := sess.ContextEntries(context.Background(), Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return st
+	return pendingCallIDs(entries)
 }

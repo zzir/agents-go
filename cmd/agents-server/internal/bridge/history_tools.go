@@ -23,9 +23,8 @@ func (r *Runner) historyTools(_ context.Context, _ string) []*agents.Tool {
 		}
 		return historySource(ctx, r.db, r.Deps.Tasks.Get, sid, scope)
 	}
-	return history.Tools(resolve, history.Options{
-		ScopeHint: "scope may be a task_id from spawn_task, to search that task's own conversation instead of this one.",
-	})
+	return history.Tools(resolve,
+		"scope may be a task_id from spawn_task, to search that task's own conversation instead of this one.")
 }
 
 // taskLookup is the one task read the scope check needs.

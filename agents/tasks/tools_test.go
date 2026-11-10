@@ -39,7 +39,7 @@ func toolNamed(tools []*agents.Tool, name string) *agents.Tool {
 
 func TestTools_SpawnReturnsImmediately(t *testing.T) {
 	h := newHarness(t)
-	tools := h.m.Tools(nil)
+	tools := h.m.Tools()
 
 	res, err := invoke(t, toolNamed(tools, "spawn_task"), "parent",
 		`{"agent_name":"worker","input":"do it","label":"job"}`)
@@ -70,7 +70,7 @@ func TestTools_SpawnReturnsImmediately(t *testing.T) {
 // conversation could spawn tasks onto another.
 func TestTools_SpawnRefusesWithoutASession(t *testing.T) {
 	h := newHarness(t)
-	_, err := invoke(t, toolNamed(h.m.Tools(nil), "spawn_task"), "",
+	_, err := invoke(t, toolNamed(h.m.Tools(), "spawn_task"), "",
 		`{"agent_name":"worker","input":"do it"}`)
 	if err == nil {
 		t.Fatal("a spawn without a session was accepted")
@@ -91,7 +91,7 @@ func TestTools_SpawnNamesAgentsByTheHandoffGraph(t *testing.T) {
 			return inner(ctx, parent, name)
 		}
 	})
-	spawn := toolNamed(h.m.Tools(nil), "spawn_task")
+	spawn := toolNamed(h.m.Tools(), "spawn_task")
 	for _, name := range []string{"worker", " Worker ", "", "coordinator", "Coordinator"} {
 		if _, err := invoke(t, spawn, "parent", `{"agent_name":"`+name+`","input":"do it","label":""}`); err != nil {
 			t.Fatalf("agent_name %q: %v", name, err)
@@ -131,7 +131,7 @@ func TestTools_StatusReturnsTheFullResult(t *testing.T) {
 	long := strings.Repeat("y", 400)
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: long})
 
-	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "parent",
+	res, err := invoke(t, toolNamed(h.m.Tools(), "task_status"), "parent",
 		`{"task_id":"`+info.TaskID+`","wait_seconds":0}`)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestTools_StatusWithoutAnIDListsTheConversation(t *testing.T) {
 	second := h.spawn(t)
 	h.m.OnRunFinished(ctx, h.childOf(t, first.TaskID), RunOutcome{Status: StatusCompleted, Text: strings.Repeat("y", 100)})
 
-	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "parent", `{"task_id":"","wait_seconds":0}`)
+	res, err := invoke(t, toolNamed(h.m.Tools(), "task_status"), "parent", `{"task_id":"","wait_seconds":0}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestTools_StatusWithoutAnIDListsTheConversation(t *testing.T) {
 		t.Fatalf("delivered = %v — a listing must not settle the wake-up debt", delivered)
 	}
 	// Another conversation's listing is empty: ids do not leak sideways.
-	res, err = invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "other", `{"task_id":"","wait_seconds":0}`)
+	res, err = invoke(t, toolNamed(h.m.Tools(), "task_status"), "other", `{"task_id":"","wait_seconds":0}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestTools_StopOfAFinishedTaskIsAResult(t *testing.T) {
 	info := h.spawn(t)
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
 
-	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_stop"), "parent",
+	res, err := invoke(t, toolNamed(h.m.Tools(), "task_stop"), "parent",
 		`{"task_id":"`+info.TaskID+`","graceful":false}`)
 	if err != nil {
 		t.Fatalf("err = %v, want the terminal state as a result", err)
@@ -207,7 +207,7 @@ func TestTools_StopOfAFinishedTaskIsAResult(t *testing.T) {
 
 func TestTools_ExposesTheFour(t *testing.T) {
 	m := newHarness(t).m
-	tools := m.Tools(nil)
+	tools := m.Tools()
 	for _, name := range []string{"spawn_task", "task_status", "task_retry", "task_stop"} {
 		if toolNamed(tools, name) == nil {
 			t.Errorf("missing tool %q", name)
@@ -215,10 +215,10 @@ func TestTools_ExposesTheFour(t *testing.T) {
 	}
 	// The parts a host composes its own surface from: the spawn tool alone,
 	// and the three that name an existing task.
-	if st := m.SpawnTool(nil); st == nil || st.Name != "spawn_task" {
+	if st := m.SpawnTool(); st == nil || st.Name != "spawn_task" {
 		t.Fatalf("SpawnTool = %v", st)
 	}
-	tt := m.TaskTools(nil)
+	tt := m.TaskTools()
 	if len(tt) != 3 || toolNamed(tt, "spawn_task") != nil {
 		t.Fatalf("TaskTools = %v, want status/retry/stop only", tt)
 	}
@@ -240,14 +240,14 @@ func TestTools_StatusShowsTheHostsProgressLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "parent", `{"task_id":"`+info.TaskID+`","wait_seconds":0}`)
+	res, err := invoke(t, toolNamed(h.m.Tools(), "task_status"), "parent", `{"task_id":"`+info.TaskID+`","wait_seconds":0}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(stringOf(res), `progress: step 2/3 (verify) from {"n":2}`) {
 		t.Fatalf("status = %q, want the host's progress line", stringOf(res))
 	}
-	list, err := invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "parent", `{"task_id":"","wait_seconds":0}`)
+	list, err := invoke(t, toolNamed(h.m.Tools(), "task_status"), "parent", `{"task_id":"","wait_seconds":0}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestTools_RetryRefusalIsAResult(t *testing.T) {
 	info := h.spawn(t)
 	h.m.OnRunFinished(ctx, h.childOf(t, info.TaskID), RunOutcome{Status: StatusCompleted, Text: "done"})
 
-	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
+	res, err := invoke(t, toolNamed(h.m.Tools(), "task_retry"), "parent",
 		`{"task_id":"`+info.TaskID+`"}`)
 	if err != nil {
 		t.Fatalf("err = %v, want the refusal as a result", err)
@@ -288,7 +288,7 @@ func TestTools_RetryRefusesAForeignTask(t *testing.T) {
 	info := h.spawn(t)
 	h.fail(t, info.TaskID, "boom")
 
-	if _, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "someone-else",
+	if _, err := invoke(t, toolNamed(h.m.Tools(), "task_retry"), "someone-else",
 		`{"task_id":"`+info.TaskID+`"}`); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -304,7 +304,7 @@ func TestTools_RetryReportsTheAttempt(t *testing.T) {
 	info := h.spawn(t)
 	h.fail(t, info.TaskID, "boom")
 
-	res, err := invoke(t, toolNamed(h.m.Tools(nil), "task_retry"), "parent",
+	res, err := invoke(t, toolNamed(h.m.Tools(), "task_retry"), "parent",
 		`{"task_id":"`+info.TaskID+`"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -317,7 +317,7 @@ func TestTools_RetryReportsTheAttempt(t *testing.T) {
 	}
 	// The first attempt says nothing: every task has one, and a line on all of
 	// them is a line the model learns to skip.
-	first, err := invoke(t, toolNamed(h.m.Tools(nil), "task_status"), "parent",
+	first, err := invoke(t, toolNamed(h.m.Tools(), "task_status"), "parent",
 		`{"task_id":"`+h.spawn(t).TaskID+`","wait_seconds":0}`)
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func stringOf(r agents.ToolResult) string {
 // the task so a UI can nest the task's wake-up run under the spawning run.
 func TestTools_SpawnRecordsTheParentRun(t *testing.T) {
 	h := newHarness(t)
-	inv := toolNamed(h.m.Tools(nil), "spawn_task")
+	inv := toolNamed(h.m.Tools(), "spawn_task")
 	if inv.OnInvoke == nil {
 		t.Fatal("spawn_task is not invokable")
 	}

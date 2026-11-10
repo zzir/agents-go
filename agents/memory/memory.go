@@ -6,6 +6,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -419,6 +420,12 @@ func (t *tools) store(ctx context.Context, tc *agents.ToolContext, a writeArgs, 
 		verb = "Appended to"
 	}
 	return fmt.Sprintf("%s %s in %s (%d bytes now).", verb, a.Key, spec.Name, total), nil
+}
+
+// decodeArgs reads a tool call's arguments for the approval predicate, which
+// sees them before the runner validates them; false means undecodable.
+func decodeArgs(argsJSON string, into any) bool {
+	return json.Unmarshal([]byte(argsJSON), into) == nil
 }
 
 // keyProblem is ValidKey's verdict as the text a model reads, "" when fine.

@@ -119,8 +119,8 @@ func TestTree_BranchIsRecordedAsAnEntry(t *testing.T) {
 	if leaves != 1 {
 		t.Errorf("leaf entries = %d, want 1 — the switch should be in the log", leaves)
 	}
-	if got, err := sess.Leaf(ctx); err != nil || got != entries[0].ID {
-		t.Errorf("leaf = %q (%v), want the branch target", got, err)
+	if got := LeafOf(all); got != entries[0].ID {
+		t.Errorf("leaf = %q, want the branch target", got)
 	}
 }
 
@@ -150,10 +150,11 @@ func TestTree_PathContinuesPastCompaction(t *testing.T) {
 	}
 	appendText(t, sess, "recent")
 
-	path, err := sess.PathEntries(ctx)
+	all, err := sess.Entries(ctx, Cursor{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	path := ActiveBranchOf(all)
 	if len(path) != 3 || path[1].Kind != EntryKindCompaction {
 		t.Fatalf("path = %d entries, want the folded entry, the checkpoint and what followed", len(path))
 	}
@@ -161,46 +162,6 @@ func TestTree_PathContinuesPastCompaction(t *testing.T) {
 		if strings.Contains(item, "ancient") {
 			t.Error("history folded away by compaction came back")
 		}
-	}
-}
-
-// A fork extracts the active branch, not everything: the point is to continue
-// from where the conversation actually is.
-func TestFork_ExtractsTheActiveBranch(t *testing.T) {
-	ctx := context.Background()
-	src := NewInMemorySession()
-	entries := appendText(t, src, "question", "abandoned")
-	if err := src.Branch(ctx, entries[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	appendText(t, src, "kept")
-
-	dst := NewInMemorySession()
-	if err := Fork(ctx, src, dst); err != nil {
-		t.Fatal(err)
-	}
-
-	got := contextTexts(t, dst)
-	if len(got) != 2 {
-		t.Fatalf("fork = %d items, want the branch: %v", len(got), got)
-	}
-	for _, item := range got {
-		if strings.Contains(item, "abandoned") {
-			t.Error("the fork carried an abandoned branch across")
-		}
-	}
-
-	// Entry ids survive, so an update entry naming one still finds it.
-	forked, _ := dst.Entries(ctx, Cursor{})
-	if forked[0].ID != entries[0].ID {
-		t.Errorf("fork changed entry ids (%q -> %q); updates would lose their targets",
-			entries[0].ID, forked[0].ID)
-	}
-
-	// And the fork is independent: writing to it does not touch the source.
-	appendText(t, dst, "only in the fork")
-	if len(contextTexts(t, src)) != 2 {
-		t.Error("writing to the fork changed the source")
 	}
 }
 
@@ -223,11 +184,11 @@ func TestTree_LinklessHistoryKeepsItsPrefix(t *testing.T) {
 		e.ID, e.Seq = "legacy-"+text, int64(len(legacy)+1)
 		legacy = append(legacy, e)
 	}
-	if err := st.ReplaceEntries(ctx, legacy...); err != nil {
+	if err := st.Append(ctx, legacy...); err != nil {
 		t.Fatal(err)
 	}
-	// ReplaceEntries links what it is given; strip the links back off to get
-	// the shape a pre-branching store actually holds.
+	// Append links what it is given; strip the links back off to get the shape
+	// a pre-branching store actually holds.
 	stored, err := st.Entries(ctx, Cursor{})
 	if err != nil {
 		t.Fatal(err)
