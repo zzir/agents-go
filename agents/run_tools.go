@@ -77,23 +77,52 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 	if limit := r.toolConcurrency(runs); limit > 0 {
 		g.SetLimit(limit)
 	}
-	for i, run := range runs {
-		g.Go(func() (err error) {
-			defer func() {
-				// errgroup does not recover panics: the tool body's own is already
-				// an error (invokeTool); anything else here aborts the run.
-				if p := recover(); p != nil {
-					err = newToolPanicError(run.Call.Name, p).fatalError()
-				}
-				if err != nil {
-					fatalErrs[i] = err
-				}
-			}()
-			results[i], err = r.runOneTool(gctx, agent, run)
-			return err
-		})
+	// Tools hand progress to this goroutine, the only one that yields — see
+	// spec §2.7g. A blocking run has no consumer and push stays nil.
+	progress := make(chan *ToolProgressEvent)
+	batchDone := make(chan struct{})
+	defer close(batchDone)
+	var push func(*ToolProgressEvent)
+	if r.rawEvents {
+		push = func(ev *ToolProgressEvent) {
+			select {
+			case progress <- ev:
+			case <-batchDone:
+			}
+		}
 	}
-	if werr := g.Wait(); werr != nil {
+	// Launched off this goroutine: g.Go blocks at the concurrency limit while
+	// the calls already running still have progress to drain.
+	waited := make(chan error, 1)
+	go func() {
+		for i, run := range runs {
+			g.Go(func() (err error) {
+				defer func() {
+					// errgroup does not recover panics: the tool body's own is already
+					// an error (invokeTool); anything else here aborts the run.
+					if p := recover(); p != nil {
+						err = newToolPanicError(run.Call.Name, p).fatalError()
+					}
+					if err != nil {
+						fatalErrs[i] = err
+					}
+				}()
+				results[i], err = r.runOneTool(gctx, agent, run, push)
+				return err
+			})
+		}
+		waited <- g.Wait()
+	}()
+	var werr error
+	for waiting := true; waiting; {
+		select {
+		case ev := <-progress:
+			r.emit(ev)
+		case werr = <-waited:
+			waiting = false
+		}
+	}
+	if werr != nil {
 		// The first cause, not the first casualty: skip a context.Canceled that
 		// is only errgroup cancelling a sibling, unless it is all there is.
 		var cancelled error
@@ -116,7 +145,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 
 // runOneTool executes one call end to end: input guardrails, the invocation
 // under its span, and the shared tail — a handled failure is an IsError output.
-func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFunction) (res functionToolResult, err error) {
+func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFunction, push func(*ToolProgressEvent)) (res functionToolResult, err error) {
 	tc := &ToolContext{
 		RunContext:    r.rc,
 		ToolName:      run.Call.Name,
@@ -127,9 +156,9 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 	}
 	// Progress is delivered only on a streamed run; on a blocking run nobody
 	// is watching and buffering it would grow without bound.
-	if r.rawEvents {
+	if push != nil {
 		tc.emit = func(partial ToolResult) {
-			r.emit(&ToolProgressEvent{
+			push(&ToolProgressEvent{
 				ToolName: run.Call.Name,
 				CallID:   run.Call.CallID,
 				Agent:    agent,

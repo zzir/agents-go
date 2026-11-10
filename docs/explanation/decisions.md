@@ -2130,3 +2130,25 @@ arguments are flat strings and integers. Other strict tools with fields
 optional by meaning stay strict until a log shows the same refusal.
 
 Rules: spec §2.5i, invariant 98.
+
+### 5.100 Tool progress is yielded by the run loop
+
+Decided 2026-11-10.
+
+**Decision.** `ToolContext.Emit` hands its event over an unbuffered channel to
+the goroutine ranging the stream, which yields it while it waits on the tool
+batch. No other goroutine ever calls `yield`.
+
+**Rejected.** Yielding on the tool's goroutine under a mutex — the consumer's
+range body ran on a goroutine it did not start: its panic was recovered as the
+tool's failure and the next yield died inside the runtime, `t.Fatal` in the
+body ended the wrong goroutine, and §2.0 carried an exception consumers had to
+design around. A buffered channel — progress would outrun a slow consumer and
+grow without bound.
+
+**Cost accepted.** One helper goroutine per tool batch launches the calls and
+waits for them: `errgroup.Go` blocks at the concurrency limit while the calls
+already running still have progress to drain. `Emit` returns when the loop
+takes the event, not when the consumer is done with it.
+
+Rules: spec §2.0, §2.7g.

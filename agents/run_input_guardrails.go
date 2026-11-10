@@ -177,7 +177,7 @@ func (r *runner) raceModelCall(span *tracing.SpanHandle, call func(context.Conte
 	out.resp, err = call(race.modelCtx)
 	// An abandoned stream stops the run where it stands (spec §2.0): cancel the
 	// guardrails and leave rather than wait on a verdict nobody will read.
-	if r.closed.Load() || errors.Is(err, errConsumerStopped) {
+	if r.closed || errors.Is(err, errConsumerStopped) {
 		race.stop()
 		span.Finish()
 		out.resp, out.stopped = nil, true

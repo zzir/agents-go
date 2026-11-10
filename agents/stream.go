@@ -93,15 +93,11 @@ var errConsumerStopped = errors.New("agents: stream consumer stopped")
 // emit yields an event and reports whether the run should continue; a false
 // return propagates to the loop as errConsumerStopped.
 func (r *runner) emit(event StreamEvent) bool {
-	// Tool progress arrives from other goroutines; yield is not
-	// concurrency-safe — see spec §2.7g.
-	r.emitMu.Lock()
-	defer r.emitMu.Unlock()
-	if r.closed.Load() {
+	if r.closed {
 		return false
 	}
 	if !r.yield(event, nil) {
-		r.closed.Store(true)
+		r.closed = true
 		// In-flight work (a streamed model call, a tool batch) has no emit
 		// point to observe the flag at.
 		if r.cancelRun != nil {

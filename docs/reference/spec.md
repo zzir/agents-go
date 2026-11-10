@@ -110,8 +110,8 @@ renumbered — which is why the letters run out of alphabetical order in places.
 `ResumeRun` / `ResumeRunSync` are the same pair for a paused run.
 
 - **A run executes on the consumer's goroutine.** Ranging the stream advances
-  the loop; abandoning it stops the run where it stands. The one exception: a
-  tool streaming progress yields from its own goroutine ([§2.7g](#27g-tool-progress)).
+  the loop; abandoning it stops the run where it stands. No other goroutine
+  calls `yield`.
 - **Abandoning the stream cancels the run's own context root**, so the model
   call, the tool batch and racing guardrails are told to stop. A tool that
   ignores its context runs on; its result is discarded.
@@ -1124,12 +1124,9 @@ A tool marked `Deferred: true` is withheld from the model until some
   value does.
 - **Scope is the call.** After the tool returns, `Emit` is ignored.
 - **No-op on a blocking run.**
-- **`emit` serializes with the run loop's own yields**: an iterator's `yield`
-  is not safe for concurrent calls.
-- **The consumer's range body runs on the emitting tool's goroutine** for a
-  progress event — never concurrently with itself, but not on the goroutine
-  that started the range. A consumer that pins work to the starting goroutine
-  hands the event off ([streaming.md](../howto/streaming.md)).
+- **The run loop yields progress.** `Emit` hands the event to the goroutine
+  ranging the stream and returns once it is taken, or the tool batch is over
+  — see decisions §5.100.
 - **A nested agent-as-tool run is streamed whenever the parent is**; only its
   messages are forwarded, never its raw deltas.
 - The sandbox exec tool streams stdout through it, capturing in parallel.

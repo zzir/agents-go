@@ -103,17 +103,12 @@ func (r *runner) execute(ctx context.Context, agent *Agent, input []InputItem) (
 func (r *runner) finishStream(res *RunResult, err error) {
 	// A failed or abandoned attempt returns its injection take for the next
 	// attempt — see spec §2.11b.
-	if err != nil || r.closed.Load() {
+	if err != nil || r.closed {
 		r.ctrl.rollbackInjected()
 	} else {
 		r.ctrl.commitInjected()
 	}
-	// Closed under emitMu so a tool goroutine that outlived its call finds the
-	// stream closed.
-	r.emitMu.Lock()
-	defer r.emitMu.Unlock()
-	defer r.closed.Store(true)
-	if r.closed.Load() || errors.Is(err, errConsumerStopped) {
+	if r.closed || errors.Is(err, errConsumerStopped) {
 		return
 	}
 	if err != nil {
@@ -170,9 +165,8 @@ type runner struct {
 	// rawEvents streams the model call — the one difference between Run and RunSync.
 	rawEvents bool
 
-	// closed marks the stream ended; emit yields nothing after it. Atomic: a
-	// tool goroutine may set it.
-	closed atomic.Bool
+	// closed marks the consumer gone; emit yields nothing after it.
+	closed bool
 
 	// cancelRun cancels the run's context when the consumer stops ranging — see
 	// spec §2.0.
@@ -192,9 +186,6 @@ type runner struct {
 
 	// userInputSaved guards the one-time persistence of userInput.
 	userInputSaved bool
-
-	// emitMu serializes yields: tools push progress from their own goroutines.
-	emitMu sync.Mutex
 
 	// diagnostics collects trouble the run survived. Never nil.
 	diagnostics *DiagnosticSink
