@@ -37,6 +37,7 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 		limit := session.ResolveLimit(opts.Conversation.Settings)
 		entries, herr := opts.Conversation.Session.ContextEntries(ctx, session.Cursor{Limit: -limit})
 		if herr != nil {
+			finishTrace()
 			return nil, nil, nil, herr
 		}
 		// Compact before projecting: the compactor reasons about entries, and
@@ -44,6 +45,7 @@ func prepareRun(ctx context.Context, agent *Agent, userInput []InputItem, opts R
 		entries, _ = r.compactContext(ctx, CompactBeforeRun, entries)
 		history, herr := session.ProjectEntries(entries, opts.Conversation.Projectors)
 		if herr != nil {
+			finishTrace()
 			return nil, nil, nil, herr
 		}
 		if len(history) > 0 {
