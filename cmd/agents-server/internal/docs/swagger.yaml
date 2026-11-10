@@ -2984,6 +2984,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.approvalResultResp'
           description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: body present but not valid JSON
         "404":
           content:
             application/json:
@@ -3035,6 +3041,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.approvalResultResp'
           description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: body present but not valid JSON
         "404":
           content:
             application/json:
@@ -6918,6 +6930,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/bridge.TaskInfo'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: body present but not valid JSON
         "404":
           content:
             application/json:

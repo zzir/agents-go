@@ -65,6 +65,8 @@ stable machine-readable identifier, `message` human-readable detail.
 - **Ids are the server's.** A create ignores an `id` or `created_at` in its
   body. An `:id` that is not a UUID is `404` like any other missing resource,
   and a body field that is not one is refused as a reference to a missing row.
+- **An optional body may be absent, not broken**: one that is present and does
+  not parse is `400`, never read as the defaults.
 - Secret fields are write-only — see [Secret handling](#secret-handling).
 
 ### Authorization

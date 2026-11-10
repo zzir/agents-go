@@ -41,13 +41,16 @@ type taskStopReq struct {
 //	@Param			id		path		string		true	"Task ID"
 //	@Param			request	body		taskStopReq	false	"Stop options"
 //	@Success		200		{object}	bridge.TaskInfo
+//	@Failure		400		{object}	ErrorResponse	"body present but not valid JSON"
 //	@Failure		404		{object}	ErrorResponse
 //	@Failure		409		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/tasks/{id}/stop [post]
 func (h *TaskHandler) Stop(c *gin.Context) {
 	var req taskStopReq
-	_ = c.ShouldBindJSON(&req) // body is optional
+	if !bindOptional(c, &req) {
+		return
+	}
 	info, err := h.runner.StopTask(c.Param("id"), req.Graceful)
 	if err != nil {
 		h.stopError(c, err)

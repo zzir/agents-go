@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"unicode/utf8"
@@ -139,6 +140,16 @@ const maxNameLen = 256
 func nameFits(c *gin.Context, name string) bool {
 	if utf8.RuneCountInString(name) > maxNameLen {
 		badRequest(c, fmt.Sprintf("name is longer than %d characters", maxNameLen))
+		return false
+	}
+	return true
+}
+
+// bindOptional binds a JSON body that may be absent: none is the zero request,
+// anything else must parse or the answer is 400.
+func bindOptional(c *gin.Context, req any) bool {
+	if err := c.ShouldBindJSON(req); err != nil && !errors.Is(err, io.EOF) {
+		badRequest(c, err.Error())
 		return false
 	}
 	return true

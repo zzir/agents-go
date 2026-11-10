@@ -528,6 +528,15 @@ export interface paths {
                         "application/json": components["schemas"]["handler.approvalResultResp"];
                     };
                 };
+                /** @description body present but not valid JSON */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
                 /** @description Not Found */
                 404: {
                     headers: {
@@ -600,6 +609,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["handler.approvalResultResp"];
+                    };
+                };
+                /** @description body present but not valid JSON */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
                 /** @description Not Found */
@@ -6527,6 +6545,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["bridge.TaskInfo"];
+                    };
+                };
+                /** @description body present but not valid JSON */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
                     };
                 };
                 /** @description Not Found */

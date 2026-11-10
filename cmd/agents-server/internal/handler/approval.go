@@ -107,6 +107,7 @@ type approvalResultResp struct {
 //	@Param			tool_call_id	path		string		true	"Tool call ID"
 //	@Param			body			body		approveReq	false	"Optional approval scope"
 //	@Success		202				{object}	approvalResultResp
+//	@Failure		400				{object}	ErrorResponse	"body present but not valid JSON"
 //	@Failure		404				{object}	ErrorResponse
 //	@Failure		409				{object}	ErrorResponse	"session already has an active run"
 //	@Failure		500				{object}	ErrorResponse
@@ -114,7 +115,9 @@ type approvalResultResp struct {
 //	@Router			/approvals/{tool_call_id}/approve [post]
 func (h *ApprovalHandler) Approve(c *gin.Context) {
 	var req approveReq
-	_ = c.ShouldBindJSON(&req) // body optional; absent → once
+	if !bindOptional(c, &req) { // absent → once
+		return
+	}
 	h.resolve(c, true, req.toScope(), "")
 }
 
@@ -128,6 +131,7 @@ func (h *ApprovalHandler) Approve(c *gin.Context) {
 //	@Param			tool_call_id	path		string		true	"Tool call ID"
 //	@Param			body			body		rejectReq	false	"Optional rejection reason"
 //	@Success		202				{object}	approvalResultResp
+//	@Failure		400				{object}	ErrorResponse	"body present but not valid JSON"
 //	@Failure		404				{object}	ErrorResponse
 //	@Failure		409				{object}	ErrorResponse	"session already has an active run"
 //	@Failure		500				{object}	ErrorResponse
@@ -135,7 +139,9 @@ func (h *ApprovalHandler) Approve(c *gin.Context) {
 //	@Router			/approvals/{tool_call_id}/reject [post]
 func (h *ApprovalHandler) Reject(c *gin.Context) {
 	var req rejectReq
-	_ = c.ShouldBindJSON(&req) // body is optional
+	if !bindOptional(c, &req) {
+		return
+	}
 	h.resolve(c, false, bridge.ApprovalOnce, req.Reason)
 }
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -211,8 +210,7 @@ type sessionCreateReq struct {
 //	@Router		/sessions [post]
 func (h *SessionHandler) Create(c *gin.Context) {
 	var req sessionCreateReq
-	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		badRequest(c, err.Error())
+	if !bindOptional(c, &req) {
 		return
 	}
 	req.Name = cmp.Or(req.Name, store.DefaultSessionName)
@@ -486,9 +484,8 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		Exclusive bool    `json:"exclusive"`
 		Label     string  `json:"label"`
 	}
-	// An empty body means "fork everything"; anything else must parse.
-	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		badRequest(c, err.Error())
+	// An empty body means "fork everything".
+	if !bindOptional(c, &req) {
 		return
 	}
 
