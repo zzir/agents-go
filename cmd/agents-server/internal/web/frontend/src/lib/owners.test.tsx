@@ -7,6 +7,10 @@ vi.mock('@primer/react', () => ({ Tooltip: ({ children }: { children?: unknown }
 const userLabels = vi.fn();
 vi.mock('@/lib/api', () => ({ api: { auth: { userLabels: () => userLabels() } } }));
 import { reloadDirectory, useOwnerLabels } from '@/lib/owners';
+import { MeContext, type MeState } from '@/lib/me';
+
+const as = (role: string): MeState =>
+  ({ me: { id: 'me', role } as MeState['me'], loading: false, error: false, reload: () => {} });
 
 const g = globalThis as Record<string, unknown>;
 let savedActEnv: unknown;
@@ -16,11 +20,11 @@ afterEach(() => { vi.useRealTimers(); });
 
 type Labels = ReturnType<typeof useOwnerLabels>;
 
-async function mount() {
+async function mount(role = 'admin') {
   let last!: Labels;
   function Probe() { last = useOwnerLabels(); return null; }
   const root = createRoot(document.createElement('div'));
-  await act(async () => { root.render(<Probe />); });
+  await act(async () => { root.render(<MeContext.Provider value={as(role)}><Probe /></MeContext.Provider>); });
   return { last: () => last, unmount: () => act(async () => { root.unmount(); }) };
 }
 
@@ -54,5 +58,13 @@ describe('useOwnerLabels', () => {
     expect(userLabels).toHaveBeenCalledTimes(3);
     expect(b.last().labelFor('u1')).toBe('Annie');
     await a.unmount(); await b.unmount(); await d.unmount();
+  });
+
+  it('never asks for a member: the directory is admin-only', async () => {
+    userLabels.mockClear();
+    const m = await mount('member');
+    expect(userLabels).not.toHaveBeenCalled();
+    expect(m.last().labelFor('0123456789abcdef')).toBe('01234567');
+    await m.unmount();
   });
 });

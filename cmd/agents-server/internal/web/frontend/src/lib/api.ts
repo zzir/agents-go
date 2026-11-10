@@ -166,7 +166,7 @@ export const api = {
       revokeTokens: (id: string) =>
         request<null>(`/auth/users/${encodeURIComponent(id)}/tokens`, { method: 'DELETE' }),
     },
-    // The id→person directory any member reads to label row owners.
+    // The id→person directory row owners are labelled from; admin only.
     userLabels: () => request<{ id: string; name?: string; email: string }[]>('/auth/user-labels'),
     // Admin: the audit log, newest first; `before` (an event id) pages older.
     audit: (limit = 50, before?: string) =>

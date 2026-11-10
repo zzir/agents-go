@@ -1,6 +1,7 @@
 import { Tooltip } from '@primer/react';
 import { api } from '@/lib/api';
 import { useApi, invalidate } from '@/lib/hooks';
+import { useIsAdmin } from '@/lib/me';
 
 // The token-mode admin: never a transfer target, never listed as a member.
 export const LOCAL_USER_ID = '00000000-0000-0000-0000-000000000001';
@@ -22,11 +23,14 @@ export function reloadDirectory(): void {
   invalidate(DIRECTORY_KEY);
 }
 
-// useOwnerLabels serves the id→person directory the scoped panels render row
-// owners from (every member may read it — decisions §5.29); `labelFor` falls
-// back to a short id until it arrives.
+// useOwnerLabels serves the id→person directory row owners render from. The
+// server gives it to admins only, so a member never asks and `labelFor` shows
+// a short id.
 export function useOwnerLabels() {
-  const { data } = useApi<UserLabel[]>(() => api.auth.userLabels(), [], DIRECTORY_KEY);
+  const admin = useIsAdmin() === true;
+  const { data } = useApi<UserLabel[]>(
+    () => (admin ? api.auth.userLabels() : Promise.resolve(NO_USERS)),
+    [admin], admin ? DIRECTORY_KEY : undefined);
   const users = data ?? NO_USERS;
   const ownerOf = (ownerId?: string): UserLabel | undefined =>
     ownerId ? users.find(x => x.id === ownerId) : undefined;
