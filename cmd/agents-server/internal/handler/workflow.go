@@ -316,7 +316,7 @@ func (h *WorkflowHandler) SetScope(c *gin.Context) error {
 	if err := h.validateStepAgents(c, wf); err != nil {
 		return err
 	}
-	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, wf.OwnerID); err != nil {
+	if err := h.store.SetScope(ctx, id, scope, wf.OwnerID); err != nil {
 		return err
 	}
 	server.SetAuditDetail(c, "scope="+scope)
@@ -351,7 +351,7 @@ func (h *WorkflowHandler) SetOwner(c *gin.Context) error {
 	if err := h.validateStepAgents(c, wf); err != nil {
 		return err
 	}
-	if err := store.SetOwnerOf(ctx, h.store.CrudStore, id, req.UserID); err != nil {
+	if err := h.store.SetOwner(ctx, id, req.UserID); err != nil {
 		if errors.Is(err, store.ErrNoSuchUser) {
 			return badRequest("no such user")
 		}

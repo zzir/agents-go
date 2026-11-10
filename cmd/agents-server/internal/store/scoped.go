@@ -74,10 +74,10 @@ const scopedListOrder = `CASE WHEN scope = 'global' THEN 0 ELSE 1 END, created_a
 // target scope (decisions §5.29). Handlers map it to 409.
 var ErrSameScope = errors.New("the row is already in that scope")
 
-// SetScopeOf moves one scoped row between global and private, the owner
+// setScopeOf moves one scoped row between global and private, the owner
 // unchanged (decisions §5.29); a transfer since the caller's check is
-// ErrOwnershipChanged.
-func SetScopeOf[T any](ctx context.Context, s *CrudStore[T], id, scope, expectOwner string) error {
+// ErrOwnershipChanged. A store whose scope flip is no more than this forwards it.
+func setScopeOf[T any](ctx context.Context, s *CrudStore[T], id, scope, expectOwner string) error {
 	res, err := s.db.NewUpdate().Model((*T)(nil)).
 		Set("scope = ?", scope).
 		Set("updated_at = ?", time.Now().UTC()).
@@ -138,14 +138,9 @@ var ErrNoSuchUser = errors.New("no such user")
 // moved since the caller's authorization (decisions §5.29). Handlers map it to 409.
 var ErrOwnershipChanged = errors.New("the configuration's owner or scope changed; reload and try again")
 
-// DeleteOwnedBy removes a row only while it still belongs to expectOwner (an
-// admin names the owner they saw). ErrOwnershipChanged when it moved.
-func DeleteOwnedBy[T any](ctx context.Context, s *CrudStore[T], id, expectOwner string) error {
-	return deleteOwnedBy[T](ctx, s.db, s.label, id, expectOwner)
-}
-
-// deleteOwnedBy is DeleteOwnedBy on db or a transaction, for a store whose
-// delete cascades.
+// deleteOwnedBy removes a row only while it still belongs to expectOwner (an
+// admin names the owner they saw), on db or a transaction. ErrOwnershipChanged
+// when it moved.
 func deleteOwnedBy[T any](ctx context.Context, db bun.IDB, label, id, expectOwner string) error {
 	res, err := db.NewDelete().Model((*T)(nil)).
 		Where("id = ?", id).
@@ -167,9 +162,9 @@ func deleteOwnedBy[T any](ctx context.Context, db bun.IDB, label, id, expectOwne
 	return nil
 }
 
-// SetOwnerOf transfers one scoped row to another user (admin). Scope is
+// setOwnerOf transfers one scoped row to another user (admin). Scope is
 // untouched; a name collision in the target namespace is a UNIQUE violation.
-func SetOwnerOf[T any](ctx context.Context, s *CrudStore[T], id, ownerID string) error {
+func setOwnerOf[T any](ctx context.Context, s *CrudStore[T], id, ownerID string) error {
 	// The scoped tables carry no FK, so the target account is checked here.
 	exists, err := s.db.NewSelect().Model((*User)(nil)).Where("id = ?", ownerID).Exists(ctx)
 	if err != nil {

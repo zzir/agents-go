@@ -16,8 +16,8 @@ func TestGenericWritesAreNotExportedPastTheirGuards(t *testing.T) {
 		absent []string
 	}{
 		{(*CrudStore[Guardrail])(nil), []string{"Create", "Update", "Delete"}},
-		{(*AgentConfigStore)(nil), []string{"Delete"}},
-		{(*ProviderStore)(nil), []string{"Delete"}},
+		{(*AgentConfigStore)(nil), []string{"Delete", "SetOwner"}},
+		{(*ProviderStore)(nil), []string{"Delete", "DeleteOwnedBy", "SetOwner"}},
 		{(*SandboxStore)(nil), []string{"Delete"}},
 		{(*WorkspaceStore)(nil), []string{"Delete"}},
 		{(*McpServerStore)(nil), []string{"Delete"}},

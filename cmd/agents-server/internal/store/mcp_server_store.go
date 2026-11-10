@@ -23,6 +23,22 @@ func (s *McpServerStore) Create(ctx context.Context, m *McpServerConfig) error {
 	return s.create(ctx, m)
 }
 
+// DeleteOwnedBy removes the server config while it still belongs to expectOwner.
+func (s *McpServerStore) DeleteOwnedBy(ctx context.Context, id, expectOwner string) error {
+	return deleteOwnedBy[McpServerConfig](ctx, s.db, s.label, id, expectOwner)
+}
+
+// SetScope moves the server config between global and private; expectOwner is the
+// owner the caller authorized against.
+func (s *McpServerStore) SetScope(ctx context.Context, id, scope, expectOwner string) error {
+	return setScopeOf(ctx, s.CrudStore, id, scope, expectOwner)
+}
+
+// SetOwner transfers the server config to another user.
+func (s *McpServerStore) SetOwner(ctx context.Context, id, ownerID string) error {
+	return setOwnerOf(ctx, s.CrudStore, id, ownerID)
+}
+
 // Update overwrites the server config; the stored row is read in the same
 // transaction and handed to prepare (nil to skip), oauth_token already copied
 // onto m. ErrNotFound when absent.

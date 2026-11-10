@@ -637,6 +637,17 @@ func NewWorkflowStore(db *bun.DB) *WorkflowStore {
 // Create inserts the definition.
 func (s *WorkflowStore) Create(ctx context.Context, m *Workflow) error { return s.create(ctx, m) }
 
+// SetScope moves the definition between global and private; expectOwner is
+// the owner the caller authorized against.
+func (s *WorkflowStore) SetScope(ctx context.Context, id, scope, expectOwner string) error {
+	return setScopeOf(ctx, s.CrudStore, id, scope, expectOwner)
+}
+
+// SetOwner transfers the definition to another user.
+func (s *WorkflowStore) SetOwner(ctx context.Context, id, ownerID string) error {
+	return setOwnerOf(ctx, s.CrudStore, id, ownerID)
+}
+
 // Update overwrites the definition in one transaction that reads the stored row
 // (locked) and hands it to prepare (nil to skip), the shape every scoped entity
 // uses.

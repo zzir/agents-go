@@ -205,17 +205,10 @@ func gatedRow[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (st
 	return row, nil
 }
 
-// deleteOwned deletes the row the id path parameter names, with the owner
-// deletableRow saw as the predicate (409 when it moved).
-func deleteOwned[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string)) error {
-	return deleteOwnedWith(c, s, scopeOf, func(ctx context.Context, id, owner string) error {
-		return store.DeleteOwnedBy(ctx, s, id, owner)
-	})
-}
-
-// deleteOwnedWith is deleteOwned with the store's own delete in place of the
-// row delete: the one that cascades.
-func deleteOwnedWith[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string), del func(ctx context.Context, id, owner string) error) error {
+// deleteOwned deletes the row the id path parameter names through del, the
+// store's own delete, with the owner deletableRow saw as the predicate (409
+// when it moved).
+func deleteOwned[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string), del func(ctx context.Context, id, owner string) error) error {
 	row, err := gatedRow(c, s, scopeOf, deletableRow)
 	if err != nil {
 		return err
@@ -263,7 +256,7 @@ func scopeChangeAllowed(c *gin.Context, target, rowScope, rowOwner string) error
 
 // setScopePlain is the /scope POST body for entities with no extra validation
 // (MCP servers): bind, authorize, refuse the same scope, flip.
-func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, scopeOf func(*T) (scope, owner string)) error {
+func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, scopeOf func(*T) (scope, owner string), set func(ctx context.Context, id, scope, expectOwner string) error) error {
 	scope, err := bindScope(c)
 	if err != nil {
 		return err
@@ -280,7 +273,7 @@ func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, sc
 	if err := sameScope(kind, cur, scope); err != nil {
 		return err
 	}
-	if err := store.SetScopeOf(ctx, s, id, scope, owner); err != nil {
+	if err := set(ctx, id, scope, owner); err != nil {
 		return err // name collision in the target scope -> 409
 	}
 	server.SetAuditDetail(c, "scope="+scope)
@@ -290,12 +283,12 @@ func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, sc
 
 // setOwnerPlain is the /owner PUT body shared by the scoped entities (the
 // route carries the admin gate): the row moves, scope stays; a taken name is 409.
-func setOwnerPlain[T any](c *gin.Context, s *store.CrudStore[T]) error {
+func setOwnerPlain(c *gin.Context, set func(ctx context.Context, id, ownerID string) error) error {
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
 		return badRequest("user_id is required")
 	}
-	if err := store.SetOwnerOf(c.Request.Context(), s, c.Param("id"), req.UserID); err != nil {
+	if err := set(c.Request.Context(), c.Param("id"), req.UserID); err != nil {
 		if errors.Is(err, store.ErrNoSuchUser) {
 			return badRequest("no such user")
 		}

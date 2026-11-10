@@ -57,6 +57,22 @@ func NewSkillStore(db *bun.DB) *SkillStore {
 // Create inserts the skill.
 func (s *SkillStore) Create(ctx context.Context, m *Skill) error { return s.create(ctx, m) }
 
+// DeleteOwnedBy removes the skill while it still belongs to expectOwner.
+func (s *SkillStore) DeleteOwnedBy(ctx context.Context, id, expectOwner string) error {
+	return deleteOwnedBy[Skill](ctx, s.db, s.label, id, expectOwner)
+}
+
+// SetScope moves the skill between global and private; expectOwner is the
+// owner the caller authorized against.
+func (s *SkillStore) SetScope(ctx context.Context, id, scope, expectOwner string) error {
+	return setScopeOf(ctx, s.CrudStore, id, scope, expectOwner)
+}
+
+// SetOwner transfers the skill to another user.
+func (s *SkillStore) SetOwner(ctx context.Context, id, ownerID string) error {
+	return setOwnerOf(ctx, s.CrudStore, id, ownerID)
+}
+
 // Update overwrites the skill in one transaction that reads the stored row
 // (locked) and hands it to prepare, the shape every scoped entity uses.
 func (s *SkillStore) Update(ctx context.Context, id string, m *Skill, prepare func(prev *Skill) error) error {

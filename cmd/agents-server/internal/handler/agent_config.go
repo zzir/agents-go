@@ -301,7 +301,7 @@ func (h *AgentConfigHandler) Update(c *gin.Context) error {
 //	@Security		BearerAuth
 //	@Router			/agents/{id} [delete]
 func (h *AgentConfigHandler) Delete(c *gin.Context) error {
-	if err := deleteOwnedWith(c, h.store.CrudStore, agentScope, h.store.DeleteOwnedBy); err != nil {
+	if err := deleteOwned(c, h.store.CrudStore, agentScope, h.store.DeleteOwnedBy); err != nil {
 		return err
 	}
 	c.Status(http.StatusNoContent)

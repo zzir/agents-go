@@ -93,7 +93,7 @@ func TestAgentTransferChecksProviderVisibility(t *testing.T) {
 		t.Fatalf("a refused transfer moved the row: owner = %s", got.OwnerID)
 	}
 	// Publishing the provider makes it visible to everyone, and the transfer lands.
-	if err := SetScopeOf(ctx, providers.CrudStore, pv.ID, ScopeGlobal, id("alice")); err != nil {
+	if err := providers.SetScope(ctx, pv.ID, ScopeGlobal, id("alice")); err != nil {
 		t.Fatal(err)
 	}
 	if err := agents.TransferOwner(ctx, ac.ID, id("bob")); err != nil {

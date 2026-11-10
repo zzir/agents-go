@@ -321,10 +321,10 @@ func TestUpdateRefusedAfterATransfer(t *testing.T) {
 	// The transfer lands between the caller's authorization and their write —
 	// modelled by moving the rows, then issuing the edit the old owner had
 	// already been allowed to make.
-	if err := store.SetOwnerOf(ctx, agents.CrudStore, ac.ID, otherUser.ID); err != nil {
+	if err := agents.TransferOwner(ctx, ac.ID, otherUser.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetOwnerOf(ctx, workflows.CrudStore, wf.ID, otherUser.ID); err != nil {
+	if err := workflows.SetOwner(ctx, wf.ID, otherUser.ID); err != nil {
 		t.Fatal(err)
 	}
 	if rec := serve(engine, as(memberUser, http.MethodPut, "/api/v1/agents/"+ac.ID, `{"name":"movable","model":"m2"}`)); rec.Code != http.StatusNotFound {

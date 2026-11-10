@@ -2291,9 +2291,10 @@ Rules: spec §2.5e2 (the SQLite pool cap, which `OpenSQLite` applies);
 
 Decided 2026-11-10.
 
-**Decision.** `CrudStore[T]`'s writes are unexported. A store exports one as a
-one-line forwarder only when the plain insert, overwrite or delete is that
-entity's whole contract; the reads (`Get`, `List`) stay promoted.
+**Decision.** `CrudStore[T]`'s writes are unexported, and so are the scoped
+helpers (`setScopeOf`, `setOwnerOf`, `deleteOwnedBy`). A store exports one as a
+one-line forwarder only when the plain insert, overwrite, delete, scope flip or
+transfer is that entity's whole contract; the reads (`Get`, `List`) stay promoted.
 
 **Rejected.** Exported generic writes shadowed per store — embedding promoted
 `Delete` onto `AgentConfigStore`, where it skipped the cascade `DeleteOwnedBy`
@@ -2302,9 +2303,9 @@ A named field instead of the embedding — the handlers' generic helpers take a
 `*CrudStore[T]` from every scoped store, and the promoted reads would each
 need a forwarder.
 
-**Cost accepted.** Nine forwarders on seven stores, and a test outside the
-package seeds a row its store would refuse in SQL. `DeleteOwnedBy`,
-`SetScopeOf` and `SetOwnerOf` still accept any store's `CrudStore`.
+**Cost accepted.** A one-line forwarder per plain write on seven stores, and a
+test outside the package seeds a row its store would refuse in SQL. The
+handlers' shared helpers take the store's own write as an argument.
 
 Rules: workbench invariant 103.
 

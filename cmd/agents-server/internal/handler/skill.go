@@ -189,7 +189,7 @@ func (h *SkillHandler) Update(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/skills/{id} [delete]
 func (h *SkillHandler) Delete(c *gin.Context) error {
-	if err := deleteOwned(c, h.store.CrudStore, skillScope); err != nil {
+	if err := deleteOwned(c, h.store.CrudStore, skillScope, h.store.DeleteOwnedBy); err != nil {
 		return err
 	}
 	c.Status(http.StatusNoContent)
@@ -219,7 +219,7 @@ func (h *SkillHandler) SetScope(c *gin.Context) error {
 	if sk.SourceRepo != "" {
 		return badRequest("an imported skill changes scope with its repository — use the repository scope action")
 	}
-	return setScopePlain(c, h.store.CrudStore, "skill", skillScope)
+	return setScopePlain(c, h.store.CrudStore, "skill", skillScope, h.store.SetScope)
 }
 
 // repoScopeReq is the body of POST /skill-repos/scope: the repo group to
@@ -300,7 +300,7 @@ func (h *SkillHandler) SetOwner(c *gin.Context) error {
 		return err
 	}
 	if sk.SourceRepo == "" {
-		return setOwnerPlain(c, h.store.CrudStore)
+		return setOwnerPlain(c, h.store.SetOwner)
 	}
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {

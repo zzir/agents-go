@@ -65,6 +65,12 @@ func NewProviderStore(db *bun.DB) *ProviderStore {
 // Create inserts the provider, its credentials sealed.
 func (s *ProviderStore) Create(ctx context.Context, p *Provider) error { return s.create(ctx, p) }
 
+// SetScope moves the provider between global and private; expectOwner is the
+// owner the caller authorized against.
+func (s *ProviderStore) SetScope(ctx context.Context, id, scope, expectOwner string) error {
+	return setScopeOf(ctx, s.CrudStore, id, scope, expectOwner)
+}
+
 // Update overwrites the provider in one transaction that first reads the
 // stored row (locked) and hands it to prepare, nil to skip. A chatgpt_login
 // provider keeps its chatgpt_token; any other mode clears it.

@@ -317,7 +317,7 @@ func oauthIdentityChanged(next, prev json.RawMessage) bool {
 func (h *McpServerHandler) Delete(c *gin.Context) error {
 	// Row first, then disconnect: a failed delete must not strand a persisted
 	// server offline.
-	if err := deleteOwned(c, h.store.CrudStore, mcpScope); err != nil {
+	if err := deleteOwned(c, h.store.CrudStore, mcpScope, h.store.DeleteOwnedBy); err != nil {
 		return err
 	}
 	_ = h.manager.Disconnect(c.Param("id"))
@@ -339,7 +339,7 @@ func (h *McpServerHandler) Delete(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/scope [post]
 func (h *McpServerHandler) SetScope(c *gin.Context) error {
-	return setScopePlain(c, h.store.CrudStore, "MCP server", mcpScope)
+	return setScopePlain(c, h.store.CrudStore, "MCP server", mcpScope, h.store.SetScope)
 }
 
 // SetOwner transfers the MCP server to another account (admin).
@@ -355,7 +355,7 @@ func (h *McpServerHandler) SetScope(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/owner [put]
 func (h *McpServerHandler) SetOwner(c *gin.Context) error {
-	return setOwnerPlain(c, h.store.CrudStore)
+	return setOwnerPlain(c, h.store.SetOwner)
 }
 
 // mcpConnectResp is the Connect response: status "connected", or

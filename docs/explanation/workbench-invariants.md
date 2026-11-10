@@ -596,11 +596,11 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      WHERE (`NOT EXISTS`) is not that lock: under READ COMMITTED both commit
      (decisions §5.28).
 103. **A store exports a generic write only where it is the whole
-     contract.** `CrudStore`'s `create`, `update` and `delete` are
-     package-private. A store that guards, cascades or column-scopes a write
-     exports that method and no forwarder beside it: there is no plain `Delete`
-     on agents, providers, sandboxes or workspaces, and no plain `Update` on
-     triggers or memories — decisions §5.107.
+     contract.** `CrudStore`'s writes and the scoped helpers (`setScopeOf`,
+     `setOwnerOf`, `deleteOwnedBy`) are package-private. A store that guards,
+     cascades or column-scopes a write exports that method and no forwarder
+     beside it: no plain `Delete` on agents, providers, sandboxes or workspaces,
+     no plain owner transfer on agents or providers — decisions §5.107.
 104. **The bridge's dependencies are checked once, at construction.**
      `bridge.NewRunner` refuses an `AgentDeps` missing a field the composition
      root injects, and bridge code then calls them without a nil check; a

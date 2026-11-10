@@ -355,7 +355,7 @@ func (h *ProviderHandler) SetScope(c *gin.Context) error {
 		c.Status(http.StatusNoContent)
 		return nil
 	}
-	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, pv.OwnerID); err != nil {
+	if err := h.store.SetScope(ctx, id, scope, pv.OwnerID); err != nil {
 		return err // name collision in the target scope -> 409
 	}
 	server.SetAuditDetail(c, "scope="+scope)
