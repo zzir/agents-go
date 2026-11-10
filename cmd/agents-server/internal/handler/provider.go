@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -60,6 +61,8 @@ func (c *modelListCache) put(key string, models []providers.ModelInfo) {
 	if c.entries == nil {
 		c.entries = map[string]modelListEntry{}
 	}
+	// An edited provider's old key is never asked for again: drop what expired.
+	maps.DeleteFunc(c.entries, func(_ string, e modelListEntry) bool { return time.Since(e.at) > modelListTTL })
 	c.entries[key] = modelListEntry{models: models, at: time.Now()}
 }
 

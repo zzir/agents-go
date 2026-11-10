@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -174,5 +175,17 @@ func TestProviderModelsChatGPTLoginIs409(t *testing.T) {
 	var tr providerTestResp
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &tr) != nil || tr.OK || tr.Detail != "chatgpt_not_logged_in" {
 		t.Fatalf("test of a ChatGPT-login provider = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A provider edit changes its cache key, so the old entry is never read again:
+// the next write drops whatever has expired.
+func TestModelListCacheDropsExpired(t *testing.T) {
+	var c modelListCache
+	c.put("stale", nil)
+	c.entries["stale"] = modelListEntry{at: time.Now().Add(-2 * modelListTTL)}
+	c.put("fresh", nil)
+	if _, kept := c.entries["stale"]; kept || len(c.entries) != 1 {
+		t.Fatalf("entries after a write = %d (stale kept: %v), want only the fresh one", len(c.entries), kept)
 	}
 }
