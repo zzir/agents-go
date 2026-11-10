@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { Button, Flash, SelectPanel, type SelectPanelItemInput } from '@primer/react';
 import { CommentDiscussionIcon, PinIcon, PlusIcon, TriangleDownIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { useApi } from '@/lib/hooks';
+import { invalidate, useApi } from '@/lib/hooks';
 import { nameOf } from '@/lib/named';
 import { filterSessionsByName } from '@/lib/sessionFilter';
+import { SESSION_LISTS } from '@/lib/sessionPages';
 import './sessions.css';
 
 interface SessionRef { id: string; name: string; pinned?: boolean; workspace_id?: string }
@@ -16,6 +17,21 @@ export const SESSION_REMOVED = 'sessions:removed';
 // NEW_SESSION is the picker's first row as a value: the ask for a session,
 // which the form holding the picker makes when it saves (invariant 69).
 export const NEW_SESSION = '__new_session__';
+
+// withPickedSession runs `work` against the picked session, making it first
+// when the pick is NEW_SESSION; a refusal takes the new session back.
+export async function withPickedSession<T>(picked: string, create: () => Promise<unknown>, work: (sessionId: string) => Promise<T>): Promise<T> {
+  if (picked !== NEW_SESSION) return work(picked);
+  const made = ((await create()) as { id: string }).id;
+  try {
+    const out = await work(made);
+    invalidate(SESSION_LISTS);
+    return out;
+  } catch (e) {
+    void api.sessions.delete(made).catch(() => undefined);
+    throw e;
+  }
+}
 const NEW_SESSION_TEXT = 'New session';
 
 // SessionPicker chooses ONE session, in the sidebar's order and search, or

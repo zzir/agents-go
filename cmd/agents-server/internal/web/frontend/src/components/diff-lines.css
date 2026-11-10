@@ -1,0 +1,22 @@
+/* A line diff's rows; the container sets the font and the frame. */
+.diff-line {
+  display: flex;
+  gap: var(--base-size-6);
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 0 var(--base-size-4);
+}
+.diff-sign {
+  flex-shrink: 0;
+  user-select: none;
+  width: 1ch;
+}
+.diff-add {
+  background: var(--bgColor-success-muted);
+  color: var(--fgColor-default);
+}
+.diff-del {
+  background: var(--bgColor-danger-muted);
+  color: var(--fgColor-muted);
+  text-decoration: line-through;
+}

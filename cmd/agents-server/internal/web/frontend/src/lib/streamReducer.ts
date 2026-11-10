@@ -133,28 +133,18 @@ export function mergeLiveTail(persisted: Msgs, current: Msgs, liveRunId?: string
   return out;
 }
 
-// appendMessageItem folds one completed assistant message into the live turn;
-// dedupByText guards replays on backends that send no item id (id dedup is the
-// caller's).
-export function appendMessageItem(msgs: Msgs, text: string, dedupByText: boolean): Msgs | null {
+// appendItem folds one completed item into the live turn; dedupByText guards
+// replays on backends that send no item id (id dedup is the caller's).
+function appendItem(type: 'text' | 'thinking', msgs: Msgs, text: string, dedupByText: boolean): Msgs | null {
   const turn = lastTurn(msgs);
   if (!turn) return null;
-  const parts = [...(turn.parts || [])];
-  if (dedupByText && runShows(msgs, turn, pt => pt.type === 'text' && pt.content === text)) return null;
-  parts.push({ type: 'text', content: text });
-  return withParts(msgs, turn, parts);
+  if (dedupByText && runShows(msgs, turn, pt => pt.type === type && pt.content === text)) return null;
+  return withParts(msgs, turn, [...(turn.parts || []), { type, content: text }]);
 }
 
-// appendReasoningItem folds one completed thinking block into the live turn,
-// with the same dedup contract as appendMessageItem.
-export function appendReasoningItem(msgs: Msgs, text: string, dedupByText: boolean): Msgs | null {
-  const turn = lastTurn(msgs);
-  if (!turn) return null;
-  const parts = [...(turn.parts || [])];
-  if (dedupByText && runShows(msgs, turn, pt => pt.type === 'thinking' && pt.content === text)) return null;
-  parts.push({ type: 'thinking', content: text });
-  return withParts(msgs, turn, parts);
-}
+// One completed assistant message, and one completed thinking block.
+export const appendMessageItem = (msgs: Msgs, text: string, dedupByText: boolean) => appendItem('text', msgs, text, dedupByText);
+export const appendReasoningItem = (msgs: Msgs, text: string, dedupByText: boolean) => appendItem('thinking', msgs, text, dedupByText);
 
 // finalizeTurn flushes what run.output carries: leftover thinking, and the final
 // text unless run.message already appended it.
@@ -272,6 +262,11 @@ export function applyToolResult(msgs: Msgs, toolCallId: string, output: string, 
 
 // TERMINAL_TASK_STATUSES mirrors the server's isTerminalTaskStatus.
 export const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+// isLive: a task or run still going — working, or paused on a decision.
+export function isLive(status: string): boolean {
+  return status === 'working' || status === 'input_required';
+}
 
 // applyTaskTerminal folds a task's terminal outcome into its spawn card —
 // terminal only, never backwards (invariant 21). Pre-terminal states stay on

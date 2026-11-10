@@ -5,13 +5,13 @@ import { KeyIcon, PersonIcon, XIcon } from '@primer/octicons-react';
 
 import { UserAvatar, displayName } from '@/components/UserAvatar';
 import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
+import { LoadError } from '@/components/LoadError';
 import { api, authConfig, type ApiSchemas, type AuthConfig } from '@/lib/api';
 import { useApi, useCopy } from '@/lib/hooks';
 import { useMe } from '@/lib/me';
 import { formatTime } from '@/lib/time';
 import { parseOptionalPositive } from '@/lib/numericField';
 import { toast } from '@/lib/toast';
-import { useLoadError } from '@/features/admin/useLoadError';
 
 type PatView = ApiSchemas['protocol.PatView'];
 type PatRow = Omit<PatView, 'id'> & { id: string };
@@ -20,8 +20,7 @@ type PatRow = Omit<PatView, 'id'> & { id: string };
 // token mode has no PAT section (the server refuses it there). Signing out
 // lives in the sidebar's account menu.
 export function AccountPanel() {
-  const { data: cfg, error } = useApi<AuthConfig>(authConfig, [], 'auth:config');
-  useLoadError(error, 'account details');
+  const { data: cfg, error, reload } = useApi<AuthConfig>(authConfig, [], 'auth:config');
   const { me, error: meError } = useMe();
 
   return (
@@ -33,6 +32,7 @@ export function AccountPanel() {
           </PageHeader.TitleArea>
           <PageHeader.Description>The account this browser is signed in as.</PageHeader.Description>
         </PageHeader>
+        {error ? <LoadError what="account details" error={error} onRetry={reload} /> : null}
         {meError ? <Flash variant="danger">Failed to load who is signed in.</Flash> : null}
         {me ? (
           <div className="account-profile">
@@ -66,7 +66,6 @@ const listPats = async (): Promise<PatRow[]> => ((await api.auth.pats.list()) ??
 // plaintext is shown once, right here — it is not retrievable afterwards.
 function PatSection() {
   const { data: pats, error, reload } = useApi<PatRow[]>(listPats, [], 'account:pats');
-  useLoadError(error, 'tokens');
   const [minted, setMinted] = useState('');
   const [creating, setCreating] = useState(false);
   const confirm = useConfirm();
@@ -128,6 +127,9 @@ function PatSection() {
         rows={pats ?? []}
         columns={columns}
         loading={pats === null}
+        what="tokens"
+        error={error}
+        onRetry={reload}
         search={{ placeholder: 'Search tokens', match: (p, q) => (p.name || '').toLowerCase().includes(q) }}
         empty={(
           <Blankslate>

@@ -19,12 +19,3 @@ export function formatTime(iso: string, style: 'short' | 'long' = 'short'): stri
   if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
   return d.toLocaleString(undefined, opts);
 }
-
-export function shortTime(iso?: string): string {
-  return iso ? formatTime(iso) : '';
-}
-
-export function shortDate(iso?: string): string {
-  const d = parse(iso);
-  return d ? d.toLocaleDateString() : '';
-}

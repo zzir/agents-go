@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { ActionList, ActionMenu, Button, Dialog, Flash, IconButton, Label, Select, Stack, TextInput, Textarea, useConfirm } from '@primer/react';
+import { ActionList, ActionMenu, Button, Dialog, IconButton, Label, Select, Stack, TextInput, Textarea, useConfirm } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { ClockIcon, DependabotIcon, KebabHorizontalIcon, TrashIcon, WebhookIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { invalidate, useApi, useCopy } from '@/lib/hooks';
-import { SESSION_LISTS } from '@/lib/sessionPages';
+import { useApi, useCopy } from '@/lib/hooks';
 import { nameOf, type Named } from '@/lib/named';
 import { fc } from '@/lib/form';
 import { formatTime } from '@/lib/time';
@@ -13,11 +12,12 @@ import { sessionTitle } from '@/lib/sessionTitle';
 import { BADGE } from '@/lib/badges';
 import { Disclosure } from '@/components/Disclosure';
 import { FormActions } from '@/components/FormActions';
+import { LoadError } from '@/components/LoadError';
 import { Loading } from '@/components/Loading';
 import { UnsavedForm } from '@/components/UnsavedForm';
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { AgentPicker } from '@/components/AgentPicker';
-import { NEW_SESSION, SessionPicker, UnboundHint } from '@/features/sessions/SessionPicker';
+import { SessionPicker, UnboundHint, withPickedSession } from '@/features/sessions/SessionPicker';
 import { useServerInfo } from '@/features/settings/serverInfo';
 import { UnsavedContext } from '@/lib/unsaved';
 import { useUnsavedRegistry } from '@/lib/useUnsavedRegistry';
@@ -132,9 +132,9 @@ export function useTriggerActions(reload: () => void, sessionName: (id: string) 
 
 // TriggerListState is what every trigger list shows while it has no rows: the
 // loading placeholder, the load error, or the empty state (held while adding).
-export function TriggerListState({ loading, error, count, adding }: { loading: boolean; error: string | null; count: number; adding: boolean }) {
+export function TriggerListState({ loading, error, onRetry, count, adding }: { loading: boolean; error: string | null; onRetry: () => void; count: number; adding: boolean }) {
   if (loading && count === 0) return <Loading kind="list" />;
-  if (error) return <Flash variant="danger">Could not load triggers: {error}</Flash>;
+  if (error) return <LoadError what="triggers" error={error} onRetry={onRetry} />;
   if (count === 0 && !adding) {
     return (
       <Blankslate>
@@ -246,31 +246,25 @@ export function TriggerForm({ fixedWorkflow, sessionId, initial, timezone, inlin
   // a refused trigger takes it back (invariant 69).
   const save = async () => {
     setBusy(true);
-    let made: string | null = null;
+    const isAgent = form.target === 'agent';
+    const newSession = () => api.sessions.create({
+      name: sessionTitle(isAgent ? nameOf(agents, form.agent_config_id) : nameOf(workflows, form.workflow_id), form.brief),
+      ...(isAgent ? { agent_config_id: form.agent_config_id } : {}),
+    });
     try {
-      let sessionId = form.session_id;
-      if (sessionId === NEW_SESSION) {
-        const isAgent = form.target === 'agent';
-        const target = isAgent ? nameOf(agents, form.agent_config_id) : nameOf(workflows, form.workflow_id);
-        const sess = await api.sessions.create({
-          name: sessionTitle(target, form.brief),
-          ...(isAgent ? { agent_config_id: form.agent_config_id } : {}),
-        }) as { id: string };
-        made = sessionId = sess.id;
-      }
-      const fields = {
-        target: form.target, kind: form.kind, schedule: form.schedule, session_id: sessionId, brief: form.brief,
-        workflow_id: form.target === 'workflow' ? form.workflow_id : undefined,
-        agent_config_id: form.target === 'agent' ? form.agent_config_id : undefined,
-      };
-      const saved = initial
-        ? await api.triggers.update(initial.id, { ...initial, ...fields }) as Trigger
-        : await api.triggers.create({ ...fields, enabled: true }) as Trigger;
-      if (made) invalidate(SESSION_LISTS);
+      const saved = await withPickedSession(form.session_id, newSession, sessionId => {
+        const fields = {
+          target: form.target, kind: form.kind, schedule: form.schedule, session_id: sessionId, brief: form.brief,
+          workflow_id: form.target === 'workflow' ? form.workflow_id : undefined,
+          agent_config_id: isAgent ? form.agent_config_id : undefined,
+        };
+        return (initial
+          ? api.triggers.update(initial.id, { ...initial, ...fields })
+          : api.triggers.create({ ...fields, enabled: true })) as Promise<Trigger>;
+      });
       onSaved(saved, !initial);
       toast.success(initial ? 'Trigger saved' : 'Trigger added');
     } catch (e) {
-      if (made) void api.sessions.delete(made).catch(() => undefined);
       toast.error((e as Error).message || (initial ? 'Could not save the trigger' : 'Could not add the trigger'));
     } finally {
       setBusy(false);
@@ -345,7 +339,7 @@ export function TriggersDialog({ workflowId, workflowName, sessionId, onClose }:
 
         {actions.minted && <SecretBox trigger={actions.minted} />}
 
-        <TriggerListState loading={loading} error={error} count={list.length} adding={adding} />
+        <TriggerListState loading={loading} error={error} onRetry={reload} count={list.length} adding={adding} />
         {list.length > 0 && (
           <div className="Box">
             {list.map(t => actions.editing?.id === t.id

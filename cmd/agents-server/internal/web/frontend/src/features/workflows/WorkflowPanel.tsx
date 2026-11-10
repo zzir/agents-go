@@ -8,8 +8,7 @@ import { LoadError } from '@/components/LoadError';
 import { Loading } from '@/components/Loading';
 import { ChevronUpIcon, ChevronDownIcon, TrashIcon, PlayIcon, WorkflowIcon, ZapIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
-import { PAGE_SIZE, invalidate, useApi, useCrud, usePage } from '@/lib/hooks';
-import { SESSION_LISTS } from '@/lib/sessionPages';
+import { PAGE_SIZE, useApi, useCrud, usePage } from '@/lib/hooks';
 import { ReadOnlyContext, canDeleteRow, canDemoteRow, canEditRow } from '@/lib/access';
 import { useMe } from '@/lib/me';
 import { RowActionsMenu, ScopeBadge } from '@/components/CrudPanel';
@@ -22,7 +21,7 @@ import { numberDraft, parseOptionalPositive } from '@/lib/numericField';
 import { EdgeGraph, END, stepLabel, type Workflow, type WorkflowBudget, type WorkflowStep } from '@/features/workflows/graph';
 import { Disclosure } from '@/components/Disclosure';
 import { TriggersDialog } from '@/features/workflows/TriggersDialog';
-import { NEW_SESSION, SessionPicker } from '@/features/sessions/SessionPicker';
+import { NEW_SESSION, SessionPicker, withPickedSession } from '@/features/sessions/SessionPicker';
 import { workspaceLabel, type Workspace, type SandboxLite } from '@/lib/binding';
 import '@/features/chat/workflow.css';
 import './workflow-panel.css';
@@ -278,22 +277,17 @@ function RunDialog({ workflow, sessionId, onClose }: { workflow: Workflow; sessi
   // the workflow and brief); a refused start takes it back (invariant 69).
   const run = async () => {
     setBusy(true);
-    let made: string | null = null;
     try {
-      let sessionId = target;
-      if (sessionId === NEW_SESSION) {
-        made = sessionId = ((await api.sessions.create()) as { id: string }).id;
-      }
-      const body: { session_id: string; input: string; workspace_id?: string } = { session_id: sessionId, input: input.trim() };
-      if (unbound && workspace) {
-        body.workspace_id = workspace.id;
-      }
-      await api.workflows.run(workflow.id, body);
-      if (made) invalidate(SESSION_LISTS);
+      await withPickedSession(target, () => api.sessions.create(), sessionId => {
+        const body: { session_id: string; input: string; workspace_id?: string } = { session_id: sessionId, input: input.trim() };
+        if (unbound && workspace) {
+          body.workspace_id = workspace.id;
+        }
+        return api.workflows.run(workflow.id, body);
+      });
       toast.success(`Started "${workflow.name}" in the background — the result comes back to the session`);
       onClose();
     } catch (e) {
-      if (made) void api.sessions.delete(made).catch(() => undefined);
       toast.error((e as Error).message || 'Could not start the workflow');
     } finally {
       setBusy(false);

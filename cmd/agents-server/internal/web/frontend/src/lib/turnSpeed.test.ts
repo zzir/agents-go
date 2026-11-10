@@ -4,7 +4,7 @@ import { turnSpeed } from '@/lib/turnSpeed';
 const t0 = Date.UTC(2026, 9, 14, 0, 0, 0);
 const at = (ms: number) => new Date(t0 + ms).toISOString();
 const span = (type: string, from: number, to: number | null, data?: Record<string, unknown>) =>
-  ({ kind: 'span', type, started_at: at(from), ended_at: to === null ? undefined : at(to), data: data ?? null });
+  ({ type, started_at: at(from), ended_at: to === null ? undefined : at(to), data: data ?? null });
 
 describe('turnSpeed', () => {
   // Model time only: the tool call between the two generations and the agent

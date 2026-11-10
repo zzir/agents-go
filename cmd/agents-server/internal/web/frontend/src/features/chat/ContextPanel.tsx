@@ -303,7 +303,6 @@ export function ContextPanel({ sessionId, running, reloadKey, onClose, onCompact
       title="Context"
       count={windowSize > 0 ? `${Math.round(pct)}%` : undefined}
       onClose={onClose}
-      storageKey="inspectorWidth"
     >
       {loading && !data ? (
         <Loading kind="panel" />

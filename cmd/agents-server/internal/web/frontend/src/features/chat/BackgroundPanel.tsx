@@ -21,7 +21,8 @@ import { AgentAvatar } from '@/components/AgentAvatar';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { STEP_APPROVAL_TOOL } from '@/lib/protocol';
-import { isLive, statusDot } from '@/lib/status';
+import { statusDot } from '@/lib/status';
+import { isLive } from '@/lib/streamReducer';
 import { requestedBy } from '@/lib/background';
 import { activates } from '@/lib/activation';
 import { useNowTicker } from '@/lib/hooks';
@@ -31,7 +32,7 @@ import { useNowTicker } from '@/lib/hooks';
 
 // The list's group order: live work first, then terminal states by kind.
 const GROUPS: Array<{ title: string; match: (s: BackgroundItem['status']) => boolean }> = [
-  { title: 'Active', match: s => s === 'working' || s === 'input_required' },
+  { title: 'Active', match: isLive },
   { title: 'Completed', match: s => s === 'completed' },
   { title: 'Failed', match: s => s === 'failed' },
   { title: 'Cancelled', match: s => s === 'cancelled' },
@@ -53,7 +54,7 @@ export function BackgroundListPanel({ onClose }: { onClose: () => void }) {
     .filter(g => g.items.length > 0), [items]);
 
   return (
-    <SidePanel icon={StackIcon} title="Tasks" count={items.length} onClose={onClose} storageKey="inspectorWidth">
+    <SidePanel icon={StackIcon} title="Tasks" count={items.length} onClose={onClose}>
       {/* A failed read says so above whatever rows live events brought in;
           the empty state is for a list that loaded empty (invariant 79). */}
       {tasksError && <LoadError what="background tasks" error={tasksError} onRetry={retryTasks} />}
@@ -140,7 +141,7 @@ interface BackgroundDetailPanelProps {
 export function BackgroundMissingPanel({ taskId, loading, onBack, onClose }: { taskId: string; loading: boolean; onBack: () => void; onClose: () => void }) {
   const count = useChatBackground().length;
   return (
-    <SidePanel icon={StackIcon} title="Tasks" count={count} onClose={onClose} storageKey="inspectorWidth">
+    <SidePanel icon={StackIcon} title="Tasks" count={count} onClose={onClose}>
       <LensHead onBack={onBack} backLabel="Back to tasks" id={taskId} />
       {loading
         ? <Loading kind="inline" />
@@ -224,7 +225,7 @@ export function BackgroundDetailPanel({ item, view, onBack, onClose }: Backgroun
     rerunnable && <Button key="again" size="small" onClick={runAgain}>Run again</Button>,
   ].filter(Boolean);
   return (
-    <SidePanel icon={StackIcon} title="Tasks" count={items.length} onClose={onClose} storageKey="inspectorWidth">
+    <SidePanel icon={StackIcon} title="Tasks" count={items.length} onClose={onClose}>
       <LensHead
         onBack={onBack}
         backLabel="Back to tasks"

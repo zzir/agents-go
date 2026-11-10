@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { Dialog, NavList as PrimerNavList, Flash } from '@primer/react';
 import { LockIcon } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ScopeFilterContext } from '@/components/ScopeFilter';
 import { ReadOnlyContext } from '@/lib/access';
+import { useAuthMode } from '@/lib/authMode';
 import { useNarrow } from '@/lib/hooks';
+import { useIsAdmin } from '@/lib/me';
 import { UnsavedContext } from '@/lib/unsaved';
 import { useUnsavedRegistry } from '@/lib/useUnsavedRegistry';
 
@@ -17,6 +20,16 @@ export interface DialogTab {
   // Rows carry their own scope/owner, so a member writes there too — the
   // dialog's blanket read-only applies only to the other tabs.
   scoped?: boolean;
+}
+
+// A scoped tab is ONE list, an admin's widened by its own "Mine | All" filter,
+// opening on Mine and absent in token mode (invariant 61).
+function ScopedTab({ children }: { children: ReactNode }) {
+  const isAdmin = useIsAdmin();
+  const team = useAuthMode() !== 'token';
+  const [mine, setMine] = useState(true);
+  const filter = useMemo(() => (isAdmin && team ? { mine, setMine } : null), [isAdmin, team, mine]);
+  return <ScopeFilterContext value={filter}>{children}</ScopeFilterContext>;
 }
 
 function TabLoadError() {
@@ -130,7 +143,7 @@ export function PanelDialog({ title, tabs, adminTabs, readOnly, initialTab, onTa
                     </Flash>
                   )}
                   <ReadOnlyContext value={!!readOnly && !t.scoped}>
-                    <ErrorBoundary resetKey={t.key}><Comp /></ErrorBoundary>
+                    <ErrorBoundary resetKey={t.key}>{t.scoped ? <ScopedTab><Comp /></ScopedTab> : <Comp />}</ErrorBoundary>
                   </ReadOnlyContext>
                 </div>
               );

@@ -5,7 +5,7 @@ import { ChevronDownIcon, PlusIcon, QuoteIcon, SyncIcon, TerminalIcon, XIcon } f
 import { api } from '@/lib/api';
 import { readStoredSize, saveStoredSize, useApi } from '@/lib/hooks';
 import { insertIntoComposer, quoteAsCodeBlock } from '@/lib/composer';
-import { useWorkspaces } from '@/lib/useWorkspaces';
+import type { Workspace } from '@/lib/binding';
 import { toast } from '@/lib/toast';
 import { TerminalView, type TerminalViewHandle, type TermStatus } from '@/features/terminal/TerminalView';
 
@@ -30,10 +30,6 @@ interface TerminalTab {
 interface TerminalPanelProps {
   open: boolean;
   onClose: () => void;
-  settingsReloadKey?: number;
-  // Bumped by the app when the set of session bindings changed; refreshes the
-  // + menu's workspace list.
-  bindingsVersion?: number;
   // One-shot request to start (or focus) a terminal for a workspace, issued when
   // the top-bar button opens a closed panel; the nonce marks each request as new.
   openRequest?: { workspaceId: string; workspaceName?: string; targetName?: string; nonce: number } | null;
@@ -50,7 +46,7 @@ const maxHeight = () => Math.round(window.innerHeight * 0.8);
 
 // TerminalPanel is the global bottom panel hosting sandbox terminals in tabs;
 // it stays mounted while hidden, and only closing a tab ends its shell (invariant 81).
-export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersion, openRequest }: TerminalPanelProps) {
+export function TerminalPanel({ open, onClose, openRequest }: TerminalPanelProps) {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const nextId = useRef(1);
@@ -69,15 +65,12 @@ export function TerminalPanel({ open, onClose, settingsReloadKey, bindingsVersio
   const [activeHasSelection, setActiveHasSelection] = useState(false);
   const viewRefs = useRef(new Map<number, TerminalViewHandle | null>());
 
-  const { data: targets, reload: reloadTargets } = useApi<SandboxTarget[]>(
+  const { data: targets } = useApi<SandboxTarget[]>(
     () => api.sandboxes.list() as Promise<SandboxTarget[]>, [], 'sandboxes',
   );
-  useEffect(() => {
-    if (settingsReloadKey) reloadTargets();
-  }, [settingsReloadKey, reloadTargets]);
-  // The caller's workspace rows for the + menu, the same hook the composer
-  // picker uses: a workspace's terminal lands in that workspace's container.
-  const { workspaces, error: workspacesError } = useWorkspaces(bindingsVersion);
+  // The caller's workspace rows for the + menu, the cache entry the composer
+  // picker shares: a workspace's terminal lands in that workspace's container.
+  const { data: workspaces, error: workspacesError } = useApi<Workspace[]>(() => api.workspaces.list() as Promise<Workspace[]>, [], 'workspaces');
 
   // A collapsed panel must expand before a terminal can be shown (a new tab
   // mounted into a zero-height body would fit to a bogus grid).

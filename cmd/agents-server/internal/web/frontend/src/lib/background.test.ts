@@ -107,8 +107,8 @@ describe('stepRows', () => {
   it('joins the launch log with each run\'s trace', () => {
     const rows = stepRows(state, 'working', {
       r1: [
-        { kind: 'span', type: 'generation', data: { input_tokens: 10, output_tokens: 5 }, started_at: '2026-01-01T00:00:00Z', ended_at: '2026-01-01T00:00:02Z' },
-        { kind: 'span', type: 'function', started_at: '2026-01-01T00:00:02Z', ended_at: '2026-01-01T00:00:03Z' },
+        { type: 'generation', data: { input_tokens: 10, output_tokens: 5 }, started_at: '2026-01-01T00:00:00Z', ended_at: '2026-01-01T00:00:02Z' },
+        { type: 'function', started_at: '2026-01-01T00:00:02Z', ended_at: '2026-01-01T00:00:03Z' },
       ],
     });
     expect(rows.map(r => [r.index, r.name, r.outcome])).toEqual([[1, 'write', 'completed'], [2, 'check', 'running']]);
@@ -137,7 +137,7 @@ describe('stepRows', () => {
     };
     expect(stepRows(stamped, 'completed')[0].durationMs).toBe(45000);
     // Spans, when loaded, win — they bound the actual work.
-    const rows = stepRows(stamped, 'completed', { r1: [{ kind: 'span', type: 'function', started_at: '2026-01-01T00:00:00Z', ended_at: '2026-01-01T00:00:03Z' }] });
+    const rows = stepRows(stamped, 'completed', { r1: [{ type: 'function', started_at: '2026-01-01T00:00:00Z', ended_at: '2026-01-01T00:00:03Z' }] });
     expect(rows[0].durationMs).toBe(3000);
   });
 });

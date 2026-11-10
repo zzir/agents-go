@@ -420,27 +420,6 @@
   font-family: var(--fontStack-monospace);
   font-size: var(--base-text-size-xs);
 }
-.trace-diff-line {
-  display: flex;
-  gap: var(--base-size-6);
-  white-space: pre-wrap;
-  word-break: break-word;
-  padding: 0 var(--base-size-4);
-}
-.trace-diff-sign {
-  flex-shrink: 0;
-  user-select: none;
-  width: 1ch;
-}
-.trace-diff-add {
-  background: var(--bgColor-success-muted);
-  color: var(--fgColor-default);
-}
-.trace-diff-del {
-  background: var(--bgColor-danger-muted);
-  color: var(--fgColor-muted);
-  text-decoration: line-through;
-}
 
 /* Narrow (mobile): the dialog goes fullscreen (Dialog position prop), the two
    panes become a Request/Response tab switch, and the request knobs and tool

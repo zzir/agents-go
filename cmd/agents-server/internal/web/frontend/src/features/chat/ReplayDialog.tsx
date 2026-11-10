@@ -3,6 +3,7 @@ import { Button, Checkbox, Dialog, Flash, Link, SegmentedControl, Select, Select
 import type { SelectPanelItemInput } from '@primer/react';
 import { TriangleDownIcon } from '@primer/octicons-react';
 import { AgentPicker } from '@/components/AgentPicker';
+import { DiffLines } from '@/components/DiffLines';
 import { api } from '@/lib/api';
 import { useApi, useNarrow } from '@/lib/hooks';
 import { diffLines } from '@/lib/diff';
@@ -440,12 +441,7 @@ export function ReplayDialog({ data, attachments, onClose }: { data: PayloadReco
                 <div className="trace-replay-diff">
                   {diff.length === 0 || diff.every(d => d.type === 'same')
                     ? <div className="trace-empty">Identical to the original response.</div>
-                    : diff.map((d, i) => (
-                      <div key={i} className={'trace-diff-line trace-diff-' + d.type}>
-                        <span className="trace-diff-sign">{d.type === 'add' ? '+' : d.type === 'del' ? '-' : ' '}</span>
-                        {d.text}
-                      </div>
-                    ))}
+                    : <DiffLines lines={diff} />}
                 </div>
               ) : (
                 <ResponseItems items={attempt.output} prefix={'rp' + selected + '-'} />

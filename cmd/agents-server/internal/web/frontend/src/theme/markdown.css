@@ -141,18 +141,6 @@
 }
 .mermaid-preview svg { max-width: 100%; max-height: 400px; height: auto; }
 
-.mermaid-pending {
-  margin: var(--base-size-16) 0;
-  padding: var(--base-size-16);
-  background: var(--bgColor-muted);
-  border: 1px solid var(--borderColor-default);
-  border-radius: var(--borderRadius-medium);
-  font-family: var(--fontStack-monospace);
-  font-size: var(--base-text-size-xs);
-  color: var(--fgColor-muted);
-  white-space: pre;
-}
-
 /* KaTeX math */
 .katex { font-size: 1em; }
 .math-block {

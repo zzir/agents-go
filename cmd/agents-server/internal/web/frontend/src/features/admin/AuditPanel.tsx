@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button, Link, PageHeader, Stack, TextInput } from '@primer/react';
 import { Blankslate, DataTable, Table, type Column } from '@primer/react/experimental';
 import { LogIcon, SearchIcon } from '@primer/octicons-react';
+import { LoadError } from '@/components/LoadError';
 import { Loading } from '@/components/Loading';
 import { api, type ApiSchemas } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { formatTime } from '@/lib/time';
 import { toast } from '@/lib/toast';
-import { useLoadError } from '@/features/admin/useLoadError';
 import './admin.css';
 
 type AuditRow = Omit<ApiSchemas['store.AuditEvent'], 'id'> & { id: string };
@@ -39,8 +39,7 @@ function ResourceCell({ e }: { e: AuditRow }) {
 // cursor (the last line's id as `before`) — every loaded line stays on the
 // page, and "Load older entries" appends the next chunk.
 export function AuditPanel() {
-  const { data: first, error, loading } = useApi<AuditRow[]>(() => fetchChunk(), [], 'admin:audit');
-  useLoadError(error, 'the audit log');
+  const { data: first, error, loading, reload } = useApi<AuditRow[]>(() => fetchChunk(), [], 'admin:audit');
   // The chunks after the first; reset whenever the first is refetched.
   const [tail, setTail] = useState<{ rows: AuditRow[]; done: boolean }>({ rows: [], done: false });
   useEffect(() => { setTail({ rows: [], done: false }); }, [first]);
@@ -108,23 +107,27 @@ export function AuditPanel() {
           </span>
         </PageHeader.Description>
       </PageHeader>
-      <Table.Container className="list-table">
-        {rows.length > 0 && (
-          <div className="list-table-filter">
-            <TextInput leadingVisual={SearchIcon} size="small" block aria-label="Search loaded entries" placeholder="Search loaded entries"
-              value={query} onChange={e => setQuery(e.target.value)} />
-          </div>
-        )}
-        {body}
-        {rows.length > 0 && (
-          <div className="list-table-more">
-            <Stack direction="horizontal" align="center" gap="normal">
-              <span className="list-table-count">{rows.length} loaded{done ? ' — that is everything' : ''}</span>
-              {!done && <Button size="small" disabled={busy} onClick={() => { void loadOlder(); }}>{busy ? 'Loading…' : 'Load older entries'}</Button>}
-            </Stack>
-          </div>
-        )}
-      </Table.Container>
+      {error && <LoadError what="the audit log" error={error} onRetry={reload} />}
+      {/* A failed read is not an empty log (invariant 79): the line above says it. */}
+      {!(error && rows.length === 0) && (
+        <Table.Container className="list-table">
+          {rows.length > 0 && (
+            <div className="list-table-filter">
+              <TextInput leadingVisual={SearchIcon} size="small" block aria-label="Search loaded entries" placeholder="Search loaded entries"
+                value={query} onChange={e => setQuery(e.target.value)} />
+            </div>
+          )}
+          {body}
+          {rows.length > 0 && (
+            <div className="list-table-more">
+              <Stack direction="horizontal" align="center" gap="normal">
+                <span className="list-table-count">{rows.length} loaded{done ? ' — that is everything' : ''}</span>
+                {!done && <Button size="small" disabled={busy} onClick={() => { void loadOlder(); }}>{busy ? 'Loading…' : 'Load older entries'}</Button>}
+              </Stack>
+            </div>
+          )}
+        </Table.Container>
+      )}
     </Stack>
   );
 }

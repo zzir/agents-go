@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { Dialog, FormControl, Select, Stack } from '@primer/react';
 import { useMe } from '@/lib/me';
 import { LOCAL_USER_ID, useOwnerLabels } from '@/lib/owners';
@@ -11,19 +11,18 @@ export interface TransferRow {
   owner_id?: string;
 }
 
-// TransferDialog picks the account a scoped row moves to. Scope stays put: a
-// published row stays published, under its new author.
-export function TransferDialog({ row, kindLabel, owner, users, transfer, onClose, onDone, meId, note }: {
-  row: TransferRow;
-  kindLabel: string;
-  owner: string;
+// OwnerDialog picks the account something moves to; the caller words it.
+export function OwnerDialog({ title, action, caption, failure, users, move, onClose, onDone }: {
+  title: string;
+  // The primary button's verb ("Transfer", "Reassign").
+  action: string;
+  caption: ReactNode;
+  // The toast when the refusal carries no message.
+  failure: string;
   users: { id: string; name?: string; email: string }[];
-  transfer: (userId: string) => Promise<null>;
+  move: (userId: string) => Promise<unknown>;
   onClose: () => void;
-  onDone: () => void;
-  meId?: string;
-  // One more sentence for the caption, e.g. what moves along with the row.
-  note?: string;
+  onDone: (userId: string) => void;
 }) {
   const [userId, setUserId] = useState(users[0]?.id || '');
   const [busy, setBusy] = useState(false);
@@ -31,33 +30,28 @@ export function TransferDialog({ row, kindLabel, owner, users, transfer, onClose
   const run = useCallback(async () => {
     setBusy(true);
     try {
-      await transfer(userId);
-      onDone();
+      await move(userId);
+      onDone(userId);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to transfer.');
+      toast.error(e instanceof Error ? e.message : failure);
       setBusy(false);
     }
-  }, [transfer, userId, onDone]);
+  }, [move, userId, onDone, failure]);
 
   return (
     <Dialog
-      title={`Transfer ${kindLabel.replace(/s$/, '').toLowerCase()}`}
+      title={title}
       onClose={onClose}
       width="medium"
       footerButtons={[
         { buttonType: 'default', content: 'Cancel', onClick: onClose },
-        { buttonType: 'primary', content: 'Transfer', disabled: busy || !userId, onClick: () => { void run(); } },
+        { buttonType: 'primary', content: action, disabled: busy || !userId, onClick: () => { void run(); } },
       ]}
     >
       <Stack gap="normal">
         <FormControl required>
           <FormControl.Label>New owner</FormControl.Label>
-          <FormControl.Caption>
-            &quot;{row.name}&quot; ({owner}) becomes theirs to edit — any credential on it
-            included. It stays {row.scope === 'global' ? 'published to the team' : 'private'}.
-            {note ? ' ' + note : ''}
-            {row.owner_id === meId ? ' You will no longer be its author.' : ''}
-          </FormControl.Caption>
+          <FormControl.Caption>{caption}</FormControl.Caption>
           <Select block value={userId} onChange={e => setUserId(e.target.value)}>
             {users.length === 0 ? <Select.Option value="">No other account</Select.Option> : null}
             {users.map(u => <Select.Option key={u.id} value={u.id}>{u.name ? `${u.name} (${u.email})` : u.email}</Select.Option>)}
@@ -74,22 +68,29 @@ export function useTransfer({ kindLabel, setOwner, onDone, note }: {
   kindLabel: string;
   setOwner: (id: string, userId: string) => Promise<null>;
   onDone: () => void;
+  // One more sentence for the caption, e.g. what moves along with the row.
   note?: (row: TransferRow) => string | undefined;
 }) {
   const [row, setRow] = useState<TransferRow | null>(null);
   const { me } = useMe();
   const { users, labelFor } = useOwnerLabels();
+  // Scope stays put: a published row stays published, under its new author.
+  const extra = row ? note?.(row) : undefined;
   const dialog = row ? (
-    <TransferDialog
-      row={row}
-      kindLabel={kindLabel}
-      owner={row.owner_id ? labelFor(row.owner_id) : 'no author'}
+    <OwnerDialog
+      title={`Transfer ${kindLabel.replace(/s$/, '').toLowerCase()}`}
+      action="Transfer"
+      failure="Failed to transfer."
+      caption={<>
+        &quot;{row.name}&quot; ({row.owner_id ? labelFor(row.owner_id) : 'no author'}) becomes theirs to edit — any credential on it
+        included. It stays {row.scope === 'global' ? 'published to the team' : 'private'}.
+        {extra ? ' ' + extra : ''}
+        {row.owner_id === me?.id ? ' You will no longer be its author.' : ''}
+      </>}
       users={users.filter(u => u.id !== LOCAL_USER_ID && u.id !== row.owner_id)}
-      transfer={userId => setOwner(String(row.id), userId)}
+      move={userId => setOwner(String(row.id), userId)}
       onClose={() => setRow(null)}
       onDone={() => { setRow(null); onDone(); }}
-      meId={me?.id}
-      note={note?.(row)}
     />
   ) : null;
   return { start: (r: TransferRow) => setRow(r), dialog };

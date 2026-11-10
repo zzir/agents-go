@@ -12,6 +12,7 @@ import { api, clearToken } from '@/lib/api';
 import { invalidate } from '@/lib/apiCache';
 import { SESSION_LISTS } from '@/lib/sessionPages';
 import { resyncAfterGap, type GapResync } from '@/lib/gapResync';
+import { upsertSpan } from '@/lib/traceGroups';
 import { toast } from '@/lib/toast';
 import { putBackInComposer } from '@/lib/composer';
 import { ME_RELOAD } from '@/lib/me';
@@ -91,6 +92,15 @@ export interface TraceRow {
   attachments?: AttachmentMeta[];
 }
 
+// The fields a stored row and a live event carry alike, in the panel's shape.
+function spanFields(p: Pick<TraceRow, 'span_id' | 'parent_id' | 'parent_run_id' | 'error' | 'started_at' | 'ended_at' | 'attachments' | 'payload_omitted'>) {
+  return {
+    span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
+    error: p.error, started_at: p.started_at, ended_at: p.ended_at, attachments: p.attachments,
+    duration: spanDuration(p.started_at, p.ended_at), payloadOmitted: !!p.payload_omitted,
+  };
+}
+
 function spanDuration(startedAt?: string, endedAt?: string): string {
   if (!startedAt || !endedAt) return '';
   const ms = new Date(endedAt).getTime() - new Date(startedAt).getTime();
@@ -104,13 +114,18 @@ export function traceEventFromRow(ev: TraceRow): TraceEvent {
   if (ev.data) {
     try { parsed = JSON.parse(ev.data); } catch (_e) { /* pre-JSON rows */ }
   }
-  return {
-    kind: 'span', name: ev.name || '', type: ev.detail || '',
-    span_id: ev.span_id, parent_id: ev.parent_id, parent_run_id: ev.parent_run_id,
-    error: ev.error, started_at: ev.started_at, ended_at: ev.ended_at,
-    data: Object.keys(parsed).length > 0 ? parsed : null, attachments: ev.attachments,
-    duration: spanDuration(ev.started_at, ev.ended_at), payloadOmitted: !!ev.payload_omitted,
-  };
+  return { name: ev.name || '', type: ev.detail || '', data: Object.keys(parsed).length > 0 ? parsed : null, ...spanFields(ev) };
+}
+
+// groupTraceRows is a session's stored spans by run, in row (= time) order;
+// spans are the sole trace source, so rows of another kind are left out.
+function groupTraceRows(rows: TraceRow[] | null): Record<string, TraceEvent[]> {
+  const runs: Record<string, TraceEvent[]> = {};
+  for (const row of rows || []) {
+    if (row.kind !== 'span') continue;
+    (runs[row.run_id || 'unknown'] ||= []).push(traceEventFromRow(row));
+  }
+  return runs;
 }
 
 // A live trace.span event in the panel's shape.
@@ -121,13 +136,7 @@ interface TraceSpanEvent {
 }
 
 function traceEventFromLive(p: TraceSpanEvent): TraceEvent {
-  return {
-    kind: 'span', name: p.name, type: p.type || '',
-    span_id: p.span_id, parent_id: p.parent_id, parent_run_id: p.parent_run_id,
-    error: p.error, started_at: p.started_at, ended_at: p.ended_at,
-    data: p.data || null, attachments: p.attachments,
-    duration: spanDuration(p.started_at, p.ended_at), payloadOmitted: !!p.payload_omitted,
-  };
+  return { name: p.name, type: p.type || '', data: p.data || null, ...spanFields(p) };
 }
 
 // withSpanPayload puts one span's whole row into every trace group that holds
@@ -368,15 +377,8 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
   // loadSpanPayload). Per run id the live group wins unless fetchedWins (a
   // resync after an outage).
   const fetchTraces = useCallback((sid: string, fetchedWins: boolean) => {
-    (api.sessions.traces(sid, { summary: true }) as Promise<TraceRow[] | null>).then(events => {
-      const runs: Record<string, TraceEvent[]> = {};
-      for (const ev of events || []) {
-        // Spans are the sole trace source; kind=hook rows are ignored.
-        if (ev.kind !== 'span') continue;
-        const rid = ev.run_id || 'unknown';
-        if (!runs[rid]) runs[rid] = [];
-        runs[rid].push(traceEventFromRow(ev));
-      }
+    (api.sessions.traces(sid, { summary: true }) as Promise<TraceRow[] | null>).then(rows => {
+      const runs = groupTraceRows(rows);
       updateSS(sid, s => ({ ...s, tracesLoaded: true, traceRuns: fetchedWins ? { ...s.traceRuns, ...runs } : { ...runs, ...s.traceRuns } }));
     }).catch(() => {
       // Roll back the mark so the next lens open retries.
@@ -478,7 +480,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (sid) updateSS(sid, s => (s.streaming || s.reasoning ? { ...s, streaming: '', reasoning: '' } : s));
     };
 
-    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; attachments?: AttachmentMeta[]; parent_session_id?: string; parent_run_id?: string; task_id?: string; kind?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
+    ws.on(EV.runStarted, (p: { session_id?: string; run_id: string; input?: string; attachments?: AttachmentMeta[]; parent_session_id?: string; task_id?: string; kind?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number }) => {
       // A background task run (a sub-agent's, a workflow step's) is the router's alone.
       if (tasks.runStarted(p)) return;
       const sid = p.session_id;
@@ -816,13 +818,7 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       if (tasks.traceSpan(p.run_id, ev)) return;
       const sid = runMapRef.current[p.run_id];
       if (!sid) return;
-      updateSS(sid, s => {
-        const events = s.traceRuns[p.run_id] || [];
-        // A span arrives twice: pending on start, full on end — upsert by id.
-        const idx = p.span_id ? events.findIndex(e => e.span_id === p.span_id) : -1;
-        const next = idx >= 0 ? [...events.slice(0, idx), ev, ...events.slice(idx + 1)] : [...events, ev];
-        return { ...s, traceRuns: { ...s.traceRuns, [p.run_id]: next } };
-      });
+      updateSS(sid, s => ({ ...s, traceRuns: { ...s.traceRuns, [p.run_id]: upsertSpan(s.traceRuns[p.run_id] || [], ev) } }));
     });
 
     ws.on(EV.sessionTitleUpdated, (p: { session_id?: string; title?: string }) => {
@@ -909,26 +905,13 @@ export function useAgentSocket(updateSSRaw: UpdateSSFn, events: SessionEvents) {
       (api.sessions.traces(childSessionId, { summary: true }) as Promise<TraceRow[] | null>).catch(() => [] as TraceRow[]),
     ]).then(([{ timeline }, traceRows]) => {
       if (tasks.watching()?.taskId !== taskId) return; // switched away meanwhile
-      // Grouped by run, one group per attempt, in row (= time) order, like the
-      // chat's load.
-      const traceRuns: Record<string, TraceEvent[]> = {};
-      for (const ev of traceRows || []) {
-        if (ev.kind !== 'span') continue;
-        const rid = ev.run_id || 'unknown';
-        if (!traceRuns[rid]) traceRuns[rid] = [];
-        traceRuns[rid].push(traceEventFromRow(ev));
-      }
+      // One group per attempt, like the chat's load.
+      const traceRuns = groupTraceRows(traceRows);
       updateSS(sid, s => {
         if (!s.taskView || s.taskView.taskId !== taskId) return s;
-        // Live spans that raced the fetch win (upsert by span id; a live-only
-        // run keeps its group).
+        // Live spans that raced the fetch win; a live-only run keeps its group.
         for (const [rid, liveEvents] of Object.entries(s.taskView.traceRuns)) {
-          const merged = [...(traceRuns[rid] || [])];
-          for (const live of liveEvents) {
-            const idx = live.span_id ? merged.findIndex(e => e.span_id === live.span_id) : -1;
-            if (idx >= 0) merged[idx] = live; else merged.push(live);
-          }
-          traceRuns[rid] = merged;
+          traceRuns[rid] = liveEvents.reduce(upsertSpan, traceRuns[rid] || []);
         }
         // Snapshot wins: the child rows share the live turn's runId, so
         // mergeLiveTail would drop the in-flight turn; terminal events refetch

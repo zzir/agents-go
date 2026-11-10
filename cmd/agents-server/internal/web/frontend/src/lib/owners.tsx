@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Tooltip } from '@primer/react';
 import { api } from '@/lib/api';
+import { useApi, invalidate } from '@/lib/hooks';
 
 // The token-mode admin: never a transfer target, never listed as a member.
 export const LOCAL_USER_ID = '00000000-0000-0000-0000-000000000001';
@@ -11,45 +11,23 @@ export interface UserLabel {
   email: string;
 }
 
-// The directory is one small, slow-moving list every scoped panel needs, so it is
-// fetched once and shared; a mount refetches only past STALE_MS (or reloadDirectory).
-const STALE_MS = 60_000;
-let directory: UserLabel[] | null = null;
-let loadedAt = 0;
-let inflight: Promise<UserLabel[]> | null = null;
-const listeners = new Set<(u: UserLabel[]) => void>();
+// The directory is one small, slow-moving list every scoped panel needs: one
+// cache entry, shared by every mount.
+const DIRECTORY_KEY = 'user-labels';
+const NO_USERS: UserLabel[] = [];
 
-function loadDirectory(): Promise<UserLabel[]> {
-  inflight ??= (api.auth.userLabels() as Promise<UserLabel[]>)
-    .then(list => {
-      directory = list ?? [];
-      loadedAt = Date.now();
-      for (const notify of listeners) notify(directory);
-      return directory;
-    })
-    .catch(() => directory ?? []) // a failed load must not poison the next try
-    .finally(() => { inflight = null; });
-  return inflight;
-}
-
-/** Refetches the directory now (a member was added or renamed) and updates
- * every mounted useOwnerLabels. */
-export function reloadDirectory(): Promise<void> {
-  loadedAt = 0;
-  return loadDirectory().then(() => undefined);
+/** Drops the cached directory (a member was added or renamed); every mounted
+ * useOwnerLabels refetches. */
+export function reloadDirectory(): void {
+  invalidate(DIRECTORY_KEY);
 }
 
 // useOwnerLabels serves the id→person directory the scoped panels render row
 // owners from (every member may read it — decisions §5.29); `labelFor` falls
 // back to a short id until it arrives.
 export function useOwnerLabels() {
-  const [users, setUsers] = useState<UserLabel[]>(directory ?? []);
-  useEffect(() => {
-    listeners.add(setUsers);
-    if (directory) setUsers(directory);
-    if (!directory || Date.now() - loadedAt > STALE_MS) void loadDirectory();
-    return () => { listeners.delete(setUsers); };
-  }, []);
+  const { data } = useApi<UserLabel[]>(() => api.auth.userLabels(), [], DIRECTORY_KEY);
+  const users = data ?? NO_USERS;
   const ownerOf = (ownerId?: string): UserLabel | undefined =>
     ownerId ? users.find(x => x.id === ownerId) : undefined;
   const labelFor = (ownerId?: string) => {

@@ -3,8 +3,8 @@ import { ChevronRightIcon } from '@primer/octicons-react';
 import type { Icon } from '@primer/octicons-react';
 import './disclosure.css';
 
-/** Primer color roles, plus 'plain' — an inline toggle with no card chrome. */
-type Variant = 'default' | 'accent' | 'success' | 'attention' | 'severe' | 'danger' | 'done' | 'open' | 'closed' | 'plain';
+/** The Primer color roles in use, plus 'plain' — an inline toggle with no card chrome. */
+type Variant = 'default' | 'attention' | 'danger' | 'done' | 'plain';
 
 interface DisclosureProps {
   icon?: Icon;

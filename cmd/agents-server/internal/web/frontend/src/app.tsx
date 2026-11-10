@@ -33,23 +33,21 @@ import { toast } from '@/lib/toast';
 import { putBackInComposer } from '@/lib/composer';
 import { MeContext, useMeLoader } from '@/lib/me';
 import { useAuthMode } from '@/lib/authMode';
-import { useNarrow } from '@/lib/hooks';
+import { useNarrow, invalidate } from '@/lib/hooks';
+import { SESSION_LISTS } from '@/lib/sessionPages';
 import { readHash, writeHash, consumeAuthFragment, restoreReturnHash } from '@/lib/route';
 import { frameTooLarge } from '@/lib/messageSize';
 import { installExternalLinkOpener } from '@/lib/externalLinks';
 
 // The settings hub's tabs: the person's own, then what a run is built from,
 // the admin entries last — invariant 61. Workflows are authored in the sidebar's hub.
-const scopedTab = (name: 'ProvidersTab' | 'AgentsTab' | 'McpServersTab' | 'SkillsTab') =>
-  () => import('@/features/settings/ScopedEntityPanel').then(m => ({ default: m[name] }));
-
 const SETTINGS_TABS: DialogTab[] = [
   { key: 'account',    label: 'Account',     icon: PersonIcon,      load: () => import('@/features/account/AccountPanel') },
   { key: 'general',    label: 'General',     icon: GearIcon,        load: () => import('@/features/settings/SettingsPanel') },
-  { key: 'providers',  label: 'Providers',   icon: CpuIcon,         load: scopedTab('ProvidersTab'), scoped: true, dividerBefore: true },
-  { key: 'agents',     label: 'Agents',      icon: DependabotIcon,  load: scopedTab('AgentsTab'), scoped: true },
-  { key: 'mcp',        label: 'MCP servers', icon: McpIcon,         load: scopedTab('McpServersTab'), scoped: true },
-  { key: 'skills',     label: 'Skills',      icon: SparkleIcon,     load: scopedTab('SkillsTab'), scoped: true },
+  { key: 'providers',  label: 'Providers',   icon: CpuIcon,         load: () => import('@/features/providers/ProviderPanel'), scoped: true, dividerBefore: true },
+  { key: 'agents',     label: 'Agents',      icon: DependabotIcon,  load: () => import('@/features/agents/AgentConfigPanel'), scoped: true },
+  { key: 'mcp',        label: 'MCP servers', icon: McpIcon,         load: () => import('@/features/mcp/McpServerPanel'), scoped: true },
+  { key: 'skills',     label: 'Skills',      icon: SparkleIcon,     load: () => import('@/features/skills/SkillsPanel'), scoped: true },
   { key: 'sandbox',    label: 'Sandboxes',   icon: ContainerIcon,   load: () => import('@/features/sandbox/SandboxPanel') },
   { key: 'memory',     label: 'Memory',      icon: DatabaseIcon,    load: () => import('@/features/memory/MemoryPanel') },
   { key: 'guardrails', label: 'Guardrails',  icon: ShieldCheckIcon, load: () => import('@/features/guardrails/GuardrailPanel') },
@@ -60,7 +58,7 @@ const ADMIN_TABS: DialogTab[] = [
   { key: 'members',   label: 'Members',    icon: PeopleIcon,            load: () => import('@/features/admin/MembersPanel') },
   { key: 'sessions',  label: 'Sessions',   icon: CommentDiscussionIcon, load: () => import('@/features/admin/SessionsPanel') },
   { key: 'workspaces',  label: 'Workspaces',   icon: FileDirectoryIcon,     load: () => import('@/features/admin/WorkspacesPanel') },
-  { key: 'workflows', label: 'Workflows',  icon: WorkflowIcon,          load: () => import('@/features/admin/ScopedRowsPanel').then(m => ({ default: m.AdminWorkflows })) },
+  { key: 'workflows', label: 'Workflows',  icon: WorkflowIcon,          load: () => import('@/features/admin/AdminWorkflowsPanel') },
   { key: 'audit',     label: 'Audit logs', icon: LogIcon,               load: () => import('@/features/admin/AuditPanel') },
 ];
 
@@ -68,6 +66,15 @@ const DEFAULT_SS = defaultSS();
 
 // A session id's width, for sizing a message's frame before its session exists.
 const PLACEHOLDER_SESSION_ID = '00000000-0000-0000-0000-000000000000';
+
+// What Settings may have changed, refetched when it closes: the composer's
+// pickers, the terminal's targets, and the sidebar (the admin panels delete
+// and reassign conversations).
+function refetchAfterSettings() {
+  invalidate('agents');
+  invalidate('sandboxes');
+  invalidate(SESSION_LISTS);
+}
 
 // Monotonic id stamped on each optimistic user bubble: the socket layer rolls
 // back one specific un-sent message by it, and the reducer dedups identical sends.
@@ -117,11 +124,9 @@ function App() {
   const [hubTab, setHubTab] = useState<HubTab | null>(() => readHash().hub);
   const [settingsOpen, setSettingsOpen] = useState(() => readHash().settings != null);
   const [settingsTab, setSettingsTab] = useState<string | undefined>(() => readHash().settings || undefined);
+  const settingsOpenRef = useRef(settingsOpen);
+  settingsOpenRef.current = settingsOpen;
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sessionReloadKey, setSessionReloadKey] = useState(0);
-  // Bumped when the settings dialog closes: the composer's pickers and the
-  // terminal panel refetch the configuration it may have changed.
-  const [settingsReloadKey, setSettingsReloadKey] = useState(0);
   const narrow = useNarrow();
   const narrowRef = useRef(narrow);
   narrowRef.current = narrow;
@@ -133,9 +138,6 @@ function App() {
   // the session GET is in flight (meta is null then), and an announced binding
   // wins over what the GET returns — invariant 27.
   const announcedBindings = useRef<Record<string, string>>({});
-  // Bumped when the set of bound sessions changes: a bind can auto-create its
-  // scratch workspace, so the workspace pickers (ChatView, terminal panel) refetch.
-  const [bindingsVersion, setBindingsVersion] = useState(0);
   // Global terminal panel, opened from the composer (closing lives on the panel).
   // everOpened defers the mount to first use; then it stays mounted while hidden.
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -221,8 +223,8 @@ function App() {
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
     setSettingsTab(undefined);
-    setSettingsReloadKey(k => k + 1);
-    setSessionReloadKey(k => k + 1);
+    settingsOpenRef.current = false;
+    refetchAfterSettings();
     if (settingsPushedRef.current && readHash().settings != null) {
       settingsPushedRef.current = false;
       closingBackRef.current = true;
@@ -244,10 +246,13 @@ function App() {
         setSettingsTab(settings || undefined);
         setSettingsOpen(true);
       } else {
-        setSettingsOpen(open => {
-          if (open) { setSettingsTab(undefined); setSettingsReloadKey(k => k + 1); setSessionReloadKey(k => k + 1); }
-          return false;
-        });
+        // Both events fire for one navigation: the ref makes the second a no-op.
+        if (settingsOpenRef.current) {
+          settingsOpenRef.current = false;
+          setSettingsTab(undefined);
+          refetchAfterSettings();
+        }
+        setSettingsOpen(false);
         settingsPushedRef.current = false;
       }
       setHubTab(hub);
@@ -323,7 +328,8 @@ function App() {
     onWorkspaceBound: (sid: string, workspaceId: string) => {
       announcedBindings.current[sid] = workspaceId;
       setSessionMeta(prev => (prev && prev.id === sid ? { ...prev, workspaceId } : prev));
-      setBindingsVersion(v => v + 1);
+      // A bind can auto-create its scratch workspace: the workspace pickers refetch.
+      invalidate('workspaces');
     },
     onStatus: (st: SessionStatusEvent | null) => {
       setSessionStatuses(prev => {
@@ -425,8 +431,24 @@ function App() {
     await loadSession(sid).catch(() => toast.error('Could not reload the session'));
   }, [forgetLoaded, loadSession]);
 
-  // The /workflow command: the name, then the brief. With no session open it
-  // makes one, as a message would (invariant 69); the reload brings in the
+  // The open conversation, or a new one when the composer is empty: the first
+  // message or /workflow makes it (invariant 69). Null when the create failed.
+  const ensureSession = useCallback(async (agentConfigId?: string): Promise<{ id: string; isNew: boolean } | null> => {
+    if (activeSession) return { id: activeSession, isNew: false };
+    try {
+      const sess = await api.sessions.create(agentConfigId ? { agent_config_id: agentConfigId } : {}) as { id: string };
+      adoptNewSessionPrefs(sess.id);
+      setActiveSession(sess.id);
+      setActivePanel(null);
+      invalidate(SESSION_LISTS);
+      return { id: sess.id, isNew: true };
+    } catch {
+      toast.error('Could not start a new session');
+      return null;
+    }
+  }, [activeSession]);
+
+  // The /workflow command: the name, then the brief; the reload brings in the
   // started note the server writes.
   const runWorkflowCommand = useCallback(async (rest: string, agentConfigId?: string, workspaceId?: string) => {
     const spec = rest.trim();
@@ -452,20 +474,9 @@ function App() {
       return;
     }
     const brief = spec.slice(wf.name.length).trim();
-    let sid = activeSession;
-    if (!sid) {
-      try {
-        const sess = await api.sessions.create(agentConfigId ? { agent_config_id: agentConfigId } : {}) as { id: string };
-        sid = sess.id;
-        adoptNewSessionPrefs(sid);
-        setActiveSession(sid);
-        setActivePanel(null);
-        setSessionReloadKey(k => k + 1);
-      } catch {
-        toast.error('Could not start a new session');
-        return;
-      }
-    }
+    const session = await ensureSession(agentConfigId);
+    if (!session) return;
+    const sid = session.id;
     try {
       // The composer's workspace rides along as on a message: it binds an unbound
       // session before the start — invariant 27.
@@ -481,7 +492,7 @@ function App() {
     } catch (e) {
       toast.error((e as Error).message || 'Could not start the workflow');
     }
-  }, [activeSession, sessionMeta, reloadTimeline]);
+  }, [ensureSession, sessionMeta, reloadTimeline]);
 
   const handleSend = useCallback(async (input: string, agentConfigId?: string, workspaceId?: string, attachments?: AttachmentMeta[]) => {
     if (!wsRef.current) return;
@@ -520,22 +531,9 @@ function App() {
     // No active session: the first message makes one (invariant 69). It has no
     // history, so it is marked loaded, or the load-session effect would drop
     // the bubble.
-    let sid = activeSession;
-    let isNew = false;
-    if (!sid) {
-      try {
-        const sess = await api.sessions.create(agentConfigId ? { agent_config_id: agentConfigId } : {}) as { id: string };
-        sid = sess.id;
-        isNew = true;
-        adoptNewSessionPrefs(sid);
-        setActiveSession(sid);
-        setActivePanel(null);
-        setSessionReloadKey(k => k + 1);
-      } catch {
-        toast.error('Could not start a new session');
-        return;
-      }
-    }
+    const session = await ensureSession(agentConfigId);
+    if (!session) return;
+    const { id: sid, isNew } = session;
     payload.session_id = sid;
     const clientMsgId = nextClientMsgId();
     updateSS(sid, s => ({ ...s, messages: [...s.messages, { role: 'user', content: text, clientMsgId, attachments }], ...(isNew ? { loaded: true } : {}) }));
@@ -546,7 +544,7 @@ function App() {
       toast.error('Connection lost, reconnecting — message not sent');
       return;
     }
-  }, [activeSession, updateSS, wsRef, runWorkflowCommand]);
+  }, [activeSession, updateSS, wsRef, runWorkflowCommand, ensureSession]);
 
   // handleInject queues a message on the live run — a steer read at its next
   // step, or a follow-up taken when it finishes; what could not be queued goes
@@ -636,7 +634,7 @@ function App() {
     delete announcedBindings.current[deletedId];
     // The deleted session may have carried the last reference to a workspace —
     // the pickers re-aggregate.
-    setBindingsVersion(v => v + 1);
+    invalidate('workspaces');
   }, [deleteSession]);
 
   // The Sessions admin panel deleting or reassigning a conversation away: the
@@ -657,7 +655,7 @@ function App() {
     if (!activeSession) return;
     try {
       const forked = await api.sessions.fork(activeSession, String(messageId));
-      setSessionReloadKey(k => k + 1);
+      invalidate(SESSION_LISTS);
       setActiveSession(forked.id || null);
       setActivePanel(null);
     } catch (e) {
@@ -830,7 +828,6 @@ function App() {
       onDelete={handleDeleteSession}
       onRenamed={handleRenamed}
       onNew={handleNewSession}
-      reloadKey={sessionReloadKey}
       statuses={sessionStatuses}
       onOpenHub={handleOpenHub}
     />
@@ -852,9 +849,6 @@ function App() {
       sessionBinding={sessionBinding}
       ownPending={!!ownPending && ownPending.id === activeSession && ownPending.pending}
       state={currentSS}
-      loadError={currentSS.loadError}
-      settingsReloadKey={settingsReloadKey}
-      bindingsVersion={bindingsVersion}
       panel={activePanel}
       actions={chatActions}
     />
@@ -873,8 +867,6 @@ function App() {
               <TerminalPanel
                 open={terminalOpen}
                 onClose={() => setTerminalOpen(false)}
-                settingsReloadKey={settingsReloadKey}
-                bindingsVersion={bindingsVersion}
                 openRequest={terminalRequest}
               />
             </React.Suspense>

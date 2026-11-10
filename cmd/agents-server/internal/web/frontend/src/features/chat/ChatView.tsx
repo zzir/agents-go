@@ -4,14 +4,13 @@ import { ActionMenu, ActionList, Link } from '@primer/react';
 import { Blankslate } from '@primer/react/experimental';
 import { api } from '@/lib/api';
 import { CHECK_ICON } from '@/lib/markdownShared';
-import { rowKeys, type TurnPart, type TimelineEntry, type Branches, type WorkflowStartedNote } from '@/lib/timeline';
+import { rowKeys, type TimelineEntry } from '@/lib/timeline';
 import { labelRuns } from '@/lib/runLabels';
 import { turnSpeed, loadSpeedPref, saveSpeedPref } from '@/lib/turnSpeed';
 import { queuedInputMarkers } from '@/lib/queuedInputs';
 import { useScrollToBottom, useApi, useCopy } from '@/lib/hooks';
 import { loadSessionAgent, saveSessionAgent, loadLastAgent, saveLastAgent, loadSessionWorkspace, saveSessionWorkspace } from '@/lib/drafts';
-import { composerWorkspaceRows, composerSandboxView, workspaceLabel, type SandboxSupports, type SessionBinding } from '@/lib/binding';
-import { useWorkspaces } from '@/lib/useWorkspaces';
+import { composerWorkspaceRows, composerSandboxView, workspaceLabel, type SandboxSupports, type SessionBinding, type Workspace } from '@/lib/binding';
 import { parseTaskNotification, TASK_KIND_WORKFLOW, type InjectQueue, type TaskStatus } from '@/lib/protocol';
 import type { SessionState, TaskState } from '@/lib/useAgentSocket';
 import { ChatSessionProvider, useDerivedChatTasks, type ChatSessionState, type ChatActions } from '@/features/chat/ChatSessionContext';
@@ -19,7 +18,7 @@ import { BackgroundListPanel, BackgroundDetailPanel, BackgroundMissingPanel } fr
 import { AgentAvatar } from '@/components/AgentAvatar';
 import { ScopeHint, collidingNames } from '@/components/AgentPicker';
 import { Loading } from '@/components/Loading';
-import { MessageBubble } from '@/features/chat/MessageBubble';
+import { SystemMessage } from '@/features/chat/SystemMessage';
 import { TurnBlock } from '@/features/chat/TurnBlock';
 import { UserMessage } from '@/features/chat/UserMessage';
 import { WorkflowStartedChip } from '@/features/chat/WorkflowStartedChip';
@@ -46,28 +45,6 @@ import { toast } from '@/lib/toast';
 // background work — taskId is a task id or a workflow-execution id, whichever
 // the list row was.
 export type InspectorPanel = null | { kind: 'trace' } | { kind: 'run'; runId: string } | { kind: 'tasks' } | { kind: 'task'; taskId: string } | { kind: 'context' };
-
-interface ChatMessage {
-  role: string;
-  content?: string;
-  // The run that produced this row — what groups a workflow's turns together.
-  runId?: string;
-  messageId?: string;
-  // The durable entry id — what a branch switch and a regenerate aim at.
-  entryId?: string;
-  parts?: TurnPart[];
-  // Present on a turn that is one of several attempts at the same point.
-  branches?: Branches;
-  // Present on a compaction checkpoint: the entries it folded away, and the
-  // context size on either side of the pass.
-  folded?: TimelineEntry[];
-  tokensBefore?: number;
-  reset?: boolean;
-  foldedCount?: number;
-  tokensAfter?: number;
-  // Present on a workflow-started note (a system row).
-  note?: WorkflowStartedNote;
-}
 
 interface AgentConfig {
   id: string;
@@ -104,39 +81,39 @@ const PENDING_HINT = 'Sending skips the pending call — or use Reject with reas
 export interface ChatViewActions {
   onSend: (text: string, agentConfigId: string, workspaceId?: string, attachments?: AttachmentMeta[]) => void;
   onCancel: (graceful?: boolean) => boolean;
-  onApprove?: (id: string, scope?: string) => void;
+  onApprove: (id: string, scope?: string) => void;
   // Approves every listed pending call of the session's pause at once.
-  onApproveAll?: (toolCallIds: string[]) => void;
-  onReject?: (id: string, reason?: string) => void;
+  onApproveAll: (toolCallIds: string[]) => void;
+  onReject: (id: string, reason?: string) => void;
   // Queues a message on the session's live run: a steer, or a follow-up.
   // False when there was no run to queue on: the text stays in the box.
-  onInject?: (text: string, queue: InjectQueue) => boolean;
-  onFork?: (id: string) => void;
+  onInject: (text: string, queue: InjectQueue) => boolean;
+  onFork: (id: string) => void;
   // Switches the session's active branch to another attempt.
-  onSwitchBranch?: (tipEntryId: string) => void;
+  onSwitchBranch: (tipEntryId: string) => void;
   // Forces one compaction pass now (the Context panel's button); resolves
   // after the timeline reload that follows a fold.
-  onCompact?: () => Promise<void>;
-  onRegenerate?: (userEntryId: string, userContent: string, agentConfigId: string, workspaceId?: string) => void;
-  onWatchTask?: (sid: string, taskId: string, childSessionId: string) => void;
-  onUnwatchTask?: (sid: string) => void;
+  onCompact: () => Promise<void>;
+  onRegenerate: (userEntryId: string, userContent: string, agentConfigId: string, workspaceId?: string) => void;
+  onWatchTask: (sid: string, taskId: string, childSessionId: string) => void;
+  onUnwatchTask: (sid: string) => void;
   // Applies a server-confirmed task state change (the stop API response) —
   // the fallback when no hub broadcast will come (paused task after restart).
-  onPatchTask?: (sid: string, taskId: string, patch: Partial<TaskState>) => void;
+  onPatchTask: (sid: string, taskId: string, patch: Partial<TaskState>) => void;
   // Loads one trace span's payload (left out of the listing) into the panel
   // showing it, from the session whose stored rows hold the span.
-  onLoadSpan?: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
+  onLoadSpan: (spanSessionId: string, runId: string, spanId: string) => Promise<void>;
   // Opens the Settings dialog, optionally on a named tab (e.g. 'agents').
-  onSettingsOpen?: (tab?: string) => void;
+  onSettingsOpen: (tab?: string) => void;
   // Fetches the session's history again after a failed first load.
-  onRetryLoad?: () => void;
+  onRetryLoad: () => void;
   // Fetches the session's task list again after it failed to load.
-  onRetryTasks?: () => void;
+  onRetryTasks: () => void;
   onPanelChange: (panel: InspectorPanel) => void;
   // Opens the global terminal panel (open-only; it closes on the panel itself)
   // with the bound session's workspace, so a fresh panel starts a terminal in the
   // runs' container.
-  onTerminalOpen?: (workspace?: { workspaceId: string; workspaceName?: string; targetName?: string }) => void;
+  onTerminalOpen: (workspace?: { workspaceId: string; workspaceName?: string; targetName?: string }) => void;
 }
 
 interface ChatViewProps {
@@ -155,24 +132,18 @@ interface ChatViewProps {
   // The session as the socket layer keeps it: timeline, stream, live run,
   // tasks. One reference per session, replaced on change.
   state: SessionState;
-  // Why the first load of the history failed, when it did (state.loadError).
-  loadError?: string;
-  settingsReloadKey?: number;
-  // Bumped by the app when the set of session bindings changed; refreshes the
-  // Workspace picker's list.
-  bindingsVersion?: number;
   panel: InspectorPanel;
   actions: ChatViewActions;
 }
 
 export function ChatView({
-  sessionId, sessionName, sessionAgentId, sessionBinding, ownPending, state, loadError, settingsReloadKey, bindingsVersion, panel, actions,
+  sessionId, sessionName, sessionAgentId, sessionBinding, ownPending, state, panel, actions,
 }: ChatViewProps) {
   // The rendered timeline drops the entries no longer on the active branch;
   // the trace panel still lists their runs, so it reads the raw entries.
-  const messages: ChatMessage[] = state.messages;
+  const messages = state.messages;
   const {
-    entries, loaded, streaming, reasoning, running, compacting, diagnostics, traceRuns,
+    entries, loaded, loadError, streaming, reasoning, running, compacting, diagnostics, traceRuns,
     liveRunId, tracesLoaded, tasks, tasksLoaded, tasksError, taskView, queued,
   } = state;
   const {
@@ -210,10 +181,10 @@ export function ChatView({
   // Whether the composer can send at all; null agents are a list not yet in
   // hand, never "no agents".
   const gate = composerGate(agentConfigs, agentsError);
-  const { data: sandboxDefs, reload: reloadSandboxes } = useApi<SandboxDef[]>(() => api.sandboxes.list() as Promise<SandboxDef[]>, [], 'sandboxes');
-  // The caller's workspace rows for the picker — the same hook the terminal
-  // panel's + menu uses.
-  const { workspaces, error: workspacesError, reload: reloadWorkspaces, mutate: mutateWorkspaces } = useWorkspaces(bindingsVersion);
+  const { data: sandboxDefs } = useApi<SandboxDef[]>(() => api.sandboxes.list() as Promise<SandboxDef[]>, [], 'sandboxes');
+  // The caller's workspace rows for the picker — the cache entry the terminal
+  // panel's + menu shares.
+  const { data: workspaces, error: workspacesError, reload: reloadWorkspaces, mutateData: mutateWorkspaces } = useApi<Workspace[]>(() => api.workspaces.list() as Promise<Workspace[]>, [], 'workspaces');
 
   useEffect(() => {
     if (!agentConfigs || agentConfigs.length === 0) return;
@@ -238,10 +209,6 @@ export function ChatView({
     if (!workspaceId || !workspaces) return;
     if (!workspaces.some(p => p.id === workspaceId)) setWorkspaceId('');
   }, [workspaces, workspaceId, setWorkspaceId]);
-
-  useEffect(() => {
-    if (settingsReloadKey) { reloadAgents(); reloadSandboxes(); }
-  }, [settingsReloadKey, reloadAgents, reloadSandboxes]);
 
   // The dep changes whenever content ARRIVES (a message, streamed text, a
   // reasoning delta), which tells the hook new content from height that rendered late.
@@ -312,7 +279,7 @@ export function ChatView({
   // A message typed while the run is live is queued on it; like a send, it
   // follows the log again (invariant 18).
   const handleQueue = useCallback((text: string, queue: InjectQueue) => {
-    if (!onInject?.(text, queue)) return false;
+    if (!onInject(text, queue)) return false;
     scrollToBottom();
     return true;
   }, [onInject, scrollToBottom]);
@@ -402,10 +369,10 @@ export function ChatView({
     setReplayRunId(runId);
   }, [traceRuns]);
   useEffect(() => {
-    if (!replayRunId || !replaySpan?.payloadOmitted || !replaySpan.span_id || !onLoadSpan || !sessionId) return;
+    if (!replayRunId || !replaySpan?.payloadOmitted || !replaySpan.span_id || !sessionId) return;
     onLoadSpan(sessionId, replayRunId, replaySpan.span_id).catch(() => { toast.error('Could not load the model call'); setReplayRunId(null); });
   }, [replayRunId, replaySpan, onLoadSpan, sessionId]);
-  const compact = useMemo(() => onCompact ? () => { void onCompact(); } : undefined, [onCompact]);
+  const compact = useCallback(() => { void onCompact(); }, [onCompact]);
 
   const inspectTask = useCallback((taskId: string) => {
     onPanelChange({ kind: 'task', taskId });
@@ -424,7 +391,7 @@ export function ChatView({
       // Apply the confirmed state directly: after a restart the hub has no
       // record of the run, so no run.cancelled broadcast will arrive.
       if (sessionId && info?.status) {
-        onPatchTask?.(sessionId, taskId, { status: info.status as TaskStatus, pendingCallId: undefined, pendingToolName: undefined });
+        onPatchTask(sessionId, taskId, { status: info.status as TaskStatus, pendingCallId: undefined, pendingToolName: undefined });
       }
     } catch (e) {
       toast.error((e as Error).message || 'Stop failed');
@@ -437,7 +404,7 @@ export function ChatView({
       // The confirmed state, applied without waiting for the broadcast (as stopTask
       // does): a button left on "failed" invites a second click that will be refused.
       if (sessionId && info?.status) {
-        onPatchTask?.(sessionId, taskId, {
+        onPatchTask(sessionId, taskId, {
           status: info.status as TaskStatus, attempt: info.attempt,
           maxAttempts: info.max_attempts, summary: undefined,
         });
@@ -453,7 +420,7 @@ export function ChatView({
   const dismissTask = useCallback(async (taskId: string) => {
     try {
       await api.tasks.dismiss(taskId);
-      if (sessionId) onPatchTask?.(sessionId, taskId, { dismissed: true });
+      if (sessionId) onPatchTask(sessionId, taskId, { dismissed: true });
     } catch (e) {
       toast.error((e as Error).message || 'Dismiss failed');
     }
@@ -463,7 +430,7 @@ export function ChatView({
   const inspectedChild = inspectedItem?.childSessionId;
   const inspectedId = inspectedItem?.id;
   useEffect(() => {
-    if (!sessionId || !inspectedId || !inspectedChild || !onWatchTask || !onUnwatchTask) return;
+    if (!sessionId || !inspectedId || !inspectedChild) return;
     onWatchTask(sessionId, inspectedId, inspectedChild);
     return () => onUnwatchTask(sessionId);
   }, [sessionId, inspectedId, inspectedChild, onWatchTask, onUnwatchTask]);
@@ -504,7 +471,7 @@ export function ChatView({
   // carry the choice, since a regen can be the first workspace-carrying run.
   const regenWorkspaceId = sessionBinding ? '' : workspaceId;
   const handleRegen = useCallback((messageId: string, content: string) => {
-    onRegenerate?.(messageId, content, agentConfigId, regenWorkspaceId);
+    onRegenerate(messageId, content, agentConfigId, regenWorkspaceId);
   }, [onRegenerate, agentConfigId, regenWorkspaceId]);
 
   // The session scope every transcript component reads (invariant 38); each value
@@ -520,29 +487,27 @@ export function ChatView({
     return m;
   }, [agentConfigs]);
   const workspaceBound = !!sessionBinding?.workspaceId;
-  // state.messages is the typed timeline; ChatMessage is this file's looser
-  // read of the same rows.
-  const checklist = useMemo(() => latestChecklist(state.messages), [state.messages]);
-  const traceMarkers = useMemo(() => queuedInputMarkers(state.messages), [state.messages]);
+  const checklist = useMemo(() => latestChecklist(messages), [messages]);
+  const traceMarkers = useMemo(() => queuedInputMarkers(messages), [messages]);
   const session = useMemo<ChatSessionState>(
     () => ({ sessionId, running, compacting, diagnostics, agentAvatars, agentNames, tasksError, workspaceBound, checklist }),
     [sessionId, running, compacting, agentAvatars, agentNames, diagnostics, tasksError, workspaceBound, checklist],
   );
   const turnActions = useMemo<ChatActions>(() => ({
     approve: onApprove, approveAll: onApproveAll, reject: onReject, fork: onFork, switchBranch: onSwitchBranch,
-    regenerate: onRegenerate ? handleRegen : undefined,
+    regenerate: handleRegen,
     openTrace, replayRun, compact, inspectTask, retryTask, stopTask, dismissTask, loadSpan: onLoadSpan, openSettings: onSettingsOpen, retryTasks: onRetryTasks,
-  }), [onApprove, onApproveAll, onReject, onFork, onSwitchBranch, onRegenerate, handleRegen, openTrace, replayRun, compact, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen, onRetryTasks]);
+  }), [onApprove, onApproveAll, onReject, onFork, onSwitchBranch, handleRegen, openTrace, replayRun, compact, inspectTask, retryTask, stopTask, dismissTask, onLoadSpan, onSettingsOpen, onRetryTasks]);
 
   const topBar = (
     <ChatTopBar
       sessionName={sessionName || ''}
       panel={panel}
       onPanelChange={onPanelChange}
-      terminalEnabled={!!onTerminalOpen && !!sandboxDefs && sandboxDefs.length > 0}
+      terminalEnabled={!!sandboxDefs && sandboxDefs.length > 0}
       // The bound workspace's terminal — the same container the runs use. The
       // menu that offers it renders only once the session is bound.
-      onTerminalOpen={onTerminalOpen && boundWorkspace
+      onTerminalOpen={boundWorkspace
         ? () => onTerminalOpen({ workspaceId: boundWorkspace.id, workspaceName: boundWorkspace.name, targetName: sandboxName(boundWorkspace.sandbox_id) })
         : undefined}
       binding={sandboxView.bound && sessionBinding
@@ -646,9 +611,7 @@ export function ChatView({
           </span>
         ) : gate.state === 'none' ? (
           <span className="chat-input-toolbar-warn">
-            No agents — {onSettingsOpen
-              ? <Link as="button" type="button" onClick={() => onSettingsOpen('agents')}>add one in Settings</Link>
-              : 'add one in Settings'}
+            No agents — <Link as="button" type="button" onClick={() => onSettingsOpen('agents')}>add one in Settings</Link>
           </span>
         ) : null}
       </div>
@@ -659,23 +622,24 @@ export function ChatView({
 
   // One transcript row. Extracted from the render so the workflow grouping can
   // wrap a span of them without the map body moving.
-  const renderMessage = (m: ChatMessage, i: number) => {
+  const renderMessage = (m: TimelineEntry, i: number) => {
     if (m.role === 'turn') {
         const isLive = running && i === messages.length - 1;
         // The user message this turn answers — the row object itself, whose
         // identity is stable across deltas, so the memoized block stays put.
-        let prompt: ChatMessage | null = null;
+        let prompt: Extract<TimelineEntry, { role: 'user' }> | null = null;
         for (let j = i - 1; j >= 0; j--) {
-          if (messages[j].role === 'user') { prompt = messages[j]; break; }
+          const prev = messages[j];
+          if (prev.role === 'user') { prompt = prev; break; }
         }
         const rid = turnRunMap[i];
         const turnDuration = rid && traceRuns[rid]
-          ? traceRuns[rid].find(e => e.kind === 'span' && e.duration)?.duration
+          ? traceRuns[rid].find(e => e.duration)?.duration
           : undefined;
         return (
           <TurnBlock
             key={keys[i]}
-            parts={m.parts || []}
+            parts={m.parts}
             streaming={isLive ? streaming : null}
             reasoning={isLive ? reasoning : null}
             isLive={isLive}
@@ -695,8 +659,8 @@ export function ChatView({
         return (
           <UserMessage
             key={keys[i]}
-            content={m.content || ''}
-            attachments={(m as { attachments?: AttachmentMeta[] }).attachments}
+            content={m.content}
+            attachments={m.attachments}
             traceRunId={rid || null}
             msgIdx={i}
           />
@@ -705,10 +669,10 @@ export function ChatView({
       if (m.role === 'compaction') {
         return <CompactionCard key={keys[i]} content={m.content} tokensBefore={m.tokensBefore} tokensAfter={m.tokensAfter} reset={m.reset} folded={m.foldedCount} />;
       }
-      if (m.role === 'system' && m.note) {
-        return <WorkflowStartedChip key={keys[i]} note={m.note} content={m.content || ''} traceRunId={userRunMap[i] || null} msgIdx={i} />;
+      if (m.note) {
+        return <WorkflowStartedChip key={keys[i]} note={m.note} content={m.content} traceRunId={userRunMap[i] || null} msgIdx={i} />;
       }
-      return <MessageBubble key={keys[i]} role={m.role} content={m.content || ''} />;
+      return <SystemMessage key={keys[i]} content={m.content} />;
   };
 
   const isEmpty = loaded && messages.length === 0;
@@ -802,7 +766,7 @@ export function ChatView({
             <Blankslate>
               <Blankslate.Heading>Could not load this session</Blankslate.Heading>
               <Blankslate.Description>{loadError}</Blankslate.Description>
-              <Blankslate.PrimaryAction onClick={() => actions.onRetryLoad?.()}>Retry</Blankslate.PrimaryAction>
+              <Blankslate.PrimaryAction onClick={actions.onRetryLoad}>Retry</Blankslate.PrimaryAction>
             </Blankslate>
           ) : <Loading kind="panel" />}
         </div>
@@ -881,7 +845,7 @@ export function ChatView({
                 blocked={gate.blocked}
                 hint={ownPending ? PENDING_HINT : undefined}
                 running={running}
-                onQueue={liveRunId && onInject ? handleQueue : undefined}
+                onQueue={liveRunId ? handleQueue : undefined}
                 allowAttachments={allowAttachments}
                 toolbar={inputToolbar}
                 plusItems={plusItems}

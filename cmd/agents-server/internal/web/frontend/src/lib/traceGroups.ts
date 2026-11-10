@@ -1,3 +1,12 @@
+import type { TraceEventData } from '@/features/chat/TracePanel';
+
+// upsertSpan puts a span into its run's events by span id: a span arrives twice
+// (pending on start, full on end), and a live one can race the stored copy.
+export function upsertSpan(events: TraceEventData[], ev: TraceEventData): TraceEventData[] {
+  const idx = ev.span_id ? events.findIndex(e => e.span_id === ev.span_id) : -1;
+  return idx >= 0 ? [...events.slice(0, idx), ev, ...events.slice(idx + 1)] : [...events, ev];
+}
+
 // A Traces lens entry: a run with the wake-up runs its tasks triggered chained
 // under it, in insertion order — one exchange. rootOf routes any run in a
 // chain to its root; a wake-up run whose parent is absent (retention) is a

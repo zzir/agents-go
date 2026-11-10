@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatTime, shortDate, shortTime } from '@/lib/time';
+import { formatTime } from '@/lib/time';
 
 
 describe('formatTime', () => {
@@ -21,7 +21,5 @@ describe('formatTime', () => {
   it('is empty for nothing or garbage', () => {
     expect(formatTime('')).toBe('');
     expect(formatTime('yesterday')).toBe('');
-    expect(shortTime(undefined)).toBe('');
-    expect(shortDate('nope')).toBe('');
   });
 });

@@ -26,8 +26,11 @@ export function clearToken(): void {
   sessionStorage.removeItem(TOKEN_KEY);
 }
 
-async function request<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string>) };
+// rawFetch is the authenticated call under every endpoint: the bearer header, a
+// 401 signing this browser out, any other refusal thrown with the envelope's
+// message and the status. The caller reads the body.
+async function rawFetch(path: string, opts: RequestInit = {}): Promise<Response> {
+  const headers: Record<string, string> = { ...(opts.headers as Record<string, string>) };
   const t = getToken();
   if (t) headers['Authorization'] = `Bearer ${t}`;
   const res = await fetch(`${BASE}${path}`, { ...opts, headers });
@@ -44,6 +47,11 @@ async function request<T = unknown>(path: string, opts: RequestInit = {}): Promi
     err.status = res.status;
     throw err;
   }
+  return res;
+}
+
+async function request<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await rawFetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string>) } });
   if (res.status === 204) return null as T;
   return res.json();
 }
@@ -225,20 +233,12 @@ export const api = {
   },
   attachments: {
     config: () => request('/attachments/config'),
-    // Multipart, not JSON: hand-rolled fetch because request() stamps a JSON
-    // Content-Type the multipart boundary must replace.
+    // Multipart, not JSON: request() stamps a JSON Content-Type the multipart
+    // boundary must replace.
     upload: async (blob: Blob, name: string) => {
       const form = new FormData();
       form.append('file', blob, name);
-      const headers: Record<string, string> = {};
-      const t = getToken();
-      if (t) headers['Authorization'] = `Bearer ${t}`;
-      const res = await fetch(`${BASE}/attachments`, { method: 'POST', body: form, headers });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error?.message || res.statusText);
-      }
-      return res.json();
+      return (await rawFetch('/attachments', { method: 'POST', body: form })).json();
     },
     remove: (id: string) => request(`/attachments/${id}`, { method: 'DELETE' }),
     // The storage section saves/tests/clears as ONE group: per-key writes are
@@ -265,17 +265,7 @@ export const api = {
   },
   memories: crud<S['store.Memory']>('/memories'),
   playground: {
-    generate: (body: {
-      agent_config_id: string;
-      model?: string;
-      system_instructions?: string;
-      input_items: unknown[];
-      model_settings?: Record<string, unknown>;
-      tools?: unknown[];
-      output_schema?: { name?: string; schema: Record<string, unknown>; strict?: boolean };
-    }) =>
-      request('/playground/generate', { method: 'POST', body: JSON.stringify(body) }),
-    // The SSE variant: onDelta/onReasoning fire per chunk, the promise resolves
+    // One model call over SSE: onDelta/onReasoning fire per chunk, the promise resolves
     // with the terminal `done` payload; `signal` aborts the model call server-side.
     generateStream: async (
       body: Record<string, unknown>,
@@ -283,21 +273,10 @@ export const api = {
       signal?: AbortSignal,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ): Promise<any> => {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const t = getToken();
-      if (t) headers['Authorization'] = `Bearer ${t}`;
-      const res = await fetch(`${BASE}/playground/generate`, {
-        method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }), signal,
+      const res = await rawFetch('/playground/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, stream: true }), signal,
       });
-      if (res.status === 401) {
-        clearToken();
-        window.dispatchEvent(new Event('auth:logout'));
-        throw new Error('unauthorized');
-      }
-      if (!res.ok || !res.body) {
-        const b = await res.json().catch(() => ({} as { error?: { message?: string } }));
-        throw new Error(b.error?.message || res.statusText);
-      }
+      if (!res.body) throw new Error(res.statusText);
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
@@ -339,7 +318,6 @@ export const api = {
     // The registry the panel renders from — kinds, defaults, labels. A new
     // global setting is a Go entry; nothing here enumerates keys.
     defs: () => request('/setting-defs'),
-    get: (key: string) => request(`/settings/${key}`),
     set: (key: string, value: unknown) => request(`/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
     delete: (key: string) => request(`/settings/${key}`, { method: 'DELETE' }),
   },
@@ -390,17 +368,10 @@ export const api = {
     sandboxHost: (id: string) => request<{ sandbox_id: string; domain: string }>(`/workspaces/${id}/host`),
     sandboxStart: (id: string) => request<null>(`/workspaces/${id}/sandbox/start`, { method: 'POST' }),
     sandboxStop: (id: string) => request<{ stopped: boolean }>(`/workspaces/${id}/sandbox/stop`, { method: 'POST' }),
-    // The working tree as a tar: a DOWNLOAD, not JSON, so it bypasses request()
-    // — the bearer token must ride on the fetch, and the body is a stream.
+    // The working tree as a tar: a DOWNLOAD, not JSON — the bearer token must
+    // ride on the fetch, and the body is a stream.
     exportTar: async (id: string, name: string): Promise<void> => {
-      const headers: Record<string, string> = {};
-      const t = getToken();
-      if (t) headers['Authorization'] = `Bearer ${t}`;
-      const res = await fetch(`${BASE}/workspaces/${id}/export`, { headers });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error?.message || res.statusText);
-      }
+      const res = await rawFetch(`/workspaces/${id}/export`);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a');
       a.href = url;

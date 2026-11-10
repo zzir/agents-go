@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo } from 'react';
-import { ActionList, Label, PageHeader, Stack, useConfirm } from '@primer/react';
-import { Blankslate, type Column } from '@primer/react/experimental';
+import { ActionList, Label, useConfirm } from '@primer/react';
+import type { Column } from '@primer/react/experimental';
 import { PeopleIcon } from '@primer/octicons-react';
 import { UserAvatar, displayName } from '@/components/UserAvatar';
-import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
+import { RowMenu, actionsColumn } from '@/components/ListTable';
 import { api, type ApiSchemas } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { useMe } from '@/lib/me';
 import { LOCAL_USER_ID, reloadDirectory } from '@/lib/owners';
 import { formatTime } from '@/lib/time';
 import { toast } from '@/lib/toast';
-import { useLoadError } from '@/features/admin/useLoadError';
+import { AdminListPage } from '@/features/admin/AdminListPage';
 
 type UserRow = Omit<ApiSchemas['store.User'], 'id'> & { id: string };
 
@@ -24,18 +24,17 @@ const listMembers = async (): Promise<UserRow[]> =>
 export function MembersPanel() {
   const { me } = useMe();
   const { data: users, error, reload } = useApi<UserRow[]>(listMembers, [], 'admin:users');
-  useLoadError(error, 'members');
   const confirm = useConfirm();
 
   // The owner directory the other tables name people from follows this view:
   // refreshed on open, and after any change here.
-  useEffect(() => { void reloadDirectory(); }, []);
+  useEffect(() => { reloadDirectory(); }, []);
 
   const patch = useCallback(async (u: UserRow, p: { role?: 'admin' | 'member'; disabled?: boolean }) => {
     try {
       await api.auth.users.patch(u.id, p);
       reload();
-      void reloadDirectory();
+      reloadDirectory();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to change the account.');
     }
@@ -104,34 +103,22 @@ export function MembersPanel() {
   ], [me, patch, signOutEverywhere]);
 
   return (
-    <Stack gap="normal">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title><span id="members-title">Members</span></PageHeader.Title>
-        </PageHeader.TitleArea>
-        <PageHeader.Description>
-          Everyone who has signed in. Admins write shared configuration and manage
-          sessions; members run their own.
-        </PageHeader.Description>
-      </PageHeader>
-      <ListTable
-        labelledBy="members-title"
-        rows={users ?? []}
-        columns={columns}
-        loading={users === null}
-        search={{ placeholder: 'Search members', match: (u, q) => `${u.name || ''} ${u.email || ''}`.toLowerCase().includes(q) }}
-        empty={(
-          <Blankslate>
-            <Blankslate.Visual><PeopleIcon size={24} /></Blankslate.Visual>
-            <Blankslate.Heading>No members yet</Blankslate.Heading>
-            <Blankslate.Description>
-              Accounts are created at first sign-in with OAuth mode
-              (<code>--auth oauth</code>). Token mode has the one local admin.
-            </Blankslate.Description>
-          </Blankslate>
-        )}
-      />
-    </Stack>
+    <AdminListPage
+      titleId="members-title"
+      title="Members"
+      description="Everyone who has signed in. Admins write shared configuration and manage sessions; members run their own."
+      what="members"
+      rows={users}
+      error={error}
+      onRetry={reload}
+      columns={columns}
+      match={(u, q) => `${u.name || ''} ${u.email || ''}`.toLowerCase().includes(q)}
+      empty={{
+        icon: PeopleIcon,
+        heading: 'No members yet',
+        text: <>Accounts are created at first sign-in with OAuth mode (<code>--auth oauth</code>). Token mode has the one local admin.</>,
+      }}
+    />
   );
 }
 

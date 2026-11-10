@@ -56,7 +56,7 @@ describe('TraceDetail', () => {
     document.body.appendChild(container);
     const root = createRoot(container);
     const summary: TraceEventData = {
-      kind: 'span', name: 'generation', type: 'generation', span_id: 'sp1',
+      name: 'generation', type: 'generation', span_id: 'sp1',
       started_at: '2026-08-19T00:00:00.000Z', ended_at: '2026-08-19T00:00:01.000Z',
       data: { model: 'm', input_tokens: 5 }, payloadOmitted: true,
     };
@@ -90,10 +90,10 @@ describe('TraceDetail', () => {
     const root = createRoot(container);
     const t = (s: number) => new Date(Date.UTC(2026, 7, 19, 0, 0, s)).toISOString();
     const events: TraceEventData[] = [
-      { kind: 'span', name: 'a', type: 'agent', span_id: 'p', started_at: t(0), ended_at: t(100) },
-      { kind: 'span', name: 'a', type: 'generation', span_id: 'c1', parent_id: 'p', started_at: t(0), ended_at: t(10) },
-      { kind: 'span', name: 'function:ls', type: 'function', span_id: 'c2', parent_id: 'p', started_at: t(50), ended_at: t(51), error: 'boom' },
-      { kind: 'span', name: 'function:cat', type: 'function', span_id: 'c3', parent_id: 'p', started_at: t(80), ended_at: t(80.2) },
+      { name: 'a', type: 'agent', span_id: 'p', started_at: t(0), ended_at: t(100) },
+      { name: 'a', type: 'generation', span_id: 'c1', parent_id: 'p', started_at: t(0), ended_at: t(10) },
+      { name: 'function:ls', type: 'function', span_id: 'c2', parent_id: 'p', started_at: t(50), ended_at: t(51), error: 'boom' },
+      { name: 'function:cat', type: 'function', span_id: 'c3', parent_id: 'p', started_at: t(80), ended_at: t(80.2) },
     ];
     act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
     const tracks = container.querySelectorAll('.trace-span-track');
@@ -120,13 +120,13 @@ describe('TraceDetail', () => {
     const root = createRoot(container);
     const t = (s: number) => new Date(Date.UTC(2026, 8, 8, 0, 0, s)).toISOString();
     const events: TraceEventData[] = [
-      { kind: 'span', name: 'a', type: 'agent', span_id: 'a1', started_at: t(0), ended_at: t(2) },
-      { kind: 'span', name: 'a', type: 'generation', span_id: 'g1', parent_id: 'a1', started_at: t(0), ended_at: t(2) },
-      { kind: 'span', name: 'compaction', type: 'compaction', span_id: 'c1', started_at: t(134), ended_at: t(135) },
-      { kind: 'span', name: 'a', type: 'agent', span_id: 'a2', started_at: t(135), ended_at: t(137) },
-      { kind: 'span', name: 'function:memory_write', type: 'function', span_id: 'f1', parent_id: 'a2', started_at: t(135), ended_at: t(136) },
-      { kind: 'span', name: 'transfer_to_b', type: 'handoff', span_id: 'h1', parent_id: 'a2', started_at: t(136), ended_at: t(137) },
-      { kind: 'span', name: 'b', type: 'agent', span_id: 'a3', started_at: t(137), ended_at: t(140) },
+      { name: 'a', type: 'agent', span_id: 'a1', started_at: t(0), ended_at: t(2) },
+      { name: 'a', type: 'generation', span_id: 'g1', parent_id: 'a1', started_at: t(0), ended_at: t(2) },
+      { name: 'compaction', type: 'compaction', span_id: 'c1', started_at: t(134), ended_at: t(135) },
+      { name: 'a', type: 'agent', span_id: 'a2', started_at: t(135), ended_at: t(137) },
+      { name: 'function:memory_write', type: 'function', span_id: 'f1', parent_id: 'a2', started_at: t(135), ended_at: t(136) },
+      { name: 'transfer_to_b', type: 'handoff', span_id: 'h1', parent_id: 'a2', started_at: t(136), ended_at: t(137) },
+      { name: 'b', type: 'agent', span_id: 'a3', started_at: t(137), ended_at: t(140) },
     ];
     act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
     const segs = container.querySelectorAll('.trace-run-segment');
@@ -146,7 +146,7 @@ describe('TraceDetail', () => {
     document.body.appendChild(container);
     const root = createRoot(container);
     const gen: TraceEventData = {
-      kind: 'span', name: 'generation', type: 'generation', span_id: 'g1',
+      name: 'generation', type: 'generation', span_id: 'g1',
       started_at: '2026-09-09T00:00:00.000Z', ended_at: '2026-09-09T00:00:01.000Z',
       data: {
         model: 'm', input_tokens: 5, cached_tokens: 3,
@@ -174,8 +174,8 @@ describe('TraceDetail', () => {
     const root = createRoot(container);
     const t = (s: number) => new Date(Date.UTC(2026, 8, 9, 0, 0, s)).toISOString();
     const events: TraceEventData[] = [
-      { kind: 'span', name: 'a', type: 'agent', span_id: 'a1', started_at: t(0), ended_at: t(2), data: { ended_by: 'interruption', pending_tools: ['exec_command'] } },
-      { kind: 'span', name: 'a', type: 'agent', span_id: 'a2', started_at: t(134), ended_at: t(137), error: 'boom' },
+      { name: 'a', type: 'agent', span_id: 'a1', started_at: t(0), ended_at: t(2), data: { ended_by: 'interruption', pending_tools: ['exec_command'] } },
+      { name: 'a', type: 'agent', span_id: 'a2', started_at: t(134), ended_at: t(137), error: 'boom' },
     ];
     act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
     // The failed row's tag; the run's own is the lens head's, not the waterfall's.
@@ -196,9 +196,9 @@ describe('TraceDetail', () => {
     const root = createRoot(container);
     const t = (s: number) => new Date(Date.UTC(2026, 8, 8, 0, 0, s)).toISOString();
     const events: TraceEventData[] = [
-      { kind: 'span', name: 'a', type: 'agent', span_id: 'a1', started_at: t(0), ended_at: t(10) },
-      { kind: 'span', name: 'function:search', type: 'function', span_id: 'f1', parent_id: 'a1', started_at: t(1), ended_at: t(3), data: { input: '{}', output: 'ok' } },
-      { kind: 'span', name: 'mcp.call_tool', type: 'mcp', span_id: 'm1', parent_id: 'f1', started_at: t(1), ended_at: t(3) },
+      { name: 'a', type: 'agent', span_id: 'a1', started_at: t(0), ended_at: t(10) },
+      { name: 'function:search', type: 'function', span_id: 'f1', parent_id: 'a1', started_at: t(1), ended_at: t(3), data: { input: '{}', output: 'ok' } },
+      { name: 'mcp.call_tool', type: 'mcp', span_id: 'm1', parent_id: 'f1', started_at: t(1), ended_at: t(3) },
     ];
     act(() => { root.render(<Harness events={events} loadSpan={resolve} />); });
     const names = () => Array.from(container.querySelectorAll('.trace-span-name')).map(n => n.textContent);
@@ -216,7 +216,7 @@ describe('TraceDetail', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
-    const summary: TraceEventData = { kind: 'span', name: 'function:ls', type: 'function', span_id: 'sp2', payloadOmitted: true };
+    const summary: TraceEventData = { name: 'function:ls', type: 'function', span_id: 'sp2', payloadOmitted: true };
     const loadSpan = () => Promise.reject(new Error('not found'));
     act(() => { root.render(<Harness events={[summary]} loadSpan={loadSpan} />); });
     await act(async () => { (container.querySelector('.trace-span-clickable') as HTMLElement).click(); });
@@ -234,9 +234,9 @@ describe('TraceDetail', () => {
     const t = (s: number) => new Date(Date.UTC(2026, 7, 19, 0, 0, s)).toISOString();
     const at = (s: number) => Date.UTC(2026, 7, 19, 0, 0, s);
     const events: TraceEventData[] = [
-      { kind: 'span', name: 'a', type: 'agent', span_id: 'p', started_at: t(0), ended_at: t(100) },
-      { kind: 'span', name: 'a', type: 'generation', span_id: 'g1', parent_id: 'p', started_at: t(0), ended_at: t(10) },
-      { kind: 'span', name: 'a', type: 'generation', span_id: 'g2', parent_id: 'p', started_at: t(60), ended_at: t(70) },
+      { name: 'a', type: 'agent', span_id: 'p', started_at: t(0), ended_at: t(100) },
+      { name: 'a', type: 'generation', span_id: 'g1', parent_id: 'p', started_at: t(0), ended_at: t(10) },
+      { name: 'a', type: 'generation', span_id: 'g2', parent_id: 'p', started_at: t(60), ended_at: t(70) },
     ];
     act(() => { root.render(<Harness events={events} loadSpan={resolve} markers={[{ at: at(50), label: 'also add a test', text: 'also add a test' }]} />); });
     const rows = Array.from(container.querySelectorAll('.trace-span')) as HTMLElement[];

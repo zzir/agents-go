@@ -2,6 +2,7 @@ import { Label } from '@primer/react';
 import { api } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { diffLines } from '@/lib/diff';
+import { DiffLines } from '@/components/DiffLines';
 import { EdgeGraph, type Workflow } from '@/features/workflows/graph';
 import { canonicalWorkflowText, specFromStored, specSteps, stepFlags, type WorkflowSpec } from '@/lib/workflowArgs';
 
@@ -66,14 +67,7 @@ function WorkflowSaveReview({ spec }: { spec: WorkflowSpec }) {
         <span>{from === spec.steps.length ? `${from} steps` : `${from} → ${spec.steps.length} steps`}{changed ? '' : ' · no change'}</span>
       </div>
       {changed && (
-        <div className="ToolCallCard-wf-diff">
-          {diff.map((l, i) => (
-            <div key={i} className={'ToolCallCard-wf-diff-line ToolCallCard-wf-diff-' + l.type}>
-              <span className="ToolCallCard-wf-diff-sign">{l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' '}</span>
-              {l.text}
-            </div>
-          ))}
-        </div>
+        <div className="ToolCallCard-wf-diff"><DiffLines lines={diff} /></div>
       )}
     </div>
   );

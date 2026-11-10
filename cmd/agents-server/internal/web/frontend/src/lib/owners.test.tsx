@@ -50,7 +50,7 @@ describe('useOwnerLabels', () => {
 
     // Asked: reloadDirectory refetches regardless of age.
     userLabels.mockResolvedValue([{ id: 'u1', name: 'Annie', email: 'ann@x' }]);
-    await act(async () => { await reloadDirectory(); });
+    await act(async () => { reloadDirectory(); });
     expect(userLabels).toHaveBeenCalledTimes(3);
     expect(b.last().labelFor('u1')).toBe('Annie');
     await a.unmount(); await b.unmount(); await d.unmount();

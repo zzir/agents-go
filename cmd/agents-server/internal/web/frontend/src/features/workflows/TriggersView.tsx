@@ -40,7 +40,7 @@ export function TriggersView({ sessionId }: { sessionId: string | null }) {
           onSaved={(t, created) => { if (created && t.kind === 'webhook') actions.setMinted(t); setAdding(false); reload(); }} />
       )}
       {actions.minted && <SecretBox trigger={actions.minted} />}
-      <TriggerListState loading={loading} error={error} count={list.length} adding={adding} />
+      <TriggerListState loading={loading} error={error} onRetry={reload} count={list.length} adding={adding} />
       {list.length > 0 && (
         <Paged page={page} total={list.length} label="Trigger pages">
           <div className="Box">

@@ -2,6 +2,7 @@ import { createContext, useContext, useRef, type Context, type ReactNode } from 
 import type { Checklist } from '@/lib/checklist';
 import type { RunDiagnostic } from '@/lib/protocol';
 import { backgroundItems, type BackgroundItem } from '@/lib/background';
+import { isLive } from '@/lib/streamReducer';
 import { taskRetryable, type TaskState } from '@/lib/useAgentSocket';
 
 // The chat's session scope: four contexts split by how often each value moves —
@@ -88,7 +89,7 @@ export function deriveChatTasks(tasks: Record<string, TaskState> | undefined, pr
   for (const t of Object.values(tasks || {})) {
     if (t.toolCallId) {
       if (taskRetryable(t)) next.retryableByCallId[t.toolCallId] = true;
-      if (t.status === 'working' || t.status === 'input_required') next.liveTaskStatusByCallId[t.toolCallId] = t.status;
+      if (isLive(t.status)) next.liveTaskStatusByCallId[t.toolCallId] = t.status;
       if (t.label) next.liveTaskLabelByCallId[t.toolCallId] = t.label;
     }
     if (t.taskId && t.label) next.taskLabelById[t.taskId] = t.label;

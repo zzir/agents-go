@@ -15,10 +15,6 @@ export function statusText(status: string): string {
   return status.replace('_', ' ');
 }
 
-export function isLive(status: string): boolean {
-  return status === 'working' || status === 'input_required';
-}
-
 /** The status as the colored dot every list shows beside its title — the
  * words live in the tooltip/aria-label. Live states pulse (chat.css). */
 export function statusDot(status: string) {

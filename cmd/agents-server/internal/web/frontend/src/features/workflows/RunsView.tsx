@@ -4,7 +4,8 @@ import { Blankslate, DataTable, Table, type Column } from '@primer/react/experim
 import { HistoryIcon, LinkExternalIcon } from '@primer/octicons-react';
 import { api } from '@/lib/api';
 import { PAGE_SIZE, useApi, useNowTicker } from '@/lib/hooks';
-import { isLive, StatusLabel } from '@/lib/status';
+import { StatusLabel } from '@/lib/status';
+import { isLive } from '@/lib/streamReducer';
 import { TASK_KIND_WORKFLOW, type TaskRow } from '@/lib/protocol';
 import { taskStateFromRow } from '@/lib/useAgentSocket';
 import { itemDuration, taskItem, type BackgroundItem } from '@/lib/background';

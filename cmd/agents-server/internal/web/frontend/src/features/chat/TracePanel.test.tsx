@@ -54,11 +54,11 @@ function mount(el: ReactNode) {
 
 const t = (s: number) => new Date(Date.UTC(2026, 9, 21, 0, 0, s)).toISOString();
 const gen = (id: string, tokens: number): TraceEventData => ({
-  kind: 'span', name: 'generation', type: 'generation', span_id: id, started_at: t(0), ended_at: t(1), data: { input_tokens: tokens, output_tokens: 1 },
+  name: 'generation', type: 'generation', span_id: id, started_at: t(0), ended_at: t(1), data: { input_tokens: tokens, output_tokens: 1 },
 });
 const GROUPS: TraceGroupView[] = [
   { rootId: 'r1', segments: [{ runId: 'r1', events: [gen('g1', 10)] }, { runId: 'w1', events: [gen('g2', 20)] }] },
-  { rootId: 'r2', segments: [{ runId: 'r2', events: [{ kind: 'span', name: 'a', type: 'agent', span_id: 'a2', started_at: t(0), ended_at: t(1), error: 'boom' }] }] },
+  { rootId: 'r2', segments: [{ runId: 'r2', events: [{ name: 'a', type: 'agent', span_id: 'a2', started_at: t(0), ended_at: t(1), error: 'boom' }] }] },
 ];
 const LABELS = { r1: 'hello', r2: 'again' };
 

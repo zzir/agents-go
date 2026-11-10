@@ -6,7 +6,7 @@ import type { TraceSpanLike } from '@/lib/background';
 export function turnSpeed(events: TraceSpanLike[]): string {
   let tokens = 0, ms = 0;
   for (const ev of events) {
-    if (ev.kind !== 'span' || ev.type !== 'generation' || !ev.started_at || !ev.ended_at) continue;
+    if (ev.type !== 'generation' || !ev.started_at || !ev.ended_at) continue;
     const n = Number(ev.data?.output_tokens) || 0;
     const dt = new Date(ev.ended_at).getTime() - new Date(ev.started_at).getTime();
     if (n <= 0 || !(dt > 0)) continue;

@@ -355,18 +355,6 @@
   animation: msg-jump-flash 1.8s ease-out;
 }
 
-/* Assistant message — left-aligned, no avatar */
-.message-assistant {
-  display: flex;
-}
-.message-assistant .message-body {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--base-text-size-sm);
-  line-height: 1.5;
-  color: var(--fgColor-default);
-}
-
 /* System message — centered Primer Label */
 .message-system {
   text-align: center;
@@ -813,10 +801,7 @@
   padding: var(--base-size-4) 0;
   overflow-x: auto;
 }
-.ToolCallCard-wf-diff-line { display: flex; gap: var(--base-size-6); white-space: pre-wrap; word-break: break-word; padding: 0 var(--base-size-6); }
-.ToolCallCard-wf-diff-sign { flex-shrink: 0; user-select: none; width: 1ch; }
-.ToolCallCard-wf-diff-add { background: var(--bgColor-success-muted); color: var(--fgColor-default); }
-.ToolCallCard-wf-diff-del { background: var(--bgColor-danger-muted); color: var(--fgColor-muted); text-decoration: line-through; }
+.ToolCallCard-wf-diff .diff-line { padding: 0 var(--base-size-6); }
 
 /* todo_write checklist */
 .ToolCallCard-todos {
@@ -943,17 +928,6 @@
 }
 .first-mile-detail {
   color: var(--fgColor-muted);
-}
-
-/* Empty state — vertically centered Blankslate */
-.chat-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.chat-empty > * {
-  min-width: min(380px, 100%);
 }
 
 /* Message entrance — quiet staggered fade-up. `backwards` (not `both`) so

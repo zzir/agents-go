@@ -2,9 +2,10 @@ import { TASK_KIND_WORKFLOW, type TaskRow, type TaskStatus, type WorkflowState }
 import {
   ensureLiveTurn, appendMessageItem, appendReasoningItem, finalizeTurn,
   appendErrorPart, appendCancelledPart, appendToolCall, applyToolResult, syncTaskCard, appendToolProgress, appendHandoffPart,
-  TERMINAL_TASK_STATUSES,
+  TERMINAL_TASK_STATUSES, isLive,
 } from '@/lib/streamReducer';
 import { toast } from '@/lib/toast';
+import { upsertSpan } from '@/lib/traceGroups';
 import type { TimelineEntry } from '@/lib/timeline';
 import type { SessionState, UpdateSSFn } from '@/lib/useAgentSocket';
 import type { TraceEventData as TraceEvent } from '@/features/chat/TracePanel';
@@ -30,9 +31,6 @@ export interface TaskState {
   maxAttempts?: number;
   childSessionId?: string;
   toolCallId?: string;
-  // The run that spawned this task — lets the trace panel nest the wake-up
-  // run's card under the run whose spawn_task started the chain.
-  parentRunId?: string;
   // Millisecond timestamps for the duration label: createdAt from the row (or
   // spawn time), updatedAt refreshed per task event — a terminal task's finish time.
   createdAt?: number;
@@ -71,7 +69,7 @@ export function taskStateFromRow(row: TaskRow): TaskState {
   return {
     taskId: row.task_id, label: row.label || '', kind: row.kind, state: row.state, toolCallId: row.tool_call_id,
     agentConfigId: row.agent_config_id,
-    childSessionId: row.child_session_id, parentRunId: row.parent_run_id,
+    childSessionId: row.child_session_id,
     status: (row.status || 'working') as TaskStatus, attempt: row.attempt,
     maxAttempts: row.max_attempts, summary: row.summary, dismissed: row.dismissed,
     createdAt: row.created_at ? Date.parse(row.created_at) : undefined,
@@ -115,7 +113,6 @@ export function seedTaskRows(s: SessionState, rows: TaskRow[]): SessionState {
         dismissed: cur.dismissed ?? row.dismissed,
         toolCallId: cur.toolCallId || row.tool_call_id,
         childSessionId: cur.childSessionId || row.child_session_id,
-        parentRunId: cur.parentRunId || row.parent_run_id,
         agentConfigId: cur.agentConfigId || row.agent_config_id,
         attempt: cur.attempt || row.attempt,
         maxAttempts: row.max_attempts ?? cur.maxAttempts,
@@ -123,7 +120,7 @@ export function seedTaskRows(s: SessionState, rows: TaskRow[]): SessionState {
         createdAt: created || cur.createdAt,
         // For a terminal task the row's updated_at IS the finish time
         // (authoritative); live tasks keep their event-driven value.
-        updatedAt: cur.status === 'working' || cur.status === 'input_required'
+        updatedAt: isLive(cur.status)
           ? (cur.updatedAt || updated)
           : (updated || cur.updatedAt),
       };
@@ -150,7 +147,6 @@ export function mergeTaskRows(s: SessionState, rows: TaskRow[]): SessionState {
       state: row.state ?? cur?.state,
       dismissed: row.dismissed,
       childSessionId: cur?.childSessionId || row.child_session_id,
-      parentRunId: cur?.parentRunId || row.parent_run_id,
       status, attempt: row.attempt ?? cur?.attempt,
       maxAttempts: row.max_attempts ?? cur?.maxAttempts,
       summary: row.summary ?? cur?.summary,
@@ -210,7 +206,7 @@ export interface TaskRouterDeps {
 }
 
 export interface TaskRunStarted {
-  session_id?: string; run_id: string; parent_session_id?: string; parent_run_id?: string; task_id?: string;
+  session_id?: string; run_id: string; parent_session_id?: string; task_id?: string;
   kind?: string; tool_call_id?: string; label?: string; attempt?: number; max_attempts?: number;
 }
 
@@ -342,7 +338,7 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
           ...s,
           messages: rearmed || s.messages,
           // Live again, so back on the strip whatever the person hid.
-          tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], taskId, label: p.label || '', kind: p.kind || s.tasks[taskId]?.kind, status: 'working' as TaskStatus, attempt: p.attempt || s.tasks[taskId]?.attempt, maxAttempts: p.max_attempts || s.tasks[taskId]?.maxAttempts, toolCallId: p.tool_call_id, childSessionId: p.session_id, parentRunId: p.parent_run_id || s.tasks[taskId]?.parentRunId, createdAt: s.tasks[taskId]?.createdAt || Date.now(), updatedAt: Date.now(), summary: undefined, dismissed: false } },
+          tasks: { ...s.tasks, [taskId]: { ...s.tasks[taskId], taskId, label: p.label || '', kind: p.kind || s.tasks[taskId]?.kind, status: 'working' as TaskStatus, attempt: p.attempt || s.tasks[taskId]?.attempt, maxAttempts: p.max_attempts || s.tasks[taskId]?.maxAttempts, toolCallId: p.tool_call_id, childSessionId: p.session_id, createdAt: s.tasks[taskId]?.createdAt || Date.now(), updatedAt: Date.now(), summary: undefined, dismissed: false } },
         };
       });
       // A resume segment of the watched task re-announces itself; make sure
@@ -374,7 +370,6 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
           summary: p.summary ?? cur?.summary,
           toolCallId: cur?.toolCallId || p.tool_call_id,
           childSessionId: cur?.childSessionId || p.child_session_id,
-          parentRunId: cur?.parentRunId || p.parent_run_id,
           agentConfigId: p.agent_config_id || cur?.agentConfigId,
           createdAt: cur?.createdAt || updated,
           updatedAt: updated,
@@ -554,14 +549,8 @@ export function createTaskRouter(deps: () => TaskRouterDeps): TaskRouter {
 
     traceSpan(runId, ev) {
       if (!isBackgroundRun(runId)) return false;
-      updateTaskView(runId, v => {
-        // Into the span's own run group (a retry's spans open a new group),
-        // upserting by span id within it.
-        const events = v.traceRuns[runId] || [];
-        const idx = ev.span_id ? events.findIndex(e => e.span_id === ev.span_id) : -1;
-        const next = idx >= 0 ? [...events.slice(0, idx), ev, ...events.slice(idx + 1)] : [...events, ev];
-        return { ...v, traceRuns: { ...v.traceRuns, [runId]: next } };
-      });
+      // Into the span's own run group: a retry's spans open a new one.
+      updateTaskView(runId, v => ({ ...v, traceRuns: { ...v.traceRuns, [runId]: upsertSpan(v.traceRuns[runId] || [], ev) } }));
       return true;
     },
 

@@ -14,14 +14,9 @@
 .disclosure[data-variant="default"].expanded { --_border: var(--borderColor-default); }
 
 /* Colored variants — header bg + fg + border all follow the same role */
-.disclosure[data-variant="accent"]    { --_border: var(--borderColor-accent-muted);    --_headerBg: var(--bgColor-accent-muted);    --_headerBgHover: var(--bgColor-accent-muted);    --_headerFg: var(--fgColor-accent); }
-.disclosure[data-variant="success"]   { --_border: var(--borderColor-success-muted);   --_headerBg: var(--bgColor-success-muted);   --_headerBgHover: var(--bgColor-success-muted);   --_headerFg: var(--fgColor-success); }
 .disclosure[data-variant="attention"] { --_border: var(--borderColor-attention-muted); --_headerBg: var(--bgColor-attention-muted); --_headerBgHover: var(--bgColor-attention-muted); --_headerFg: var(--fgColor-attention); }
-.disclosure[data-variant="severe"]    { --_border: var(--borderColor-severe-muted);    --_headerBg: var(--bgColor-severe-muted);    --_headerBgHover: var(--bgColor-severe-muted);    --_headerFg: var(--fgColor-severe); }
 .disclosure[data-variant="danger"]    { --_border: var(--borderColor-danger-muted);    --_headerBg: var(--bgColor-danger-muted);    --_headerBgHover: var(--bgColor-danger-muted);    --_headerFg: var(--fgColor-danger); }
 .disclosure[data-variant="done"]      { --_border: var(--borderColor-done-muted);      --_headerBg: var(--bgColor-done-muted);      --_headerBgHover: var(--bgColor-done-muted);      --_headerFg: var(--fgColor-done); }
-.disclosure[data-variant="open"]      { --_border: var(--borderColor-open-muted);      --_headerBg: var(--bgColor-open-muted);      --_headerBgHover: var(--bgColor-open-muted);      --_headerFg: var(--fgColor-open); }
-.disclosure[data-variant="closed"]    { --_border: var(--borderColor-closed-muted);    --_headerBg: var(--bgColor-closed-muted);    --_headerBgHover: var(--bgColor-closed-muted);    --_headerFg: var(--fgColor-closed); }
 
 /* Header */
 .disclosure-header {

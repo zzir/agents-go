@@ -801,13 +801,6 @@ a:hover {
     margin-bottom: var(--base-size-12);
 }
 
-/* Status row (dot + text + action) */
-.form-status {
-    display: flex;
-    align-items: center;
-    gap: var(--base-size-8);
-}
-
 .form-status-dot {
     width: 8px;
     height: 8px;

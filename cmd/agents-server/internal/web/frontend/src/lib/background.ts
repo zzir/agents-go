@@ -1,4 +1,5 @@
 import { TASK_KIND_COMMAND, TASK_KIND_WORKFLOW, type TaskStatus, type WorkflowState } from '@/lib/protocol';
+import { isLive } from '@/lib/streamReducer';
 import { taskRetryable, type TaskState } from '@/lib/useAgentSocket';
 
 // BackgroundItem is one piece of background work as the panel shows it: a
@@ -52,7 +53,7 @@ export function stepProgress(state?: WorkflowState): { activity?: string; progre
 export function taskItem(t: TaskState): BackgroundItem {
   const workflow = t.kind === TASK_KIND_WORKFLOW;
   const command = t.kind === TASK_KIND_COMMAND;
-  const live = t.status === 'working' || t.status === 'input_required';
+  const live = isLive(t.status);
   return {
     kind: workflow ? 'workflow' : command ? 'command' : 'task',
     id: t.taskId,
@@ -91,7 +92,7 @@ export function fmtDuration(ms: number): string {
 // finish time (updatedAt).
 export function itemDuration(it: BackgroundItem, now: number): string {
   if (!it.createdAt) return '';
-  const live = it.status === 'working' || it.status === 'input_required';
+  const live = isLive(it.status);
   const end = live ? now : (it.updatedAt || 0);
   return end > it.createdAt ? fmtDuration(end - it.createdAt) : '';
 }
@@ -121,7 +122,6 @@ export interface StepRow {
 // TraceSpanLike is the slice of a trace event stepRows reads (structurally the
 // Inspector's TraceEventData).
 export interface TraceSpanLike {
-  kind?: string;
   type?: string;
   data?: Record<string, unknown> | null;
   started_at?: string;
@@ -136,7 +136,7 @@ export function stepRows(state: WorkflowState | undefined, status: TaskStatus, t
   const runs = state?.step_runs || [];
   return runs.map((sr, i) => {
     const idx = steps.findIndex(s => s.id === sr.step_id);
-    const spans = (traceRuns?.[sr.run_id] || []).filter(ev => ev.kind === 'span');
+    const spans = traceRuns?.[sr.run_id] || [];
     let inp = 0, out = 0, t0 = Infinity, t1 = -Infinity;
     for (const ev of spans) {
       if (ev.type === 'generation' && ev.data) {
@@ -155,7 +155,7 @@ export function stepRows(state: WorkflowState | undefined, status: TaskStatus, t
     const logged = sr.started_at && sr.ended_at ? new Date(sr.ended_at).getTime() - new Date(sr.started_at).getTime() : NaN;
     // A run still open shows the task's live status; the log records an ending
     // (the task status stands in for older rows).
-    const loggedOutcome = sr.outcome || (last ? (status === 'working' || status === 'input_required' ? 'running' : status) : '');
+    const loggedOutcome = sr.outcome || (last ? (isLive(status) ? 'running' : status) : '');
     const verdict = loggedOutcome === 'pass' || loggedOutcome === 'fail' ? loggedOutcome : undefined;
     return {
       index: idx >= 0 ? idx + 1 : i + 1,

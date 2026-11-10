@@ -357,7 +357,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     panel, never a second dialog.** One `PanelDialog`: the person's own
     sections, then an admin's entries after a divider. A scoped entity's tab
     is one list — every member's rows for an admin, "Mine | All" only narrowing,
-    opening on Mine and hidden in token mode with Members (`ScopedEntityPanel.tsx`);
+    opening on Mine and hidden in token mode with Members (`layout/PanelDialog.tsx`);
     `?settings=<tab>` on the view's own URL opens it: pushed on open, so Back closes it and a reload reopens it over the same view.
 62. **A span's payload is content-addressed per session, and lives and dies
     with the session's trace.** Payload elements are stored once per session

@@ -14,6 +14,7 @@ import { JsonField } from '@/lib/JsonField';
 import { headersToText, parseHeadersText } from '@/lib/headers';
 import { toast } from '@/lib/toast';
 import { parseOptionalPositive, parseOptionalPositiveDecimal } from '@/lib/numericField';
+import '@/features/settings/settings.css';
 
 // A sandbox is one row: WHERE it runs and WHAT runs on it; a workspace picks one.
 // The fields split by mutability, not section — type and destination freeze

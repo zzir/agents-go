@@ -1,15 +1,15 @@
 import { useCallback, useMemo } from 'react';
-import { ActionList, PageHeader, Stack, useConfirm } from '@primer/react';
-import { Blankslate, type Column } from '@primer/react/experimental';
+import { ActionList, useConfirm } from '@primer/react';
+import type { Column } from '@primer/react/experimental';
 import { FileDirectoryIcon } from '@primer/octicons-react';
-import { ListTable, RowMenu, actionsColumn } from '@/components/ListTable';
+import { RowMenu, actionsColumn } from '@/components/ListTable';
 import { api, type ApiSchemas } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { useOwnerLabels } from '@/lib/owners';
 import { formatTime } from '@/lib/time';
 import { toast } from '@/lib/toast';
 import { OwnerCell, ownerLabel } from '@/features/admin/OwnerCell';
-import { useLoadError } from '@/features/admin/useLoadError';
+import { AdminListPage } from '@/features/admin/AdminListPage';
 
 type WorkspaceRow = Omit<ApiSchemas['store.Workspace'], 'id'> & { id: string; sandbox: string; rebuildable: boolean };
 
@@ -34,7 +34,6 @@ const listWorkspaces = async (): Promise<WorkspaceRow[]> => {
 // reading a tree (preview, export) is offered nowhere here.
 export function WorkspacesPanel() {
   const { data: workspaces, error, reload } = useApi<WorkspaceRow[]>(listWorkspaces, [], 'admin:workspaces:joined');
-  useLoadError(error, 'workspaces');
   const confirm = useConfirm();
   const { ownerOf, labelFor } = useOwnerLabels();
 
@@ -99,31 +98,18 @@ export function WorkspacesPanel() {
   ], [remove, act, ownerOf, labelFor]);
 
   return (
-    <Stack gap="normal">
-      <PageHeader>
-        <PageHeader.TitleArea>
-          <PageHeader.Title><span id="admin-workspaces-title">Workspaces</span></PageHeader.Title>
-        </PageHeader.TitleArea>
-        <PageHeader.Description>
-          Every owner&apos;s working trees and where their files live. Deleting
-          a row DESTROYS that storage — the volume or sandbox holding it.
-        </PageHeader.Description>
-      </PageHeader>
-      <ListTable
-        labelledBy="admin-workspaces-title"
-        rows={workspaces ?? []}
-        columns={columns}
-        loading={workspaces === null}
-        search={{ placeholder: 'Search workspaces', match: (p, q) => `${p.name || ''} ${ownerLabel(labelFor, p.owner_id)} ${p.sandbox} ${p.storage_hint || ''}`.toLowerCase().includes(q) }}
-        empty={(
-          <Blankslate>
-            <Blankslate.Visual><FileDirectoryIcon size={24} /></Blankslate.Visual>
-            <Blankslate.Heading>No workspaces</Blankslate.Heading>
-            <Blankslate.Description>Working trees list here as members create them.</Blankslate.Description>
-          </Blankslate>
-        )}
-      />
-    </Stack>
+    <AdminListPage
+      titleId="admin-workspaces-title"
+      title="Workspaces"
+      description="Every owner's working trees and where their files live. Deleting a row DESTROYS that storage — the volume or sandbox holding it."
+      what="workspaces"
+      rows={workspaces}
+      error={error}
+      onRetry={reload}
+      columns={columns}
+      match={(p, q) => `${p.name || ''} ${ownerLabel(labelFor, p.owner_id)} ${p.sandbox} ${p.storage_hint || ''}`.toLowerCase().includes(q)}
+      empty={{ icon: FileDirectoryIcon, heading: 'No workspaces', text: 'Working trees list here as members create them.' }}
+    />
   );
 }
 

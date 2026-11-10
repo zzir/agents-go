@@ -20,9 +20,7 @@ import type { AttachmentMeta } from '@/lib/attachments';
 import type { TraceMarker } from '@/lib/queuedInputs';
 
 export interface TraceEventData {
-  kind?: string;
   name: string;
-  detail?: string;
   type?: string;
   span_id?: string;
   parent_id?: string;
@@ -48,7 +46,7 @@ export interface TraceEventData {
 export function lastGenerationSpan(events?: TraceEventData[]): TraceEventData | undefined {
   if (!events) return undefined;
   for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].kind === 'span' && events[i].type === 'generation') return events[i];
+    if (events[i].type === 'generation') return events[i];
   }
   return undefined;
 }
@@ -489,7 +487,6 @@ export function traceSummary(segments: TraceRunSegment[]): TraceSummary {
   let inp = 0, out = 0, count = 0, failed = false;
   for (const seg of segments) {
     for (const ev of seg.events) {
-      if (ev.kind !== 'span') continue;
       count++;
       if (ev.type === 'generation' && ev.data) {
         inp += Number(ev.data.input_tokens) || 0;
@@ -545,11 +542,10 @@ export function TraceDetail({ segments, isLive, payloadSessionId, focusSpanId, m
   const payloadSession = payloadSessionId || sessionId;
   const summary = useMemo(() => traceSummary(segments), [segments]);
   const parts = useMemo(() => segments.flatMap(seg => {
-    const spanEvents = seg.events.filter(ev => ev.kind === 'span');
     const load = loadSpan && payloadSession ? (spanId: string) => loadSpan(payloadSession, seg.runId, spanId) : undefined;
     let prevEnd: number | undefined;
     let prevPaused = false;
-    return splitEpisodes(buildSpanTree(spanEvents)).map((roots, i) => {
+    return splitEpisodes(buildSpanTree(seg.events)).map((roots, i) => {
       const range = spanTimeRange(episodeSpans(roots));
       // A later stretch is headed by how long the run had been stopped — as
       // a wait for approval when the stretch before it paused for one.
@@ -629,7 +625,7 @@ interface TraceDrawerProps extends TraceLensContext {
 // first, with what it cost and how many spans it left; a row opens the run lens.
 export function TraceDrawer({ groups, liveRunId, runLabels, staleRuns, markers, onOpen, onClose }: TraceDrawerProps) {
   return (
-    <SidePanel icon={PulseIcon} title="Traces" count={groups.length} onClose={onClose} storageKey="inspectorWidth">
+    <SidePanel icon={PulseIcon} title="Traces" count={groups.length} onClose={onClose}>
       {groups.length === 0 && <div className="trace-empty">No traces yet.</div>}
       {groups.map(group => (
         <TraceRow
@@ -670,7 +666,7 @@ export function TraceRunPanel({ group, total, liveRunId, staleRuns, markers, foc
   const stale = staleRuns?.has(group.rootId);
   const runMarkers = groupMarkers(markers, group);
   return (
-    <SidePanel icon={PulseIcon} title="Traces" count={total} onClose={onClose} storageKey="inspectorWidth">
+    <SidePanel icon={PulseIcon} title="Traces" count={total} onClose={onClose}>
       <LensHead
         onBack={onBack}
         backLabel="Back to traces"
@@ -694,7 +690,7 @@ export function TraceRunPanel({ group, total, liveRunId, staleRuns, markers, foc
 // says so and leads back to the list.
 export function TraceRunMissingPanel({ runId, total, loading, onBack, onClose }: { runId: string; total: number; loading: boolean; onBack: () => void; onClose: () => void }) {
   return (
-    <SidePanel icon={PulseIcon} title="Traces" count={total} onClose={onClose} storageKey="inspectorWidth">
+    <SidePanel icon={PulseIcon} title="Traces" count={total} onClose={onClose}>
       <LensHead onBack={onBack} backLabel="Back to traces" id={runId} />
       {loading
         ? <Loading kind="inline" />

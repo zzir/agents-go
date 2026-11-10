@@ -64,7 +64,7 @@ async function mount(props: Partial<Parameters<typeof SessionList>[0]> = {}) {
   document.body.appendChild(host);
   const root = createRoot(host);
   await act(async () => {
-    root.render(<SessionList activeId={null} onSelect={noop} onNew={noop} onOpenHub={noop} reloadKey={0} {...props} />);
+    root.render(<SessionList activeId={null} onSelect={noop} onNew={noop} onOpenHub={noop} {...props} />);
   });
   await act(async () => {});
   return { host, unmount: () => { act(() => root.unmount()); host.remove(); } };

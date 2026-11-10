@@ -41,7 +41,6 @@ interface SessionListProps {
   // New: the app opens an empty composer; the first message makes the
   // conversation (invariant 69).
   onNew: () => void;
-  reloadKey: unknown;
   // Each conversation's status as session.status last announced it; a row
   // not named here shows the status the list carried (invariant 3).
   statuses?: Record<string, SessionStatus>;
@@ -155,7 +154,7 @@ function RenameDialog({ session, onClose, onRenamed }: { session: Session; onClo
   );
 }
 
-export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onNew, reloadKey, statuses, onOpenHub }: SessionListProps): ReactElement {
+export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRenamed: onRenamedNotify, onNew, statuses, onOpenHub }: SessionListProps): ReactElement {
   const confirmDialog = useConfirm();
   const [query, setQuery] = useState('');
   // The server searches the name and the first user message once the typing
@@ -180,9 +179,6 @@ export function SessionList({ activeId, onSelect, onDelete: onDeleteNotify, onRe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasMore, loading, limit]);
 
-  useEffect(() => {
-    if (reloadKey) reload(); // auto-refresh: does not throw
-  }, [reloadKey, reload]);
   // The search box is a button until clicked; it stays open while a filter is
   // typed, so the narrowed list is never shown without the query that made it.
   const [searchOpen, setSearchOpen] = useState(false);

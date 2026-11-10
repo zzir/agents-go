@@ -16,9 +16,6 @@
 .form-field-action {
   margin-top: var(--base-size-8);
 }
-.form-caption-error {
-  color: var(--fgColor-danger);
-}
 
 /* Appearance: bordered rows like the switch rows. The mode's control sits on
    the right; the seven swatches are one line (light, a divider, dark), each
