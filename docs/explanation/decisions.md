@@ -2286,3 +2286,24 @@ bun dialect package.
 
 Rules: spec §2.5e2 (the SQLite pool cap, which `OpenSQLite` applies);
 [Sessions](../howto/sessions.md#sql-sessions-sqlite--postgresql).
+
+### 5.107 A store exports a generic write only when it is correct for it
+
+Decided 2026-11-10.
+
+**Decision.** `CrudStore[T]`'s writes are unexported. A store exports one as a
+one-line forwarder only when the plain insert, overwrite or delete is that
+entity's whole contract; the reads (`Get`, `List`) stay promoted.
+
+**Rejected.** Exported generic writes shadowed per store — embedding promoted
+`Delete` onto `AgentConfigStore`, where it skipped the cascade `DeleteOwnedBy`
+performs, and the embedded field reaches the generic method past any shadow.
+A named field instead of the embedding — the handlers' generic helpers take a
+`*CrudStore[T]` from every scoped store, and the promoted reads would each
+need a forwarder.
+
+**Cost accepted.** Nine forwarders on seven stores, and a test outside the
+package seeds a row its store would refuse in SQL. `DeleteOwnedBy`,
+`SetScopeOf` and `SetOwnerOf` still accept any store's `CrudStore`.
+
+Rules: workbench invariant 103.

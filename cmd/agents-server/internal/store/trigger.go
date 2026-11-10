@@ -209,6 +209,9 @@ func (s *TriggerStore) UpdateSettings(ctx context.Context, id string, t *Trigger
 	})
 }
 
+// Delete removes the trigger; ErrNotFound when absent.
+func (s *TriggerStore) Delete(ctx context.Context, id string) error { return s.delete(ctx, id) }
+
 // DeleteIfWorkflow removes the trigger only while it still names workflowID
 // (the self-heal of a fire that found the workflow gone); else ErrNotFound.
 func (s *TriggerStore) DeleteIfWorkflow(ctx context.Context, id, workflowID string) error {

@@ -54,6 +54,9 @@ func NewSkillStore(db *bun.DB) *SkillStore {
 	return &SkillStore{CrudStore: NewCrudStore[Skill](db, "skill", "name ASC"), db: db}
 }
 
+// Create inserts the skill.
+func (s *SkillStore) Create(ctx context.Context, m *Skill) error { return s.create(ctx, m) }
+
 // Update overwrites the skill in one transaction that reads the stored row
 // (locked) and hands it to prepare, the shape every scoped entity uses.
 func (s *SkillStore) Update(ctx context.Context, id string, m *Skill, prepare func(prev *Skill) error) error {

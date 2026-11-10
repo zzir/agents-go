@@ -18,6 +18,11 @@ func NewMcpServerStore(db *bun.DB) *McpServerStore {
 	return &McpServerStore{NewCrudStore[McpServerConfig](db, "mcp server config", "created_at DESC").withSecrets(sealMcpServer, openMcpServer)}
 }
 
+// Create inserts the server config, its credentials sealed.
+func (s *McpServerStore) Create(ctx context.Context, m *McpServerConfig) error {
+	return s.create(ctx, m)
+}
+
 // Update overwrites the server config; the stored row is read in the same
 // transaction and handed to prepare (nil to skip), oauth_token already copied
 // onto m. ErrNotFound when absent.

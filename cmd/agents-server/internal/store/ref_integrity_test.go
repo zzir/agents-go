@@ -105,7 +105,7 @@ func TestDemoteToPrivateGuardsReferences(t *testing.T) {
 		t.Fatalf("refused demote must leave the row global: (%+v, %v)", got, err)
 	}
 
-	if err := agents.Delete(ctx, ref.ID); err != nil {
+	if err := agents.DeleteOwnedBy(ctx, ref.ID, ref.OwnerID); err != nil {
 		t.Fatal(err)
 	}
 	refs, err = providers.DemoteToPrivate(ctx, pv.ID)

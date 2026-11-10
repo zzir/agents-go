@@ -122,6 +122,9 @@ func (s *MemoryStore) AppendContent(ctx context.Context, sc MemoryScope, key, te
 	}, true, guard)
 }
 
+// Delete removes one memory by id; ErrNotFound when absent.
+func (s *MemoryStore) Delete(ctx context.Context, id string) error { return s.delete(ctx, id) }
+
 // write is the one transaction behind Upsert and AppendContent; a create the
 // unique index refuses (a racing creator won) is retried once against that row.
 func (s *MemoryStore) write(ctx context.Context, m *Memory, appendTo bool, guard func(ctx context.Context, tx bun.Tx) error) error {

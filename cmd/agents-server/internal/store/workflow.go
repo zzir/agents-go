@@ -634,6 +634,9 @@ func NewWorkflowStore(db *bun.DB) *WorkflowStore {
 	return &WorkflowStore{NewCrudStore[Workflow](db, "workflow", "created_at DESC")}
 }
 
+// Create inserts the definition.
+func (s *WorkflowStore) Create(ctx context.Context, m *Workflow) error { return s.create(ctx, m) }
+
 // Update overwrites the definition in one transaction that reads the stored row
 // (locked) and hands it to prepare (nil to skip), the shape every scoped entity
 // uses.

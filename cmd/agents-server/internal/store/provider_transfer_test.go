@@ -35,7 +35,7 @@ func TestTransferOwnerGuardsReferences(t *testing.T) {
 		t.Fatalf("a refused transfer moved the row: owner = %s", got.OwnerID)
 	}
 
-	if err := agents.Delete(ctx, ref.ID); err != nil {
+	if err := agents.DeleteOwnedBy(ctx, ref.ID, ref.OwnerID); err != nil {
 		t.Fatal(err)
 	}
 	if refs, err = providers.TransferOwner(ctx, pv.ID, id("bob")); err != nil || refs != 0 {

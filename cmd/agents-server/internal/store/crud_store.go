@@ -74,7 +74,8 @@ func stampOnAppend(query bun.Query, id *string, createdAt, updatedAt *time.Time)
 var ErrRevisionConflict = errors.New("the record changed concurrently; re-read and retry")
 
 // CrudStore is a generic store for entities keyed by a string "id" primary
-// key with created_at/updated_at columns; entity stores embed it.
+// key with created_at/updated_at columns; entity stores embed it and export
+// one of its writes only as a forwarder (invariant 103).
 type CrudStore[T any] struct {
 	db    *bun.DB
 	label string // human-readable name for error messages, e.g. "agent config"
@@ -111,8 +112,8 @@ func (s *CrudStore[T]) opened(m *T) error {
 	return s.open(m)
 }
 
-// Create inserts m as a new row.
-func (s *CrudStore[T]) Create(ctx context.Context, m *T) error {
+// create inserts m as a new row.
+func (s *CrudStore[T]) create(ctx context.Context, m *T) error {
 	if err := s.sealed(m); err != nil {
 		return fmt.Errorf("creating %s: %w", s.label, err)
 	}
@@ -163,9 +164,9 @@ func (s *CrudStore[T]) Get(ctx context.Context, id string) (*T, error) {
 	return m, nil
 }
 
-// Update overwrites every column of the row except id and created_at.
+// update overwrites every column of the row except id and created_at.
 // Returns an ErrNotFound-wrapping error when the row doesn't exist.
-func (s *CrudStore[T]) Update(ctx context.Context, id string, m *T) error {
+func (s *CrudStore[T]) update(ctx context.Context, id string, m *T) error {
 	if err := s.sealed(m); err != nil {
 		return fmt.Errorf("updating %s %s: %w", s.label, id, err)
 	}
@@ -245,9 +246,9 @@ func (s *CrudStore[T]) updateFrom(ctx context.Context, tx bun.Tx, id string, m *
 	return err
 }
 
-// Delete removes the row with the given id. Returns an ErrNotFound-wrapping
+// delete removes the row with the given id. Returns an ErrNotFound-wrapping
 // error when the row doesn't exist.
-func (s *CrudStore[T]) Delete(ctx context.Context, id string) error {
+func (s *CrudStore[T]) delete(ctx context.Context, id string) error {
 	res, err := s.db.NewDelete().Model((*T)(nil)).Where("id = ?", id).Exec(ctx)
 	if err == nil {
 		err = requireRows(res)

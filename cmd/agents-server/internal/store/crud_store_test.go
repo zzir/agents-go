@@ -3,8 +3,36 @@ package store
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 )
+
+// A store whose write is guarded, cascading or column-scoped exports no plain
+// one beside it, and CrudStore itself exports none: a forwarder added here is
+// a write that skips the guard.
+func TestGenericWritesAreNotExportedPastTheirGuards(t *testing.T) {
+	for _, c := range []struct {
+		store  any
+		absent []string
+	}{
+		{(*CrudStore[Guardrail])(nil), []string{"Create", "Update", "Delete"}},
+		{(*AgentConfigStore)(nil), []string{"Delete"}},
+		{(*ProviderStore)(nil), []string{"Delete"}},
+		{(*SandboxStore)(nil), []string{"Delete"}},
+		{(*WorkspaceStore)(nil), []string{"Delete"}},
+		{(*McpServerStore)(nil), []string{"Delete"}},
+		{(*SkillStore)(nil), []string{"Delete"}},
+		{(*TriggerStore)(nil), []string{"Update"}},
+		{(*MemoryStore)(nil), []string{"Create", "Update"}},
+	} {
+		typ := reflect.TypeOf(c.store)
+		for _, name := range c.absent {
+			if _, ok := typ.MethodByName(name); ok {
+				t.Errorf("%s exports %s", typ, name)
+			}
+		}
+	}
+}
 
 func TestCrudStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
@@ -57,7 +85,7 @@ func TestCrudStoreRoundTrip(t *testing.T) {
 		t.Fatalf("expected 1 row, got %d", len(list))
 	}
 
-	if err := s.Delete(ctx, ac.ID); err != nil {
+	if err := s.delete(ctx, ac.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if _, err := s.Get(ctx, ac.ID); err == nil {
@@ -74,7 +102,7 @@ func TestMemoryStoreListInjectable(t *testing.T) {
 	scoped := &Memory{ScopeKind: MemoryScopeAgent, ScopeID: id("agent-1"), Key: "s", Content: "scoped", WrittenBy: MemoryWrittenByUser}
 	other := &Memory{ScopeKind: MemoryScopeAgent, ScopeID: id("agent-2"), Key: "o", Content: "other", WrittenBy: MemoryWrittenByUser}
 	for _, m := range []*Memory{global, scoped, other} {
-		if err := s.Create(ctx, m); err != nil {
+		if err := s.create(ctx, m); err != nil {
 			t.Fatalf("create: %v", err)
 		}
 	}
@@ -108,13 +136,13 @@ func TestMemoryStoreListInjectable(t *testing.T) {
 func TestAgentConfigDeleteNotFoundAndOtherEntities(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
-	if err := NewAgentConfigStore(db).Delete(ctx, NewID()); !errors.Is(err, ErrNotFound) {
+	if err := NewAgentConfigStore(db).DeleteOwnedBy(ctx, NewID(), LocalUserID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleting missing agent: want ErrNotFound, got %v", err)
 	}
 	// A Memory (also CrudStore-backed) deletes through the plain path.
 	memories := NewMemoryStore(db)
 	m := &Memory{Key: "k", Content: "c"}
-	if err := memories.Create(ctx, m); err != nil {
+	if err := memories.create(ctx, m); err != nil {
 		t.Fatalf("create memory: %v", err)
 	}
 	if err := memories.Delete(ctx, m.ID); err != nil {

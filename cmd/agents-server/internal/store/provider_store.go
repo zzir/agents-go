@@ -62,6 +62,9 @@ func NewProviderStore(db *bun.DB) *ProviderStore {
 	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider", "created_at DESC").withSecrets(sealProvider, openProvider), db: db}
 }
 
+// Create inserts the provider, its credentials sealed.
+func (s *ProviderStore) Create(ctx context.Context, p *Provider) error { return s.create(ctx, p) }
+
 // Update overwrites the provider in one transaction that first reads the
 // stored row (locked) and hands it to prepare, nil to skip. A chatgpt_login
 // provider keeps its chatgpt_token; any other mode clears it.

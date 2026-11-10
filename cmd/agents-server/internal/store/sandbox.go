@@ -352,7 +352,7 @@ func (s *SandboxStore) Create(ctx context.Context, sb *Sandbox) error {
 	if sb.Revision == 0 {
 		sb.Revision = 1
 	}
-	return s.CrudStore.Create(ctx, sb)
+	return s.create(ctx, sb)
 }
 
 // guardSandbox locks the sandbox row (the lock workspace Create/Update take)

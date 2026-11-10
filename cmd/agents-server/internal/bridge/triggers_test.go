@@ -143,7 +143,7 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 
 	// Switched off, it starts nothing.
 	trg.Enabled = false
-	if err := sched.store.Update(ctx, trg.ID, trg); err != nil {
+	if err := sched.store.UpdateSettings(ctx, trg.ID, trg); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := sched.Fire(ctx, trg.ID, "", FireManual); !errors.Is(err, ErrTriggerDisabled) {
@@ -151,8 +151,11 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	}
 	// A fire that cannot start (the session is gone) is recorded as the
 	// trigger's last error, not lost in a log.
+	// Written around the store, which refuses a session that is not there.
 	trg.Enabled, trg.SessionID = true, "nope"
-	if err := sched.store.Update(ctx, trg.ID, trg); err != nil {
+	if _, err := runner.db.NewUpdate().Model((*store.Trigger)(nil)).
+		Set("enabled = ?", trg.Enabled).Set("session_id = ?", trg.SessionID).
+		Where("id = ?", trg.ID).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := sched.Fire(ctx, trg.ID, "", FireManual); err == nil {
@@ -165,7 +168,7 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	// A trigger whose WORKFLOW is gone is removed at its next fire — it could
 	// never fire again and is listed nowhere.
 	trg.SessionID = sess.ID
-	if err := sched.store.Update(ctx, trg.ID, trg); err != nil {
+	if err := sched.store.UpdateSettings(ctx, trg.ID, trg); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runner.db.NewDelete().Model((*store.Workflow)(nil)).Where("id = ?", wf.ID).Exec(ctx); err != nil {
@@ -222,7 +225,7 @@ func TestTriggerSchedulerFollowsTheTable(t *testing.T) {
 	}
 
 	tick.Enabled = true
-	if err := sched.store.Update(ctx, tick.ID, tick); err != nil {
+	if err := sched.store.UpdateSettings(ctx, tick.ID, tick); err != nil {
 		t.Fatal(err)
 	}
 	sched.Sync(ctx, tick.ID)
@@ -262,7 +265,7 @@ func TestTriggerSchedulerFollowsTheTable(t *testing.T) {
 	}
 	// Off again — and off the clock.
 	tick.Enabled = false
-	if err := sched.store.Update(ctx, tick.ID, tick); err != nil {
+	if err := sched.store.UpdateSettings(ctx, tick.ID, tick); err != nil {
 		t.Fatal(err)
 	}
 	sched.Sync(ctx, tick.ID)
@@ -279,7 +282,7 @@ func TestTriggerSchedulerFollowsTheTable(t *testing.T) {
 	// cascade, which no Sync sees — is dropped by the periodic reconcile
 	// (long before its next tick, for a slow schedule)…
 	tick.Enabled = true
-	if err := sched.store.Update(ctx, tick.ID, tick); err != nil {
+	if err := sched.store.UpdateSettings(ctx, tick.ID, tick); err != nil {
 		t.Fatal(err)
 	}
 	sched.Sync(ctx, tick.ID)
@@ -295,7 +298,7 @@ func TestTriggerSchedulerFollowsTheTable(t *testing.T) {
 	}
 	// …and, should a tick come first, leaves at that tick.
 	tick.Enabled = true
-	if err := sched.store.Update(ctx, tick.ID, tick); err != nil {
+	if err := sched.store.UpdateSettings(ctx, tick.ID, tick); err != nil {
 		t.Fatal(err)
 	}
 	sched.Sync(ctx, tick.ID)

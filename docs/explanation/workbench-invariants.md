@@ -595,3 +595,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      row takes at least `shareRow` on it in its own. A guard in the statement's
      WHERE (`NOT EXISTS`) is not that lock: under READ COMMITTED both commit
      (decisions §5.28).
+103. **A store exports a generic write only where it is the whole
+     contract.** `CrudStore`'s `create`, `update` and `delete` are
+     package-private. A store that guards, cascades or column-scopes a write
+     exports that method and no forwarder beside it: there is no plain `Delete`
+     on agents, providers, sandboxes or workspaces, and no plain `Update` on
+     triggers or memories — decisions §5.107.
