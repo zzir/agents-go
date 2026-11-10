@@ -607,3 +607,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      dependency production may lack is declared optional on its field (none is
      today). The hooks the WS handler wires afterwards (`OnRunAttach`,
      `OnBroadcast`) stay "when set" — see decisions §5.108.
+105. **A flag is read once, into the config.** `loadConfig`
+     (`cmd/config.go`) is the only reader of the command's flags and of their
+     environment fallbacks; `serve` and the wiring functions take the `config`
+     it returns. A flag error that needs no database is refused there, before
+     the address is bound; `--trusted-proxies` alone is checked on the engine
+     (`trustProxies`), still ahead of the orphan sweep — see decisions §5.109.

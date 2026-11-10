@@ -6,8 +6,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/url"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -226,100 +224,44 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 	}
 }
 
-// newAuth builds the auth service the --auth mode names; both modes keep the
+// newAuth builds the auth service cfg's --auth mode names; both modes keep the
 // implicit local account (token mode signs in as it, OAuth mode leaves it dormant).
-func newAuth(ctx context.Context, st *stores, baseURL string, log *slog.Logger) (*authn.Service, error) {
+func newAuth(ctx context.Context, st *stores, cfg *config, log *slog.Logger) (*authn.Service, error) {
 	localUser, err := st.Users.EnsureLocalUser(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("ensuring the local user: %w", err)
 	}
-	switch flagAuthMode {
-	case "token":
-		// Flag wins, then env, then a fresh one.
-		token := flagToken
-		if token == "" {
-			token = os.Getenv("AGENTS_TOKEN")
-		}
+	auth := cfg.Auth
+	if auth.Mode == authn.ModeToken {
+		token := auth.Token
 		if token == "" {
 			// Logged only when generated.
 			token = server.GenerateToken()
 			log.Info("auth token", "token", token)
 		}
 		return authn.NewStatic(token, localUser), nil
-	case "oauth":
-		if flagToken != "" {
-			return nil, fmt.Errorf("--token cannot combine with --auth oauth; programmatic access uses personal access tokens")
-		}
-		if baseURL == "" {
-			return nil, fmt.Errorf("--auth oauth requires --base-url: the OAuth redirect URI derives from it")
-		}
-		// A provider's secret: flag, then env, off argv and ps like the other secrets.
-		secretOf := func(flag, env string) string {
-			if flag != "" {
-				return flag
-			}
-			return os.Getenv(env)
-		}
-		var oauthProviders []authn.OAuthProvider
-		if flagGoogleClientID != "" {
-			secret := secretOf(flagGoogleSecret, "AGENTS_OAUTH_GOOGLE_CLIENT_SECRET")
-			if secret == "" {
-				return nil, fmt.Errorf("google login needs --oauth-google-client-secret (or AGENTS_OAUTH_GOOGLE_CLIENT_SECRET)")
-			}
-			oauthProviders = append(oauthProviders, &authn.Google{ClientID: flagGoogleClientID, ClientSecret: secret})
-		}
-		if flagGitHubClientID != "" {
-			secret := secretOf(flagGitHubSecret, "AGENTS_OAUTH_GITHUB_CLIENT_SECRET")
-			if secret == "" {
-				return nil, fmt.Errorf("github login needs --oauth-github-client-secret (or AGENTS_OAUTH_GITHUB_CLIENT_SECRET)")
-			}
-			oauthProviders = append(oauthProviders, &authn.GitHub{ClientID: flagGitHubClientID, ClientSecret: secret})
-		}
-		if len(oauthProviders) == 0 {
-			return nil, fmt.Errorf("--auth oauth needs at least one provider (--oauth-google-client-id or --oauth-github-client-id)")
-		}
-		domains, emails := settings.SplitList(flagAllowedDomains), settings.SplitList(flagAllowedEmails)
-		bootstrapAdmin := store.NormalizeEmail(flagBootstrapAdmin)
-		for _, d := range domains {
-			if strings.Contains(d, "@") {
-				return nil, fmt.Errorf("--allowed-domains takes domains, not addresses: %q", d)
-			}
-		}
-		for _, e := range append(emails, bootstrapAdmin) {
-			if e != "" && !strings.Contains(e, "@") {
-				return nil, fmt.Errorf("--allowed-emails and --bootstrap-admin take addresses: %q", e)
-			}
-		}
-		if flagBootstrapAdmin != "" && bootstrapAdmin == "" {
-			return nil, fmt.Errorf("--bootstrap-admin is blank")
-		}
-		if len(domains) == 0 && len(emails) == 0 && bootstrapAdmin == "" {
-			return nil, fmt.Errorf("--auth oauth needs an allowlist: --allowed-domains, --allowed-emails or --bootstrap-admin")
-		}
-		if bootstrapAdmin == "" {
-			// Without a named admin the first account to sign in is it — a
-			// race anyone on an allowed domain can win until someone has.
-			if n, err := st.Users.CountReal(ctx); err != nil {
-				return nil, fmt.Errorf("counting users: %w", err)
-			} else if n == 0 {
-				log.Warn("no admin account yet: the first OAuth login becomes the admin — name one with --bootstrap-admin to choose who")
-			}
-		}
-		return authn.NewOAuth(authn.OAuthConfig{
-			Users: st.Users, Tokens: st.AuthTokens,
-			BaseURL: baseURL, Providers: oauthProviders,
-			AllowedDomains: domains, AllowedEmails: emails,
-			BootstrapAdmin: bootstrapAdmin, Log: log,
-		}), nil
-	default:
-		return nil, fmt.Errorf("unknown --auth mode %q (token or oauth)", flagAuthMode)
 	}
+	if auth.BootstrapAdmin == "" {
+		// Without a named admin the first account to sign in is it — a
+		// race anyone on an allowed domain can win until someone has.
+		if n, err := st.Users.CountReal(ctx); err != nil {
+			return nil, fmt.Errorf("counting users: %w", err)
+		} else if n == 0 {
+			log.Warn("no admin account yet: the first OAuth login becomes the admin — name one with --bootstrap-admin to choose who")
+		}
+	}
+	return authn.NewOAuth(authn.OAuthConfig{
+		Users: st.Users, Tokens: st.AuthTokens,
+		BaseURL: cfg.BaseURL, Providers: auth.Providers,
+		AllowedDomains: auth.AllowedDomains, AllowedEmails: auth.AllowedEmails,
+		BootstrapAdmin: auth.BootstrapAdmin, Log: log,
+	}), nil
 }
 
 // newServer builds the HTTP server and mounts everything on it: the auth
 // handler, the REST API, the WebSocket endpoints, the hook, health, OpenAPI and
 // the SPA.
-func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, audit protocol.AuditFunc, st *stores, hs *handlers, baseURL string) (*server.Server, error) {
+func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, audit protocol.AuditFunc, st *stores, hs *handlers, cfg *config) (*server.Server, error) {
 	srv := server.New(log, authSvc.Authenticate, audit)
 	// img-src admits the avatar hosts plus the attachment bucket's host,
 	// re-applied whenever a storage key changes (invariant 58).
@@ -343,14 +285,8 @@ func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, au
 	srv.SetBodyLimit(server.APIPrefix+"/attachments", func() int64 {
 		return handler.MaxAttachmentBytes + 64<<10
 	})
-	if flagTrustedProxies != "" {
-		if err := srv.SetTrustedProxies(settings.SplitList(flagTrustedProxies)); err != nil {
-			return nil, fmt.Errorf("invalid --trusted-proxies: %w", err)
-		}
-	} else if baseURL != "" {
-		// --base-url is the "behind a proxy" signal; without trusted proxies
-		// every client shares the proxy's IP and so one per-IP budget.
-		log.Warn("--base-url is set but --trusted-proxies is not: every request arrives from the proxy's address, so all users share one per-IP rate budget")
+	if err := trustProxies(srv, cfg, log); err != nil {
+		return nil, err
 	}
 	authHandler := handler.NewAuthHandler(authSvc, st.AuthTokens, st.Users, st.Audit)
 	authHandler.Conns = srv.Conns
@@ -366,4 +302,19 @@ func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, au
 	}
 	srv.ServeStatic(staticFS)
 	return srv, nil
+}
+
+// trustProxies applies --trusted-proxies to srv, refusing an entry that is
+// neither an IP nor a CIDR.
+func trustProxies(srv *server.Server, cfg *config, log *slog.Logger) error {
+	if len(cfg.TrustedProxies) > 0 {
+		if err := srv.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+			return fmt.Errorf("invalid --trusted-proxies: %w", err)
+		}
+	} else if cfg.BaseURL != "" {
+		// --base-url is the "behind a proxy" signal; without trusted proxies
+		// every client shares the proxy's IP and so one per-IP budget.
+		log.Warn("--base-url is set but --trusted-proxies is not: every request arrives from the proxy's address, so all users share one per-IP rate budget")
+	}
+	return nil
 }

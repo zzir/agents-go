@@ -194,6 +194,7 @@ it — composes as follows. The rules its handlers and panels must obey are in
 cmd/agents-server/
 ├── main.go                     entry point
 ├── cmd/root.go                 CLI flags, start-up and shutdown ordering
+├── cmd/config.go               the process configuration: flags and their env fallbacks, checked before anything opens
 ├── cmd/wire.go                 the composition root: stores → bridge → handlers → auth → server
 ├── internal/
 │   ├── server/                 Gin engine, routing, WS upgrade + heartbeat

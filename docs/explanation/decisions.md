@@ -2330,3 +2330,27 @@ is about them. The complete set is written twice: the bridge's own tests cannot
 import `bridgetest`.
 
 Rules: workbench invariant 104.
+
+### 5.109 Process configuration is a value
+
+Decided 2026-11-10.
+
+**Decision.** The server's flags are defined without variables and read once,
+by `loadConfig`, into a `config` that `serve`, `newAuth` and `newServer` take
+as an argument. It resolves the environment fallbacks and refuses every flag
+combination that needs no database to refuse.
+
+**Rejected.** Eighteen package-level flag variables read by the wiring
+functions — the `--auth` matrix sat inside `newAuth`, behind an open database,
+so only `dbTarget` had a test and a refused start had already created the
+database and its local user. A configuration library (viper) — five variables,
+each one flag's fallback, do not need a second precedence system. Validating
+`--trusted-proxies` in `loadConfig` too — gin's engine is its parser, and a
+second one would drift from it.
+
+**Cost accepted.** A start with several things wrong reports them in a new
+order: the flag errors come first, ahead of a log-format or a bind error. An
+all-blank `--trusted-proxies` now counts as unset and draws the `--base-url`
+warning.
+
+Rules: workbench invariant 105.

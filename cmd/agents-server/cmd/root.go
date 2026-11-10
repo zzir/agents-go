@@ -19,57 +19,40 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/handler"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/secrets"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-var (
-	flagHost           string
-	flagPort           int
-	flagDB             string
-	flagToken          string
-	flagLogLevel       string
-	flagLogFormat      string
-	flagBaseURL        string
-	flagTrustedProxies string
-	flagAuthMode       string
-	flagGoogleClientID string
-	flagGoogleSecret   string
-	flagGitHubClientID string
-	flagGitHubSecret   string
-	flagAllowedDomains string
-	flagAllowedEmails  string
-	flagBootstrapAdmin string
-	flagAuditRetention int
-	flagSecretKeyFile  string
-)
+// rootCmd is the command main executes; a test builds its own (newRootCmd).
+var rootCmd = newRootCmd()
 
-var rootCmd = &cobra.Command{
-	Use:   "agents-server",
-	Short: "The Go-native agent workbench you run yourself",
-	RunE:  run,
-}
-
-func init() {
-	rootCmd.Flags().StringVar(&flagHost, "host", "127.0.0.1", "Bind address (use 0.0.0.0 for LAN access)")
-	rootCmd.Flags().IntVar(&flagPort, "port", 9527, "HTTP server port")
-	rootCmd.Flags().StringVar(&flagDB, "db", "data.db", "SQLite database path, or a postgres:// DSN (or env AGENTS_DB)")
-	rootCmd.Flags().StringVar(&flagToken, "token", "", "Authentication token (or env AGENTS_TOKEN; auto-generated if empty)")
-	rootCmd.Flags().StringVar(&flagLogLevel, "log-level", "info", "Log level: debug, info, warn, error")
-	rootCmd.Flags().StringVar(&flagLogFormat, "log-format", "text", "Log format: text, json")
-	rootCmd.Flags().StringVar(&flagBaseURL, "base-url", "", "Public origin of this server, scheme://host[:port] (required behind a reverse proxy for OAuth flows)")
-	rootCmd.Flags().StringVar(&flagTrustedProxies, "trusted-proxies", "", "Comma-separated proxy IPs/CIDRs whose X-Forwarded-For is believed for client IPs (default: none)")
-	rootCmd.Flags().StringVar(&flagAuthMode, "auth", "token", "Authentication mode: token (single static token) or oauth (per-user login)")
-	rootCmd.Flags().StringVar(&flagGoogleClientID, "oauth-google-client-id", "", "Google OAuth client id (enables the google login provider)")
-	rootCmd.Flags().StringVar(&flagGoogleSecret, "oauth-google-client-secret", "", "Google OAuth client secret (or env AGENTS_OAUTH_GOOGLE_CLIENT_SECRET)")
-	rootCmd.Flags().StringVar(&flagGitHubClientID, "oauth-github-client-id", "", "GitHub OAuth client id (enables the github login provider)")
-	rootCmd.Flags().StringVar(&flagGitHubSecret, "oauth-github-client-secret", "", "GitHub OAuth client secret (or env AGENTS_OAUTH_GITHUB_CLIENT_SECRET)")
-	rootCmd.Flags().StringVar(&flagAllowedDomains, "allowed-domains", "", "Comma-separated email domains admitted to OAuth login")
-	rootCmd.Flags().StringVar(&flagAllowedEmails, "allowed-emails", "", "Comma-separated email addresses admitted to OAuth login")
-	rootCmd.Flags().StringVar(&flagBootstrapAdmin, "bootstrap-admin", "", "Email that signs in as admin (implicitly admitted; the recovery hatch)")
-	rootCmd.Flags().IntVar(&flagAuditRetention, "audit-retention-days", 0, "Prune audit log entries older than this many days (0 = keep forever); a process setting, never an API one")
-	rootCmd.Flags().StringVar(&flagSecretKeyFile, "secret-key-file", "", "File holding the 32-byte key (base64 or hex) that seals stored credentials; or env AGENTS_SECRET_KEY")
+// newRootCmd defines the command and its flags. Nothing is bound to a
+// variable: loadConfig reads the parsed flags into the config run passes on.
+func newRootCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "agents-server",
+		Short: "The Go-native agent workbench you run yourself",
+		RunE:  run,
+	}
+	f := cmd.Flags()
+	f.String("host", "127.0.0.1", "Bind address (use 0.0.0.0 for LAN access)")
+	f.Int("port", 9527, "HTTP server port")
+	f.String("db", "data.db", "SQLite database path, or a postgres:// DSN (or env AGENTS_DB)")
+	f.String("token", "", "Authentication token (or env AGENTS_TOKEN; auto-generated if empty)")
+	f.String("log-level", "info", "Log level: debug, info, warn, error")
+	f.String("log-format", "text", "Log format: text, json")
+	f.String("base-url", "", "Public origin of this server, scheme://host[:port] (required behind a reverse proxy for OAuth flows)")
+	f.String("trusted-proxies", "", "Comma-separated proxy IPs/CIDRs whose X-Forwarded-For is believed for client IPs (default: none)")
+	f.String("auth", "token", "Authentication mode: token (single static token) or oauth (per-user login)")
+	f.String("oauth-google-client-id", "", "Google OAuth client id (enables the google login provider)")
+	f.String("oauth-google-client-secret", "", "Google OAuth client secret (or env AGENTS_OAUTH_GOOGLE_CLIENT_SECRET)")
+	f.String("oauth-github-client-id", "", "GitHub OAuth client id (enables the github login provider)")
+	f.String("oauth-github-client-secret", "", "GitHub OAuth client secret (or env AGENTS_OAUTH_GITHUB_CLIENT_SECRET)")
+	f.String("allowed-domains", "", "Comma-separated email domains admitted to OAuth login")
+	f.String("allowed-emails", "", "Comma-separated email addresses admitted to OAuth login")
+	f.String("bootstrap-admin", "", "Email that signs in as admin (implicitly admitted; the recovery hatch)")
+	f.Int("audit-retention-days", 0, "Prune audit log entries older than this many days (0 = keep forever); a process setting, never an API one")
+	f.String("secret-key-file", "", "File holding the 32-byte key (base64 or hex) that seals stored credentials; or env AGENTS_SECRET_KEY")
+	return cmd
 }
 
 // buildVersion is the plain version string (without commit/date), surfaced by
@@ -89,24 +72,22 @@ func Execute() {
 	}
 }
 
-// dbTarget resolves the database argument: an explicit --db wins, then
-// AGENTS_DB, then the flag's default.
-func dbTarget(flag string, set bool, getenv func(string) string) string {
-	if set {
-		return flag
-	}
-	if env := getenv("AGENTS_DB"); env != "" {
-		return env
-	}
-	return flag
-}
-
+// run is the command's RunE: the flags become a config, and serve runs on it.
 func run(cmd *cobra.Command, _ []string) error {
-	log, err := logging.New(os.Stderr, flagLogLevel, flagLogFormat)
+	cfg, err := loadConfig(cmd)
 	if err != nil {
 		return err
 	}
-	// The root context scopes runs, connections and the hub; it ends when run returns.
+	return serve(cfg)
+}
+
+// serve runs the server on cfg until a signal or a dead listener ends it.
+func serve(cfg *config) error {
+	log, err := logging.New(os.Stderr, cfg.LogLevel, cfg.LogFormat)
+	if err != nil {
+		return err
+	}
+	// The root context scopes runs, connections and the hub; it ends when serve returns.
 	ctx, stopRoot := context.WithCancel(logging.Into(context.Background(), log))
 	defer stopRoot()
 	// The maintenance loops get their own cancellation so shutdown stops them
@@ -114,16 +95,9 @@ func run(cmd *cobra.Command, _ []string) error {
 	bgCtx, stopBg := context.WithCancel(ctx)
 	defer stopBg()
 
-	baseURL := ""
-	if flagBaseURL != "" {
-		var err error
-		if baseURL, err = server.NormalizeBaseURL(flagBaseURL); err != nil {
-			return err
-		}
-	}
 	// Bound before the database is opened: a second start on a taken address
 	// is refused before it can sweep a live instance's tasks — invariant 63.
-	addr := net.JoinHostPort(flagHost, strconv.Itoa(flagPort))
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", addr, err)
@@ -132,16 +106,12 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	// Stored credentials are sealed under one process key. Without a key they
 	// are plaintext — the single-user workbench — and the log says so once.
-	box, err := secrets.FromEnvOrFile("AGENTS_SECRET_KEY", flagSecretKeyFile)
-	if err != nil {
-		return err
-	}
-	store.UseSecretBox(box)
-	if box == nil {
+	store.UseSecretBox(cfg.SecretBox)
+	if cfg.SecretBox == nil {
 		log.Warn("stored credentials are not encrypted at rest; set AGENTS_SECRET_KEY (or --secret-key-file) to seal them")
 	}
 
-	db, err := store.OpenDB(dbTarget(flagDB, cmd.Flags().Changed("db"), os.Getenv))
+	db, err := store.OpenDB(cfg.DB)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -163,26 +133,27 @@ func run(cmd *cobra.Command, _ []string) error {
 	// The audit log; its retention is a flag, not a setting (invariant 54): the
 	// log of configuration changes is not shortened through the API it records.
 	recordAudit := auditRecorder(st.Audit, log)
-	if flagAuditRetention > 0 {
-		go bridge.RunAuditRetention(bgCtx, st.Audit, flagAuditRetention)
+	if cfg.AuditRetentionDays > 0 {
+		go bridge.RunAuditRetention(bgCtx, st.Audit, cfg.AuditRetentionDays)
 	}
 	svc, err := newBridge(ctx, bgCtx, db, st, recordAudit)
 	if err != nil {
 		return err
 	}
 	defer svc.Close()
-	hs := newHandlers(st, svc, recordAudit, baseURL, handler.ServerInfo{
+	hs := newHandlers(st, svc, recordAudit, cfg.BaseURL, handler.ServerInfo{
 		Version:           buildVersion,
 		Timezone:          serverTimezone(),
-		CredentialsSealed: box != nil,
+		CredentialsSealed: cfg.SecretBox != nil,
 	})
 
-	// Every flag is validated before the sweep below changes a row.
-	authSvc, err := newAuth(ctx, st, baseURL, log)
+	// What is left of flag validation (--trusted-proxies) happens before the
+	// sweep below changes a row.
+	authSvc, err := newAuth(ctx, st, cfg, log)
 	if err != nil {
 		return err
 	}
-	srv, err := newServer(ctx, log, authSvc, recordAudit, st, hs, baseURL)
+	srv, err := newServer(ctx, log, authSvc, recordAudit, st, hs, cfg)
 	if err != nil {
 		return err
 	}

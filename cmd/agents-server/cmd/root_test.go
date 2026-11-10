@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -65,13 +68,15 @@ func TestRunRefusesATakenAddressBeforeOpeningTheDatabase(t *testing.T) {
 	}
 	defer ln.Close()
 	dbPath := filepath.Join(t.TempDir(), "data.db")
-	t.Setenv("AGENTS_DB", dbPath)
-	oldHost, oldPort := flagHost, flagPort
-	flagHost, flagPort = "127.0.0.1", ln.Addr().(*net.TCPAddr).Port
-	defer func() { flagHost, flagPort = oldHost, oldPort }()
+	hermeticEnv(t, map[string]string{"AGENTS_DB": dbPath})
+	// The whole command, as main runs it: flags parsed, config loaded, served.
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"--host", "127.0.0.1", "--port", strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
 
-	if err := run(rootCmd, nil); err == nil {
-		t.Fatal("run succeeded on a taken address")
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "listening on") {
+		t.Fatalf("run on a taken address: err = %v, want the bind refused", err)
 	}
 	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
 		t.Fatalf("the database was opened before the address was bound (stat: %v)", err)
