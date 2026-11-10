@@ -54,32 +54,25 @@ func fakeDaemon(t *testing.T) (host string, acted *[]string) {
 	return "tcp://" + srv.Listener.Addr().String(), &actions
 }
 
-// Stop and remove refuse a foreign holder of the name, and act on the
-// INSPECTED id — never the name, which a remove+recreate race could hand to
-// a foreign container between the check and the act.
-func TestManagedActionsVerifyOwnershipAndActByID(t *testing.T) {
+// Remove refuses a foreign holder of the name, and acts on the INSPECTED id —
+// never the name, which a remove+recreate race could hand to a foreign
+// container between the check and the act.
+func TestRemoveManagedVerifiesOwnershipAndActsByID(t *testing.T) {
 	host, acted := fakeDaemon(t)
 	ctx := context.Background()
 	opts := Options{Host: host}
 
-	if err := StopManaged(ctx, opts, "foreign"); err == nil || !strings.Contains(err.Error(), "not created by this package") {
-		t.Fatalf("stop of a foreign container = %v, want an ownership refusal", err)
-	}
 	if err := RemoveManaged(ctx, opts, "foreign"); err == nil || !strings.Contains(err.Error(), "not created by this package") {
 		t.Fatalf("remove of a foreign container = %v, want an ownership refusal", err)
 	}
 	if len(*acted) != 0 {
-		t.Fatalf("refused actions still reached the daemon: %v", *acted)
+		t.Fatalf("refused action still reached the daemon: %v", *acted)
 	}
 
-	if err := StopManaged(ctx, opts, "ours"); err != nil {
-		t.Fatal(err)
-	}
 	if err := RemoveManaged(ctx, opts, "ours"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"stop ours-id", "remove ours-id"}
-	if len(*acted) != 2 || (*acted)[0] != want[0] || (*acted)[1] != want[1] {
-		t.Fatalf("actions = %v, want %v (by id, not name)", *acted, want)
+	if len(*acted) != 1 || (*acted)[0] != "remove ours-id" {
+		t.Fatalf("actions = %v, want [remove ours-id] (by id, not name)", *acted)
 	}
 }

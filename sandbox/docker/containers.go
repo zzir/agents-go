@@ -5,21 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 )
-
-// ManagedContainer is one container this package created (it carries the
-// fingerprint label), as an admin listing shows it.
-type ManagedContainer struct {
-	Name    string    `json:"name"`
-	Image   string    `json:"image"`
-	State   string    `json:"state"`  // running | exited | ...
-	Status  string    `json:"status"` // human-readable, e.g. "Up 2 hours"
-	Created time.Time `json:"created"`
-}
 
 // dial connects to the daemon opts describes; the returned func releases the
 // client and, for an ssh:// host, its tunnel.
@@ -63,47 +52,6 @@ func stopContainer(ctx context.Context, cli *client.Client, id string) error {
 	timeout := stopTimeoutSeconds
 	_, err := cli.ContainerStop(ctx, id, client.ContainerStopOptions{Timeout: &timeout})
 	return err
-}
-
-// ListManaged lists this package's containers on the daemon opts describes —
-// running and stopped alike, matched by the fingerprint label so foreign
-// containers never appear. Only Host/SSH of opts are used.
-func ListManaged(ctx context.Context, opts Options) ([]ManagedContainer, error) {
-	cli, done, err := dial(opts)
-	if err != nil {
-		return nil, err
-	}
-	defer done()
-	res, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
-	if err != nil {
-		return nil, fmt.Errorf("docker sandbox: listing containers: %w", err)
-	}
-	var out []ManagedContainer
-	for _, c := range res.Items {
-		if _, ours := c.Labels[fingerprintLabel]; !ours {
-			continue
-		}
-		name := ""
-		if len(c.Names) > 0 {
-			name = strings.TrimPrefix(c.Names[0], "/")
-		}
-		out = append(out, ManagedContainer{
-			Name:    name,
-			Image:   c.Image,
-			State:   string(c.State),
-			Status:  c.Status,
-			Created: time.Unix(c.Created, 0).UTC(),
-		})
-	}
-	return out, nil
-}
-
-// StopManaged stops the named container on the daemon opts describes,
-// refusing one this package did not create.
-func StopManaged(ctx context.Context, opts Options, name string) error {
-	return withManaged(ctx, opts, name, func(cli *client.Client, id string) error {
-		return stopContainer(ctx, cli, id)
-	})
 }
 
 // RemoveManaged force-removes the named container, so the next run recreates

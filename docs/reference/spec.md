@@ -1226,7 +1226,7 @@ an activated environment survive between calls.
 - **A backend that cannot control its compute does not implement `Lifecycle`**
   (`LocalSandbox`); callers discover that by type assertion.
 - **A by-name lifecycle call never touches a container it did not create.**
-  `docker`'s `Stop` and `Status` (like `StopManaged`/`RemoveManaged`) verify
+  `docker`'s `Stop` and `Status` (like `RemoveManaged`) verify
   the ownership fingerprint first — a foreign holder of the name is an error —
   and `Stop` then acts on the resolved id, not the name.
 - **`Detacher.Detach` releases the Sandbox's connection and touches neither
