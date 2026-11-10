@@ -107,7 +107,7 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
-	// BindWorkspaceIfEmpty refuses a workspace with no row (EXISTS).
+	// BindWorkspaceIfEmpty refuses a workspace with no row.
 	sandboxID := mkSandboxRow(t, db)
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 

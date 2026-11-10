@@ -63,9 +63,9 @@ func TestPGAgentWritesShareOneLockOrder(t *testing.T) {
 }
 
 // A first-run bind and a workspace delete race on the workspace row's lock (FOR
-// KEY SHARE vs FOR UPDATE): whichever commits first, no interleaving may end
+// SHARE vs FOR UPDATE): whichever commits first, no interleaving may end
 // with a session bound to a deleted workspace — there is no unbind path. On
-// READ COMMITTED, the old single-statement guards let both commit.
+// READ COMMITTED, one guarded statement each lets both commit.
 func TestPGBindVsWorkspaceDeleteNeverDangles(t *testing.T) {
 	ctx := context.Background()
 	db := pgTestDB(t)
@@ -145,6 +145,45 @@ func TestPGWorkspaceCreateVsSandboxDeleteNeverOrphans(t *testing.T) {
 		}
 		if perr == nil && !sbExists {
 			t.Fatalf("round %d: workspace survived on a deleted sandbox", i)
+		}
+	}
+}
+
+// A workspace move onto a sandbox and that sandbox's identity update race on
+// the sandbox row's lock: the move lands and the update refuses, or the update
+// wins and the move is refused — never a workspace on a sandbox that now
+// addresses another machine.
+func TestPGWorkspaceMoveVsSandboxIdentityUpdateKeepsTheMachine(t *testing.T) {
+	ctx := context.Background()
+	db := pgTestDB(t)
+	workspaces := NewWorkspaceStore(db)
+	sandboxes := NewSandboxStore(db)
+
+	for i := range 40 {
+		from, to := NewID(), NewID()
+		createSandboxRow(t, db, from)
+		createSandboxRow(t, db, to)
+		p := &Workspace{ID: NewID(), OwnerID: LocalUserID, SandboxID: from, Name: fmt.Sprintf("p-%d", i)}
+		if err := workspaces.Create(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+		move := *p
+		move.SandboxID = to
+		elsewhere := &Sandbox{Name: to, Type: "docker", Config: []byte(`{"host":"ssh://u@other","image":"i"}`)}
+		var wg sync.WaitGroup
+		var blockers int
+		var moveErr, updErr error
+		wg.Go(func() { _, moveErr = workspaces.Update(ctx, p.ID, &move, 1, true) })
+		wg.Go(func() { blockers, updErr = sandboxes.UpdateIdentityIfUnreferenced(ctx, to, elsewhere, 1) })
+		wg.Wait()
+		if moveErr != nil && !errors.Is(moveErr, ErrSandboxMoveDestination) {
+			t.Fatalf("round %d: move: %v", i, moveErr)
+		}
+		if updErr != nil {
+			t.Fatalf("round %d: identity update: %v", i, updErr)
+		}
+		if moved, updated := moveErr == nil, blockers == 0; moved == updated {
+			t.Fatalf("round %d: moved=%v updated=%v, want exactly one to land", i, moved, updated)
 		}
 	}
 }

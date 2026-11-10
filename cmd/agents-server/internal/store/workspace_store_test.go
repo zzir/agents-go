@@ -240,3 +240,106 @@ func TestWorkspaceMovesOnlyWithinOneDestination(t *testing.T) {
 		t.Fatalf("moving to another daemon: err=%v, want ErrSandboxMoveDestination", err)
 	}
 }
+
+// A workspace delete refuses while a session binds it and leaves the row; a
+// missing workspace is ErrNotFound.
+func TestWorkspaceDeleteIfUnreferencedOutcomes(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := ids(t)
+	workspaces := NewWorkspaceStore(db)
+	sessions := NewSessionStore(db)
+	createSandboxRow(t, db, id("sb"))
+	createWorkspaceRow(t, db, id("ws"), id("sb"))
+
+	if _, err := workspaces.DeleteIfUnreferenced(ctx, NewID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleting a missing workspace: err=%v, want ErrNotFound", err)
+	}
+	for _, name := range []string{"a", "b"} {
+		s := &Session{ID: id(name), OwnerID: LocalUserID, Name: name}
+		if err := sessions.Create(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		if won, err := sessions.BindWorkspaceIfEmpty(ctx, s.ID, id("ws")); err != nil || !won {
+			t.Fatalf("bind %s: won=%v err=%v", name, won, err)
+		}
+	}
+	if refs, err := workspaces.DeleteIfUnreferenced(ctx, id("ws")); err != nil || refs != 2 {
+		t.Fatalf("deleting a bound workspace: refs=%d err=%v, want 2 blockers", refs, err)
+	}
+	if _, err := workspaces.Get(ctx, id("ws")); err != nil {
+		t.Fatalf("a refused delete removed the workspace: %v", err)
+	}
+	for _, name := range []string{"a", "b"} {
+		if err := sessions.Delete(ctx, id(name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if refs, err := workspaces.DeleteIfUnreferenced(ctx, id("ws")); err != nil || refs != 0 {
+		t.Fatalf("deleting an unbound workspace: refs=%d err=%v, want deleted", refs, err)
+	}
+	if _, err := workspaces.Get(ctx, id("ws")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after the delete: err=%v, want ErrNotFound", err)
+	}
+}
+
+// The sandbox's guarded writes: a workspace on it refuses the delete and the
+// identity update and leaves the row as it was; the revision is checked
+// before the reference count; a missing sandbox is ErrNotFound.
+func TestSandboxGuardedWritesOutcomes(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := ids(t)
+	withTestBox(t)
+	sandboxes := NewSandboxStore(db)
+	workspaces := NewWorkspaceStore(db)
+	createSandboxRow(t, db, id("sb"))
+	createWorkspaceRow(t, db, id("ws"), id("sb"))
+	const before, after = `{"host":"ssh://u@h","image":"i"}`, `{"host":"ssh://u@other","image":"i"}`
+	moved := func() *Sandbox {
+		return &Sandbox{Name: "moved", Type: "docker", Config: []byte(after)}
+	}
+
+	if _, err := sandboxes.DeleteIfUnreferenced(ctx, NewID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleting a missing sandbox: err=%v, want ErrNotFound", err)
+	}
+	if _, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, NewID(), moved(), 1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("updating a missing sandbox: err=%v, want ErrNotFound", err)
+	}
+	if _, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb"), moved(), 7); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("updating at a stale revision: err=%v, want ErrRevisionConflict", err)
+	}
+	if n, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb"), moved(), 1); err != nil || n != 1 {
+		t.Fatalf("updating a referenced sandbox: workspaces=%d err=%v, want 1 blocker", n, err)
+	}
+	if n, err := sandboxes.DeleteIfUnreferenced(ctx, id("sb")); err != nil || n != 1 {
+		t.Fatalf("deleting a referenced sandbox: workspaces=%d err=%v, want 1 blocker", n, err)
+	}
+	got, err := sandboxes.Get(ctx, id("sb"))
+	if err != nil {
+		t.Fatalf("a refused write removed the sandbox: %v", err)
+	}
+	if got.Revision != 1 || string(got.Config) != before {
+		t.Fatalf("after the refusals: revision=%d config=%s, want the row untouched", got.Revision, got.Config)
+	}
+
+	if _, err := workspaces.DeleteIfUnreferenced(ctx, id("ws")); err != nil {
+		t.Fatal(err)
+	}
+	sb := moved()
+	if n, err := sandboxes.UpdateIdentityIfUnreferenced(ctx, id("sb"), sb, 1); err != nil || n != 0 {
+		t.Fatalf("updating an unreferenced sandbox: workspaces=%d err=%v, want written", n, err)
+	}
+	if string(sb.Config) != after {
+		t.Errorf("caller's config after the write = %s, want plaintext", sb.Config)
+	}
+	if got, err = sandboxes.Get(ctx, id("sb")); err != nil || got.Revision != 2 || string(got.Config) != after {
+		t.Fatalf("after the write: %+v err=%v, want revision 2 and the new config", got, err)
+	}
+	if n, err := sandboxes.DeleteIfUnreferenced(ctx, id("sb")); err != nil || n != 0 {
+		t.Fatalf("deleting an unreferenced sandbox: workspaces=%d err=%v, want deleted", n, err)
+	}
+	if _, err := sandboxes.Get(ctx, id("sb")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after the delete: err=%v, want ErrNotFound", err)
+	}
+}

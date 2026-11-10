@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect"
 
 	e2bsb "github.com/zzir/agents-go/sandbox/e2b"
 )
@@ -356,27 +355,18 @@ func (s *SandboxStore) Create(ctx context.Context, sb *Sandbox) error {
 	return s.CrudStore.Create(ctx, sb)
 }
 
-// noWorkspacesOnSandbox is the guard the identity update and the delete share.
-// Atomic in a WHERE only under SQLite; PostgreSQL locks and re-reads (pgGuardSandbox).
-const noWorkspacesOnSandbox = "NOT EXISTS (SELECT 1 FROM workspaces WHERE sandbox_id = ?)"
-
-// pgGuardSandbox locks the sandbox row FOR UPDATE (the lock workspace
-// Create/Update take) and returns its revision and workspace count. ErrNotFound
-// when gone.
-func pgGuardSandbox(ctx context.Context, tx bun.Tx, id string) (revision int64, workspaces int, err error) {
-	err = tx.NewSelect().Model((*Sandbox)(nil)).Column("revision").
-		Where("id = ?", id).For("UPDATE").Scan(ctx, &revision)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, ErrNotFound
-	}
-	if err != nil {
+// guardSandbox locks the sandbox row (the lock workspace Create/Update take)
+// and returns its revision and workspace count. ErrNotFound when gone.
+func guardSandbox(ctx context.Context, tx bun.Tx, id string) (revision int64, workspaces int, err error) {
+	sb := new(Sandbox)
+	if err := lockRow(ctx, tx, sb, "id = ?", id); err != nil {
 		return 0, 0, err
 	}
 	workspaces, err = tx.NewSelect().Model((*Workspace)(nil)).Where("sandbox_id = ?", id).Count(ctx)
 	if err != nil {
 		return 0, 0, fmt.Errorf("counting workspaces on sandbox %s: %w", id, err)
 	}
-	return revision, workspaces, nil
+	return sb.Revision, workspaces, nil
 }
 
 // Update overwrites the sandbox under a compare-and-set on expectedRevision
@@ -408,93 +398,51 @@ func (s *SandboxStore) Update(ctx context.Context, id string, sb *Sandbox, expec
 // identity moves. Returns the blocking count; a moved revision is ErrRevisionConflict.
 func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id string, sb *Sandbox, expectedRevision int64) (workspaces int, err error) {
 	sb.ID = id
-	if s.db.Dialect().Name() == dialect.PG {
-		err = sealedWrite(sb, sealSandbox, openSandbox, func() error {
-			return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-				revision, n, gerr := pgGuardSandbox(ctx, tx, id)
-				if gerr != nil {
-					return gerr
-				}
-				if revision != expectedRevision {
-					return ErrRevisionConflict
-				}
-				if n > 0 {
-					workspaces = n
-					return nil
-				}
-				_, uerr := tx.NewUpdate().Model(sb).
-					ExcludeColumn("id", "created_at", "revision").
-					Set("revision = revision + 1").
-					Where("id = ?", id).
-					Exec(ctx)
-				return uerr
-			})
-		})
-		if err != nil && !errors.Is(err, ErrRevisionConflict) {
-			err = fmt.Errorf("updating sandbox %s: %w", id, err)
-		}
-		return workspaces, err
-	}
-	var res sql.Result
-	err = sealedWrite(sb, sealSandbox, openSandbox, func() (err error) {
-		res, err = s.db.NewUpdate().Model(sb).
-			ExcludeColumn("id", "created_at", "revision").
-			Set("revision = revision + 1").
-			Where("id = ?", id).
-			Where("revision = ?", expectedRevision).
-			Where(noWorkspacesOnSandbox, id).
-			Exec(ctx)
-		return err
-	})
-	if err != nil {
-		return 0, fmt.Errorf("updating sandbox %s: %w", id, err)
-	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return 0, nil
-	}
-	cur, gerr := s.Get(ctx, id)
-	if gerr != nil {
-		return 0, gerr // ErrNotFound included
-	}
-	if cur.Revision != expectedRevision {
-		return 0, ErrRevisionConflict
-	}
-	return s.countBlockers(ctx, id)
-}
-
-// DeleteIfUnreferenced deletes the sandbox only while no workspace lives on it
-// (atomic under SQLite; FOR UPDATE and a re-read on PostgreSQL) and returns how
-// many workspaces blocked it; a missing sandbox is ErrNotFound. No cascade —
-// decisions §5.33.
-func (s *SandboxStore) DeleteIfUnreferenced(ctx context.Context, id string) (workspaces int, err error) {
-	if s.db.Dialect().Name() == dialect.PG {
-		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-			_, n, gerr := pgGuardSandbox(ctx, tx, id)
-			if gerr != nil {
-				return gerr
+	err = sealedWrite(sb, sealSandbox, openSandbox, func() error {
+		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			revision, n, err := guardSandbox(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if revision != expectedRevision {
+				return ErrRevisionConflict
 			}
 			if n > 0 {
 				workspaces = n
 				return nil
 			}
-			if _, derr := tx.NewDelete().Model((*Sandbox)(nil)).Where("id = ?", id).Exec(ctx); derr != nil {
-				return fmt.Errorf("deleting sandbox %s: %w", id, derr)
-			}
-			return nil
+			_, err = tx.NewUpdate().Model(sb).
+				ExcludeColumn("id", "created_at", "revision").
+				Set("revision = revision + 1").
+				Where("id = ?", id).
+				Exec(ctx)
+			return err
 		})
-		return workspaces, err
+	})
+	if err != nil && !errors.Is(err, ErrRevisionConflict) {
+		err = fmt.Errorf("updating sandbox %s: %w", id, err)
 	}
-	res, err := s.db.NewDelete().Model((*Sandbox)(nil)).
-		Where("id = ?", id).
-		Where(noWorkspacesOnSandbox, id).
-		Exec(ctx)
+	return workspaces, err
+}
+
+// DeleteIfUnreferenced deletes the sandbox only while no workspace lives on
+// it, under the row lock every workspace write takes, and returns how many
+// workspaces blocked it; a missing sandbox is ErrNotFound. No cascade —
+// decisions §5.33.
+func (s *SandboxStore) DeleteIfUnreferenced(ctx context.Context, id string) (workspaces int, err error) {
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, n, err := guardSandbox(ctx, tx, id)
+		if err != nil || n > 0 {
+			workspaces = n
+			return err
+		}
+		_, err = tx.NewDelete().Model((*Sandbox)(nil)).Where("id = ?", id).Exec(ctx)
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("deleting sandbox %s: %w", id, err)
 	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return 0, nil
-	}
-	return s.countBlockers(ctx, id)
+	return workspaces, nil
 }
 
 // explainWriteRefusal disambiguates a zero-row conditional write that carried
@@ -508,23 +456,6 @@ func (s *SandboxStore) explainWriteRefusal(ctx context.Context, id string) error
 		return fmt.Errorf("updating sandbox %s: %w", id, ErrNotFound)
 	}
 	return ErrRevisionConflict
-}
-
-// countBlockers reports how many workspaces hold the sandbox down (at least
-// one, even if the reference vanished since), or ErrNotFound when it is gone.
-func (s *SandboxStore) countBlockers(ctx context.Context, id string) (int, error) {
-	exists, err := s.db.NewSelect().Model((*Sandbox)(nil)).Where("id = ?", id).Exists(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("checking sandbox %s: %w", id, err)
-	}
-	if !exists {
-		return 0, ErrNotFound
-	}
-	n, err := s.db.NewSelect().Model((*Workspace)(nil)).Where("sandbox_id = ?", id).Count(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("counting workspaces on sandbox %s: %w", id, err)
-	}
-	return max(n, 1), nil
 }
 
 // canonicalEqual compares two raw payloads through T as canonical JSON: a map

@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect"
 )
 
 // WorkspaceStore persists workspaces — per-user working trees on a sandbox
@@ -212,57 +211,24 @@ func (s *WorkspaceStore) List(ctx context.Context, ownerID string) ([]Workspace,
 	return out, nil
 }
 
-// DeleteIfUnreferenced deletes the workspace only while no session binds it (NOT
-// EXISTS on SQLite; FOR UPDATE and a re-read on PostgreSQL) and returns how
-// many sessions blocked it. Reclaiming the storage is the caller's act
-// (decisions §5.33).
+// DeleteIfUnreferenced deletes the workspace only while no session binds it,
+// under the row lock a binding shares, and returns how many sessions blocked
+// it. Reclaiming the storage is the caller's act (decisions §5.33).
 func (s *WorkspaceStore) DeleteIfUnreferenced(ctx context.Context, id string) (refs int, err error) {
-	if s.db.Dialect().Name() == dialect.PG {
-		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-			var pid string
-			lerr := tx.NewSelect().Model((*Workspace)(nil)).Column("id").
-				Where("id = ?", id).For("UPDATE").Scan(ctx, &pid)
-			if errors.Is(lerr, sql.ErrNoRows) {
-				return fmt.Errorf("deleting workspace %s: %w", id, ErrNotFound)
-			}
-			if lerr != nil {
-				return lerr
-			}
-			n, cerr := tx.NewSelect().Model((*Session)(nil)).Where("workspace_id = ?", id).Count(ctx)
-			if cerr != nil {
-				return fmt.Errorf("counting sessions on workspace %s: %w", id, cerr)
-			}
-			if n > 0 {
-				refs = n
-				return nil
-			}
-			if _, derr := tx.NewDelete().Model((*Workspace)(nil)).Where("id = ?", id).Exec(ctx); derr != nil {
-				return fmt.Errorf("deleting workspace %s: %w", id, derr)
-			}
-			return nil
-		})
-		return refs, err
-	}
-	res, err := s.db.NewDelete().Model((*Workspace)(nil)).
-		Where("id = ?", id).
-		Where("NOT EXISTS (SELECT 1 FROM sessions WHERE workspace_id = ?)", id).
-		Exec(ctx)
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := lockRow(ctx, tx, new(Workspace), "id = ?", id); err != nil {
+			return err
+		}
+		n, err := tx.NewSelect().Model((*Session)(nil)).Where("workspace_id = ?", id).Count(ctx)
+		if err != nil || n > 0 {
+			refs = n
+			return err
+		}
+		_, err = tx.NewDelete().Model((*Workspace)(nil)).Where("id = ?", id).Exec(ctx)
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("deleting workspace %s: %w", id, err)
 	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return 0, nil
-	}
-	exists, err := s.db.NewSelect().Model((*Workspace)(nil)).Where("id = ?", id).Exists(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("deleting workspace %s: %w", id, err)
-	}
-	if !exists {
-		return 0, fmt.Errorf("deleting workspace %s: %w", id, ErrNotFound)
-	}
-	n, err := s.db.NewSelect().Model((*Session)(nil)).Where("workspace_id = ?", id).Count(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("counting sessions on workspace %s: %w", id, err)
-	}
-	return n, nil
+	return refs, nil
 }

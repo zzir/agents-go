@@ -535,7 +535,8 @@ Rules: workbench invariant 45 (only a sandbox's identity freezes); invariant 27
 ### 5.28 A workspace is the unit of working storage, and containers are per workspace
 
 Decided 2026-08-24; revised 2026-08-25 (§5.29), 2026-08-28 (§5.33, §5.36),
-2026-08-29 (deletion contracts in SQL) and 2026-11-05 (named workspace, §5.98).
+2026-08-29 (deletion contracts in SQL), 2026-11-05 (named workspace, §5.98)
+and 2026-11-10 (one shape for both dialects).
 
 **Decision.** A **workspace** is one user's working tree on one sandbox, keyed by
 id and never by a typed path, with one persistent container per workspace —
@@ -550,10 +551,10 @@ cascade would destroy working trees as a side effect of removing a machine.
 Workspaces behind the admin gate — they are the first PERSONAL configuration
 entity, scoped in the handlers; an admin MANAGES the plane (§5.29).
 
-**Cost accepted.** Deletion and binding contracts settle in SQL per dialect —
-single-statement guards on SQLite, parent-row locks on PostgreSQL — two shapes
-to keep equivalent. Sessions, forks and tasks on one workspace share its tree; a
-regenerate or fork rewinds the transcript, not the files.
+**Cost accepted.** Deletion and binding contracts settle in one transaction
+that locks the parent row first — sound on SQLite only while its pool is one
+connection (`NewSQLiteDB`). Sessions, forks and tasks on one workspace share its
+tree; a regenerate or fork rewinds the transcript, not the files.
 
 Rules: workbench invariant 27 (binding, fences, locks); the operational
 surface, the terminal's ownership rule included, is

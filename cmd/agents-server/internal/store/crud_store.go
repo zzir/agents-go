@@ -193,7 +193,8 @@ func lockRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) e
 }
 
 // shareRow is lockRow for a row the transaction only references — FOR SHARE:
-// referencing writes do not wait on each other, the row's own writers do.
+// referencing writes do not wait on each other, the row's own writers do
+// (invariant 102).
 func shareRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) error {
 	return readLocked(ctx, tx, model, "SHARE", where, arg)
 }

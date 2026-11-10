@@ -589,3 +589,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      the linker pruning unused methods; a new build definition carries both,
      and `scripts/binary-size.sh` fails CI when the binary outgrows its budget
      — decisions §5.102.
+102. **A delete that references can refuse is decided under the row's
+     lock, on both dialects.** The delete takes `lockRow` on the row and counts
+     the references inside that transaction; every write that references the
+     row takes at least `shareRow` on it in its own. A guard in the statement's
+     WHERE (`NOT EXISTS`) is not that lock: under READ COMMITTED both commit
+     (decisions §5.28).

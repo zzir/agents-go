@@ -263,8 +263,8 @@ func (h *SandboxHandler) Update(c *gin.Context) error {
 	return nil
 }
 
-// Delete removes the sandbox; one still carrying workspaces is 409, decided by
-// the delete statement itself.
+// Delete removes the sandbox; one still carrying workspaces is 409, decided
+// under the sandbox row's lock.
 //
 //	@Summary	Delete sandbox
 //	@Tags		sandboxes

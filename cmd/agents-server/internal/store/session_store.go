@@ -244,53 +244,36 @@ func (s *SessionStore) BindAgentIfEmpty(ctx context.Context, id, agentConfigID s
 }
 
 // BindWorkspaceIfEmpty permanently binds workspace_id to the session unless it is
-// already bound (decisions §5.28), reporting whether THIS call bound it; the
-// workspace's existence is pinned inside the write (EXISTS on SQLite, FOR KEY
-// SHARE on PostgreSQL). An empty workspaceID binds nothing; a missing session is
-// (false, nil).
-func (s *SessionStore) BindWorkspaceIfEmpty(ctx context.Context, id, workspaceID string) (bool, error) {
+// already bound (decisions §5.28), reporting whether THIS call bound it, under
+// a share lock on the workspace row: a deleted workspace binds nothing. An
+// empty workspaceID binds nothing; a missing session is (false, nil).
+func (s *SessionStore) BindWorkspaceIfEmpty(ctx context.Context, id, workspaceID string) (bound bool, err error) {
 	if workspaceID == "" {
 		return false, nil
 	}
-	var res sql.Result
-	var err error
-	if s.db.Dialect().Name() == dialect.PG {
-		err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-			var pid string
-			lerr := tx.NewSelect().Model((*Workspace)(nil)).Column("id").
-				Where("id = ?", workspaceID).For("KEY SHARE").Scan(ctx, &pid)
-			if errors.Is(lerr, sql.ErrNoRows) {
-				return nil // no workspace row: bind nothing (res stays nil)
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := shareRow(ctx, tx, new(Workspace), "id = ?", workspaceID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return nil
 			}
-			if lerr != nil {
-				return lerr
-			}
-			res, lerr = tx.NewUpdate().Model((*Session)(nil)).
-				Set("workspace_id = ?", workspaceID).
-				Where("id = ?", id).
-				Where("workspace_id IS NULL").
-				Exec(ctx)
-			return lerr
-		})
-	} else {
-		res, err = s.db.NewUpdate().Model((*Session)(nil)).
+			return err
+		}
+		res, err := tx.NewUpdate().Model((*Session)(nil)).
 			Set("workspace_id = ?", workspaceID).
 			Where("id = ?", id).
 			Where("workspace_id IS NULL").
-			Where("EXISTS (SELECT 1 FROM workspaces WHERE id = ?)", workspaceID).
 			Exec(ctx)
-	}
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		bound = n > 0
+		return err
+	})
 	if err != nil {
 		return false, fmt.Errorf("binding session %s to workspace %s: %w", id, workspaceID, err)
 	}
-	if res == nil {
-		return false, nil // the workspace vanished before the lock
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("binding session %s to workspace %s: %w", id, workspaceID, err)
-	}
-	return n > 0, nil
+	return bound, nil
 }
 
 // CountWorkspaceRefs reports how many sessions bind workspaceID — the unit the
