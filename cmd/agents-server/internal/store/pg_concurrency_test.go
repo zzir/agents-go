@@ -188,6 +188,37 @@ func TestPGWorkspaceMoveVsSandboxIdentityUpdateKeepsTheMachine(t *testing.T) {
 	}
 }
 
+// Two workspaces swapping sandboxes reference the same two rows in opposite
+// orders; shared locks keep that from deadlocking.
+func TestPGCrossedWorkspaceMovesNeverDeadlock(t *testing.T) {
+	ctx := context.Background()
+	db := pgTestDB(t)
+	workspaces := NewWorkspaceStore(db)
+
+	for i := range 40 {
+		a, b := NewID(), NewID()
+		createSandboxRow(t, db, a)
+		createSandboxRow(t, db, b)
+		p := &Workspace{ID: NewID(), OwnerID: LocalUserID, SandboxID: a, Name: fmt.Sprintf("p-%d", i)}
+		q := &Workspace{ID: NewID(), OwnerID: LocalUserID, SandboxID: b, Name: fmt.Sprintf("q-%d", i)}
+		for _, w := range []*Workspace{p, q} {
+			if err := workspaces.Create(ctx, w); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pm, qm := *p, *q
+		pm.SandboxID, qm.SandboxID = b, a
+		var wg sync.WaitGroup
+		var perr, qerr error
+		wg.Go(func() { _, perr = workspaces.Update(ctx, p.ID, &pm, 1, true) })
+		wg.Go(func() { _, qerr = workspaces.Update(ctx, q.ID, &qm, 1, true) })
+		wg.Wait()
+		if perr != nil || qerr != nil {
+			t.Fatalf("round %d: crossed moves: %v / %v", i, perr, qerr)
+		}
+	}
+}
+
 // An agent create and the delete of a provider it names race on the provider
 // row's lock: the create lands and the delete refuses, or the delete wins and
 // the create is refused — never an agent naming a deleted provider, as its

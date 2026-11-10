@@ -355,7 +355,7 @@ func (s *SandboxStore) Create(ctx context.Context, sb *Sandbox) error {
 	return s.create(ctx, sb)
 }
 
-// guardSandbox locks the sandbox row (the lock workspace Create/Update take)
+// guardSandbox locks the sandbox row (the one workspace Create/Update share-lock)
 // and returns its revision and workspace count. ErrNotFound when gone.
 func guardSandbox(ctx context.Context, tx bun.Tx, id string) (revision int64, workspaces int, err error) {
 	sb := new(Sandbox)

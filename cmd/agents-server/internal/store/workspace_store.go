@@ -22,8 +22,8 @@ func NewWorkspaceStore(db *bun.DB) *WorkspaceStore {
 	return &WorkspaceStore{CrudStore: NewCrudStore[Workspace](db, "workspace", "name ASC").withSecrets(sealWorkspace, openWorkspace), db: db}
 }
 
-// Create inserts the workspace with the sandbox row locked for the insert's
-// duration (decisions §5.28); ErrNotFound when it is missing. The insert
+// Create inserts the workspace with the sandbox row share-locked for the
+// insert's duration (decisions §5.28); ErrNotFound when it is missing. The insert
 // bypasses the CrudStore write path, hence sealedWrite.
 func (s *WorkspaceStore) Create(ctx context.Context, p *Workspace) error {
 	// The id is assigned before sealing: the env AAD binds to it.
@@ -39,7 +39,7 @@ func (s *WorkspaceStore) Create(ctx context.Context, p *Workspace) error {
 	err := sealedWrite(p, sealWorkspace, openWorkspace, func() error {
 		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			sb := new(Sandbox)
-			if err := lockRow(ctx, tx, sb, "id = ?", p.SandboxID); err != nil {
+			if err := shareRow(ctx, tx, sb, "id = ?", p.SandboxID); err != nil {
 				if errors.Is(err, ErrNotFound) {
 					return fmt.Errorf("sandbox %s: %w", p.SandboxID, err)
 				}
@@ -68,10 +68,11 @@ func (s *WorkspaceStore) Update(ctx context.Context, id string, p *Workspace, ex
 	var res sql.Result
 	var newGen int64
 	err := sealedWrite(p, sealWorkspace, openWorkspace, func() error {
-		// The sandbox row is locked for the write's duration, as Create locks it.
+		// Both sandbox rows are share-locked for the write's duration: two
+		// workspaces swapping sandboxes take them in opposite orders.
 		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			next := new(Sandbox)
-			if err := lockRow(ctx, tx, next, "id = ?", p.SandboxID); err != nil {
+			if err := shareRow(ctx, tx, next, "id = ?", p.SandboxID); err != nil {
 				if errors.Is(err, ErrNotFound) {
 					return fmt.Errorf("sandbox %s: %w", p.SandboxID, err)
 				}
@@ -132,7 +133,7 @@ func checkMove(ctx context.Context, tx bun.Tx, workspaceID string, next *Sandbox
 		return nil
 	}
 	prev := new(Sandbox)
-	if err := lockRow(ctx, tx, prev, "id = ?", cur.SandboxID); err != nil {
+	if err := shareRow(ctx, tx, prev, "id = ?", cur.SandboxID); err != nil {
 		return err
 	}
 	if prev.Type != next.Type {
