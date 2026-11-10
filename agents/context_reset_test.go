@@ -255,7 +255,7 @@ func TestNewContextResetsUnderAHistoryLimit(t *testing.T) {
 	model := resetScript()
 	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{agents.NewContextTool()}}
 	opts := agents.RunOptions{
-		Conversation: agents.ConversationOptions{Session: sess, Settings: session.Settings{Limit: 4}},
+		Conversation: agents.ConversationOptions{Session: sess, HistoryLimit: 4},
 		Compaction:   agents.CompactionOptions{Compactor: compactor},
 	}
 	if _, err := agents.RunSync(ctx, agent, "go", opts); err != nil {

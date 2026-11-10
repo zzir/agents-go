@@ -361,25 +361,24 @@ func (m *retryModel) StreamResponse(ctx context.Context, req ModelRequest) iter.
 
 var _ Model = (*retryModel)(nil)
 
-// retryProvider wraps a ModelProvider so every Model it produces retries per the
-// given policy. This is the provider-level counterpart of NewRetryModel.
-type retryProvider struct {
-	inner  ModelProvider
-	policy RetryPolicy
-}
-
 // NewRetryProvider is the provider-level NewRetryModel: every Model it
 // produces retries per policy.
 func NewRetryProvider(inner ModelProvider, policy RetryPolicy) ModelProvider {
-	return &retryProvider{inner: inner, policy: policy}
+	return decoratedProvider{inner: inner, wrap: func(m Model) Model { return NewRetryModel(m, policy) }}
 }
 
-func (p *retryProvider) Model(name string) (Model, error) {
+// decoratedProvider wraps every Model inner produces.
+type decoratedProvider struct {
+	inner ModelProvider
+	wrap  func(Model) Model
+}
+
+func (p decoratedProvider) Model(name string) (Model, error) {
 	m, err := p.inner.Model(name)
 	if err != nil {
 		return nil, err
 	}
-	return NewRetryModel(m, p.policy), nil
+	return p.wrap(m), nil
 }
 
 // retrySpan records one failed attempt as a zero-duration span under the

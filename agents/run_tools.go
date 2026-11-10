@@ -29,8 +29,6 @@ type functionToolResult struct {
 	// terminate is the tool asking the run to stop after this batch. It only
 	// takes effect when every tool in the batch asks.
 	terminate bool
-	// addedTools are deferred tools this result discloses.
-	addedTools []string
 	// failed marks a call that did not run to a result — see spec §2.7d.
 	failed bool
 }
@@ -74,7 +72,7 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 	// surfaced is the lowest index, not whichever goroutine finished first.
 	fatalErrs := make([]error, len(runs))
 	g, gctx := errgroup.WithContext(ctx)
-	if limit := r.toolConcurrency(runs); limit > 0 {
+	if limit := r.opts.Exec.MaxToolConcurrency; limit > 0 {
 		g.SetLimit(limit)
 	}
 	// Tools hand progress to this goroutine, the only one that yields — see
@@ -147,12 +145,11 @@ func (r *runner) runFunctionTools(ctx context.Context, agent *Agent, runs []tool
 // under its span, and the shared tail — a handled failure is an IsError output.
 func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFunction, push func(*ToolProgressEvent)) (res functionToolResult, err error) {
 	tc := &ToolContext{
-		RunContext:    r.rc,
-		ToolName:      run.Call.Name,
-		ToolCallID:    run.Call.CallID,
-		ToolArguments: run.Call.Arguments,
-		Agent:         agent,
-		ToolCall:      run.Call.Raw,
+		RunContext: r.rc,
+		ToolName:   run.Call.Name,
+		ToolCallID: run.Call.CallID,
+		Agent:      agent,
+		ToolCall:   run.Call.Raw,
 	}
 	// Progress is delivered only on a streamed run; on a blocking run nobody
 	// is watching and buffering it would grow without bound.
@@ -296,7 +293,6 @@ func (r *runner) runOneTool(ctx context.Context, agent *Agent, run toolRunFuncti
 		output:     out,
 		usage:      result.Usage,
 		terminate:  result.Terminate,
-		addedTools: result.AddedTools,
 		failed:     failed,
 	}, nil
 }
@@ -400,22 +396,20 @@ func (r *runner) runToolStage(ctx context.Context, agent *Agent, stage Guardrail
 	if len(guardrails) == 0 {
 		return false, "", nil
 	}
-	// Its own span beside the function span, as the input and output stages
-	// have: a Replace is otherwise invisible in the trace.
-	span := r.trace.StartGuardrailSpan(string(stage), r.agentParentID())
-	defer span.Finish()
-	results, msg, replaced, err := runStageSequential(ctx, r.rc, guardrails, GuardrailPayload{
-		Stage:      stage,
-		Agent:      agent,
-		ToolName:   run.Call.Name,
-		ToolCallID: run.Call.CallID,
-		Arguments:  run.Call.Arguments,
-		Output:     output,
+	var msg string
+	var replaced bool
+	_, err := r.guardStage(stage, func() (res []GuardrailResult, err error) {
+		res, msg, replaced, err = runStageSequential(ctx, r.rc, guardrails, GuardrailPayload{
+			Stage:      stage,
+			Agent:      agent,
+			ToolName:   run.Call.Name,
+			ToolCallID: run.Call.CallID,
+			Arguments:  run.Call.Arguments,
+			Output:     output,
+		})
+		return res, err
 	})
-	r.recordGuardrailResults(results...)
-	annotateGuardrailSpan(span, results)
 	if err != nil {
-		span.SetError(err.Error(), nil)
 		return false, "", err
 	}
 	return replaced, msg, nil

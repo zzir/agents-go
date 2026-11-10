@@ -33,7 +33,7 @@ agent.Tools = []*agents.Tool{runQuery}
 
 - The `jsonschema:"..."` struct tag is the parameter description shown to the model.
 - The `ctx` is the run's context (cancellation propagates into tools).
-- `tc *ToolContext` carries the [run context](running_agents.md#local-context) plus call metadata: `ToolName`, `ToolCallID`, `ToolArguments`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). To observe or gate the call from outside the tool, use tool-stage [guardrails](guardrails.md) — they bracket execution with the same call identity in their payload.
+- `tc *ToolContext` carries the [run context](running_agents.md#local-context) plus call metadata: `ToolName`, `ToolCallID`, the `Agent` whose tool is running, and `ToolCall` (the raw model-emitted function-call item). To observe or gate the call from outside the tool, use tool-stage [guardrails](guardrails.md) — they bracket execution with the same call identity in their payload.
 - Tools requested in the same model turn run **concurrently**; share state through the context value only if it is goroutine-safe.
 
 The schema comes from compile-time generics over the argument struct and its tags, so what the model is shown and what the function decodes cannot drift apart.
@@ -119,29 +119,6 @@ Append to `Guardrails` rather than assign, and capture a hook
 (`inner := tool.IsEnabled`) before overwriting it when yours should compose
 with the tool's own answer ([spec §2.7c](../reference/spec.md#27c-tool-capabilities-are-fields)).
 
-### Progressive disclosure
-
-`Tool.Deferred` withholds a tool from the model until another tool's
-result names it:
-
-```go
-readAccount.Deferred = true             // hidden until disclosed
-
-agent.Tools = []*agents.Tool{
-	authenticate,                       // always available
-	readAccount,
-}
-
-// inside authenticate:
-r := agents.TextResult("signed in")
-r.AddedTools = []string{"read_account"}
-return r, nil
-```
-
-Disclosure is cumulative for the run, survives an [approval pause](human_in_the_loop.md), does not override `IsEnabled`, and naming an unknown tool is ignored ([spec §2.7i](../reference/spec.md#27i-progressive-tool-disclosure)).
-
-Each disclosure changes the `tools` array the next call sends. For OpenAI's prompt cache that is a changed prefix, so the call misses the cache; a backend that binds reasoning to its prefix (Anthropic's preserved thinking, where enforced) discards the earlier reasoning ([decisions §5.77](../explanation/decisions.md#577-a-bound-reasoning-block-is-dropped-not-fatal)). Disclose early, or keep the tool set fixed. No adapter uses a provider's own deferral mechanism for this ([decisions §5.88](../explanation/decisions.md#588-deferred-tools-reach-the-wire-as-a-shorter-list)).
-
 ### Streaming partial results
 
 A tool that runs for a while can push progress to a streamed run's consumer:
@@ -170,10 +147,9 @@ for ev, err := range stream {
 
 Progress never reaches the model — the return value does — and `Emit` is a safe no-op on a blocking run and after the tool returns ([spec §2.7g](../reference/spec.md#27g-tool-progress)).
 
-Two built-ins already use it: `sandbox.CodeTool` streams stdout as the command
-runs (on backends implementing `ExecStreamer`), and an
-[agent-as-tool](multi_agent.md) forwards the nested agent's messages, so a
-sub-agent's work is visible without wiring `OnStream`.
+Two built-ins already use it: `sandbox.CodeTool` streams output as the command
+runs, and an [agent-as-tool](multi_agent.md) forwards the nested agent's messages, so a
+sub-agent's work is visible with nothing wired.
 
 ### Structured / multimodal output
 
@@ -218,7 +194,7 @@ agents.NewTool("query_orders", "…",
 | `Content` | What the model sees — text, images, files |
 | `Details` | Structured data for the UI and logs. **Never reaches the model.** Lands on `Display().Extra` |
 | `Display` | The renderer you would like: `"diff"`, `"terminal"`, `"table"`, `"json"`, `"markdown"`. A hint — an unknown name falls back to text |
-| `Title` / `Summary` | A card heading when the tool name is not it, and a one-line account of what happened (`WithTitle`/`WithSummary`); overrides a consumer may ignore, never reaching the model |
+| `Title` / `Summary` | A card heading when the tool name is not it, and a one-line account of what happened; overrides a consumer may ignore, never reaching the model |
 
 A tool returning a `string`, a struct, or a `[]ToolOutputContent` is wrapped automatically, so `return "sunny", nil` is still the shortest correct tool. The remaining fields — `Terminate`, `IsError`, `Usage` — and the round-trip rule on `Details` are [spec §2.7b](../reference/spec.md#27b-tool-results).
 

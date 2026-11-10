@@ -57,9 +57,6 @@ type RunState struct {
 	// (tool_choice reset).
 	ToolsUsed []string
 
-	// DisclosedTools names the deferred tools opened up before the pause.
-	DisclosedTools []string
-
 	// ContextReset is a new_context request cut off before its save point;
 	// ContextFresh says the context is the last reset's — see spec §2.5i.
 	ContextReset bool
@@ -147,37 +144,22 @@ func newResumedControl(state *RunState) *RunControl {
 	return ctrl
 }
 
-// resumeWithMiddleware is ResumeRun's counterpart of withMiddleware.
+// resumeWithMiddleware is the resume side of launch: the paused agent and
+// input enter the chain, and the runner is rebuilt from state.
 func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions, ctrl *RunControl, rawEvents bool) RunStream {
 	if state == nil {
-		// resumeStream reports the nil-state error on the stream.
 		return singleUse(func(yield func(StreamEvent, error) bool) {
-			resumeStream(ctx, nil, opts, ctrl, rawEvents, yield)
+			yield(nil, NewUserError("ResumeRun: state must not be nil"))
 		})
 	}
-	base := func(ctx context.Context, in RunInput) RunStream {
-		return func(yield func(StreamEvent, error) bool) {
-			resumeStream(ctx, state, *in.Opts, ctrl, rawEvents, yield)
-		}
-	}
-	return runViaMiddleware(ctx, state.CurrentAgent, state.OriginalInput, opts, ctrl, base)
-}
-
-func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) {
-	r, err := newResumedRunner(state, opts)
-	if err != nil {
-		yield(nil, err)
-		return
-	}
-	r.run(ctx, state.CurrentAgent, ctrl, rawEvents, yield)
+	return launch(ctx, state.CurrentAgent, state.OriginalInput, opts, ctrl, rawEvents, func(in RunInput) (*runner, error) {
+		return newResumedRunner(state, *in.Opts)
+	})
 }
 
 // newResumedRunner builds the runner a paused run continues on, its carried
 // state restored from state.
 func newResumedRunner(state *RunState, opts RunOptions) (*runner, error) {
-	if state == nil {
-		return nil, NewUserError("ResumeRun: state must not be nil")
-	}
 	if state.CurrentAgent == nil {
 		return nil, NewUserError("ResumeRun: state.CurrentAgent must not be nil")
 	}
@@ -211,12 +193,6 @@ func newResumedRunner(state *RunState, opts RunOptions) (*runner, error) {
 	// Scrubbed like session history: a hand-edited state may carry a dangling call.
 	state.OriginalInput = normalizeStoredInput(state.OriginalInput)
 	r := &runner{opts: opts, rc: rc, maxTurns: maxTurns, resume: state, userInput: state.UserInput}
-	for _, name := range state.DisclosedTools {
-		if r.disclosed == nil {
-			r.disclosed = map[string]bool{}
-		}
-		r.disclosed[name] = true
-	}
 	// A copy, so a second resume of the same state counts from the pause.
 	r.toolLoop = state.toolLoop.carried()
 	// First-turn input guardrails are not re-run on resume; this is their only source.
@@ -283,11 +259,10 @@ type serialRunState struct {
 	SessionItems          []serialItem                   `json:"session_items,omitempty"`
 	PersistedSessionItems int                            `json:"persisted_session_items,omitempty"`
 	ToolsUsed             []string                       `json:"tools_used,omitempty"`
-	DisclosedTools        []string                       `json:"disclosed_tools,omitempty"`
 	ContextReset          bool                           `json:"context_reset,omitempty"`
 	ContextFresh          bool                           `json:"context_fresh,omitempty"`
 	PendingInput          *serialPendingInput            `json:"pending_input,omitempty"`
-	ServerCursor          *serialServerCursor            `json:"server_cursor,omitempty"`
+	ServerCursor          *serverCursor                  `json:"server_cursor,omitempty"`
 	ModelResponses        []serialResponse               `json:"model_responses"`
 	InterruptedResponse   *serialResponse                `json:"interrupted_response"`
 	Interruptions         []serialInterruption           `json:"interruptions"`
@@ -303,7 +278,7 @@ type serialRunState struct {
 	UsagePending *bool `json:"usage_pending,omitempty"`
 	// ToolLoop is the tool-loop valves' count (schema ≥ 1.9); absent starts
 	// it from zero.
-	ToolLoop *serialToolLoop `json:"tool_loop,omitempty"`
+	ToolLoop *toolLoopState `json:"tool_loop,omitempty"`
 
 	// Guardrail results accumulated before the pause (schema ≥ 1.3), serialized
 	// lossily as name + output payload — the live guardrail func is not restored.
@@ -316,22 +291,6 @@ type serialPendingInput struct {
 	Steer    []json.RawMessage `json:"steer,omitempty"`
 	NextTurn []json.RawMessage `json:"next_turn,omitempty"`
 	FollowUp []json.RawMessage `json:"follow_up,omitempty"`
-}
-
-// serialServerCursor is the persisted form of the run's server-conversation
-// cursor (serverCursor).
-type serialServerCursor struct {
-	ResponseID         string `json:"response_id,omitempty"`
-	ItemCount          int    `json:"item_count,omitempty"`
-	ConversationActive bool   `json:"conversation_active,omitempty"`
-}
-
-// serialToolLoop is the persisted form of toolLoopState.
-type serialToolLoop struct {
-	Turns       int                       `json:"turns,omitempty"`
-	Seen        map[string]toolLoopRepeat `json:"seen,omitempty"`
-	FailedTurns int                       `json:"failed_turns,omitempty"`
-	NoticedAt   int                       `json:"noticed_at,omitempty"`
 }
 
 // serialGuardrailResult is the persisted form of a guardrail result: name,
@@ -439,7 +398,6 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 		MaxTurns:              s.MaxTurns,
 		PersistedSessionItems: s.PersistedSessionItems,
 		ToolsUsed:             s.ToolsUsed,
-		DisclosedTools:        s.DisclosedTools,
 		ContextReset:          s.ContextReset,
 		ContextFresh:          s.ContextFresh,
 		Usage:                 s.Usage,
@@ -451,15 +409,11 @@ func (s *RunState) MarshalJSON() ([]byte, error) {
 	if s.CurrentAgent != nil {
 		out.CurrentAgent = s.CurrentAgent.Name
 	}
-	if tl := s.toolLoop; tl.turns > 0 {
-		out.ToolLoop = &serialToolLoop{Turns: tl.turns, Seen: tl.seen, FailedTurns: tl.failedTurns, NoticedAt: tl.noticedAt}
+	if s.toolLoop.Turns > 0 {
+		out.ToolLoop = &s.toolLoop
 	}
 	if s.cursor != (serverCursor{}) {
-		out.ServerCursor = &serialServerCursor{
-			ResponseID:         s.cursor.responseID,
-			ItemCount:          s.cursor.itemCount,
-			ConversationActive: s.cursor.conversationActive,
-		}
+		out.ServerCursor = &s.cursor
 	}
 	// Nested agent-as-tool states serialize recursively.
 	if len(s.nestedToolStates) > 0 {
@@ -662,7 +616,6 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		MaxTurns:              in.MaxTurns,
 		PersistedSessionItems: in.PersistedSessionItems,
 		ToolsUsed:             in.ToolsUsed,
-		DisclosedTools:        in.DisclosedTools,
 		ContextReset:          in.ContextReset,
 		ContextFresh:          in.ContextFresh,
 		Usage:                 in.Usage,
@@ -680,14 +633,10 @@ func RunStateFromJSON(data []byte, registry map[string]*Agent) (*RunState, error
 		st.Usage = NewUsage()
 	}
 	if in.ToolLoop != nil {
-		st.toolLoop = toolLoopState{turns: in.ToolLoop.Turns, seen: in.ToolLoop.Seen, failedTurns: in.ToolLoop.FailedTurns, noticedAt: in.ToolLoop.NoticedAt}
+		st.toolLoop = *in.ToolLoop
 	}
 	if in.ServerCursor != nil {
-		st.cursor = serverCursor{
-			responseID:         in.ServerCursor.ResponseID,
-			itemCount:          in.ServerCursor.ItemCount,
-			conversationActive: in.ServerCursor.ConversationActive,
-		}
+		st.cursor = *in.ServerCursor
 	}
 
 	var err error

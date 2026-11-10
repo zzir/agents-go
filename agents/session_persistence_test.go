@@ -284,8 +284,8 @@ func TestRunState_PersistedCursorRoundTrip(t *testing.T) {
 	}
 }
 
-// session.Settings.Limit caps how many history items are loaded at run start.
-func TestSessionSettings_Limit(t *testing.T) {
+// Conversation.HistoryLimit caps how many history items are loaded at run start.
+func TestConversationHistoryLimit(t *testing.T) {
 	sess := session.NewInMemorySession()
 	_ = sess.AppendItems(context.Background(), InputItemsFromText("h1"), Source{})
 	_ = sess.AppendItems(context.Background(), InputItemsFromText("h2"), Source{})
@@ -294,7 +294,7 @@ func TestSessionSettings_Limit(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "done"))}}
 	agent := &Agent{Name: "a", ModelImpl: model}
 
-	_, err := RunSync(context.Background(), agent, "new", RunOptions{Conversation: ConversationOptions{Session: sess, Settings: session.Settings{Limit: 1}}})
+	_, err := RunSync(context.Background(), agent, "new", RunOptions{Conversation: ConversationOptions{Session: sess, HistoryLimit: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}

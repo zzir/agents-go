@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/tracing"
 )
 
 // OverflowPolicy decides what happens when a model call fails because the
@@ -90,30 +89,12 @@ func (r *runner) abandonRecovery(ctx context.Context, err error) {
 // recoverOverflowViaStorage runs a forced RunCompaction on a CompactionAware
 // storage, then writes the turn and rebuilds from the session — decisions §5.52.
 func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Session, cs session.CompactionAware) ([]InputItem, bool) {
-	cur := session.Cursor{Limit: -session.ResolveLimit(r.opts.Conversation.Settings)}
+	cur := r.historyCursor()
 	before, err := sess.ContextEntries(ctx, cur)
 	if err != nil {
 		return nil, false
 	}
-	var cspan *tracing.SpanHandle
-	cerr := cs.RunCompaction(ctx, session.CompactionArgs{
-		Force: true,
-		StartSpan: func() *tracing.SpanHandle {
-			cspan = r.trace.StartCompactionSpan(r.agentParentID())
-			return cspan
-		},
-	})
-	if cerr != nil && cspan == nil {
-		// Failed before the storage opened the span; open one for the error.
-		cspan = r.trace.StartCompactionSpan(r.agentParentID())
-	}
-	if cspan != nil {
-		if cerr != nil {
-			cspan.SetError(cerr.Error(), nil)
-		}
-		cspan.Finish()
-	}
-	if cerr != nil {
+	if r.runStorageCompaction(ctx, cs, true) != nil {
 		return nil, false
 	}
 	after, err := sess.ContextEntries(ctx, cur)
@@ -134,13 +115,11 @@ func (r *runner) recoverOverflowViaStorage(ctx context.Context, sess *session.Se
 	if err != nil {
 		return nil, false
 	}
-	history, err := session.ProjectEntries(rebuilt, r.opts.Conversation.Projectors)
+	history, err := r.projectHistory(rebuilt)
 	if err != nil {
 		return nil, false
 	}
-	// Scrub exactly as the save-point rebuild does: a fold can orphan a tool
-	// output whose call is gone, which the Responses API rejects.
-	return normalizeStoredInput(history), true
+	return history, true
 }
 
 // contextSize is the byte weight of what entries put in front of the model;

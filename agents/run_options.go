@@ -97,9 +97,9 @@ type ConversationOptions struct {
 	// Session supplies prior history as input and persists the run's new items.
 	Session *session.Session
 
-	// Settings tunes how the run reads the Session (how many recent entries to
-	// load); the zero value reads the whole history.
-	Settings session.Settings
+	// HistoryLimit caps how many of the Session's most recent entries the run
+	// loads; anything not positive reads the whole history.
+	HistoryLimit int
 
 	// UsePreviousResponseID chains calls via previous_response_id and sends
 	// only new items. Needs response ids and stored responses (not
@@ -152,10 +152,6 @@ type ExecOptions struct {
 	// ReasoningItemIDPolicy decides whether reasoning-item ids are kept when run
 	// items go back to the model (default: kept). Persisted in RunState.
 	ReasoningItemIDPolicy ReasoningItemIDPolicy
-
-	// PrepareNextTurn rebuilds the next turn's configuration at the turn
-	// boundary; nil leaves it to the usual resolution — see spec §2.3b.
-	PrepareNextTurn func(ctx context.Context, tr *TurnResult) (*TurnSnapshot, error)
 
 	// ShouldStopAfterTurn ends the run after a turn that would otherwise
 	// continue, consulted at the save point — see spec §2.3c.

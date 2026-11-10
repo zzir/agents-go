@@ -8,15 +8,15 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// DiagnosticSink collects diagnostics; the runner installs one on the context
+// diagnosticSink collects diagnostics; the runner installs one on the context
 // for a run.
-type DiagnosticSink struct {
+type diagnosticSink struct {
 	mu sync.Mutex
 	ds []Diagnostic
 }
 
-// Record appends a diagnostic. Safe for concurrent use.
-func (s *DiagnosticSink) Record(d Diagnostic) {
+// record appends a diagnostic. Safe for concurrent use.
+func (s *diagnosticSink) record(d Diagnostic) {
 	if s == nil {
 		return
 	}
@@ -25,8 +25,8 @@ func (s *DiagnosticSink) Record(d Diagnostic) {
 	s.mu.Unlock()
 }
 
-// All returns a copy of what has been recorded.
-func (s *DiagnosticSink) All() []Diagnostic {
+// all returns a copy of what has been recorded.
+func (s *diagnosticSink) all() []Diagnostic {
 	if s == nil {
 		return nil
 	}
@@ -35,8 +35,8 @@ func (s *DiagnosticSink) All() []Diagnostic {
 	return append([]Diagnostic(nil), s.ds...)
 }
 
-// TakeSince returns the diagnostics recorded after n, and the new count.
-func (s *DiagnosticSink) TakeSince(n int) ([]Diagnostic, int) {
+// takeSince returns the diagnostics recorded after n, and the new count.
+func (s *diagnosticSink) takeSince(n int) ([]Diagnostic, int) {
 	if s == nil {
 		return nil, n
 	}
@@ -50,21 +50,21 @@ func (s *DiagnosticSink) TakeSince(n int) ([]Diagnostic, int) {
 
 type diagnosticKey struct{}
 
-// WithDiagnostics returns a context carrying sink, the channel through which a
+// withDiagnostics returns a context carrying sink, the channel through which a
 // model decorator or a custom tool reports trouble it recovered from.
-func WithDiagnostics(ctx context.Context, sink *DiagnosticSink) context.Context {
+func withDiagnostics(ctx context.Context, sink *diagnosticSink) context.Context {
 	return context.WithValue(ctx, diagnosticKey{}, sink)
 }
 
-// DiagnosticsFrom returns the sink on ctx, or nil.
-func DiagnosticsFrom(ctx context.Context) *DiagnosticSink {
-	s, _ := ctx.Value(diagnosticKey{}).(*DiagnosticSink)
+// diagnosticsFrom returns the sink on ctx, or nil.
+func diagnosticsFrom(ctx context.Context) *diagnosticSink {
+	s, _ := ctx.Value(diagnosticKey{}).(*diagnosticSink)
 	return s
 }
 
 // RecordDiagnostic reports trouble on whatever sink ctx carries; a no-op without one.
 func RecordDiagnostic(ctx context.Context, t DiagnosticType, err error, details map[string]any) {
-	DiagnosticsFrom(ctx).Record(NewDiagnostic(t, err, details))
+	diagnosticsFrom(ctx).record(newDiagnostic(t, err, details))
 }
 
 // attributeDiagnostics attaches the trouble seen since the last save to the
@@ -73,7 +73,7 @@ func (r *runner) attributeDiagnostics(entries []session.Entry) {
 	if len(entries) == 0 {
 		return
 	}
-	ds, n := r.diagnostics.TakeSince(r.diagnosticsSaved)
+	ds, n := r.diagnostics.takeSince(r.diagnosticsSaved)
 	r.diagnosticsSaved = n
 	if len(ds) == 0 {
 		return
@@ -81,8 +81,8 @@ func (r *runner) attributeDiagnostics(entries []session.Entry) {
 	entries[len(entries)-1].Diagnostics = ds
 }
 
-// NewDiagnostic builds a diagnostic from an error, classifying it and stamping it now.
-func NewDiagnostic(t DiagnosticType, err error, details map[string]any) Diagnostic {
+// newDiagnostic builds a diagnostic from an error, classifying it and stamping it now.
+func newDiagnostic(t DiagnosticType, err error, details map[string]any) Diagnostic {
 	d := Diagnostic{Type: t, Timestamp: time.Now().UTC(), Details: details}
 	if err != nil {
 		d.Code = CodeOf(err)

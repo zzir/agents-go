@@ -53,11 +53,6 @@ func (r *runner) enabledTools(ctx context.Context, agent *Agent) ([]*Tool, error
 		if !enabled {
 			continue
 		}
-		// A deferred tool waits for disclosure, which never overrides IsEnabled
-		// — see spec §2.7i.
-		if t.Deferred && !r.disclosed[t.Name] {
-			continue
-		}
 		out = append(out, t)
 	}
 	for _, server := range agent.MCPServers {

@@ -19,9 +19,9 @@ func TestToolResultTitleSummaryReachDisplayAndStore(t *testing.T) {
 	sess := session.NewInMemorySession()
 	patch := agents.NewTool("apply_patch", "applies a patch",
 		func(context.Context, *agents.ToolContext, struct{}) (agents.ToolResult, error) {
-			return agents.TextResult("done").
-				WithTitle("Apply patch").
-				WithSummary("3 files changed"), nil
+			res := agents.TextResult("done").WithSummary("3 files changed")
+			res.Title = "Apply patch"
+			return res, nil
 		})
 	model := agentstest.NewResponseBuilder().
 		FunctionCall("apply_patch", "call-1", "{}").

@@ -12,7 +12,8 @@ import (
 
 // newRunner builds a fresh run's runner: validated options, run context, turn
 // budget.
-func newRunner(userInput []InputItem, opts RunOptions) (*runner, error) {
+func newRunner(in RunInput) (*runner, error) {
+	opts := *in.Opts
 	if err := validateServerState(opts); err != nil {
 		return nil, err
 	}
@@ -24,7 +25,7 @@ func newRunner(userInput []InputItem, opts RunOptions) (*runner, error) {
 	}
 	rc := NewRunContext(opts.Context)
 	rc.inheritedOpts = &opts
-	return &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: userInput}, nil
+	return &runner{opts: opts, rc: rc, maxTurns: maxTurns, userInput: in.Input}, nil
 }
 
 // startInput is what the loop starts from: a resume's carried input, or the
@@ -39,8 +40,7 @@ func (r *runner) startInput(ctx context.Context) ([]InputItem, error) {
 	}
 	// The active branch minus what compaction folded, projected per kind —
 	// see spec §2.5b.
-	limit := session.ResolveLimit(r.opts.Conversation.Settings)
-	entries, err := sess.ContextEntries(ctx, session.Cursor{Limit: -limit})
+	entries, err := sess.ContextEntries(ctx, r.historyCursor())
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (r *runner) observeRun(agent *Agent) func() {
 		attrs = append(attrs, slog.Bool("resumed", true))
 	}
 	r.log = newRunLogger(r.opts.Log).component("run").with(attrs...)
-	r.diagnostics = &DiagnosticSink{}
+	r.diagnostics = &diagnosticSink{}
 
 	finishTrace := func() {}
 	switch {
@@ -95,40 +95,22 @@ func (r *runner) observeRun(agent *Agent) func() {
 	return finishTrace
 }
 
-// loopSeed is the state the run loop starts from: fresh for a new run, carried
-// state for a resume.
-type loopSeed struct {
-	agent         *Agent
-	originalInput []InputItem
-	rawResponses  []*ModelResponse
-
-	// pendingResponse, on a resume, is the interrupted response the first
-	// iteration re-processes instead of calling the model.
-	pendingResponse *ModelResponse
-
-	// cursor is a resume's pause-time server-conversation cursor; zero otherwise.
-	cursor serverCursor
-
-	startTurn int
-}
-
-// seedLoop builds the loop's starting state, restoring prior items, the persistence
-// cursor and the turn counter from the RunState when this is a resume.
-func (r *runner) seedLoop(startAgent *Agent, originalInput []InputItem) loopSeed {
-	seed := loopSeed{
+// seedLoop builds the loop's starting turn state; a resume restores the items,
+// the persistence cursor and the turn counter from its RunState.
+func (r *runner) seedLoop(startAgent *Agent, originalInput []InputItem) *turnState {
+	st := &turnState{
 		agent:         startAgent,
 		originalInput: originalInput,
 		rawResponses:  []*ModelResponse{},
 		startTurn:     1,
+		runStartHooks: true,
 	}
 	if r.resume == nil {
-		return seed
+		return st
 	}
-	seed.agent = r.resume.CurrentAgent
-	seed.originalInput = r.resume.OriginalInput
-	seed.rawResponses = append([]*ModelResponse{}, r.resume.RawResponses...)
-	seed.pendingResponse = r.resume.InterruptedResponse
-	seed.cursor = r.resume.cursor
+	st.rawResponses = append(st.rawResponses, r.resume.RawResponses...)
+	st.pendingResponse = r.resume.InterruptedResponse
+	st.cursor = r.resume.cursor
 	// GeneratedItems is the tail of the log the model still sees; a state with
 	// no SessionItems saw no filter, so the two are one.
 	sessionSeed := r.resume.SessionItems
@@ -140,9 +122,9 @@ func (r *runner) seedLoop(startAgent *Agent, originalInput []InputItem) loopSeed
 	r.persistedSessionItems = r.resume.PersistedSessionItems
 	r.userInputSaved = true
 	if r.resume.CurrentTurn > 1 {
-		seed.startTurn = r.resume.CurrentTurn
+		st.startTurn = r.resume.CurrentTurn
 	}
-	return seed
+	return st
 }
 
 // validateServerState rejects incompatible server-managed conversation options:

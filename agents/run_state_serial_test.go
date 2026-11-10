@@ -11,12 +11,10 @@ import (
 	"testing"
 )
 
-// TestRunState_RoundTripCarriesPendingInputDisclosedToolsCursor pins the rule
-// that the serialized surface covers every field a resume consumes. Pending
-// injected input, disclosed deferred tools and the server cursor used to ride
-// along only in the live struct: an in-process resume kept them, a
-// cross-process one silently dropped them.
-func TestRunState_RoundTripCarriesPendingInputDisclosedToolsCursor(t *testing.T) {
+// TestRunState_RoundTripCarriesPendingInputAndCursor pins the rule that the
+// serialized surface covers every field a resume consumes: pending injected
+// input and the server cursor survive a cross-process resume.
+func TestRunState_RoundTripCarriesPendingInputAndCursor(t *testing.T) {
 	var ran bool
 	agent := approvalAgentAndModel(t, &ran)
 	res, err := RunSync(context.Background(), agent, "delete it", RunOptions{})
@@ -32,8 +30,8 @@ func TestRunState_RoundTripCarriesPendingInputDisclosedToolsCursor(t *testing.T)
 		NextTurn: InputItemsFromText("then this"),
 		FollowUp: InputItemsFromText("and follow up"),
 	}
-	state.DisclosedTools = []string{"deferred_a", "deferred_b"}
-	state.cursor = serverCursor{responseID: "resp_42", itemCount: 3, conversationActive: true}
+	state.cursor = serverCursor{ResponseID: "resp_42", ItemCount: 3, ConversationActive: true}
+	state.toolLoop = toolLoopState{Turns: 2, Seen: map[string]toolLoopRepeat{"k": {N: 1, Turn: 2}}, FailedTurns: 1, NoticedAt: 2}
 
 	data, err := state.MarshalJSON()
 	if err != nil {
@@ -43,11 +41,20 @@ func TestRunState_RoundTripCarriesPendingInputDisclosedToolsCursor(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := restored.DisclosedTools; len(got) != 2 || got[0] != "deferred_a" || got[1] != "deferred_b" {
-		t.Errorf("DisclosedTools = %v", got)
+	// The two structs serialize as themselves, so their wire shape is pinned here.
+	for _, want := range []string{
+		`"server_cursor":{"response_id":"resp_42","item_count":3,"conversation_active":true}`,
+		`"tool_loop":{"turns":2,"seen":{"k":{"N":1,"Turn":2}},"failed_turns":1,"noticed_at":2}`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("serialized state lacks %s\n%s", want, data)
+		}
 	}
 	if restored.cursor != state.cursor {
 		t.Errorf("cursor = %+v, want %+v", restored.cursor, state.cursor)
+	}
+	if got := restored.toolLoop; got.Turns != 2 || got.Seen["k"] != (toolLoopRepeat{N: 1, Turn: 2}) || got.FailedTurns != 1 || got.NoticedAt != 2 {
+		t.Errorf("toolLoop = %+v", got)
 	}
 	queues := []struct {
 		name      string
@@ -188,9 +195,6 @@ func TestRunStateFromJSON_AbsentFieldsFallBackAndResume(t *testing.T) {
 	}
 	if !st.PendingInput.Empty() {
 		t.Errorf("PendingInput = %+v, want empty", st.PendingInput)
-	}
-	if st.DisclosedTools != nil {
-		t.Errorf("DisclosedTools = %v, want nil", st.DisclosedTools)
 	}
 	if st.cursor != (serverCursor{}) {
 		t.Errorf("cursor = %+v, want zero", st.cursor)

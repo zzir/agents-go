@@ -112,17 +112,17 @@ func TestUsage_NestedIsAttributedToTheCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nested := res.NestedUsage()
-	if nested.TotalTokens == 0 {
+	out := findToolOutput(res.NewItems)
+	if out.NestedUsage == nil || out.NestedUsage.TotalTokens == 0 {
 		t.Fatal("the nested run's usage was not attributed to the call")
 	}
 	// It is part of the run total (the nested run shares the parent's usage)…
-	if res.Usage.TotalTokens <= nested.TotalTokens {
-		t.Errorf("run total %d does not exceed the nested %d", res.Usage.TotalTokens, nested.TotalTokens)
+	if nested := out.NestedUsage.TotalTokens; res.Usage.TotalTokens <= nested {
+		t.Errorf("run total %d does not exceed the nested %d", res.Usage.TotalTokens, nested)
 	}
 	// …but it does not sit on the tool-output entry's Usage, where a context
 	// estimate would read it as this conversation's size.
-	e, err := EntryFromRunItem(findToolOutput(res.NewItems), "resp_1")
+	e, err := EntryFromRunItem(out, "resp_1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,23 +131,6 @@ func TestUsage_NestedIsAttributedToTheCall(t *testing.T) {
 	}
 	if e.NestedUsage == nil || e.NestedUsage.TotalTokens == 0 {
 		t.Error("the entry does not record what the nested run spent")
-	}
-}
-
-// UsageByResponse answers "where did it go", which the run total cannot.
-func TestUsage_ByResponse(t *testing.T) {
-	model := &fakeModel{responses: []*ModelResponse{
-		{Output: []OutputItem{messageOutput(t, "one")}, ResponseID: "r1",
-			Usage: &Usage{Requests: 1, InputTokens: 10, OutputTokens: 2, TotalTokens: 12}},
-	}}
-	agent := &Agent{Name: "a", ModelImpl: model}
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	byResp := res.UsageByResponse()
-	if got := byResp["r1"].TotalTokens; got != 12 {
-		t.Errorf("r1 total = %d, want 12", got)
 	}
 }
 

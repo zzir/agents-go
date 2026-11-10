@@ -13,11 +13,6 @@ type RunErrorData struct {
 	Input []InputItem
 	// NewItems are the items generated so far; nil when nothing was.
 	NewItems []*RunItem
-	// History is Input followed by Output: the conversation as the next model
-	// call would see it.
-	History []InputItem
-	// Output is NewItems converted to model-input form.
-	Output []InputItem
 	// RawResponses back the error: every response so far for a max-turns
 	// overrun, the current turn's for a refusal or invalid final output.
 	RawResponses []*ModelResponse
@@ -61,30 +56,6 @@ type RunErrorHandlers struct {
 	InvalidFinalOutput RunErrorHandler
 }
 
-// buildRunErrorData snapshots the run for a handler; items that cannot convert
-// are skipped.
-func buildRunErrorData(input []InputItem, newItems []*RunItem, raw []*ModelResponse, lastAgent *Agent) RunErrorData {
-	output := make([]InputItem, 0, len(newItems))
-	for _, it := range newItems {
-		in, err := it.ToInputItem()
-		if err != nil {
-			continue
-		}
-		output = append(output, in)
-	}
-	history := make([]InputItem, 0, len(input)+len(output))
-	history = append(history, input...)
-	history = append(history, output...)
-	return RunErrorData{
-		Input:        input,
-		NewItems:     slices.Clone(newItems),
-		History:      history,
-		Output:       output,
-		RawResponses: slices.Clone(raw),
-		LastAgent:    lastAgent,
-	}
-}
-
 // errorRecovery is a successful handler outcome: the validated fallback and
 // the synthesized message unless the handler opted out.
 type errorRecovery struct {
@@ -110,7 +81,12 @@ func (r *runner) resolveErrorRecovery(
 	res, err := handler(ctx, RunErrorHandlerInput{
 		Error:      cause,
 		RunContext: r.rc,
-		RunData:    buildRunErrorData(input, newItems, raw, agent),
+		RunData: RunErrorData{
+			Input:        input,
+			NewItems:     slices.Clone(newItems),
+			RawResponses: slices.Clone(raw),
+			LastAgent:    agent,
+		},
 	})
 	if err != nil {
 		return nil, err

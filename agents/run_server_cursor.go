@@ -2,22 +2,23 @@ package agents
 
 // serverCursor tracks what a server-managed conversation already holds, so
 // each turn sends only the delta; the zero value resends the full input.
+// RunState serializes it as is.
 type serverCursor struct {
-	responseID         string
-	itemCount          int
-	conversationActive bool
+	ResponseID         string `json:"response_id,omitempty"`
+	ItemCount          int    `json:"item_count,omitempty"`
+	ConversationActive bool   `json:"conversation_active,omitempty"`
 }
 
 // buildTurnInput assembles one turn's model input: the delta past the cursor
 // under server-managed state, else the full history (usedOriginal reports it).
 func (r *runner) buildTurnInput(cur serverCursor, originalInput []InputItem, generated []*RunItem) (in []InputItem, prevID string, usedOriginal bool, err error) {
 	switch {
-	case r.opts.Conversation.UsePreviousResponseID && cur.responseID != "":
-		in, err = itemsToInputList(generated[cur.itemCount:])
-		prevID = cur.responseID
-	case r.opts.Conversation.ConversationID != "" && cur.conversationActive:
+	case r.opts.Conversation.UsePreviousResponseID && cur.ResponseID != "":
+		in, err = itemsToInputList(generated[cur.ItemCount:])
+		prevID = cur.ResponseID
+	case r.opts.Conversation.ConversationID != "" && cur.ConversationActive:
 		// The conversation already holds prior items server-side.
-		in, err = itemsToInputList(generated[cur.itemCount:])
+		in, err = itemsToInputList(generated[cur.ItemCount:])
 	default:
 		usedOriginal = true
 		in, err = buildModelInput(originalInput, generated)
@@ -34,12 +35,12 @@ func (r *runner) buildTurnInput(cur serverCursor, originalInput []InputItem, gen
 func (cur *serverCursor) advance(opts ConversationOptions, resp *ModelResponse, lenBeforeStep, modelItems int) {
 	served := lenBeforeStep + modelItems
 	if opts.UsePreviousResponseID && resp.ResponseID != "" {
-		cur.responseID = resp.ResponseID
-		cur.itemCount = served
+		cur.ResponseID = resp.ResponseID
+		cur.ItemCount = served
 	}
 	if opts.ConversationID != "" {
-		cur.conversationActive = true
-		cur.itemCount = served
+		cur.ConversationActive = true
+		cur.ItemCount = served
 	}
 }
 

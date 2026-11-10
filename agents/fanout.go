@@ -34,9 +34,6 @@ func (e *GapError) Error() string {
 		e.Dropped, e.LastGood, e.Next)
 }
 
-// AtEnd reports whether the gap runs to the end of the stream.
-func (e *GapError) AtEnd() bool { return e.Next == 0 }
-
 // FanoutOptions configures a Fanout. The zero value is usable.
 type FanoutOptions struct {
 	// Subscriber is the per-subscriber buffer, in items, past which that
@@ -237,7 +234,7 @@ func (f *Fanout[T]) Subscribe(fromSeq int) (iter.Seq2[Seq[T], error], func()) {
 	}
 
 	stream := func(yield func(Seq[T], error) bool) {
-		// A timeline reset is reported immediately, with Next set (not AtEnd).
+		// A timeline reset is reported immediately, with Next set.
 		if reset {
 			s.mu.Lock()
 			n, last := s.dropped, s.lastGood

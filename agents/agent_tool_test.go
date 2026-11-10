@@ -9,7 +9,7 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-func TestAgentAsTool(t *testing.T) {
+func TestAsTool(t *testing.T) {
 	// Sub-agent that summarizes; has its own model.
 	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "SUMMARY: hello"))}}
 	sub := &Agent{Name: "summarizer", ModelImpl: subModel}
@@ -35,11 +35,11 @@ func TestAgentAsTool(t *testing.T) {
 	}
 }
 
-// TestAgentAsTool_ValidatesDefaultInput pins the default {"input": string}
+// TestAsTool_ValidatesInput pins the default {"input": string}
 // arguments to the schema the tool advertises: anything else is a
 // *ModelBehaviorError the calling model can correct, never the nested agent's
 // prompt.
-func TestAgentAsTool_ValidatesDefaultInput(t *testing.T) {
+func TestAsTool_ValidatesInput(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args string
@@ -83,42 +83,7 @@ func TestAgentAsTool_ValidatesDefaultInput(t *testing.T) {
 	}
 }
 
-// TestAsTool_CustomInputBuilderValidatesInput pins the same check on AsTool's
-// other path: an InputBuilder replaces the rendering, not the {"input": string}
-// schema the tool still advertises, so the builder never sees arguments that
-// violate it.
-func TestAsTool_CustomInputBuilderValidatesInput(t *testing.T) {
-	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "ANSWER"))}}
-	sub := &Agent{Name: "helper", ModelImpl: subModel}
-	tool := sub.AsTool(AgentToolConfig{
-		Name: "ask",
-		InputBuilder: func(opts AgentToolInputBuilderOptions) (string, error) {
-			return "CUSTOM:" + opts.ParamsJSON, nil
-		},
-	})
-	tCtx := &ToolContext{RunContext: NewRunContext(nil)}
-
-	_, err := tool.OnInvoke(context.Background(), tCtx, `{"q":"cats","n":3}`)
-	if _, ok := errors.AsType[*ModelBehaviorError](err); !ok {
-		t.Fatalf("err = %v (%T), want *ModelBehaviorError", err, err)
-	}
-	if subModel.calls != 0 {
-		t.Fatalf("nested agent ran on invalid arguments: %v", subModel.lastReq.Input)
-	}
-
-	if _, err := tool.OnInvoke(context.Background(), tCtx, `{"input":"hi"}`); err != nil {
-		t.Fatal(err)
-	}
-	item, merr := session.MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
-	if merr != nil {
-		t.Fatal(merr)
-	}
-	if nested := string(item); !strings.Contains(nested, "CUSTOM:") {
-		t.Errorf("nested input = %q, want the custom builder's rendering", nested)
-	}
-}
-
-func TestAgentAsTool_CustomExtractor(t *testing.T) {
+func TestAsTool_CustomExtractor(t *testing.T) {
 	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "raw"))}}
 	sub := &Agent{Name: "s", ModelImpl: subModel}
 	tool := sub.AsTool(AgentToolConfig{

@@ -20,7 +20,7 @@ func asstMsg(text string) InputItem {
 
 func TestNestHandoffHistory_FoldsToSingleMessage(t *testing.T) {
 	hist := []InputItem{userMsg("what is my balance?"), asstMsg("let me check")}
-	filter := NestHandoffHistory(NestHistoryOptions{})
+	filter := NestHandoffHistory
 
 	out := filter(HandoffInputData{InputHistory: hist}).InputHistory
 	if len(out) != 1 {
@@ -35,7 +35,7 @@ func TestNestHandoffHistory_FoldsToSingleMessage(t *testing.T) {
 }
 
 func TestNestHandoffHistory_FlattensPriorSummary(t *testing.T) {
-	filter := NestHandoffHistory(NestHistoryOptions{})
+	filter := NestHandoffHistory
 
 	// First handoff folds the original two turns.
 	hist := []InputItem{userMsg("hi"), asstMsg("hello")}
@@ -70,28 +70,8 @@ func TestNestHandoffHistory_FlattensPriorSummary(t *testing.T) {
 	}
 }
 
-func TestNestHandoffHistory_CustomMapper(t *testing.T) {
-	called := 0
-	filter := NestHandoffHistory(NestHistoryOptions{
-		Mapper: func(transcript []InputItem) []InputItem {
-			called++
-			if len(transcript) != 2 {
-				t.Errorf("mapper got %d items, want 2", len(transcript))
-			}
-			return []InputItem{userMsg("SUMMARY")}
-		},
-	})
-	out := filter(HandoffInputData{InputHistory: []InputItem{userMsg("a"), asstMsg("b")}}).InputHistory
-	if called != 1 {
-		t.Errorf("mapper called %d times, want 1", called)
-	}
-	if len(out) != 1 || session.ItemText(out[0]) != "SUMMARY" {
-		t.Errorf("output = %v, want one SUMMARY message", out)
-	}
-}
-
 func TestNestHandoffHistory_EmptyHistory(t *testing.T) {
-	filter := NestHandoffHistory(NestHistoryOptions{})
+	filter := NestHandoffHistory
 	out := filter(HandoffInputData{InputHistory: nil}).InputHistory
 	if len(out) != 1 {
 		t.Fatalf("got %d items, want 1", len(out))

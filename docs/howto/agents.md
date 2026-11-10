@@ -70,7 +70,7 @@ By default a turn's tool results go back to the model for another turn. A
 **tool** can end the run on its own result (`ToolResult.Terminate`, honored only
 when every tool in the batch agrees — [Tools](tools.md#returning-more-than-a-value-toolresult)),
 and a **run** can end at any turn boundary through
-`ExecOptions.ShouldStopAfterTurn` ([Running agents](running_agents.md#turn-hooks));
+`ExecOptions.ShouldStopAfterTurn` ([Running agents](running_agents.md#the-turn-hook));
 there is deliberately no agent-level setting ([spec §2.3c](../reference/spec.md#23c-stopping-early)).
 
 To prevent infinite tool loops, once an agent has called a tool the runner leaves `tool_choice` unset on its later turns (so a `"required"` or specific-tool setting cannot loop forever). Set `Agent.DisableToolChoiceReset = true` to keep `tool_choice` as configured on every turn.

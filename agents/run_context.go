@@ -21,10 +21,6 @@ type RunContext struct {
 	// Approvals tracks human-in-the-loop tool approval decisions.
 	Approvals *ApprovalStore
 
-	// turnInputMu guards turnInput: the loop refreshes it while tools read it.
-	turnInputMu sync.RWMutex
-	turnInput   []InputItem
-
 	// inheritedOpts carries the run's options for nested runs to inherit. Set
 	// by the runner.
 	inheritedOpts *RunOptions
@@ -56,31 +52,6 @@ func (rc *RunContext) RequestContextReset() bool {
 // takeContextReset consumes the request.
 func (rc *RunContext) takeContextReset() bool {
 	return rc != nil && rc.contextReset.Swap(false)
-}
-
-// TurnInput returns exactly what the executing turn sent the model (the delta
-// under server-managed state); nil before the first turn's input is built.
-// The slice is a copy whose items are shared with the live request: read-only.
-func (rc *RunContext) TurnInput() []InputItem {
-	if rc == nil {
-		return nil
-	}
-	rc.turnInputMu.RLock()
-	defer rc.turnInputMu.RUnlock()
-	if len(rc.turnInput) == 0 {
-		return nil
-	}
-	return append([]InputItem(nil), rc.turnInput...)
-}
-
-// setTurnInput publishes the turn's model input — see spec §2.2 step 1.
-func (rc *RunContext) setTurnInput(items []InputItem) {
-	if rc == nil {
-		return
-	}
-	rc.turnInputMu.Lock()
-	rc.turnInput = items
-	rc.turnInputMu.Unlock()
 }
 
 // takeNestedToolState returns and removes the cached nested run state for a
@@ -298,8 +269,6 @@ type ToolContext struct {
 	ToolName string
 	// ToolCallID is the model-assigned identifier for this tool call.
 	ToolCallID string
-	// ToolArguments is the raw JSON arguments string emitted by the model.
-	ToolArguments string
 	// Agent is the agent whose tool is being invoked.
 	Agent *Agent
 	// ToolCall is the raw model-emitted function-call item that triggered this

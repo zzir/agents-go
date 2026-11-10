@@ -10,9 +10,8 @@ import (
 )
 
 // A Blocking input guardrail's Replace verdict must reach the model on the
-// guarded call itself. The input is built before the guardrail runs (so the
-// guardrail can read rc.TurnInput()), and rebuilt from the replacement when
-// one is returned — leaving the pre-replace build in place once sent the
+// guarded call itself. The input is built before the guardrail runs, and
+// rebuilt from the replacement when one is returned — leaving the pre-replace build in place once sent the
 // original input while the run result claimed it was replaced.
 func TestBlockingGuardrailReplaceReachesModel(t *testing.T) {
 	model := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "ok"))}}

@@ -157,8 +157,7 @@ func TestToolProgress_ConcurrentToolsDoNotRaceTheStream(t *testing.T) {
 	}
 }
 
-// A nested agent's work shows up on the parent's stream without the caller
-// wiring OnStream.
+// A nested agent's work shows up on the parent's stream with nothing wired.
 func TestToolProgress_NestedAgentReportsThrough(t *testing.T) {
 	inner := &Agent{Name: "inner", ModelImpl: &fakeModel{responses: []*ModelResponse{
 		modelResp(messageOutput(t, "inner thinking")),

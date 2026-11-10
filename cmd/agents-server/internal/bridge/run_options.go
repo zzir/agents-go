@@ -42,7 +42,7 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		Conversation: agents.ConversationOptions{
 			Session: sess,
 			// A non-positive HistoryLimit means "no limit" on both sides.
-			Settings: session.Settings{Limit: built.Session.HistoryLimit},
+			HistoryLimit: built.Session.HistoryLimit,
 		},
 		Exec: agents.ExecOptions{
 			MaxTurns:              built.Behavior.MaxTurns,
@@ -63,7 +63,7 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		Log: agents.LogConfig{Logger: log, SensitiveData: built.LogSensitive},
 	}
 	if built.Behavior.HandoffInputFilter == "nest_history" {
-		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
+		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory
 	}
 	if budget.Window > 0 {
 		// The notice rides on the input, never the instructions (spec §2.5i);

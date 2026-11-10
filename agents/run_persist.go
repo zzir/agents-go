@@ -6,7 +6,6 @@ import (
 	"slices"
 
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/tracing"
 )
 
 // persistUserInput writes the run's new user input once, ahead of the first
@@ -143,25 +142,6 @@ func (r *runner) compactAfterRun(ctx context.Context) {
 		return
 	}
 	if cs, ok := r.opts.Conversation.Session.Storage().(session.CompactionAware); ok {
-		// The span starts lazily — only when the session actually compacts —
-		// so no-op passes don't clutter the trace.
-		var cspan *tracing.SpanHandle
-		cerr := cs.RunCompaction(ctx, session.CompactionArgs{
-			StartSpan: func() *tracing.SpanHandle {
-				cspan = r.trace.StartCompactionSpan(r.agentParentID())
-				return cspan
-			},
-		})
-		if cerr != nil && cspan == nil {
-			// Failed before the session opened the span; open one so the
-			// error is still visible on the trace.
-			cspan = r.trace.StartCompactionSpan(r.agentParentID())
-		}
-		if cspan != nil {
-			if cerr != nil {
-				cspan.SetError(cerr.Error(), nil)
-			}
-			cspan.Finish()
-		}
+		_ = r.runStorageCompaction(ctx, cs, false)
 	}
 }

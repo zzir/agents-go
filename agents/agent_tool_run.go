@@ -5,15 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sync/atomic"
 )
 
-// runNestedAgent executes (or resumes) the nested run, collecting without an
-// OnStream handler and forwarding each event with one.
-func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunState, opts RunOptions, cfg AgentToolConfig, tc *ToolContext, argsJSON string) (*RunResult, error) {
-	// Stream when anyone is watching: an OnStream handler, or a streamed parent
-	// whose consumer should see the sub-agent working (spec §2.7g).
-	if cfg.OnStream == nil && !tc.streaming() {
+// runNestedAgent executes (or resumes) the nested run; under a streamed parent
+// it forwards the nested agent's messages as tool progress (spec §2.7g).
+func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunState, opts RunOptions, tc *ToolContext) (*RunResult, error) {
+	if !tc.streaming() {
 		if paused != nil {
 			return ResumeRunSync(ctx, paused, opts)
 		}
@@ -27,28 +24,11 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 		stream, _ = Run(ctx, a, input, opts)
 	}
 
-	// Callbacks dispatch from a background goroutine so a slow handler does not
-	// stall the run; canceled drains the backlog without invoking it.
-	var canceled atomic.Bool
-	events := make(chan AgentToolStreamEvent, 64)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for ev := range events {
-			if canceled.Load() {
-				continue
-			}
-			dispatchAgentToolStreamEvent(ctx, cfg.OnStream, ev)
-		}
-	}()
-
 	current := a
 	var res *RunResult
-	var runErr error
-	for ev, eerr := range stream {
-		if eerr != nil {
-			runErr = eerr
-			break
+	for ev, err := range stream {
+		if err != nil {
+			return nil, err
 		}
 		switch e := ev.(type) {
 		case *AgentUpdatedStreamEvent:
@@ -57,67 +37,20 @@ func runNestedAgent(ctx context.Context, a *Agent, input string, paused *RunStat
 			}
 		case *RunCompletedEvent:
 			res = e.Result
-			// The completion is the loop's own bookkeeping, not something a
-			// handler watching the nested agent should see.
-			continue
 		case *RunItemStreamEvent:
-			// Forward the nested agent's messages to the PARENT's stream as tool
-			// progress; messages only, or raw deltas bury the parent's stream.
+			// Messages only: raw deltas would bury the parent's stream.
 			if e.Item.Kind == ItemMessage {
 				tc.Emit(TextResult(e.Item.Text()).WithDetails(map[string]any{
 					"nested_agent": current.Name, "partial": true,
 				}))
 			}
 		}
-		if ctx.Err() != nil {
-			// Parent canceled: keep draining so the run can finish and record
-			// its result, but stop dispatching to the handler.
-			canceled.Store(true)
-			continue
-		}
-		if cfg.OnStream == nil {
-			// Streaming only to forward progress; there is no handler to feed.
-			continue
-		}
-		payload := AgentToolStreamEvent{
-			Event:      ev,
-			Agent:      current,
-			ToolCallID: tc.ToolCallID,
-			ToolName:   tc.ToolName,
-			Arguments:  argsJSON,
-		}
-		select {
-		case events <- payload:
-		case <-ctx.Done():
-		}
 	}
-	if ctx.Err() != nil {
-		canceled.Store(true)
-	}
-	close(events)
-	if ctx.Err() == nil {
-		// Normal completion waits for the handler backlog to drain;
-		// cancellation does not (the canceled flag makes the drain a no-op).
-		<-done
-	}
-	if res == nil && runErr == nil {
+	if res == nil {
 		// The stream ended without completing — cancellation.
-		runErr = ctx.Err()
+		return nil, ctx.Err()
 	}
-	return res, runErr
-}
-
-// dispatchAgentToolStreamEvent invokes OnStream, recovering a panic into a
-// diagnostic on the parent run so a handler bug never fails the tool call.
-func dispatchAgentToolStreamEvent(ctx context.Context, fn func(AgentToolStreamEvent), ev AgentToolStreamEvent) {
-	defer func() {
-		if p := recover(); p != nil {
-			RecordDiagnostic(ctx, DiagToolPanic, newToolPanicError(ev.ToolName, p), map[string]any{
-				"tool": ev.ToolName, "call_id": ev.ToolCallID, "source": "on_stream_handler",
-			})
-		}
-	}()
-	fn(ev)
+	return res, nil
 }
 
 // nestedRunInterrupt is returned by an agent-as-tool's OnInvoke when its

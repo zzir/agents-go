@@ -51,13 +51,6 @@ type Tool struct {
 	// the model; nil aborts the run. NewTool installs DefaultToolErrorFunction.
 	FailureErrorFunction func(ctx context.Context, tc *ToolContext, err error) string
 
-	// Sequential runs the tool alone, in order, never concurrently with other tools.
-	Sequential bool
-
-	// Deferred withholds the tool from the model until a ToolResult names it in
-	// AddedTools — see spec §2.7i.
-	Deferred bool
-
 	// RetrySafe declares the tool safe to run again after a crash interrupted
 	// it (RetrySafeNames, session.RecoveryPolicy). Default unsafe.
 	RetrySafe bool

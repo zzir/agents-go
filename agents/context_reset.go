@@ -39,7 +39,7 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 		r.ignoreReset(ctx, "no session")
 		return nil, false, nil
 	}
-	cur := session.Cursor{Limit: -session.ResolveLimit(r.opts.Conversation.Settings)}
+	cur := r.historyCursor()
 	var span *tracing.SpanHandle
 	startSpan := func() *tracing.SpanHandle {
 		if span == nil {
@@ -55,9 +55,7 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 	}()
 
 	var entries []session.Entry
-	switch {
-	case isCompactionAware(sess):
-		cs := sess.Storage().(session.CompactionAware)
+	if cs, ok := sess.Storage().(session.CompactionAware); ok {
 		cerr := cs.RunCompaction(ctx, session.CompactionArgs{Force: true, Reset: true, StartSpan: startSpan})
 		if cerr != nil {
 			startSpan().SetError(cerr.Error(), nil)
@@ -68,7 +66,7 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 		if entries, err = sess.ContextEntries(ctx, cur); err != nil {
 			return nil, false, err
 		}
-	default:
+	} else {
 		rs, ok := r.opts.Compaction.Compactor.(ContextResetter)
 		if !ok {
 			r.ignoreReset(ctx, "the session cannot reset")
@@ -88,14 +86,13 @@ func (r *runner) resetContext(ctx context.Context) (input []InputItem, did bool,
 		}
 		entries = r.historyWindow(entries)
 	}
-	history, err := session.ProjectEntries(entries, r.opts.Conversation.Projectors)
+	history, err := r.projectHistory(entries)
 	if err != nil {
 		return nil, false, err
 	}
 	r.log.component("compaction").Info(ctx, "context reset", slog.Int("entries_after", len(entries)))
 	r.rc.contextFresh.Store(true)
-	// Scrubbed like every other rebuild: a fold can orphan a tool output.
-	return normalizeStoredInput(history), true, nil
+	return history, true, nil
 }
 
 // turnDidWork reports whether a turn did anything but ask for a reset, which
@@ -112,12 +109,6 @@ func turnDidWork(items []*RunItem) bool {
 		}
 	}
 	return false
-}
-
-// isCompactionAware reports whether the session's storage compacts itself.
-func isCompactionAware(sess *session.Session) bool {
-	_, ok := sess.Storage().(session.CompactionAware)
-	return ok
 }
 
 // ignoreReset records a reset request the run could not honor.

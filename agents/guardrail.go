@@ -83,8 +83,7 @@ type GuardrailPayload struct {
 }
 
 // Guardrail inspects a run at one or more stages and decides whether to allow,
-// substitute or halt; placement decides scope — see spec §2.6. The typed
-// constructors ([NewInputGuardrail] and friends) cover a single stage:
+// substitute or halt; placement decides scope — see spec §2.6.
 //
 //	scanner := agents.Guardrail{
 //	    Name:   "pii",
@@ -151,56 +150,6 @@ func newTripwireError(res GuardrailResult) *GuardrailTripwireError {
 	return &GuardrailTripwireError{Result: res}
 }
 
-// --- typed constructors -----------------------------------------------------
-
-// NewInputGuardrail builds a StageInput guardrail from a callback that sees
-// only the input items; a [Guardrail] literal covers more.
-func NewInputGuardrail(name string, fn func(ctx context.Context, input []InputItem) (GuardrailDecision, error)) Guardrail {
-	return Guardrail{
-		Name:   name,
-		Stages: []GuardrailStage{StageInput},
-		Run: func(ctx context.Context, _ *RunContext, p GuardrailPayload) (GuardrailDecision, error) {
-			return fn(ctx, p.Input)
-		},
-	}
-}
-
-// NewOutputGuardrail builds a StageOutput guardrail from a callback that sees
-// only the final output value.
-func NewOutputGuardrail(name string, fn func(ctx context.Context, output any) (GuardrailDecision, error)) Guardrail {
-	return Guardrail{
-		Name:   name,
-		Stages: []GuardrailStage{StageOutput},
-		Run: func(ctx context.Context, _ *RunContext, p GuardrailPayload) (GuardrailDecision, error) {
-			return fn(ctx, p.Output)
-		},
-	}
-}
-
-// NewToolInputGuardrail builds a StageToolInput guardrail from a callback that
-// sees the tool name and its raw JSON arguments.
-func NewToolInputGuardrail(name string, fn func(ctx context.Context, toolName, argsJSON string) (GuardrailDecision, error)) Guardrail {
-	return Guardrail{
-		Name:   name,
-		Stages: []GuardrailStage{StageToolInput},
-		Run: func(ctx context.Context, _ *RunContext, p GuardrailPayload) (GuardrailDecision, error) {
-			return fn(ctx, p.ToolName, p.Arguments)
-		},
-	}
-}
-
-// NewToolOutputGuardrail builds a StageToolOutput guardrail from a callback
-// that sees the tool name and its result.
-func NewToolOutputGuardrail(name string, fn func(ctx context.Context, toolName string, output any) (GuardrailDecision, error)) Guardrail {
-	return Guardrail{
-		Name:   name,
-		Stages: []GuardrailStage{StageToolOutput},
-		Run: func(ctx context.Context, _ *RunContext, p GuardrailPayload) (GuardrailDecision, error) {
-			return fn(ctx, p.ToolName, p.Output)
-		},
-	}
-}
-
 // --- execution --------------------------------------------------------------
 
 // selectStage returns the guardrails covering stage, preserving order.
@@ -235,11 +184,10 @@ func runOne(ctx context.Context, rc *RunContext, g Guardrail, p GuardrailPayload
 	return g.Run(ctx, rc, p)
 }
 
-// runStageConcurrent runs every guardrail covering stage concurrently, failing
-// fast on the first tripwire or error; results come back in declaration order —
-// see spec §2.6.
-func runStageConcurrent(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) ([]GuardrailResult, error) {
-	sel := selectStage(guardrails, p.Stage)
+// runStageConcurrent runs sel — the guardrails covering p.Stage — concurrently,
+// failing fast on the first tripwire or error; results come back in declaration
+// order — see spec §2.6.
+func runStageConcurrent(ctx context.Context, rc *RunContext, sel []Guardrail, p GuardrailPayload) ([]GuardrailResult, error) {
 	if len(sel) == 0 {
 		return nil, nil
 	}
@@ -319,10 +267,11 @@ func newGuardrailResult(g Guardrail, p GuardrailPayload, d GuardrailDecision) Gu
 	}
 }
 
-// runStageSequential runs every guardrail covering stage in order, stopping
-// at the first Replace or Trip; it returns the results so far — see spec §2.6.
-func runStageSequential(ctx context.Context, rc *RunContext, guardrails []Guardrail, p GuardrailPayload) (results []GuardrailResult, replacement string, replaced bool, err error) {
-	for _, g := range selectStage(guardrails, p.Stage) {
+// runStageSequential runs sel — the guardrails covering p.Stage — in order,
+// stopping at the first Replace or Trip; it returns the results so far — see
+// spec §2.6.
+func runStageSequential(ctx context.Context, rc *RunContext, sel []Guardrail, p GuardrailPayload) (results []GuardrailResult, replacement string, replaced bool, err error) {
+	for _, g := range sel {
 		d, rerr := runOne(ctx, rc, g, p)
 		res := newGuardrailResult(g, p, d)
 		if rerr != nil {

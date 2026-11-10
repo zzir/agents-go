@@ -51,7 +51,6 @@ func TestToolProgressDrainsWhileASequentialBatchLaunches(t *testing.T) {
 			tc.Emit(agents.TextResult("working"))
 			return "ok", nil
 		})
-	tool.Sequential = true
 	model := agentstest.NewResponseBuilder().
 		FunctionCall("step", "c1", "{}").
 		FunctionCall("step", "c2", "{}").
@@ -59,7 +58,9 @@ func TestToolProgressDrainsWhileASequentialBatchLaunches(t *testing.T) {
 		Text("done").
 		Build()
 	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{tool}}
-	stream, _ := agents.Run(context.Background(), agent, "go", agents.RunOptions{})
+	stream, _ := agents.Run(context.Background(), agent, "go", agents.RunOptions{
+		Exec: agents.ExecOptions{MaxToolConcurrency: 1},
+	})
 
 	var progress atomic.Int32
 	var runErr error

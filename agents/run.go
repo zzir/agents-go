@@ -23,13 +23,13 @@ import (
 //	}
 func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (RunStream, *RunControl) {
 	ctrl := &RunControl{}
-	return withMiddleware(ctx, agent, input, opts, ctrl, true), ctrl
+	return launch(ctx, agent, input, opts, ctrl, true, newRunner), ctrl
 }
 
 // RunSync executes a run to completion and returns its result; the model is
 // called without streaming.
 func RunSync(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunResult, error) {
-	return withMiddleware(ctx, agent, input, opts, &RunControl{}, false).Collect()
+	return launch(ctx, agent, input, opts, &RunControl{}, false, newRunner).Collect()
 }
 
 // singleUse makes a second range of a RunStream yield an error instead of
@@ -45,19 +45,20 @@ func singleUse(stream RunStream) RunStream {
 	}
 }
 
-// withMiddleware builds the run's stream through the middleware chain.
-func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *RunControl, rawEvents bool) RunStream {
+// launch is the pipeline fresh runs and resumes share: normalize the input
+// once, wrap the run in the middleware chain, hand out a single-use stream.
+// build makes the runner from what the chain settled on.
+func launch(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *RunControl, rawEvents bool, build func(RunInput) (*runner, error)) RunStream {
 	base := func(ctx context.Context, in RunInput) RunStream {
 		return func(yield func(StreamEvent, error) bool) {
-			runStream(ctx, in.Agent, in.Input, *in.Opts, ctrl, rawEvents, yield)
+			r, err := build(in)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			r.run(ctx, in.Agent, ctrl, rawEvents, yield)
 		}
 	}
-	return runViaMiddleware(ctx, agent, input, opts, ctrl, base)
-}
-
-// runViaMiddleware is the pipeline fresh runs and resumes share: normalize
-// the input once, wrap base in the middleware chain, hand out a single-use stream.
-func runViaMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *RunControl, base RunFunc) RunStream {
 	return singleUse(func(yield func(StreamEvent, error) bool) {
 		items, err := normalizeInput(input)
 		if err != nil {
@@ -73,20 +74,14 @@ func runViaMiddleware(ctx context.Context, agent *Agent, input any, opts RunOpti
 	})
 }
 
-// runStream is the body shared by Run and RunSync.
-func runStream(ctx context.Context, agent *Agent, input []InputItem, opts RunOptions, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) {
-	r, err := newRunner(input, opts)
-	if err != nil {
-		yield(nil, err)
-		return
-	}
-	r.run(ctx, agent, ctrl, rawEvents, yield)
-}
-
 // run is the tail a fresh run and a resume share: the loop inside the run's
 // trace, then the stream's last yield against the closed trace — see spec §2.0.
 func (r *runner) run(ctx context.Context, agent *Agent, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) {
 	r.yield, r.ctrl, r.rawEvents = yield, ctrl, rawEvents
+	if r.resume != nil {
+		// A resume continues the paused agent, whatever the chain passed.
+		agent = r.resume.CurrentAgent
+	}
 	res, err := r.execute(ctx, agent)
 	r.finishStream(res, err)
 }
@@ -97,7 +92,7 @@ func (r *runner) execute(ctx context.Context, agent *Agent) (*RunResult, error) 
 	defer r.observeRun(agent)()
 	// Attached before the starting input loads: a before-run compaction pass
 	// that gives up is a diagnostic too.
-	ctx = WithDiagnostics(ctx, r.diagnostics)
+	ctx = withDiagnostics(ctx, r.diagnostics)
 	input, err := r.startInput(ctx)
 	if err != nil {
 		return nil, err
@@ -144,9 +139,8 @@ type turnState struct {
 	// sends the delta.
 	cursor serverCursor
 
-	// pending is PrepareNextTurn's snapshot for the next turn; runStartHooks
-	// gates OnStart and the agent span; finalTurn is the tool-free grace turn.
-	pending       *TurnSnapshot
+	// runStartHooks gates OnStart and the agent span; finalTurn is the
+	// tool-free closing turn.
 	runStartHooks bool
 	finalTurn     bool
 }
@@ -198,7 +192,7 @@ type runner struct {
 	userInputSaved bool
 
 	// diagnostics collects trouble the run survived. Never nil.
-	diagnostics *DiagnosticSink
+	diagnostics *diagnosticSink
 	// diagnosticsSaved is how many diagnostics are already attached to entries.
 	diagnosticsSaved int
 
@@ -226,10 +220,6 @@ type runner struct {
 	// injectedUpTo is the sessionItems length just past the latest injected
 	// input; a session write past it commits the in-flight injections.
 	injectedUpTo int
-
-	// disclosed names the deferred tools a ToolResult has opened up; carried in
-	// RunState.
-	disclosed map[string]bool
 
 	// toolLoop is the tool-loop valves' count — see spec §2.7d.
 	toolLoop toolLoopState
@@ -259,16 +249,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 	defer func() { r.agentSpan.Finish() }()
 	defer func() { r.inputRace.stop() }()
 
-	seed := r.seedLoop(startAgent, originalInput)
-	st := &turnState{
-		originalInput:   seed.originalInput,
-		rawResponses:    seed.rawResponses,
-		agent:           seed.agent,
-		startTurn:       seed.startTurn,
-		pendingResponse: seed.pendingResponse,
-		cursor:          seed.cursor,
-		runStartHooks:   true,
-	}
+	st := r.seedLoop(startAgent, originalInput)
 	r.state = st
 
 	r.log.Info(ctx, "run started",
@@ -295,24 +276,16 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 			return res, nil
 		}
 		if r.maxTurns > 0 && turn > r.maxTurns {
-			// FinalTurnWithoutTools grants this turn, tool-free and once — see
-			// spec §2.7d.
-			if r.opts.Exec.ToolLoop.FinalTurnWithoutTools && !st.finalTurn {
-				r.log.Info(ctx, "turn budget exhausted; one final turn without tools",
-					slog.Int("max_turns", r.maxTurns))
-				st.finalTurn = true
-			} else {
-				r.log.Warn(ctx, "turn budget exhausted", slog.Int("max_turns", r.maxTurns))
-				maxErr := &MaxTurnsError{MaxTurns: r.maxTurns}
-				res, rerr := r.recoverMaxTurns(ctx, maxErr)
-				if rerr != nil {
-					return nil, r.fail(rerr)
-				}
-				if res != nil {
-					return res, nil
-				}
-				return nil, r.fail(maxErr)
+			r.log.Warn(ctx, "turn budget exhausted", slog.Int("max_turns", r.maxTurns))
+			maxErr := &MaxTurnsError{MaxTurns: r.maxTurns}
+			res, rerr := r.recoverMaxTurns(ctx, maxErr)
+			if rerr != nil {
+				return nil, r.fail(rerr)
 			}
+			if res != nil {
+				return res, nil
+			}
+			return nil, r.fail(maxErr)
 		}
 		// A cancellation at the turn boundary fails the run like any mid-loop error.
 		if err := ctx.Err(); err != nil {
@@ -330,11 +303,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 		}
 
 		preStep := r.generatedItems()
-		step, err := r.executeToolsAndSideEffects(ctx, st.agent, call.processed, call.snapshot.OutputSchema, call.resumed, stepProgress{
-			originalInput: st.originalInput,
-			preStepItems:  preStep,
-			resp:          call.resp,
-		})
+		step, err := r.executeToolsAndSideEffects(ctx, call, preStep)
 		if err != nil {
 			return nil, r.fail(err)
 		}
@@ -357,16 +326,17 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 			st.cursor.advance(r.opts.Conversation, call.resp, len(preStep), len(call.processed.NewItems))
 		}
 
+		tr := &TurnResult{Turn: turn, Response: call.resp, NewItems: step.NewStepItems}
 		var a stepAction
 		switch step.NextStep {
 		case stepFinalOutput:
 			a = r.handleFinalOutput(ctx, st, step)
 		case stepHandoff:
-			a = r.handleHandoff(ctx, st, step, call.snapshot, call.resp, turn)
+			a = r.handleHandoff(ctx, st, step, tr)
 		case stepInterruption:
 			a = r.handleInterruption(ctx, step, call.resp, turn)
 		case stepRunAgain:
-			a = r.handleRunAgain(ctx, st, step, call.snapshot, call.resp, turn)
+			a = r.handleRunAgain(ctx, st, tr)
 		}
 		if a.done {
 			return a.result, a.err
@@ -376,7 +346,7 @@ func (r *runner) loop(ctx context.Context, startAgent *Agent, originalInput []In
 
 // turnCall is one turn's model response, classified and ready to execute.
 type turnCall struct {
-	snapshot  *TurnSnapshot
+	snapshot  *turnSnapshot
 	resp      *ModelResponse
 	processed *processedResponse
 	// resumed marks a resume's first turn: the interrupted response is
@@ -409,19 +379,12 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 	if err != nil {
 		return nil, false, r.fail(err)
 	}
-	snapshot, err := r.buildSnapshot(ctx, st.agent, turnInput)
+	snapshot, err := r.buildSnapshot(ctx, st.agent)
 	if err != nil {
 		return nil, false, r.fail(err)
 	}
-	// A prepared snapshot replaces the resolved one, all but Input — see spec §2.3b.
-	if st.pending != nil {
-		st.pending.Input = turnInput
-		snapshot = st.pending
-		st.pending = nil
-	}
 	tools, handoffs := snapshot.Tools, snapshot.Handoffs
 	settings := snapshot.Settings
-	modelInput := snapshot.Input
 	if st.finalTurn {
 		// Tools stay on the wire, uncallable; nothing the turn returns runs —
 		// see spec §2.7d.
@@ -430,13 +393,11 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 		}
 		tools, handoffs = nil, nil
 	}
-	// What the model is sent; refreshed if InputFilter edits it — see spec §2.2.
-	r.rc.setTurnInput(modelInput)
 
 	// First turn only: Blocking input guardrails gate the call, the rest race it.
 	if turn == st.startTurn && r.resume == nil && !r.inputGuardrailsRan {
 		r.inputGuardrailsRan = true
-		gate, gerr := r.firstTurnInputGuardrails(ctx, st.agent, st.originalInput, usedOriginalInput, snapshot,
+		gate, gerr := r.firstTurnInputGuardrails(ctx, st.agent, st.originalInput, usedOriginalInput,
 			func(replaced []InputItem) ([]InputItem, error) {
 				in, _, _, err := r.buildTurnInput(st.cursor, replaced, r.generatedItems())
 				return in, err
@@ -447,7 +408,7 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 			return nil, false, r.fail(gerr)
 		}
 		if gate.model != nil {
-			modelInput = gate.model
+			turnInput = gate.model
 		}
 	}
 
@@ -456,9 +417,9 @@ func (r *runner) runTurn(ctx context.Context, turn int) (call *turnCall, retry b
 	if resumed {
 		st.pendingResponse = nil
 	} else {
-		out := r.callModelOnce(ctx, turn, snapshot, ModelRequest{
+		out := r.callModelOnce(ctx, turn, snapshot.Model, ModelRequest{
 			SystemInstructions: snapshot.Instructions,
-			Input:              modelInput,
+			Input:              turnInput,
 			Settings:           settings,
 			Tools:              snapshot.Tools,
 			OutputSchema:       snapshot.OutputSchema,
@@ -564,15 +525,13 @@ func (r *runner) handleFinalOutput(ctx context.Context, st *turnState, step *sin
 
 // handleHandoff persists the turn, offers the stop hook, applies any input
 // filter, then switches to the new agent.
-func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleStepResult, snapshot *TurnSnapshot, resp *ModelResponse, turn int) stepAction {
+func (r *runner) handleHandoff(ctx context.Context, st *turnState, step *singleStepResult, tr *TurnResult) stepAction {
 	// Persist before the input filter restarts the model's view.
 	if err := r.persistSessionItems(ctx); err != nil {
 		return loopReturn(nil, r.fail(err))
 	}
 	// A handoff is a turn boundary; the stop hook sees the turn as it happened.
-	stop, out, serr := r.stopAfterTurn(ctx, st.agent, &TurnResult{
-		Turn: turn, Response: resp, NewItems: step.NewStepItems, Snapshot: snapshot,
-	})
+	stop, out, serr := r.stopAfterTurn(ctx, st.agent, tr)
 	if serr != nil {
 		return loopReturn(nil, r.fail(serr))
 	}
@@ -627,15 +586,9 @@ func (r *runner) handleInterruption(ctx context.Context, step *singleStepResult,
 }
 
 // handleRunAgain runs the save point and prepares the next turn: stop,
-// recompact, inject follow-up input, or carry a prepared snapshot forward.
-func (r *runner) handleRunAgain(ctx context.Context, st *turnState, step *singleStepResult, snapshot *TurnSnapshot, resp *ModelResponse, turn int) stepAction {
-	sp, serr := r.savePoint(ctx, savePointInput{
-		Turn:     turn,
-		Agent:    st.agent,
-		Snapshot: snapshot,
-		Response: resp,
-		NewItems: step.NewStepItems,
-	})
+// recompact or inject follow-up input.
+func (r *runner) handleRunAgain(ctx context.Context, st *turnState, tr *TurnResult) stepAction {
+	sp, serr := r.savePoint(ctx, st.agent, tr)
 	if serr != nil {
 		return loopReturn(nil, r.fail(serr))
 	}
@@ -657,7 +610,6 @@ func (r *runner) handleRunAgain(ctx context.Context, st *turnState, step *single
 			return loopReturn(nil, errConsumerStopped)
 		}
 	}
-	st.pending = sp.NextSnapshot
 	return loopAgain()
 }
 
@@ -697,7 +649,7 @@ type modelCallOutcome struct {
 
 // callModelOnce performs one turn's model call with everything around it: the
 // user-input save, InputFilter, the span, the raced call, overflow recovery.
-func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot, req ModelRequest) modelCallOutcome {
+func (r *runner) callModelOnce(ctx context.Context, turn int, model Model, req ModelRequest) modelCallOutcome {
 	st := r.state
 	// The one-time user-input save lands just ahead of the first model call —
 	// see spec §2.5.
@@ -711,9 +663,6 @@ func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot
 			return modelCallOutcome{err: r.fail(ferr)}
 		}
 		req.SystemInstructions, req.Input = edited.Instructions, edited.Input
-		// The snapshot is what the model was sent; the edit lands on it too.
-		snap.Instructions, snap.Input = edited.Instructions, edited.Input
-		r.rc.setTurnInput(req.Input)
 	}
 	r.log.Debug(ctx, "calling model",
 		slog.Int("turn", turn),
@@ -725,9 +674,9 @@ func (r *runner) callModelOnce(ctx context.Context, turn int, snap *TurnSnapshot
 	call := func(ctx context.Context) (*ModelResponse, error) {
 		ctx = tracing.WithSpan(ctx, span)
 		if r.rawEvents {
-			return r.streamOneModelCall(ctx, span, snap.Model, req)
+			return r.streamOneModelCall(ctx, span, model, req)
 		}
-		return snap.Model.Respond(ctx, req)
+		return model.Respond(ctx, req)
 	}
 	var resp *ModelResponse
 	var err error
@@ -795,7 +744,6 @@ func (r *runner) buildPauseState(turn int, resp *ModelResponse, step *singleStep
 		MaxTurns:              r.maxTurns,
 		ToolsUsed:             sortedKeys(r.toolsUsedBy),
 		PendingInput:          r.ctrl.Pending(),
-		DisclosedTools:        sortedKeys(r.disclosed),
 		ContextReset:          r.rc.contextReset.Load(),
 		ContextFresh:          r.rc.contextFresh.Load(),
 		ReasoningItemIDPolicy: r.opts.Exec.ReasoningItemIDPolicy,

@@ -7,23 +7,18 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// TurnSnapshot is everything a turn was resolved to, captured before the
-// model is called; a hook may replace the next turn's — see spec §2.3b.
-type TurnSnapshot struct {
-	Agent        *Agent
+// turnSnapshot is what a turn's agent was resolved to before the model is called.
+type turnSnapshot struct {
 	Model        Model
 	Settings     *ModelSettings
 	Instructions string
 	Tools        []*Tool
 	Handoffs     []Handoff
 	OutputSchema OutputSchema
-	// Input is what the model is sent this turn. The runner owns it: a snapshot
-	// from PrepareNextTurn has it replaced; edit with ModelOptions.InputFilter.
-	Input []InputItem
 }
 
 // TurnResult describes one completed turn, handed by value to the
-// turn-boundary hooks — see spec §2.3c.
+// turn-boundary hook — see spec §2.3c.
 type TurnResult struct {
 	// Turn is the 1-based turn number within the run.
 	Turn int
@@ -32,8 +27,6 @@ type TurnResult struct {
 	// NewItems is everything the turn produced, in order: the model's own
 	// output items followed by any tool outputs and handoff records.
 	NewItems []*RunItem
-	// Snapshot is what the turn was resolved to before it ran.
-	Snapshot *TurnSnapshot
 }
 
 // ToolCallNames returns the names of the tools called this turn, in call order.
@@ -83,7 +76,7 @@ func turnFinalOutput(agent *Agent, items []*RunItem) any {
 
 // buildSnapshot resolves everything a turn needs before the model is called;
 // each resolution can fail, and each failure is the run's.
-func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []InputItem) (*TurnSnapshot, error) {
+func (r *runner) buildSnapshot(ctx context.Context, agent *Agent) (*turnSnapshot, error) {
 	model, err := r.resolveModel(agent)
 	if err != nil {
 		return nil, err
@@ -100,25 +93,14 @@ func (r *runner) buildSnapshot(ctx context.Context, agent *Agent, input []InputI
 	if err != nil {
 		return nil, err
 	}
-	return &TurnSnapshot{
-		Agent:        agent,
+	return &turnSnapshot{
 		Model:        model,
 		Settings:     r.resolveSettings(agent),
 		Instructions: instructions,
 		Tools:        tools,
 		Handoffs:     handoffs,
 		OutputSchema: agent.OutputType,
-		Input:        input,
 	}, nil
-}
-
-// savePointInput describes the turn that just finished.
-type savePointInput struct {
-	Turn     int
-	Agent    *Agent
-	Snapshot *TurnSnapshot
-	Response *ModelResponse
-	NewItems []*RunItem
 }
 
 // savePointResult is what the save point decided.
@@ -129,25 +111,20 @@ type savePointResult struct {
 	// Recompacted reports that Input replaces the run's context.
 	Recompacted bool
 	Input       []InputItem
-	// NextSnapshot, when non-nil, is used for the next turn instead of
-	// resolving one from the agent.
-	NextSnapshot *TurnSnapshot
 	// Injected is caller-supplied input to add before the next model call.
 	Injected []*RunItem
 }
 
 // savePoint is the turn boundary: persist, ask to stop, compact, drain the
-// injection queues, prepare the next turn — in that order; spec §2.3a.
-func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointResult, error) {
+// injection queues — in that order; spec §2.3a.
+func (r *runner) savePoint(ctx context.Context, agent *Agent, tr *TurnResult) (savePointResult, error) {
 	var out savePointResult
 
 	if err := r.persistSessionItems(ctx); err != nil {
 		return out, err
 	}
 
-	tr := &TurnResult{Turn: in.Turn, Response: in.Response, NewItems: in.NewItems, Snapshot: in.Snapshot}
-
-	stop, final, err := r.stopAfterTurn(ctx, in.Agent, tr)
+	stop, final, err := r.stopAfterTurn(ctx, agent, tr)
 	if err != nil {
 		return out, err
 	}
@@ -166,7 +143,7 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 
 	// Work since the last reset ends its fresh state; a reset asked for this
 	// turn lands here and wins over the pass above — see spec §2.5i.
-	if turnDidWork(in.NewItems) {
+	if turnDidWork(tr.NewItems) {
 		r.rc.contextFresh.Store(false)
 	}
 	if r.rc.takeContextReset() {
@@ -182,19 +159,11 @@ func (r *runner) savePoint(ctx context.Context, in savePointInput) (savePointRes
 	// Injected input is drained after compaction so it is never folded away by
 	// the pass that ran before it arrived; a caller's stop leaves it queued.
 	if !r.ctrl.stopRequested() {
-		taken, err := r.takeScreened(ctx, in.Agent, r.ctrl.takeTurnInput)
+		taken, err := r.takeScreened(ctx, agent, r.ctrl.takeTurnInput)
 		if err != nil {
 			return out, err
 		}
-		out.Injected = injectedInput(in.Agent, taken)
-	}
-
-	if prepare := r.opts.Exec.PrepareNextTurn; prepare != nil {
-		next, perr := prepare(ctx, tr)
-		if perr != nil {
-			return out, perr
-		}
-		out.NextSnapshot = next
+		out.Injected = injectedInput(agent, taken)
 	}
 	return out, nil
 }

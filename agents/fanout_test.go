@@ -14,7 +14,7 @@ func drainFanout(stream func(func(Seq[int], error) bool)) ([]int, []*GapError) {
 	for item, err := range stream {
 		if gap, ok := errors.AsType[*GapError](err); ok {
 			gaps = append(gaps, gap)
-			if gap.AtEnd() {
+			if gap.Next == 0 {
 				continue // no item accompanies a gap that runs to the end
 			}
 		}
@@ -68,7 +68,7 @@ func TestFanoutReportsGaps(t *testing.T) {
 	// Nothing got through after the drops, so there is no later delivery to
 	// carry the gap — it is reported as the stream ends instead. Silence here
 	// would leave the consumer unable to tell loss from a stream that ended.
-	if len(gaps) != 1 || !gaps[0].AtEnd() {
+	if len(gaps) != 1 || gaps[0].Next != 0 {
 		t.Fatalf("want one terminal gap, got %v", gaps)
 	}
 	if gaps[0].Dropped != 8 {
@@ -426,7 +426,7 @@ func TestFanoutReportsAGapThatRunsToTheEnd(t *testing.T) {
 	if gap == nil {
 		t.Fatalf("delivered %v of 10 and reported no gap", delivered)
 	}
-	if !gap.AtEnd() {
+	if gap.Next != 0 {
 		t.Errorf("gap.Next = %d, want 0 — there is no item after a terminal gap", gap.Next)
 	}
 	if want := 10 - len(delivered); gap.Dropped != want {
@@ -450,7 +450,7 @@ func TestFanoutCancelReportsNoGap(t *testing.T) {
 
 	for _, err := range stream {
 		var g *GapError
-		if errors.As(err, &g) && g.AtEnd() {
+		if errors.As(err, &g) && g.Next == 0 {
 			t.Fatal("a cancelled subscriber was told about a terminal gap")
 		}
 	}
@@ -493,9 +493,9 @@ func TestFanoutAheadOfHeadCursorResetsImmediately(t *testing.T) {
 		if r.gap.LastGood != 0 {
 			t.Errorf("LastGood = %d, want 0 — resubscribing from it must replay the new timeline", r.gap.LastGood)
 		}
-		// AtEnd means "nothing further will arrive to close this gap"; a
+		// A zero Next means "nothing further will arrive to close this gap"; a
 		// consumer that believes it stops reading a run that is still going.
-		if r.gap.AtEnd() {
+		if r.gap.Next == 0 {
 			t.Error("the reset gap claims the stream ended, on a stream that is still live")
 		}
 	case <-time.After(2 * time.Second):

@@ -28,12 +28,16 @@ func placeOrder(ran *int) *agents.Tool {
 }
 
 func noCardNumbers() agents.Guardrail {
-	return agents.NewOutputGuardrail("no_card_numbers", func(_ context.Context, output any) (agents.GuardrailDecision, error) {
-		if s, _ := output.(string); strings.Contains(s, "card ending") {
-			return agents.Trip("card number"), nil
-		}
-		return agents.Allow(nil), nil
-	})
+	return agents.Guardrail{
+		Name:   "no_card_numbers",
+		Stages: []agents.GuardrailStage{agents.StageOutput},
+		Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
+			if s, _ := p.Output.(string); strings.Contains(s, "card ending") {
+				return agents.Trip("card number"), nil
+			}
+			return agents.Allow(nil), nil
+		},
+	}
 }
 
 // storedKinds lists what the session holds: the item type of an item entry,

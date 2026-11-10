@@ -81,10 +81,6 @@ func TestErrorHandlers_InvalidFinalOutput_RecoversValidatedFallback(t *testing.T
 	if seen.RunData.LastAgent != agent {
 		t.Errorf("handler last agent mismatch")
 	}
-	if len(seen.RunData.History) != len(seen.RunData.Input)+len(seen.RunData.Output) {
-		t.Errorf("history = %d items, want input(%d) + output(%d)",
-			len(seen.RunData.History), len(seen.RunData.Input), len(seen.RunData.Output))
-	}
 	// The invalid message stays, followed by the synthesized fallback message.
 	texts := messageTexts(res.NewItems)
 	if len(texts) != 2 || texts[0] != "not valid json" || texts[1] != `{"label":"fallback","score":1}` {

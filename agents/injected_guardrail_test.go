@@ -15,19 +15,22 @@ import (
 // noForbidden trips on input carrying "forbidden" and softens input carrying
 // "rude"; it passes everything else, the run's first input included.
 func noForbidden(blocking bool) agents.Guardrail {
-	g := agents.NewInputGuardrail("no_forbidden", func(_ context.Context, input []agents.InputItem) (agents.GuardrailDecision, error) {
-		for _, item := range input {
-			switch text := session.ItemText(item); {
-			case strings.Contains(text, "forbidden"):
-				return agents.Trip("forbidden word"), nil
-			case strings.Contains(text, "rude"):
-				return agents.Replace("please, a softer ask", nil), nil
+	return agents.Guardrail{
+		Name:     "no_forbidden",
+		Stages:   []agents.GuardrailStage{agents.StageInput},
+		Blocking: blocking,
+		Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
+			for _, item := range p.Input {
+				switch text := session.ItemText(item); {
+				case strings.Contains(text, "forbidden"):
+					return agents.Trip("forbidden word"), nil
+				case strings.Contains(text, "rude"):
+					return agents.Replace("please, a softer ask", nil), nil
+				}
 			}
-		}
-		return agents.Allow(nil), nil
-	})
-	g.Blocking = blocking
-	return g
+			return agents.Allow(nil), nil
+		},
+	}
 }
 
 // steeringTool queues input through the run's control while the first turn runs.
@@ -183,19 +186,23 @@ func TestNonBlockingGuardrailGatesInjection(t *testing.T) {
 		Build()
 	release := make(chan struct{})
 	entered := make(chan struct{}, 1)
-	slow := agents.NewInputGuardrail("slow", func(ctx context.Context, input []agents.InputItem) (agents.GuardrailDecision, error) {
-		for _, item := range input {
-			if strings.Contains(session.ItemText(item), "and the date") {
-				entered <- struct{}{}
-				select {
-				case <-release:
-				case <-ctx.Done():
-					return agents.GuardrailDecision{}, ctx.Err()
+	slow := agents.Guardrail{
+		Name:   "slow",
+		Stages: []agents.GuardrailStage{agents.StageInput},
+		Run: func(ctx context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
+			for _, item := range p.Input {
+				if strings.Contains(session.ItemText(item), "and the date") {
+					entered <- struct{}{}
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return agents.GuardrailDecision{}, ctx.Err()
+					}
 				}
 			}
-		}
-		return agents.Allow(nil), nil
-	})
+			return agents.Allow(nil), nil
+		},
+	}
 	var ctrl *agents.RunControl
 	agent := &agents.Agent{
 		Name: "a", ModelImpl: model,

@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/tracing"
 )
 
 // Compactor decides what a session's history should look like as model
@@ -135,19 +136,55 @@ func (r *runner) recompactAtSavePoint(ctx context.Context) (input []InputItem, o
 		return nil, false, nil
 	}
 
-	history, err := session.ProjectEntries(r.historyWindow(compacted), r.opts.Conversation.Projectors)
+	history, err := r.projectHistory(r.historyWindow(compacted))
 	if err != nil {
 		return nil, false, err
 	}
-	// Scrubbed like the first turn's history: dropping a group can orphan a
-	// tool output.
-	return normalizeStoredInput(history), true, nil
+	return history, true, nil
 }
 
-// historyWindow applies Conversation.Settings to entries: the newest Limit, all
-// when unbounded.
+// projectHistory turns rebuilt context entries into model input, scrubbed: a
+// fold can orphan a tool output, which the Responses API rejects.
+func (r *runner) projectHistory(entries []session.Entry) ([]InputItem, error) {
+	history, err := session.ProjectEntries(entries, r.opts.Conversation.Projectors)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeStoredInput(history), nil
+}
+
+// runStorageCompaction runs a self-compacting storage's pass. The storage
+// opens the span only when it compacts; a failure before that still gets one.
+func (r *runner) runStorageCompaction(ctx context.Context, cs session.CompactionAware, force bool) error {
+	var span *tracing.SpanHandle
+	err := cs.RunCompaction(ctx, session.CompactionArgs{
+		Force: force,
+		StartSpan: func() *tracing.SpanHandle {
+			span = r.trace.StartCompactionSpan(r.agentParentID())
+			return span
+		},
+	})
+	if err != nil && span == nil {
+		span = r.trace.StartCompactionSpan(r.agentParentID())
+	}
+	if span != nil {
+		if err != nil {
+			span.SetError(err.Error(), nil)
+		}
+		span.Finish()
+	}
+	return err
+}
+
+// historyCursor reads the newest Conversation.HistoryLimit entries. A negative
+// limit clamps to none: negated, Cursor would read it as the oldest N.
+func (r *runner) historyCursor() session.Cursor {
+	return session.Cursor{Limit: -max(r.opts.Conversation.HistoryLimit, 0)}
+}
+
+// historyWindow applies Conversation.HistoryLimit to entries.
 func (r *runner) historyWindow(entries []session.Entry) []session.Entry {
-	return session.PageEntries(entries, session.Cursor{Limit: -session.ResolveLimit(r.opts.Conversation.Settings)})
+	return session.PageEntries(entries, r.historyCursor())
 }
 
 // CompactionCheckpointer is an optional Compactor capability: describe the

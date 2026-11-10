@@ -42,7 +42,7 @@ h := agents.Handoff{
 }
 ```
 
-A handoff whose target depends on the arguments sets `OnInvoke` instead of `Target` and leaves `Target` nil — it is the *static* declaration a registry-rebuilding consumer trusts without invoking callbacks, and a handoff with neither fails the run with a `*UserError` ([spec §2.4](../reference/spec.md#24-handoffs)). A hand-built `Handoff` is strict by default; set `NonStrictSchema: true` only for a schema strict mode cannot express. Every field (`InputFilter`, `IsEnabled`, …) is on [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#Handoff).
+A handoff whose target depends on the arguments sets `OnInvoke` instead of `Target` and leaves `Target` nil — it is the *static* declaration a registry-rebuilding consumer trusts without invoking callbacks, and a handoff with neither fails the run with a `*UserError` ([spec §2.4](../reference/spec.md#24-handoffs)). A hand-built `Handoff`'s `InputJSONSchema` is sent strict, so it must be strict-shaped. Every field (`InputFilter`, `IsEnabled`, …) is on [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#Handoff).
 
 ## Input filters
 
@@ -66,12 +66,10 @@ For multi-agent chains, `agents.NestHandoffHistory` is a ready-made filter that 
 
 ```go
 h := agents.HandoffTo(billing)
-h.InputFilter = agents.NestHandoffHistory(agents.NestHistoryOptions{})
+h.InputFilter = agents.NestHandoffHistory
 ```
 
-The default folds the transcript into a single assistant message wrapped in fixed `<CONVERSATION HISTORY>` markers. On a later handoff the filter **flattens** any earlier summary back into its transcript before re-folding, so a chain of handoffs yields one flat summary rather than a summary-of-summaries. Customize via `NestHistoryOptions`:
-
-- `Mapper` — a `HandoffHistoryMapper` that folds the transcript your own way (e.g. call an LLM for a real summary instead of the default JSON-per-line transcript). Only the default summary shape is flattened by later handoffs; a custom mapper's summaries are treated as opaque messages.
+It folds the transcript into a single assistant message wrapped in fixed `<CONVERSATION HISTORY>` markers. On a later handoff the filter **flattens** any earlier summary back into its transcript before re-folding, so a chain of handoffs yields one flat summary rather than a summary-of-summaries. To fold the transcript your own way (an LLM summary, say), write an `InputFilter`.
 
 The transcript is serialized one JSON item per line, which round-trips through `UnmarshalInputItem` when flattened — a line-delimited format nests reliably, where free text does not.
 

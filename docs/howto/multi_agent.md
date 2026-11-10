@@ -45,7 +45,7 @@ orchestrator := &agents.Agent{
 }
 ```
 
-`AgentToolConfig` configures the **tool surface** — `Name` / `Description`, `IsEnabled`, `NeedsApproval` / `NeedsApprovalFunc`, `CustomOutputExtractor` (derive the string result from the nested `*RunResult`), `FailureErrorFunction`, `OnStream`, `InputBuilder` — every field on [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#AgentToolConfig). Everything about the nested run itself goes through `ModifyRunOptions`:
+`AgentToolConfig` configures the **tool surface** — `Name` / `Description`, `IsEnabled`, `NeedsApproval` / `NeedsApprovalFunc`, `CustomOutputExtractor` (derive the string result from the nested `*RunResult`), `FailureErrorFunction` — every field on [pkg.go.dev](https://pkg.go.dev/github.com/zzir/agents-go/agents#AgentToolConfig). Everything about the nested run itself goes through `ModifyRunOptions`:
 
 ```go
 sub.AsTool(agents.AgentToolConfig{
@@ -57,9 +57,7 @@ sub.AsTool(agents.AgentToolConfig{
 })
 ```
 
-**Streaming a nested run.** Setting `OnStream` switches the nested run to streaming: every event (raw model deltas, run items, agent updates) is delivered as an `AgentToolStreamEvent` carrying the current nested agent and the originating tool call. Events dispatch from a background goroutine so a slow callback never stalls the run; a panic in the callback is recovered, and a canceled parent does not wait for the callback backlog.
-
-**Typed parameters.** `AgentAsTool[Params](agent, cfg)` replaces the default `{input: string}` schema with one reflected from `Params`; both constructors validate the model's arguments against the advertised schema before the nested run starts, and a failure goes back to the calling model as a tool error ([spec §2.7h](../reference/spec.md#27h-schema-validation)). The arguments render into the nested input with a structured preamble and the JSON payload — or the full schema with `InputBuilder: agents.AgentToolInputWithSchema`, or through your own `InputBuilder`.
+**One input shape.** The tool's arguments are `{input: string}`, validated before the nested run starts — a failure goes back to the calling model as a tool error ([spec §2.7h](../reference/spec.md#27h-schema-validation)) — and the string becomes the nested run's input verbatim. Under a streamed parent the nested agent's messages reach the parent's stream as [tool progress](tools.md#streaming-partial-results).
 
 The nested run inherits the parent's model provider, model override, model settings, tracer and log configuration through the run context, so sub-agents need no provider of their own. Its spans join the parent's trace and its log records carry the sub-agent's name; its usage is tracked separately. If the model calls several agent-tools in one turn they run **concurrently** — like any other function tools.
 

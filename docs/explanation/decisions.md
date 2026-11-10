@@ -206,8 +206,8 @@ Rules: spec §2.15; the Anthropic mappings are in [Models](../howto/models.md).
 ### 5.11 Construction errors split by data provenance
 
 **Decision.** A constructor whose failure can only be a programmer error
-**panics** (`NewTool`, `AgentAsTool`, `OutputType`: a schema derived from a Go
-type is deterministic per type); one whose input is runtime data **returns an error**.
+**panics** (`NewTool`, `OutputType`: a schema derived from a Go type is
+deterministic per type); one whose input is runtime data **returns an error**.
 
 **Rejected.** Returning an error from a type-derived constructor — the failure
 is a bug any test surfaces at once (the `regexp.MustCompile` precedent), and
@@ -218,10 +218,6 @@ a runner check. A `NonStrict()` method relaxing a tool after it is built — the
 strict schema is generated during construction, so it cannot rescue a type
 strict mode cannot express, and it rewrites a schema and validator a copy of
 the tool shares; hence the twins `NewToolNonStrict` / `OutputTypeNonStrict`.
-
-**Cost accepted.** `AgentAsTool` has no non-strict twin — a recorded gap, not
-a decision: no caller has needed an unconstrained field in a nested run's
-arguments, and until one does the way out is building the `Tool` value directly.
 
 Rules: spec §2.7h, §4 (strict schemas).
 
@@ -239,9 +235,9 @@ run's accumulators start empty" rests on.
 ### 5.13 AgentToolConfig configures the tool, ModifyRunOptions the run
 
 **Decision.** `AgentToolConfig` holds only what has no `RunOptions` counterpart
-— the tool's name, description, visibility, approval gate, error rendering,
-output extraction, streaming callback and input rendering; everything about the
-nested run itself goes through the single `ModifyRunOptions` channel.
+— the tool's name, description, visibility, approval gate, error rendering and
+output extraction; everything about the nested run itself goes through the
+single `ModifyRunOptions` channel. The input shape is fixed (§5.110).
 
 **Rejected.** Mirror fields (`MaxTurns`, `Session`, `ConversationID`) — each
 was a second spelling of a `RunOptions` field, and the escape hatch's
@@ -1107,12 +1103,12 @@ failure. A single shared buffer — it couples every consumer to the slowest,
 the measured `chan(64)` case. Delivering a timeline reset on the next publish
 — the stream a stale cursor lands on has often already ended, and a gap
 waiting for a delivery that never comes leaves the consumer in the silence it
-exists to break. Reporting that reset `AtEnd` — it tells a consumer to stop
-reading a run that is still going. `Close` dropping an accepted publish — the
+exists to break. Reporting that reset with a zero `Next` — it tells a consumer
+to stop reading a run that is still going. `Close` dropping an accepted publish — the
 item has a sequence number and sits in replay with no gap to report it.
 
-**Cost accepted.** Memory per subscriber. The zero-value item beside an
-`AtEnd` gap, which a forwarding consumer must skip (a nil pointer, for a
+**Cost accepted.** Memory per subscriber. The zero-value item beside an end
+gap (`Next` zero), which a forwarding consumer must skip (a nil pointer, for a
 stream of pointers).
 
 Rules: spec §2.11
@@ -1829,25 +1825,10 @@ Rules: spec §2.5e2.
 
 ### 5.88 Deferred tools reach the wire as a shorter list
 
-Decided 2026-10-03.
-
-**Decision.** A deferred tool is withheld by the runner, and no adapter
-renders a provider-native deferral; when a producer appears, the runner's own
-retrieval matches by literal name, as §5.61 does, never by a model-side search.
-
-**Rejected.** Adapter-rendered deferral: the two providers' mechanics differ
-and both are still moving, and each disclosure is a prefix edit on either
-path until a native form is adopted. Turning the feature off for Anthropic
-alone: the filter is backend-agnostic, and the prefix cost is the same one
-§5.77 and §5.84 already absorb. Removing the surface now: it is the one
-mechanism spec §2.7i specifies, and it is tested.
-
-**Cost accepted.** Every disclosure changes the tools array: a prompt-cache
-miss on OpenAI, dropped reasoning on a prefix-binding backend. Nothing in this
-repository produces a deferred tool; absent a producer or a settled native
-deferral by the next breaking minor, the surface goes under the zero-consumer rule.
-
-Rules: spec §2.7i.
+Retired 2026-11-10. Was a runner-side filter that withheld a `Deferred` tool
+until a `ToolResult.AddedTools` named it, with no adapter-rendered deferral.
+Because no producer appeared by the next breaking minor, the sunset this
+section set for itself. See spec §2.7i.
 
 ### 5.89 The outbound proxy is the process environment, not a setting
 
@@ -2355,3 +2336,50 @@ all-blank `--trusted-proxies` now counts as unset and draws the `--base-url`
 warning.
 
 Rules: workbench invariant 105.
+
+### 5.110 An agent tool takes one input shape
+
+Decided 2026-11-10.
+
+**Decision.** `Agent.AsTool` is the only agent-as-tool constructor: its
+arguments are `{input: string}`, and the string is the nested run's input
+verbatim. A streamed parent sees the nested agent's messages as tool progress;
+nothing else of the nested stream is exposed.
+
+**Rejected.** `AgentAsTool[Params]` with a pluggable input builder — typed
+arguments had to be rendered back into prose for the nested model (a preamble,
+fenced JSON, a schema summary or the full schema), about 250 lines with no
+caller outside its tests. An `OnStream` callback — a dispatcher goroutine, a
+buffered channel, a cancel flag and a panic recover, to deliver events a
+streamed parent already receives through `ToolContext.Emit`.
+`RunResult.AgentToolInvocation` — it told an output extractor the call it was
+already closed over.
+
+**Cost accepted.** A caller that wants typed arguments builds the `Tool` with
+`NewTool` and runs the agent in its body, giving up what `AsTool` wires: usage
+folding, trace nesting and approval propagation from the nested run.
+
+Rules: spec §2.7h, §2.8.
+
+### 5.111 The runner exposes no per-turn input hook
+
+Decided 2026-11-10.
+
+**Decision.** A turn's resolution (model, settings, instructions, tools,
+handoffs, output schema) and its input are the runner's own: no hook replaces
+them and no accessor publishes them. `ShouldStopAfterTurn` is the one
+turn-boundary hook; `ModelOptions.InputFilter` is the one place a caller edits
+what a model call sends.
+
+**Rejected.** `PrepareNextTurn` returning a replacement `TurnSnapshot` — it
+needed an exported snapshot type and the rule "the runner owns `Input`" to stop
+a copied snapshot replaying the previous turn, and had no caller outside its
+tests. `RunContext.TurnInput()` — a mutex-guarded copy of the request,
+published at three sites so a tool could read back what `InputFilter` is
+already handed; no caller.
+
+**Cost accepted.** Changing the model or dropping tools for one turn without a
+handoff has no direct spelling: `Tool.IsEnabled` and dynamic instructions are
+evaluated per turn, and the model is the agent's.
+
+Rules: spec §2.2 (step 1, retired), §2.3a, §2.3b.

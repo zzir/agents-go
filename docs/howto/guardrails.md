@@ -56,23 +56,6 @@ read a guardrail's diagnostics whether or not it fired.
 
 Run-level and agent-level guardrails both apply; run-level ones run first.
 
-## Typed constructors
-
-For single-stage guardrails these are shorter and keep payload access type-safe:
-
-```go
-agents.NewInputGuardrail("len", func(ctx context.Context, input []agents.InputItem) (agents.GuardrailDecision, error) {
-    if tooLong(input) {
-        return agents.Trip("input too long"), nil
-    }
-    return agents.Allow(nil), nil
-})
-
-agents.NewOutputGuardrail("secrets", func(ctx context.Context, out any) (agents.GuardrailDecision, error) { ... })
-agents.NewToolInputGuardrail("args", func(ctx context.Context, tool, argsJSON string) (agents.GuardrailDecision, error) { ... })
-agents.NewToolOutputGuardrail("leak", func(ctx context.Context, tool string, out any) (agents.GuardrailDecision, error) { ... })
-```
-
 ## Blocking input guardrails
 
 By default a `StageInput` guardrail runs **concurrently** with the first model

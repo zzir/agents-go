@@ -214,12 +214,12 @@ func TestDiagnostics_SinkIsSafeWhenAbsent(t *testing.T) {
 	// No sink on the context: recording must be a no-op, not a panic, so a
 	// model decorator used outside a run still works.
 	RecordDiagnostic(context.Background(), DiagModelRetry, errors.New("x"), nil)
-	if DiagnosticsFrom(context.Background()) != nil {
+	if diagnosticsFrom(context.Background()) != nil {
 		t.Error("a bare context reported a sink")
 	}
-	var nilSink *DiagnosticSink
-	nilSink.Record(Diagnostic{})
-	if nilSink.All() != nil {
+	var nilSink *diagnosticSink
+	nilSink.record(Diagnostic{})
+	if nilSink.all() != nil {
 		t.Error("a nil sink returned diagnostics")
 	}
 }

@@ -20,7 +20,7 @@ func tripping(name string, stage GuardrailStage) Guardrail {
 // runStage is the test entry point for a single stage's concurrent execution.
 func runStage(t *testing.T, stage GuardrailStage, gs ...Guardrail) error {
 	t.Helper()
-	_, err := runStageConcurrent(context.Background(), NewRunContext(nil), gs,
+	_, err := runStageConcurrent(context.Background(), NewRunContext(nil), selectStage(gs, stage),
 		GuardrailPayload{Stage: stage, Agent: &Agent{Name: "a"}})
 	return err
 }

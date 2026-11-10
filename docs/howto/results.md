@@ -6,7 +6,7 @@
 - `FinalOutput` is typed `any`: a string for plain-text agents, the decoded value for `OutputType` agents ([below](#final-output)).
 - `Usage` is a detached copy, never the live accumulator ([below](#usage)).
 - `GuardrailResults` holds every result across all stages, allowing decisions included ([Guardrails](guardrails.md)).
-- `Interruptions` and `State` are set only on a run paused for approval ([below](#interruptions-and-state)); `Diagnostics` is trouble the run survived ([Logging](logging.md#diagnostics-trouble-a-run-survived)); `StoppedEarly` says the caller stopped it at a turn boundary ([Running agents](running_agents.md#turn-hooks)); `AgentToolInvocation` names the parent tool call when the result came from an agent-as-tool run.
+- `Interruptions` and `State` are set only on a run paused for approval ([below](#interruptions-and-state)); `Diagnostics` is trouble the run survived ([Logging](logging.md#diagnostics-trouble-a-run-survived)); `StoppedEarly` says the caller stopped it at a turn boundary ([Running agents](running_agents.md#the-turn-hook)).
 
 ## Final output
 
@@ -80,14 +80,7 @@ fmt.Printf("requests=%d input=%d output=%d total=%d cached=%d reasoning=%d\n",
 	u.InputTokensDetails.CachedTokens, u.OutputTokensDetails.ReasoningTokens)
 ```
 
-Two views say where the tokens went rather than what they cost:
-
-```go
-for responseID, u := range res.UsageByResponse() {
-	fmt.Printf("%s: %d in / %d out\n", responseID, u.InputTokens, u.OutputTokens)
-}
-nested := res.NestedUsage() // spent by tools on model calls of their own; already inside res.Usage
-```
+Each `res.RawResponses[i].Usage` is one model call's share; a tool-output item's `NestedUsage` is what that tool spent on model calls of its own, already inside `res.Usage`.
 
 With a [Session](sessions.md), exactly one entry per response carries that response's `Usage` — the last one — so summing `session.Entry.Usage` reproduces the cost, and `Entry.NestedUsage` stays separate ([spec §2.7f](../reference/spec.md#27f-usage-attribution)).
 

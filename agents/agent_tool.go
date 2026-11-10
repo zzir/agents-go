@@ -5,8 +5,8 @@ import (
 	"fmt"
 )
 
-// AgentToolConfig configures Agent.AsTool and AgentAsTool: the tool surface;
-// the nested run is ModifyRunOptions's job — see decisions §5.13.
+// AgentToolConfig configures Agent.AsTool: the tool surface; the nested run is
+// ModifyRunOptions's job — see decisions §5.13.
 type AgentToolConfig struct {
 	// Name is the tool name exposed to the calling agent; defaults to the
 	// agent's name, sanitized.
@@ -32,92 +32,26 @@ type AgentToolConfig struct {
 	// ModifyRunOptions edits the nested run's RunOptions, applied over what it
 	// inherits (nestedRunOptions). No Session unless set here.
 	ModifyRunOptions func(*RunOptions)
-
-	// OnStream streams the nested run to the callback from one background
-	// goroutine; completion drains it, cancellation does not, a panic is dropped.
-	OnStream func(AgentToolStreamEvent)
-
-	// InputBuilder renders the tool's JSON arguments into the nested run's
-	// input text in place of DefaultAgentToolInputBuilder.
-	InputBuilder AgentToolInputBuilder
 }
 
-// AgentToolStreamEvent is delivered to AgentToolConfig.OnStream for every
-// stream event of a nested agent-as-tool run.
-type AgentToolStreamEvent struct {
-	// Event is the nested run's stream event.
-	Event StreamEvent
-	// Agent is the nested agent currently emitting; it follows handoffs inside
-	// the nested run.
-	Agent *Agent
-	// ToolCallID, ToolName and Arguments identify the originating tool call in
-	// the parent run.
-	ToolCallID string
-	ToolName   string
-	Arguments  string
-}
-
-// AgentToolInvocation identifies the parent tool call that produced a nested
-// agent-as-tool run, exposed on the nested RunResult.
-type AgentToolInvocation struct {
-	ToolName   string
-	ToolCallID string
-	Arguments  string
-}
-
-// agentToolInput is the default argument schema: one input string forwarded to
-// the agent.
+// agentToolInput is the argument schema: one input string forwarded to the agent.
 type agentToolInput struct {
 	Input string `json:"input" jsonschema:"The input to pass to the agent"`
 }
 
 // AsTool turns the agent into a Tool callable by other agents: the nested run
-// takes the single `input` string verbatim and returns control when done
-// (AgentAsTool takes a custom schema) — see spec §2.8.
+// takes the single `input` string verbatim and returns control when done — see
+// spec §2.8 and decisions §5.110.
 func (a *Agent) AsTool(cfg AgentToolConfig) *Tool {
-	name := agentToolName(a, cfg)
+	name := cfg.Name
+	if name == "" {
+		name = transformToolName(a.Name)
+	}
 	schema, err := SchemaFor[agentToolInput](true)
 	if err != nil {
 		panic(fmt.Sprintf("agents: AsTool(%q): schema generation failed: %v", a.Name, err))
 	}
 	validator := newSchemaValidator(schema)
-	validate := func(argsJSON string) error {
-		var args agentToolInput
-		return decodeToolArgs(name, validator, argsJSON, &args)
-	}
-	return agentTool(a, cfg, schema, agentToolSchemaInfo{}, validate)
-}
-
-// AgentAsTool is AsTool with an argument schema reflected from Params; the
-// arguments are rendered into the nested run's input by cfg.InputBuilder or
-// DefaultAgentToolInputBuilder.
-func AgentAsTool[Params any](a *Agent, cfg AgentToolConfig) *Tool {
-	name := agentToolName(a, cfg)
-	schema, err := SchemaFor[Params](true)
-	if err != nil {
-		panic(fmt.Sprintf("agents: AgentAsTool(%q): schema generation failed: %v", name, err))
-	}
-	validator := newSchemaValidator(schema)
-	validate := func(argsJSON string) error {
-		var params Params
-		return decodeToolArgs(name, validator, argsJSON, &params)
-	}
-	return agentTool(a, cfg, schema, buildStructuredSchemaInfo(schema), validate)
-}
-
-// agentToolName resolves an agent tool's name: cfg.Name, else the agent's name
-// sanitized.
-func agentToolName(a *Agent, cfg AgentToolConfig) string {
-	if cfg.Name != "" {
-		return cfg.Name
-	}
-	return transformToolName(a.Name)
-}
-
-// agentTool builds the Tool shared by AsTool and AgentAsTool; validate checks
-// the raw arguments against the advertised schema.
-func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentToolSchemaInfo, validate func(string) error) *Tool {
-	name := agentToolName(a, cfg)
 	failureFn := cfg.FailureErrorFunction
 	if failureFn == nil {
 		failureFn = DefaultToolErrorFunction
@@ -153,20 +87,17 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 					resumeOpts := nestedOpts
 					// The serialized state already carries the conversation so far.
 					resumeOpts.Conversation.ConversationID = ""
-					res, err = runNestedAgent(ctx, a, "", paused, resumeOpts, cfg, tc, argsJSON)
+					res, err = runNestedAgent(ctx, a, "", paused, resumeOpts, tc)
 				}
 			}
 			if !resumed {
 				// Whole-schema check first; a violation is a
 				// *ModelBehaviorError — see spec §2.7h.
-				if verr := validate(argsJSON); verr != nil {
+				var args agentToolInput
+				if verr := decodeToolArgs(name, validator, argsJSON, &args); verr != nil {
 					return ToolResult{}, verr
 				}
-				input, ierr := resolveAgentToolInput(argsJSON, info, cfg.InputBuilder)
-				if ierr != nil {
-					return ToolResult{}, fmt.Errorf("agent tool %q: building input: %w", name, ierr)
-				}
-				res, err = runNestedAgent(ctx, a, input, nil, nestedOpts, cfg, tc, argsJSON)
+				res, err = runNestedAgent(ctx, a, args.Input, nil, nestedOpts, tc)
 			}
 			if err != nil {
 				return ToolResult{}, fmt.Errorf("agent tool %q run failed: %w", name, err)
@@ -183,11 +114,6 @@ func agentTool(a *Agent, cfg AgentToolConfig, schema map[string]any, info agentT
 			// Fold the nested run's usage into the parent's; Add is goroutine-safe.
 			if tc.RunContext != nil && res.Usage != nil {
 				tc.Usage.Add(res.Usage)
-			}
-			res.AgentToolInvocation = &AgentToolInvocation{
-				ToolName:   tc.ToolName,
-				ToolCallID: tc.ToolCallID,
-				Arguments:  argsJSON,
 			}
 			out := agentToolOutput(res)
 			if cfg.CustomOutputExtractor != nil {

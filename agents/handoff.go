@@ -23,9 +23,6 @@ type Handoff struct {
 	// InputJSONSchema validates the model's arguments before the handoff fires
 	// (a violation is a *ModelBehaviorError); nil skips validation — see spec §2.7h.
 	InputJSONSchema map[string]any
-	// NonStrictSchema opts the handoff input out of strict mode; the zero value
-	// is strict.
-	NonStrictSchema bool
 	// AgentName is the name of the target agent, used for tracing.
 	AgentName string
 

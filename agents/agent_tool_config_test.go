@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/zzir/agents-go/agents/session"
@@ -19,86 +18,6 @@ func orchestratorCalling(t *testing.T, tool *Tool, toolName, args string) *Agent
 		modelResp(messageOutput(t, "orch done")),
 	}}
 	return &Agent{Name: "orchestrator", Tools: []*Tool{tool}, ModelImpl: m}
-}
-
-func TestAgentToolOnStreamDeliversEvents(t *testing.T) {
-	sub := &Agent{Name: "specialist", ModelImpl: &fakeModel{responses: []*ModelResponse{
-		modelResp(messageOutput(t, "nested answer")),
-	}}}
-
-	var mu sync.Mutex
-	var events []AgentToolStreamEvent
-	tool := sub.AsTool(AgentToolConfig{
-		Name: "specialist",
-		OnStream: func(ev AgentToolStreamEvent) {
-			mu.Lock()
-			events = append(events, ev)
-			mu.Unlock()
-		},
-	})
-	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
-
-	res, err := RunSync(context.Background(), orch, "go", RunOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.FinalOutputString() != "orch done" {
-		t.Fatalf("final = %q", res.FinalOutputString())
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(events) == 0 {
-		t.Fatal("no OnStream events delivered")
-	}
-	var sawRaw, sawItem bool
-	for _, ev := range events {
-		if ev.Agent == nil || ev.Agent.Name != "specialist" {
-			t.Fatalf("event agent = %+v, want specialist", ev.Agent)
-		}
-		if ev.ToolCallID != "c1" || ev.ToolName != "specialist" {
-			t.Fatalf("event call metadata = %q/%q", ev.ToolCallID, ev.ToolName)
-		}
-		switch ev.Event.(type) {
-		case *RawResponsesStreamEvent:
-			sawRaw = true
-		case *RunItemStreamEvent:
-			sawItem = true
-		}
-	}
-	if !sawRaw || !sawItem {
-		t.Errorf("event kinds: raw=%v item=%v, want both", sawRaw, sawItem)
-	}
-}
-
-func TestAgentToolOnStreamHandlerPanicDoesNotFailCall(t *testing.T) {
-	sub := &Agent{Name: "specialist", ModelImpl: &fakeModel{responses: []*ModelResponse{
-		modelResp(messageOutput(t, "nested answer")),
-	}}}
-	tool := sub.AsTool(AgentToolConfig{
-		Name:     "specialist",
-		OnStream: func(AgentToolStreamEvent) { panic("handler bug") },
-	})
-	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
-
-	res, err := RunSync(context.Background(), orch, "go", RunOptions{})
-	if err != nil {
-		t.Fatalf("handler panic must not fail the run: %v", err)
-	}
-	if res.FinalOutputString() != "orch done" {
-		t.Errorf("final = %q", res.FinalOutputString())
-	}
-	// Survived, but not silently: the panic is recorded on the parent run's
-	// diagnostics, attributed to the handler.
-	var recorded bool
-	for _, d := range res.Diagnostics {
-		if d.Type == DiagToolPanic && d.Details["source"] == "on_stream_handler" {
-			recorded = true
-		}
-	}
-	if !recorded {
-		t.Errorf("handler panic left no diagnostic: %+v", res.Diagnostics)
-	}
 }
 
 func TestAgentToolSessionPassthrough(t *testing.T) {
@@ -203,31 +122,6 @@ func lastToolOutputText(t *testing.T, res *RunResult) string {
 	return ""
 }
 
-func TestAgentToolInvocationExposedToExtractor(t *testing.T) {
-	sub := &Agent{Name: "specialist", ModelImpl: &fakeModel{responses: []*ModelResponse{
-		modelResp(messageOutput(t, "nested answer")),
-	}}}
-	var got *AgentToolInvocation
-	tool := sub.AsTool(AgentToolConfig{
-		Name: "specialist",
-		CustomOutputExtractor: func(res *RunResult) (string, error) {
-			got = res.AgentToolInvocation
-			return "extracted", nil
-		},
-	})
-	orch := orchestratorCalling(t, tool, "specialist", `{"input":"hi"}`)
-
-	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if got == nil || got.ToolName != "specialist" || got.ToolCallID != "c1" {
-		t.Fatalf("AgentToolInvocation = %+v", got)
-	}
-	if !strings.Contains(got.Arguments, "hi") {
-		t.Errorf("Arguments = %q", got.Arguments)
-	}
-}
-
 func TestAgentToolModifyRunOptions(t *testing.T) {
 	// The nested agent wants two turns (tool call then answer); MaxTurns=1 via
 	// ModifyRunOptions forces MaxTurnsExceeded inside the nested run.
@@ -276,122 +170,6 @@ func TestMirrorIntoPreservesAlwaysDecisions(t *testing.T) {
 	d2, ok2 := nested2.decisionFor("danger", "call-9")
 	if !ok2 || d2.approved || d2.message != "never" {
 		t.Fatalf("always-reject did not stay permanent: ok=%v d=%+v", ok2, d2)
-	}
-}
-
-type asToolParams struct {
-	Query string `json:"query" jsonschema:"The search query"`
-	Limit int64  `json:"limit" jsonschema:"Max results"`
-}
-
-func TestAgentAsToolStructuredParams(t *testing.T) {
-	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "found"))}}
-	sub := &Agent{Name: "searcher", ModelImpl: subModel}
-	tool := AgentAsTool[asToolParams](sub, AgentToolConfig{Name: "search", Description: "search things"})
-
-	ft := tool
-	props, _ := ft.ParamsJSONSchema["properties"].(map[string]any)
-	if _, ok := props["query"]; !ok {
-		t.Fatalf("schema properties = %v, want query field", props)
-	}
-
-	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
-	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	// The nested agent receives the default structured rendering.
-	lastItem, _ := session.MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
-	nestedInput := string(lastItem)
-	if !strings.Contains(nestedInput, "called as a tool") || !strings.Contains(nestedInput, "cats") {
-		t.Errorf("nested input = %q, want structured preamble + params", nestedInput)
-	}
-	if !strings.Contains(nestedInput, "Input Schema Summary") {
-		t.Errorf("nested input = %q, want schema summary section", nestedInput)
-	}
-}
-
-// Params that carry no descriptions anywhere: the schema summary is empty,
-// but the rendering must still be structural (preamble + JSON) — and the
-// arguments must still decode into Params before reaching the nested run.
-type asToolBareParams struct {
-	Query string `json:"query"`
-	Limit int64  `json:"limit"`
-}
-
-func TestAgentAsToolValidatesParams(t *testing.T) {
-	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "found"))}}
-	sub := &Agent{Name: "searcher", ModelImpl: subModel}
-	tool := AgentAsTool[asToolParams](sub, AgentToolConfig{Name: "search"})
-
-	// A type mismatch (limit as string) must bounce back to the model as a
-	// tool error, not flow into the nested run.
-	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":"three"}`)
-	res, err := RunSync(context.Background(), orch, "go", RunOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if subModel.calls != 0 {
-		t.Fatalf("nested agent ran despite invalid params: %v", subModel.lastReq.Input)
-	}
-	if out := res.FinalOutputString(); out == "" {
-		t.Fatal("expected the orchestrator to receive the tool error and answer")
-	}
-}
-
-func TestAgentAsToolStructuredWithoutDescriptions(t *testing.T) {
-	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "found"))}}
-	sub := &Agent{Name: "searcher", ModelImpl: subModel}
-	tool := AgentAsTool[asToolBareParams](sub, AgentToolConfig{Name: "search"})
-
-	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
-	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	// No descriptions -> no schema summary, but the structured preamble and
-	// the JSON arguments must still be rendered (not raw passthrough).
-	lastItem, _ := session.MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
-	nestedInput := string(lastItem)
-	if !strings.Contains(nestedInput, "called as a tool") || !strings.Contains(nestedInput, "cats") {
-		t.Errorf("nested input = %q, want structured preamble + params", nestedInput)
-	}
-	if strings.Contains(nestedInput, "Input Schema Summary") {
-		t.Errorf("nested input = %q, unexpected summary section for description-less params", nestedInput)
-	}
-}
-
-func TestAgentAsToolIncludeInputSchema(t *testing.T) {
-	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "found"))}}
-	sub := &Agent{Name: "searcher", ModelImpl: subModel}
-	tool := AgentAsTool[asToolParams](sub, AgentToolConfig{Name: "search", InputBuilder: AgentToolInputWithSchema})
-
-	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
-	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	lastItem, _ := session.MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
-	nestedInput := string(lastItem)
-	if !strings.Contains(nestedInput, "Input JSON Schema") {
-		t.Errorf("nested input = %q, want full JSON schema section", nestedInput)
-	}
-}
-
-func TestAgentAsToolCustomInputBuilder(t *testing.T) {
-	subModel := &fakeModel{responses: []*ModelResponse{modelResp(messageOutput(t, "found"))}}
-	sub := &Agent{Name: "searcher", ModelImpl: subModel}
-	tool := AgentAsTool[asToolParams](sub, AgentToolConfig{
-		Name: "search",
-		InputBuilder: func(opts AgentToolInputBuilderOptions) (string, error) {
-			return "CUSTOM:" + opts.ParamsJSON, nil
-		},
-	})
-	orch := orchestratorCalling(t, tool, "search", `{"query":"cats","limit":3}`)
-	if _, err := RunSync(context.Background(), orch, "go", RunOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	lastItem, _ := session.MarshalInputItem(subModel.lastReq.Input[len(subModel.lastReq.Input)-1])
-	nestedInput := string(lastItem)
-	if !strings.Contains(nestedInput, "CUSTOM:") {
-		t.Errorf("nested input = %q, want custom builder output", nestedInput)
 	}
 }
 

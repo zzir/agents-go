@@ -139,15 +139,22 @@ func TestCallerStopAfterDrainPersistsSteer(t *testing.T) {
 	sess := session.NewInMemorySession()
 	stream, c := agents.Run(context.Background(), agent, "go", agents.RunOptions{
 		Conversation: agents.ConversationOptions{Session: sess},
-		Exec: agents.ExecOptions{PrepareNextTurn: func(context.Context, *agents.TurnResult) (*agents.TurnSnapshot, error) {
-			ctrl.StopAfterTurn()
-			return nil, nil
-		}},
 	})
 	ctrl = c
-	res, err := stream.Collect()
-	if err != nil {
-		t.Fatal(err)
+	// The drained steer reaches the stream before the next turn starts: stop there.
+	var res *agents.RunResult
+	for ev, err := range stream {
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch e := ev.(type) {
+		case *agents.RunItemStreamEvent:
+			if e.Item.Kind == agents.ItemInjectedInput {
+				ctrl.StopAfterTurn()
+			}
+		case *agents.RunCompletedEvent:
+			res = e.Result
+		}
 	}
 	if !res.StoppedEarly {
 		t.Error("StoppedEarly must report the stop the caller asked for")

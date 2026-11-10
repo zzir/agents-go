@@ -10,18 +10,16 @@ import (
 )
 
 // TestToolContext_EnrichedFields verifies that a function tool sees the enriched
-// ToolContext: the active Agent, the raw ToolCall, and the turn input.
+// ToolContext: the active Agent and the raw ToolCall.
 func TestToolContext_EnrichedFields(t *testing.T) {
 	var gotAgent *Agent
 	var gotCallID, gotCallName string
-	var turnInputLen int
 	agent := &Agent{Name: "a"}
 	tool := NewTool("probe", "probe",
 		func(ctx context.Context, tc *ToolContext, args struct{}) (string, error) {
 			gotAgent = tc.Agent
 			gotCallID = tc.ToolCall.AsFunctionCall().CallID
 			gotCallName = tc.ToolCall.AsFunctionCall().Name
-			turnInputLen = len(tc.TurnInput())
 			return "ok", nil
 		})
 	model := &fakeModel{responses: []*ModelResponse{
@@ -42,9 +40,6 @@ func TestToolContext_EnrichedFields(t *testing.T) {
 	}
 	if gotCallName != "probe" {
 		t.Errorf("tc.ToolCall name = %q, want probe", gotCallName)
-	}
-	if turnInputLen == 0 {
-		t.Errorf("tc.TurnInput is empty; want the turn's input items")
 	}
 }
 

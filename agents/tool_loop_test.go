@@ -114,40 +114,6 @@ func TestToolLoop_NegativeLimitsDisableTheValves(t *testing.T) {
 	}
 }
 
-// An exhausted budget can end in prose instead of an error — but the extra turn
-// must be tool-free, or the model calls something and the budget is gone again
-// with nothing said.
-func TestToolLoop_FinalTurnWithoutTools(t *testing.T) {
-	responses := []*ModelResponse{
-		modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
-		modelResp(functionCallOutput(t, "probe", "c2", `{}`)),
-		modelResp(messageOutput(t, "here is what I found")),
-	}
-	tool := NewTool("probe", "", func(context.Context, *ToolContext, struct{}) (string, error) {
-		return "ok", nil
-	})
-	model := &fakeModel{responses: responses}
-	agent := &Agent{Name: "a", Tools: []*Tool{tool}, ModelImpl: model}
-
-	res, err := RunSync(context.Background(), agent, "go", RunOptions{
-		Exec: ExecOptions{MaxTurns: 2, ToolLoop: ToolLoopPolicy{FinalTurnWithoutTools: true}},
-	})
-	if err != nil {
-		t.Fatalf("err = %v, want the model to close out in prose", err)
-	}
-	if res.FinalOutputString() != "here is what I found" {
-		t.Errorf("final = %q", res.FinalOutputString())
-	}
-	// The tools stay defined, uncallable: a provider may refuse calls in the
-	// history without their definitions.
-	if len(model.lastReq.Tools) != 1 {
-		t.Errorf("the final turn sent %d tools, want the agent's 1", len(model.lastReq.Tools))
-	}
-	if s := model.lastReq.Settings; s == nil || s.ToolChoice != ToolChoiceNone {
-		t.Errorf("final turn settings = %+v, want tool_choice none", s)
-	}
-}
-
 // Off by default: an exhausted budget is an error, because the budget may be a
 // cost ceiling rather than a loop guard.
 func TestToolLoop_FinalTurnIsOptIn(t *testing.T) {
@@ -217,47 +183,8 @@ func TestModelResponse_Truncated(t *testing.T) {
 	}
 }
 
-// One sequential tool makes the whole batch sequential — a tool that refuses to
-// run beside anything usually means it for a resource the others touch too.
-func TestSequentialTool_SerializesTheWholeBatch(t *testing.T) {
-	var live, peak atomic.Int32
-	body := func(context.Context, *ToolContext, struct{}) (string, error) {
-		n := live.Add(1)
-		for {
-			p := peak.Load()
-			if n <= p || peak.CompareAndSwap(p, n) {
-				break
-			}
-		}
-		time.Sleep(20 * time.Millisecond)
-		live.Add(-1)
-		return "ok", nil
-	}
-	serial := NewTool("serial", "", body)
-	serial.Sequential = true
-	parallelA := NewTool("par_a", "", body)
-	parallelB := NewTool("par_b", "", body)
-
-	model := &fakeModel{responses: []*ModelResponse{
-		{Output: []OutputItem{
-			functionCallOutput(t, "serial", "c1", `{}`),
-			functionCallOutput(t, "par_a", "c2", `{}`),
-			functionCallOutput(t, "par_b", "c3", `{}`),
-		}, Usage: NewUsage()},
-		modelResp(messageOutput(t, "done")),
-	}}
-	agent := &Agent{Name: "a", Tools: []*Tool{serial, parallelA, parallelB}, ModelImpl: model}
-
-	if _, err := RunSync(context.Background(), agent, "go", RunOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if peak.Load() != 1 {
-		t.Errorf("peak concurrency = %d, want 1 — one sequential tool serializes the batch", peak.Load())
-	}
-}
-
-// Without a sequential tool the batch still runs concurrently.
-func TestSequentialTool_AbsentMeansParallel(t *testing.T) {
+// A batch of tool calls runs concurrently.
+func TestToolBatchRunsInParallel(t *testing.T) {
 	var live, peak atomic.Int32
 	body := func(context.Context, *ToolContext, struct{}) (string, error) {
 		n := live.Add(1)

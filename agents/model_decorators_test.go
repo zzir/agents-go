@@ -410,15 +410,15 @@ func TestFallbackModel_StreamNoDiagnosticWhenConsumerStopsMidFlush(t *testing.T)
 	backup := &typedStreamModel{steps: []typedStreamStep{
 		{types: []string{"response.created"}},
 	}}
-	sink := &DiagnosticSink{}
-	ctx := WithDiagnostics(context.Background(), sink)
+	sink := &diagnosticSink{}
+	ctx := withDiagnostics(context.Background(), sink)
 	for _, err := range NewFallbackModel(primary, backup).StreamResponse(ctx, ModelRequest{}) {
 		if err != nil {
 			t.Fatalf("first event: %v, want the backup's", err)
 		}
 		break
 	}
-	if ds, _ := sink.TakeSince(0); len(ds) != 0 {
+	if ds, _ := sink.takeSince(0); len(ds) != 0 {
 		t.Fatalf("diagnostics = %v, want none (consumer abandoned the run)", ds)
 	}
 }
@@ -548,15 +548,15 @@ func TestFallbackModel_StreamCommittedBreakRecordsDiagnostic(t *testing.T) {
 			for _, st := range tc.chain {
 				models = append(models, &scriptedStreamModel{steps: []streamStep{st}})
 			}
-			sink := &DiagnosticSink{}
-			ctx := WithDiagnostics(context.Background(), sink)
+			sink := &diagnosticSink{}
+			ctx := withDiagnostics(context.Background(), sink)
 			m := NewFallbackModel(models[0], models[1:]...)
 			if _, err := drain(m.StreamResponse(ctx, ModelRequest{})); !errors.Is(err, errBoom) {
 				t.Fatalf("err = %v, want errBoom", err)
 			}
 			// Exactly one: a chain that never produced a usable response
 			// records no DiagModelFallback, which is for a successful switch.
-			ds, _ := sink.TakeSince(0)
+			ds, _ := sink.takeSince(0)
 			if len(ds) != 1 || ds[0].Type != DiagStreamError {
 				t.Fatalf("diagnostics = %+v, want one %s", ds, DiagStreamError)
 			}
@@ -580,14 +580,14 @@ func TestFallbackModel_StreamCommittedBreakIsRecordedByEveryLayer(t *testing.T) 
 	primary := NewRetryModel(&scriptedStreamModel{steps: []streamStep{{1, errBoom}}}, policy)
 	backup := NewRetryModel(&scriptedStreamModel{steps: []streamStep{{1, nil}}}, policy)
 
-	sink := &DiagnosticSink{}
-	ctx := WithDiagnostics(context.Background(), sink)
+	sink := &diagnosticSink{}
+	ctx := withDiagnostics(context.Background(), sink)
 	m := NewFallbackModel(primary, backup)
 	if _, err := drain(m.StreamResponse(ctx, ModelRequest{})); !errors.Is(err, errBoom) {
 		t.Fatalf("err = %v, want errBoom", err)
 	}
 
-	ds, _ := sink.TakeSince(0)
+	ds, _ := sink.takeSince(0)
 	if len(ds) != 2 {
 		t.Fatalf("diagnostics = %+v, want one per layer", ds)
 	}

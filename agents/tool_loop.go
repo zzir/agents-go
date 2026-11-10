@@ -27,10 +27,6 @@ type ToolLoopPolicy struct {
 	// Abort makes a trip fail the run with *ToolLoopError, instead of a notice
 	// to the model and, on a second trip, a closing turn without tools.
 	Abort bool
-
-	// FinalTurnWithoutTools buys an exhausted turn budget one more model call
-	// without tools, so the model closes out in prose. Opt-in.
-	FinalTurnWithoutTools bool
 }
 
 // valveLimit resolves a valve's limit: zero is the default, negative disables.
@@ -62,16 +58,16 @@ func (e *ToolLoopError) Error() string {
 // a call seen again later starts a fresh count — see spec §2.7d.
 const toolLoopWindow = 3
 
-// toolLoopState is what the valves have counted; carried in RunState.
+// toolLoopState is what the valves have counted; RunState serializes it as is.
 type toolLoopState struct {
-	// turns counts the tool turns observed; the window is measured in it.
-	turns int
-	// seen is each call-and-output fingerprint's live count.
-	seen map[string]toolLoopRepeat
-	// failedTurns counts consecutive turns in which no call ran.
-	failedTurns int
-	// noticedAt is the tool turn of the last notice; zero is none.
-	noticedAt int
+	// Turns counts the tool turns observed; the window is measured in it.
+	Turns int `json:"turns,omitempty"`
+	// Seen is each call-and-output fingerprint's live count.
+	Seen map[string]toolLoopRepeat `json:"seen,omitempty"`
+	// FailedTurns counts consecutive turns in which no call ran.
+	FailedTurns int `json:"failed_turns,omitempty"`
+	// NoticedAt is the tool turn of the last notice; zero is none.
+	NoticedAt int `json:"noticed_at,omitempty"`
 	// closing is the second trip: the tools are withdrawn and the next turn is
 	// the run's last. Never paused across, so never serialized.
 	closing *ToolLoopError
@@ -84,7 +80,7 @@ type toolLoopRepeat struct {
 
 // carried is the state a pause hands its RunState: a copy, closing dropped.
 func (tl toolLoopState) carried() toolLoopState {
-	return toolLoopState{turns: tl.turns, seen: maps.Clone(tl.seen), failedTurns: tl.failedTurns, noticedAt: tl.noticedAt}
+	return toolLoopState{Turns: tl.Turns, Seen: maps.Clone(tl.Seen), FailedTurns: tl.FailedTurns, NoticedAt: tl.NoticedAt}
 }
 
 const (
@@ -123,12 +119,12 @@ func (r *runner) noteToolTurn(ctx context.Context, results []functionToolResult)
 		return trip
 	}
 	stage, notice := "notice", toolLoopNotice(trip)
-	if tl.noticedAt > 0 && tl.turns-tl.noticedAt <= toolLoopWindow {
+	if tl.NoticedAt > 0 && tl.Turns-tl.NoticedAt <= toolLoopWindow {
 		stage, notice = "closing_turn", toolLoopClosingNotice
 		tl.closing = trip
 		r.state.finalTurn = true
 	}
-	tl.noticedAt = tl.turns
+	tl.NoticedAt = tl.Turns
 	results[at].appendNotice(notice)
 	RecordDiagnostic(ctx, DiagToolLoop, trip, map[string]any{"stage": stage})
 	r.log.Warn(ctx, "tool loop made no progress", slog.String("stage", stage), slog.String("trip", trip.Error()))
@@ -142,7 +138,7 @@ func (tl *toolLoopState) observe(results []functionToolResult, p ToolLoopPolicy)
 	maxRepeats := valveLimit(p.MaxRepeatedCalls)
 	var trip *ToolLoopError
 	at, last, ran := 0, -1, false
-	tl.turns++
+	tl.Turns++
 	for i, res := range results {
 		if res.outputItem == nil {
 			continue
@@ -152,32 +148,32 @@ func (tl *toolLoopState) observe(results []functionToolResult, p ToolLoopPolicy)
 		if maxRepeats <= 0 {
 			continue
 		}
-		if tl.seen == nil {
-			tl.seen = map[string]toolLoopRepeat{}
+		if tl.Seen == nil {
+			tl.Seen = map[string]toolLoopRepeat{}
 		}
 		key := callFingerprint(res.call, res.output)
-		rep := tl.seen[key]
-		if tl.turns-rep.Turn > toolLoopWindow {
+		rep := tl.Seen[key]
+		if tl.Turns-rep.Turn > toolLoopWindow {
 			rep.N = 0
 		}
-		rep.N, rep.Turn = rep.N+1, tl.turns
-		tl.seen[key] = rep
+		rep.N, rep.Turn = rep.N+1, tl.Turns
+		tl.Seen[key] = rep
 		if trip == nil && rep.N >= maxRepeats {
 			trip, at = &ToolLoopError{Tool: res.call.Name, Repeats: rep.N}, i
 		}
 	}
 	if last < 0 {
-		tl.turns--
+		tl.Turns--
 		return nil, 0
 	}
-	maps.DeleteFunc(tl.seen, func(_ string, rep toolLoopRepeat) bool { return tl.turns-rep.Turn > toolLoopWindow })
+	maps.DeleteFunc(tl.Seen, func(_ string, rep toolLoopRepeat) bool { return tl.Turns-rep.Turn > toolLoopWindow })
 	if ran {
-		tl.failedTurns = 0
+		tl.FailedTurns = 0
 	} else {
-		tl.failedTurns++
+		tl.FailedTurns++
 	}
-	if limit := valveLimit(p.MaxConsecutiveFailedTurns); trip == nil && limit > 0 && tl.failedTurns >= limit {
-		trip, at = &ToolLoopError{FailedTurns: tl.failedTurns}, last
+	if limit := valveLimit(p.MaxConsecutiveFailedTurns); trip == nil && limit > 0 && tl.FailedTurns >= limit {
+		trip, at = &ToolLoopError{FailedTurns: tl.FailedTurns}, last
 	}
 	return trip, at
 }
@@ -263,39 +259,4 @@ func unknownCallResults(agent *Agent, calls []functionCall) []functionToolResult
 		out = append(out, functionToolResult{call: call, output: msg, outputItem: item, failed: true})
 	}
 	return out
-}
-
-// anySequential reports whether any tool in the batch is Sequential.
-func anySequential(runs []toolRunFunction) bool {
-	for _, run := range runs {
-		if run.Tool.Sequential {
-			return true
-		}
-	}
-	return false
-}
-
-// toolConcurrency resolves how many of a batch's calls may run at once; one
-// Sequential tool serializes the whole batch.
-func (r *runner) toolConcurrency(runs []toolRunFunction) int {
-	if anySequential(runs) {
-		return 1
-	}
-	return r.opts.Exec.MaxToolConcurrency
-}
-
-// discloseTools records the deferred tools this batch's results opened up, for
-// the rest of the run.
-func (r *runner) discloseTools(results []functionToolResult) {
-	for _, res := range results {
-		for _, name := range res.addedTools {
-			if name == "" {
-				continue
-			}
-			if r.disclosed == nil {
-				r.disclosed = map[string]bool{}
-			}
-			r.disclosed[name] = true
-		}
-	}
 }

@@ -53,8 +53,8 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.1b](#21b-items) | Items | `RunItem` is one struct with a `Kind`, not an interface |
 | [§2.2](#22-ordering-within-a-turn) | Ordering within a turn | **The ordering contract for a turn** — the most load-bearing invariant here |
 | [§2.3](#23-deciding-the-final-output) | Deciding the final output | Which of message / refusal / schema parse becomes the final output |
-| [§2.3a](#23a-the-save-point) | The save point | The turn boundary, and the fixed order of its five steps |
-| [§2.3b](#23b-turn-snapshots) | Turn snapshots | A turn reads a `TurnSnapshot`, never the live `Agent` |
+| [§2.3a](#23a-the-save-point) | The save point | The turn boundary, and the fixed order of its four steps |
+| [§2.3b](#23b-turn-snapshots) | Turn snapshots | A turn reads what it resolved before the model call, never the live `Agent` |
 | [§2.3c](#23c-stopping-early) | Stopping early | The three places a turn can be ended, and what each guarantees |
 | [§2.4](#24-handoffs) | Handoffs | A handoff is a function call the runner intercepts |
 | [§2.5](#25-session-persistence-boundaries) | Session persistence boundaries | When the session is written, and what goes in |
@@ -75,7 +75,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 | [§2.7e](#27e-truncated-responses) | Truncated responses | A provider-truncated response, and what the run does with it |
 | [§2.7f](#27f-usage-attribution) | Usage attribution | Exactly one entry per response carries that response's `Usage` |
 | [§2.7h](#27h-schema-validation) | Schema validation | Where arguments, handoff input and structured output are validated |
-| [§2.7i](#27i-progressive-tool-disclosure) | Progressive tool disclosure | `Deferred: true` withholds a tool until something reveals it |
+| [§2.7i](#27i-progressive-tool-disclosure) | Progressive tool disclosure | Retired |
 | [§2.7g](#27g-tool-progress) | Tool progress | `ToolContext.Emit` streams a partial result to the consumer |
 | [§2.7j](#27j-sandbox-command-policy) | Sandbox command policy | `Policy` filters commands before the approval gate |
 | [§2.7k](#27k-persistent-shells) | Persistent shells | When `exec_command` may reuse a named shell |
@@ -167,14 +167,12 @@ for turn := 1; ; turn++ {
 1. `ctx` cancelled → the run ends there, and `ctx.Err()` reaches the caller
    wrapped in a `*RunError` carrying the turns that did complete
    ([§2.10](#210-errors-and-recovery)).
-2. Budget exhausted → `*MaxTurnsError`, unless `ToolLoop.FinalTurnWithoutTools`
-   buys one last tool-free model call ([§2.7d](#27d-tool-loop-safety-valves)).
+2. Budget exhausted → `*MaxTurnsError`.
 3. HITL interruption → return a `RunResult` carrying `Interruptions` and `State`.
 4. The model produced a final output → see [§2.3](#23-deciding-the-final-output).
 
 **A `RunState` round-trips whole.** Everything a resume consumes is in the wire
-format — the pending injected input, the disclosed deferred tools, the
-server-conversation cursor, the context-reset request and fresh-context guard
+format — the pending injected input, the server-conversation cursor, the context-reset request and fresh-context guard
 ([§2.5i](#25i-the-model-manages-its-own-context))
 and the host extra map (`Extra`) — pinned by a full-field round-trip test at
 the current `RunStateSchemaVersion`. The serialized surface IS the contract;
@@ -184,8 +182,8 @@ works.
 - **A resumed turn re-processes a response the restored cursor already
   accounts for and does not advance it**, so a resumed run keeps sending deltas.
 - **The state carries the run's full past** — every raw response and generated
-  item — so a resumed run's `RunResult` reports the same `RawResponses` (and
-  `UsageByResponse()`) as one that never paused. Its size grows with the run.
+  item — so a resumed run's `RunResult` reports the same `RawResponses` as one
+  that never paused. Its size grows with the run.
 - **A resumed run is observed exactly like the run it continues**: `resumed`
   marks the log and the trace name, nothing else. Any other difference between
   the two is a bug.
@@ -256,7 +254,7 @@ reordered.
 
 | # | Step | Constraint |
 |---|---|---|
-| 1 | Publish `RunContext.TurnInput` | Set once the turn's input is final (before the model call), refreshed if `CallModelInputFilter` edits it. It is **what was actually sent** — under server-managed conversation state that is the new items only, not the whole history |
+| 1 | *(retired 2026-11-10: the turn's input is no longer published on the `RunContext` — decisions §5.111)* | — |
 | 2 | On resume: drop already-completed sibling calls | Prevents duplicated side effects and a second `function_call_output` for the same call id |
 | 3 | Partition calls by approval: `toRun` / `interruptions` / `rejected` | — |
 | 4 | **If any call needs approval, pause the whole turn — no tool runs** | Pausing only the gated calls would leave `RunState` holding partial results |
@@ -275,7 +273,6 @@ reordered.
   goroutine finished first, and never a sibling's `context.Canceled` echo of
   the failure that cancelled it. Cancellation surfaces only when it is all
   there is (the consumer abandoned the run mid-batch).
-- A tool declaring `Sequential` forces the whole batch to run serially.
 
 ### 2.3 Deciding the final output
 
@@ -300,9 +297,9 @@ otherwise (plain text)
     → the message text is the final output (possibly the empty string)
 ```
 
-- **Plain text is the absence of an output schema.** `Agent.OutputType`,
-  `TurnSnapshot.OutputSchema` and `ModelRequest.OutputSchema` are nil for it;
-  no `OutputSchema` value stands for plain text.
+- **Plain text is the absence of an output schema.** `Agent.OutputType` and
+  `ModelRequest.OutputSchema` are nil for it; no `OutputSchema` value stands
+  for plain text.
 
 ### 2.3a The save point
 
@@ -315,7 +312,6 @@ one place in the code, and its step order is the contract:
 3. compact ([§2.5f](#25f-compaction)), rebuilding the context from the log
 4. drain the steer and next-turn queues ([§2.11b](#211b-run-control)) and
    screen them ([§2.6](#26-guardrails)), unless the caller asked to stop
-5. call `PrepareNextTurn`
 
 - **Persist first**: a run that stops at step 2, or whose context is rewritten
   at step 3, has its history already written.
@@ -328,19 +324,15 @@ one place in the code, and its step order is the contract:
 
 ### 2.3b Turn snapshots
 
-A turn is resolved into a `TurnSnapshot` — agent, model, settings,
-instructions, prompt, tools, handoffs, output schema, input — before the model
-is called, and the turn reads the snapshot from then on, never the agent.
+A turn is resolved — model, settings, instructions, tools, handoffs, output
+schema — before the model is called, and reads that resolution from then on,
+never the agent.
 
-- **`PrepareNextTurn` may return a replacement, which applies to one turn**; the
-  turn after resolves afresh, so dynamic instructions still change per turn.
-- **A run changes shape mid-flight without mutating the `Agent`**, which a
-  concurrent run may be reading.
-- **The runner owns `Input`.** A returned snapshot has it replaced with the next
-  turn's real input; honoring a prepared snapshot's `Input` would replay the
-  previous turn with its tool call and output missing. To edit what a call
+- **Every turn resolves afresh**, so dynamic instructions change per turn.
+- **A run never mutates the `Agent`**, which a concurrent run may be reading.
+- **No hook replaces a turn's resolution or its input.** To edit what a call
   sends, use `ModelOptions.InputFilter`, which runs per turn on the input the
-  loop built.
+  loop built — see decisions §5.111.
 
 ### 2.3c Stopping early
 
@@ -794,7 +786,8 @@ model may do about it. The first lever is the budget notice.
   save point performs it on the persisted log, after its own pass.
 - **A run-level compactor reads the whole branch at every point.** The pass,
   the reset and the after-run checkpoint see the same history;
-  `Settings.Limit` bounds the projection after the pass, never its input.
+  `Conversation.HistoryLimit` bounds the projection after the pass, never its
+  input.
 - **A reset is a forced pass with `Reset` set**: a `CompactionAware` storage
   folds everything but the newest user message, earlier checkpoints and
   stand-ins included, so one summary stands; a `ContextResetter` does the
@@ -947,8 +940,8 @@ A tool returns a `ToolResult`, not a bare value; a plain value (string, struct,
 
 `*Tool` is the only tool type, and everything a tool can do beyond being called
 is a **field** on it: `OnInvoke`, `Description`, `ParamsJSONSchema`, `Strict`,
-`NeedsApproval` / `NeedsApprovalFunc`, `Guardrails`, `Timeout`, `Sequential`,
-`IsEnabled`, `ReadOnly`, `FailureErrorFunction`, `Deferred`, `RetrySafe`.
+`NeedsApproval` / `NeedsApprovalFunc`, `Guardrails`, `Timeout`, `IsEnabled`,
+`ReadOnly`, `FailureErrorFunction`, `RetrySafe`.
 
 - **The runner reads them directly.** There is no capability lookup; a tool's
   timeout is `tool.Timeout` whether the tool was built here or elsewhere.
@@ -998,13 +991,10 @@ The loop's own failure mode, where an agent keeps calling tools and gets nowhere
   with the `*ToolLoopError` of the trip that closed it.
 - **A tool-free turn keeps the tools on the wire under `tool_choice: none`**,
   and it spends turn budget like any other.
-- **`ToolLoop.FinalTurnWithoutTools` is opt-in.** With it, an exhausted turn
-  budget buys one more tool-free model call, so the model closes out in prose.
 - **The count rides the `RunState`; a new run starts from zero.** A turn that
   pauses is counted on resume, over the calls that ran after the pause.
 - **Queued input that continues a closed-out run gets the tools back**
   ([§2.11b](#211b-run-control)); the counts carry on.
-- **One `Sequential` tool serializes the whole batch.**
 
 ### 2.7e Truncated responses
 
@@ -1066,7 +1056,6 @@ truncated response:
   `RunItem.NestedUsage` hold what a tool spent on model calls of its own; it is
   not merged into `Usage` (a different conversation) but IS part of the run
   total.
-- `RunResult.UsageByResponse()` and `RunResult.NestedUsage()` read it back.
 
 ### 2.7h Schema validation
 
@@ -1084,9 +1073,8 @@ Tool arguments, handoff input and structured outputs are validated against the
 - **A schema this SDK cannot compile skips validation** rather than failing.
 - **Schemas are compiled once per tool; a handoff's once per invocation** (the
   runner validates a per-turn copy of the `Handoff` value).
-- **An agent tool is a tool.** `AsTool`'s `{"input": string}` and
-  `AgentAsTool`'s reflected schema face this check before the nested run
-  starts, `InputBuilder` or not; failing arguments come back as a
+- **An agent tool is a tool.** `AsTool`'s `{"input": string}` faces this check
+  before the nested run starts; failing arguments come back as a
   `*ModelBehaviorError` for the calling model.
 - **Handoff input carries two rules the schema cannot express**: arguments must
   be a JSON object, and absent arguments (`""`, `"null"`) read as `{}`,
@@ -1095,7 +1083,7 @@ Tool arguments, handoff input and structured outputs are validated against the
   schema; a nil schema skips validation entirely. A rejected handoff input
   fails the run rather than being fed back.
 - **A schema derived from a Go type that strict mode cannot express panics at
-  construction** (`NewTool`, `AgentAsTool`, `OutputType`); `NewToolNonStrict` /
+  construction** (`NewTool`, `OutputType`); `NewToolNonStrict` /
   `OutputTypeNonStrict` build it relaxed.
 - **A schema given as data returns an error** (`NewRawTool`,
   `NewDynamicOutputSchema`), one that says to turn strict off where the schema was built.
@@ -1107,20 +1095,10 @@ Tool arguments, handoff input and structured outputs are validated against the
 
 ### 2.7i Progressive tool disclosure
 
-A tool marked `Deferred: true` is withheld from the model until some
-`ToolResult.AddedTools` names it.
-
-- **Marking the tool is the opt-in**, not a run-level flag.
-- **Disclosure is cumulative** for the rest of the run.
-- **It survives a resume** (`RunState.DisclosedTools`), a serialized
-  cross-process one included ([§2.1](#21-the-run-loop)).
-- **It does not override `IsEnabled`.**
-- **Naming an unknown tool is ignored.**
-- **A withheld tool is absent from `ModelRequest.Tools`**; no adapter renders a
-  provider-side deferral.
-
-— see [decisions
-§5.88](../explanation/decisions.md#588-deferred-tools-reach-the-wire-as-a-shorter-list)
+Retired 2026-11-10. Was `Tool.Deferred`, withheld from the model until a
+`ToolResult.AddedTools` named it. Because nothing ever produced a deferred
+tool. A serialized `RunState` carrying `disclosed_tools` still decodes; the
+field is ignored. See decisions §5.88.
 
 ### 2.7g Tool progress
 
@@ -1417,6 +1395,7 @@ run, and the model gets its handle at once.
 
 | Aspect | Attribution |
 |---|---|
+| **Input** | The tool's one `input` string, verbatim; `Agent.AsTool` is the only constructor — see decisions §5.110 |
 | **Usage** | Folded into the parent run's `Usage` |
 | **Trace** | Nested spans join the parent trace, parented by the function span that triggered them |
 | **Logging** | The parent's `LogConfig` is inherited, like the tracer — the nested run must not be the silent part of the workflow. Records carry the agent name, so parent and nested lines stay tellable apart |
@@ -1464,7 +1443,7 @@ are open — see [§6.3](#63-token-and-deadline-budgets).
 #### How the safety valves compose
 
 `ExecOptions` stacks `MaxTurns`, `ToolLoop`, `Overflow`, `ErrorHandlers` and
-`ShouldStopAfterTurn` / `PrepareNextTurn`; their interactions are pinned:
+`ShouldStopAfterTurn`; their interactions are pinned:
 
 - **Every recovered final output is still a final output.** A fallback from
   any `ErrorHandlers` handler and the output derived by `ShouldStopAfterTurn`
@@ -1482,9 +1461,7 @@ are open — see [§6.3](#63-token-and-deadline-budgets).
   of `finishRun`; `MaxTurns` still bounds the continued run.
 - Overflow retries spend no turn budget and move the tool-loop valve neither
   way ([§2.5g](#25g-context-overflow)); only tool-calling turns count toward
-  `MaxConsecutiveFailedTurns` ([§2.7d](#27d-tool-loop-safety-valves));
-  `ShouldStopAfterTurn` is asked before `PrepareNextTurn`
-  ([§2.3a](#23a-the-save-point)).
+  `MaxConsecutiveFailedTurns` ([§2.7d](#27d-tool-loop-safety-valves)).
 
 ---
 
@@ -1502,13 +1479,13 @@ each subscriber with a buffer of its own.
   cursor to the head).
 - **A cursor AHEAD of the head is a timeline reset**: the gap reports
   `LastGood` 0, the stale cursor as its `Dropped` count and the timeline's next
-  sequence as `Next`, and is not `AtEnd` — so resubscribing from `LastGood`
+  sequence as a non-zero `Next` — so resubscribing from `LastGood`
   replays the new timeline from its start. It is delivered **immediately on
   subscribe**, not on the next publish.
 - **A producer that finishes while a subscriber is behind reports the drops as
-  the stream ends**: `GapError.AtEnd` true, `Next` zero and a zero-value item.
+  the stream ends**: `GapError.Next` zero and a zero-value item.
   Cancelling gets no such gap.
-- **The zero item beside an `AtEnd` gap is not an event**; a consumer that
+- **The zero item beside an end gap (`Next` zero) is not an event**; a consumer that
   forwards items onward skips it.
 - **Sequence numbers are monotonic and assigned atomically with delivery**, so
   a subscriber never observes a higher number before a lower one, under
@@ -2069,7 +2046,7 @@ Defaults that callers may depend on:
 |---|---|---|
 | `MaxTurns` | 10 | `MaxTurnsUnlimited` (-1) disables it |
 | Strict schemas | on | `NewToolNonStrict` / `OutputTypeNonStrict` build the relaxed schema, advertised schema and local validation together; a schema given as data fails its constructor ([§5.11](../explanation/decisions.md#511-construction-errors-split-by-data-provenance)) |
-| Handoff input schemas | strict | `Handoff.NonStrictSchema: true` opts out; the zero value is the strict default |
+| Handoff input schemas | strict | Always; an `InputJSONSchema` must be strict-shaped |
 | Tool errors | fed back to the model | `DefaultToolErrorFunction`; set the field to `nil` to make them fatal |
 | Tool concurrency | unlimited | Bound with `MaxToolConcurrency` |
 | `ToolLoop.MaxRepeatedCalls` | 3 | Times one call returned the same output in a run; a negative value disables it ([§2.7d](#27d-tool-loop-safety-valves)) |

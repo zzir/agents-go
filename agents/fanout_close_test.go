@@ -31,7 +31,7 @@ func TestCloseDoesNotOvertakeAnAcceptedPublish(t *testing.T) {
 					mu.Lock()
 					gaps++
 					mu.Unlock()
-					if gap.AtEnd() {
+					if gap.Next == 0 {
 						continue
 					}
 				}

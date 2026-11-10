@@ -27,10 +27,6 @@ type ToolResult struct {
 	// summarization step).
 	Usage *Usage
 
-	// AddedTools names deferred tools this result discloses to the model; an
-	// unknown or non-deferred name is ignored — see spec §2.7i.
-	AddedTools []string
-
 	// Terminate asks the run to stop after this batch of tools; it takes
 	// effect only when every tool in the batch asks.
 	Terminate bool
@@ -53,12 +49,6 @@ func (r ToolResult) WithDetails(details map[string]any) ToolResult {
 // WithDisplay names the renderer for a result.
 func (r ToolResult) WithDisplay(renderer string) ToolResult {
 	r.Display = renderer
-	return r
-}
-
-// WithTitle sets the card heading for a result.
-func (r ToolResult) WithTitle(title string) ToolResult {
-	r.Title = title
 	return r
 }
 

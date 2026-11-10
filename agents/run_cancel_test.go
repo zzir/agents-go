@@ -37,12 +37,12 @@ func TestCancelAtTurnBoundaryCarriesProgress(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	// The turn completed, its tools ran and its items were recorded; the cancel
-	// lands after the save point, so the next iteration's boundary check is
-	// what sees it.
+	// lands at the save point, so the next iteration's boundary check is what
+	// sees it.
 	opts := agents.RunOptions{Exec: agents.ExecOptions{
-		PrepareNextTurn: func(context.Context, *agents.TurnResult) (*agents.TurnSnapshot, error) {
+		ShouldStopAfterTurn: func(context.Context, *agents.TurnResult) (bool, error) {
 			cancel()
-			return nil, nil
+			return false, nil
 		},
 	}}
 

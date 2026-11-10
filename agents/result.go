@@ -1,10 +1,6 @@
 package agents
 
-import (
-	"fmt"
-
-	"github.com/zzir/agents-go/agents/session"
-)
+import "fmt"
 
 // RunResult is the outcome of a completed (non-streaming) run.
 type RunResult struct {
@@ -33,10 +29,6 @@ type RunResult struct {
 	State *RunState
 	// Diagnostics records trouble the run survived — see spec §2.11d.
 	Diagnostics []Diagnostic
-
-	// AgentToolInvocation identifies the parent tool call of a nested
-	// agent-as-tool run; nil for top-level runs.
-	AgentToolInvocation *AgentToolInvocation
 
 	// StoppedEarly reports that RunControl.StopAfterTurn ended the run rather
 	// than the agent finishing — see spec §2.12.
@@ -78,36 +70,4 @@ type ToolApprovalItem struct {
 // it started from followed by everything it produced.
 func (r *RunResult) ToInputList() ([]InputItem, error) {
 	return buildModelInput(r.Input, r.NewItems)
-}
-
-// UsageByResponse breaks the run's usage down per model call, keyed by response id.
-func (r *RunResult) UsageByResponse() map[string]RequestUsage {
-	out := make(map[string]RequestUsage, len(r.RawResponses))
-	for _, resp := range r.RawResponses {
-		if resp == nil || resp.Usage == nil || resp.ResponseID == "" {
-			continue
-		}
-		u := resp.Usage.Request()
-		// A retried or resumed run can see the same response id twice: sum,
-		// never overwrite.
-		if prev, ok := out[resp.ResponseID]; ok {
-			session.AddRequestUsage(&u, &prev)
-		}
-		out[resp.ResponseID] = u
-	}
-	return out
-}
-
-// NestedUsage totals what the run's tools spent on model calls of their own
-// (agent-as-tool sub-runs, summarization); already part of Usage — see spec §2.7f.
-func (r *RunResult) NestedUsage() RequestUsage {
-	var total RequestUsage
-	for _, it := range r.NewItems {
-		if it.Kind != ItemToolCallOutput || it.NestedUsage == nil {
-			continue
-		}
-		u := it.NestedUsage.Request()
-		session.AddRequestUsage(&total, &u)
-	}
-	return total
 }

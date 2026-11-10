@@ -21,31 +21,12 @@ const (
 	historyEmptyPlaceholder = "(no previous turns recorded)"
 )
 
-// HandoffHistoryMapper folds a flattened transcript into the input items the
-// target agent receives after a handoff; the default emits one assistant message.
-type HandoffHistoryMapper func(transcript []InputItem) []InputItem
-
-// NestHistoryOptions configures NestHandoffHistory.
-type NestHistoryOptions struct {
-	// Mapper folds the transcript into the target agent's input. Only the
-	// default's marker shape is flattened by later handoffs.
-	Mapper HandoffHistoryMapper
-}
-
-// NestHandoffHistory returns a Handoff InputFilter that summarizes the prior
-// conversation for the next agent; an earlier handoff's summary is flattened
-// back first, so a chain yields one flat summary.
-func NestHandoffHistory(opts NestHistoryOptions) func(HandoffInputData) HandoffInputData {
-	mapper := opts.Mapper
-	if mapper == nil {
-		mapper = func(transcript []InputItem) []InputItem {
-			return []InputItem{summaryMessage(transcript)}
-		}
-	}
-	return func(data HandoffInputData) HandoffInputData {
-		transcript := flattenNestedHistory(data.InputHistory)
-		return HandoffInputData{InputHistory: mapper(transcript)}
-	}
+// NestHandoffHistory is a Handoff InputFilter that summarizes the prior
+// conversation for the next agent as one assistant message; an earlier
+// handoff's summary is flattened back first, so a chain yields one flat summary.
+func NestHandoffHistory(data HandoffInputData) HandoffInputData {
+	transcript := flattenNestedHistory(data.InputHistory)
+	return HandoffInputData{InputHistory: []InputItem{summaryMessage(transcript)}}
 }
 
 // summaryMessage renders the transcript as a numbered, marker-wrapped assistant

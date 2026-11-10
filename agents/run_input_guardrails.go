@@ -54,7 +54,6 @@ func (r *runner) firstTurnInputGuardrails(
 	startAgent *Agent,
 	originalInput []InputItem,
 	usedOriginalInput bool,
-	snapshot *TurnSnapshot,
 	rebuild func(replaced []InputItem) ([]InputItem, error),
 ) (inputGateResult, error) {
 	out := inputGateResult{original: originalInput}
@@ -70,39 +69,29 @@ func (r *runner) firstTurnInputGuardrails(
 
 	// Blocking guardrails gate the call: a tripwire prevents it.
 	if len(blocking) > 0 {
-		gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
-		res, gerr := runStageConcurrent(ctx, r.rc, blocking,
-			GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: out.original})
-		r.recordGuardrailResults(res...)
-		annotateGuardrailSpan(gspan, res)
-		if repl, ok := inputReplacement(res); ok {
-			// Replace means the model must see the replacement: rebuild THIS
-			// turn's input from it, or the model gets the original.
-			if !usedOriginalInput {
-				// A server-managed turn sends only a delta; the history the
-				// replacement would rewrite lives on the server (spec §2.6).
-				rerr := NewUserError(errServerManagedReplace)
-				gspan.SetError(rerr.Error(), nil)
-				gspan.Finish()
-				return out, rerr
+		_, gerr := r.guardStage(StageInput, func() ([]GuardrailResult, error) {
+			res, gerr := runStageConcurrent(ctx, r.rc, blocking,
+				GuardrailPayload{Stage: StageInput, Agent: startAgent, Input: out.original})
+			if repl, ok := inputReplacement(res); ok {
+				// Replace means the model must see the replacement: rebuild THIS
+				// turn's input from it, or the model gets the original.
+				if !usedOriginalInput {
+					// A server-managed turn sends only a delta; the history the
+					// replacement would rewrite lives on the server (spec §2.6).
+					return res, NewUserError(errServerManagedReplace)
+				}
+				out.original = repl
+				rebuilt, rerr := rebuild(repl)
+				if rerr != nil {
+					return res, rerr
+				}
+				out.model = rebuilt
 			}
-			out.original = repl
-			rebuilt, rerr := rebuild(repl)
-			if rerr != nil {
-				gspan.SetError(rerr.Error(), nil)
-				gspan.Finish()
-				return out, rerr
-			}
-			out.model = rebuilt
-			snapshot.Input = rebuilt
-			r.rc.setTurnInput(rebuilt)
-		}
+			return res, gerr
+		})
 		if gerr != nil {
-			gspan.SetError(gerr.Error(), nil)
-			gspan.Finish()
 			return out, gerr
 		}
-		gspan.Finish()
 	}
 
 	// Non-blocking guardrails race the call: a tripwire cancels it; a Replace
@@ -141,13 +130,10 @@ func (r *runner) takeScreened(ctx context.Context, agent *Agent, take func() []I
 	if len(items) == 0 || len(guards) == 0 {
 		return items, nil
 	}
-	gspan := r.trace.StartGuardrailSpan("input", r.agentParentID())
-	defer gspan.Finish()
-	res, err := runStageConcurrent(ctx, r.rc, guards, GuardrailPayload{Stage: StageInput, Agent: agent, Input: items})
-	r.recordGuardrailResults(res...)
-	annotateGuardrailSpan(gspan, res)
+	res, err := r.guardStage(StageInput, func() ([]GuardrailResult, error) {
+		return runStageConcurrent(ctx, r.rc, guards, GuardrailPayload{Stage: StageInput, Agent: agent, Input: items})
+	})
 	if err != nil {
-		gspan.SetError(err.Error(), nil)
 		if _, tripped := errors.AsType[*GuardrailTripwireError](err); tripped {
 			r.ctrl.discardInFlightSince(mark)
 		}
@@ -214,6 +200,20 @@ func (r *runner) raceModelCall(span *tracing.SpanHandle, call func(context.Conte
 	}
 	out.modelErr = err
 	return out
+}
+
+// guardStage runs one guardrail stage under its own span beside the turn's:
+// the results are recorded and annotated, and an error marks the span.
+func (r *runner) guardStage(stage GuardrailStage, run func() ([]GuardrailResult, error)) ([]GuardrailResult, error) {
+	span := r.trace.StartGuardrailSpan(string(stage), r.agentParentID())
+	defer span.Finish()
+	res, err := run()
+	r.recordGuardrailResults(res...)
+	annotateGuardrailSpan(span, res)
+	if err != nil {
+		span.SetError(err.Error(), nil)
+	}
+	return res, err
 }
 
 // guardrailActionNames spells a verdict for span data.

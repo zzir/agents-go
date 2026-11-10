@@ -19,7 +19,7 @@ func convertTools(tools []*agents.Tool, handoffs []agents.Handoff) []responses.T
 		out = append(out, functionToolParam(t.Name, t.Description, t.ParamsJSONSchema, t.Strict))
 	}
 	for _, h := range handoffs {
-		out = append(out, functionToolParam(h.ToolName, h.ToolDescription, h.InputJSONSchema, !h.NonStrictSchema))
+		out = append(out, functionToolParam(h.ToolName, h.ToolDescription, h.InputJSONSchema, true))
 	}
 	return out
 }

@@ -54,7 +54,7 @@ tool := agents.NewTool("whoami", "Return the current user.",
 	})
 ```
 
-`RunContext` also carries the run's live `Usage` ([Results](results.md#usage)) and its recorded `Approvals` ([Human-in-the-loop](human_in_the_loop.md)); `ToolContext` embeds it and adds the call's `ToolName`, `ToolCallID` and raw `ToolArguments`. Tools run concurrently within a turn, so a context value they mutate must be goroutine-safe.
+`RunContext` also carries the run's live `Usage` ([Results](results.md#usage)) and its recorded `Approvals` ([Human-in-the-loop](human_in_the_loop.md)); `ToolContext` embeds it and adds the call's `ToolName` and `ToolCallID`. Tools run concurrently within a turn, so a context value they mutate must be goroutine-safe.
 
 ## Conversations / chat threads
 
@@ -85,7 +85,6 @@ opts.Exec.ToolLoop = agents.ToolLoopPolicy{
 	MaxRepeatedCalls:          3,    // default; -1 disables
 	MaxConsecutiveFailedTurns: 3,    // default; -1 disables
 	Abort:                     true, // off by default
-	FinalTurnWithoutTools:     true, // off by default
 }
 ```
 
@@ -96,11 +95,8 @@ call. By default the first trip appends a notice to what the model reads of
 that output, a second trip soon after gives the model one tool-free turn to
 tell the user where it got to, and the run ends normally with a `tool_loop`
 diagnostic. `Abort` fails the run with a `*ToolLoopError` on the
-first trip instead. `FinalTurnWithoutTools` gives an exhausted turn budget the
-same tool-free turn instead of `*MaxTurnsError`. The rules are
-[spec §2.7d](../reference/spec.md#27d-tool-loop-safety-valves). A tool with
-`Sequential: true` makes its **whole batch** run one call at a time; see
-[Tools](tools.md#adapting-a-tool-you-did-not-build).
+first trip instead. The rules are
+[spec §2.7d](../reference/spec.md#27d-tool-loop-safety-valves).
 
 ### Truncated responses
 
@@ -132,23 +128,15 @@ guardrails an injection passes first are
 
 A runnable program is [examples/steering](../../examples/steering/main.go).
 
-## Turn hooks
+## The turn hook
 
-A turn is resolved into a `TurnSnapshot` — agent, model, settings, instructions,
-prompt, tools, handoffs, output schema, input — before the model is called. Two
-`ExecOptions` hooks see it at the **save point**: the moment the turn's message
-and every tool result are persisted, and the next model call has not happened.
+`ExecOptions.ShouldStopAfterTurn` sees each finished turn at the **save
+point**: the moment the turn's message and every tool result are persisted,
+and the next model call has not happened.
 
 ```go
 opts.Exec.ShouldStopAfterTurn = func(ctx context.Context, tr *agents.TurnResult) (bool, error) {
 	return slices.Contains(tr.ToolCallNames(), "save_report"), nil
-}
-
-opts.Exec.PrepareNextTurn = func(ctx context.Context, tr *agents.TurnResult) (*agents.TurnSnapshot, error) {
-	next := *tr.Snapshot
-	next.Tools = nil                    // withdraw the tools now that they have run
-	next.Model = cheapModel             // finish on something cheaper
-	return &next, nil
 }
 ```
 
@@ -160,9 +148,7 @@ other two places a run can end early — a tool's own `ToolResult.Terminate`
 reports as the final output are
 [spec §2.3c](../reference/spec.md#23c-stopping-early).
 
-`PrepareNextTurn` reshapes **one** turn without mutating the `Agent`; the
-`*TurnResult` it receives is read-only, and the runner owns `Snapshot.Input` —
-to edit what a call sends, use `ModelOptions.InputFilter`
+To edit what a model call sends, use `ModelOptions.InputFilter`
 ([spec §2.3b](../reference/spec.md#23b-turn-snapshots)).
 
 ## Middleware
@@ -283,7 +269,7 @@ already carries a code is returned unchanged
 - **`ModelRefusal`** fires when the model refuses to respond (`*ModelRefusalError`).
 - **`InvalidFinalOutput`** fires when an agent with an output type produces a final message that fails schema validation, or no final text at all (`*ModelBehaviorError`). Other model-behavior errors (e.g. an unknown tool call) are not routed here.
 
-A handler receives the error and a `RunErrorData` snapshot (input, items so far, their input-item form, raw responses, last agent) and returns the fallback:
+A handler receives the error and a `RunErrorData` snapshot (input, items so far, raw responses, last agent) and returns the fallback:
 
 ```go
 res, err := agents.RunSync(ctx, agent, "Analyze this long transcript", agents.RunOptions{

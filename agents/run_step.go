@@ -158,25 +158,11 @@ func processModelResponse(
 	return pr, nil
 }
 
-// stepProgress is the run as this turn found it: the input it started from,
-// the items generated before it, and the response being executed.
-type stepProgress struct {
-	originalInput []InputItem
-	preStepItems  []*RunItem
-	resp          *ModelResponse
-}
-
-// executeToolsAndSideEffects runs the tools and handoffs a model response
-// requested and decides the next step; resumed skips re-appending its items.
-func (r *runner) executeToolsAndSideEffects(
-	ctx context.Context,
-	agent *Agent,
-	pr *processedResponse,
-	outputSchema OutputSchema,
-	resumed bool,
-	prog stepProgress,
-) (*singleStepResult, error) {
-	resp := prog.resp
+// executeToolsAndSideEffects runs the tools and handoffs the turn's response
+// requested and decides the next step; preStep is the model's view before the
+// turn, and a resumed turn skips re-appending its items.
+func (r *runner) executeToolsAndSideEffects(ctx context.Context, call *turnCall, preStep []*RunItem) (*singleStepResult, error) {
+	agent, pr, resp, resumed := r.state.agent, call.processed, call.resp, call.resumed
 	newStepItems := make([]*RunItem, 0, len(pr.NewItems))
 	if !resumed {
 		newStepItems = append(newStepItems, pr.NewItems...)
@@ -186,7 +172,7 @@ func (r *runner) executeToolsAndSideEffects(
 	// completed before the pause are dropped, unknown ones included.
 	functions, unknown := pr.Functions, pr.UnknownTools
 	if resumed {
-		completed := completedCallIDs(prog.preStepItems)
+		completed := completedCallIDs(preStep)
 		functions = slices.DeleteFunc(slices.Clone(functions), func(f toolRunFunction) bool {
 			return completed[f.Call.CallID]
 		})
@@ -265,8 +251,6 @@ func (r *runner) executeToolsAndSideEffects(
 	}
 	functionResults := orderToolResults(pr.CallIDs, executed, rejected, refusedHandoffs, unknownCallResults(agent, unknown))
 
-	r.discloseTools(functionResults)
-
 	var nestedInterruptions []*ToolApprovalItem
 	var nestedStates map[string]*RunState
 	for _, fr := range functionResults {
@@ -324,7 +308,7 @@ func (r *runner) executeToolsAndSideEffects(
 	// must go back to the model.
 	hasToolActivityWithoutMessage := lastMessage == nil && len(pr.ToolsUsed) > 0
 	if !pr.hasToolsToRun() && !hasToolActivityWithoutMessage {
-		return r.decideFinalOutput(ctx, agent, outputSchema, lastMessage, newStepItems, prog)
+		return r.decideFinalOutput(ctx, call, preStep, lastMessage, newStepItems)
 	}
 
 	// Otherwise, feed tool results back to the model for another turn.
@@ -333,19 +317,23 @@ func (r *runner) executeToolsAndSideEffects(
 
 // decideFinalOutput reads a tool-free turn's last message as the final output;
 // a refusal or a bad structured output goes through ErrorHandlers — spec §2.3.
-func (r *runner) decideFinalOutput(
-	ctx context.Context,
-	agent *Agent,
-	outputSchema OutputSchema,
-	lastMessage *RunItem,
-	newStepItems []*RunItem,
-	prog stepProgress,
-) (*singleStepResult, error) {
-	// recoverVia asks an ErrorHandlers hook to turn a failed final output into a
-	// completed run, showing it the run's progress including this turn.
-	recoverVia := func(kind string, handler RunErrorHandler, cause error) (*errorRecovery, error) {
-		return r.resolveErrorRecovery(ctx, kind, handler, cause, agent,
-			prog.originalInput, slices.Concat(prog.preStepItems, newStepItems), []*ModelResponse{prog.resp})
+func (r *runner) decideFinalOutput(ctx context.Context, call *turnCall, preStep []*RunItem, lastMessage *RunItem, newStepItems []*RunItem) (*singleStepResult, error) {
+	agent, outputSchema := r.state.agent, call.snapshot.OutputSchema
+	// recoverVia asks an ErrorHandlers hook to complete the run in place of
+	// cause, appending its message; ok is false when no handler took it.
+	recoverVia := func(kind string, handler RunErrorHandler, cause error) (final any, ok bool, err error) {
+		rec, err := r.resolveErrorRecovery(ctx, kind, handler, cause, agent,
+			r.state.originalInput, slices.Concat(preStep, newStepItems), []*ModelResponse{call.resp})
+		if err != nil || rec == nil {
+			return nil, false, err
+		}
+		if rec.message != nil {
+			newStepItems = append(newStepItems, rec.message)
+		}
+		return rec.finalOutput, true, nil
+	}
+	finalOutput := func(final any) (*singleStepResult, error) {
+		return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: final}, nil
 	}
 
 	var text string
@@ -353,58 +341,44 @@ func (r *runner) decideFinalOutput(
 		text = lastMessage.Text()
 		if refusal := lastMessage.refusal(); refusal != "" {
 			refErr := &ModelRefusalError{Refusal: refusal}
-			rec, herr := recoverVia("model_refusal", r.opts.Exec.ErrorHandlers.ModelRefusal, refErr)
-			if herr != nil {
-				return nil, herr
+			final, ok, err := recoverVia("model_refusal", r.opts.Exec.ErrorHandlers.ModelRefusal, refErr)
+			if err != nil {
+				return nil, err
 			}
-			if rec == nil {
+			if !ok {
 				return nil, refErr
 			}
-			if rec.message != nil {
-				newStepItems = append(newStepItems, rec.message)
-			}
-			return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: rec.finalOutput}, nil
+			return finalOutput(final)
 		}
 	}
 	if outputSchema == nil {
-		// Plain text: the message text (or "", when the model produced nothing
-		// actionable at all) is the final output.
-		return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: text}, nil
+		// Plain text: the message text, or "" when the model produced nothing.
+		return finalOutput(text)
 	}
-
-	var final any
-	if text != "" {
-		var err error
-		final, err = outputSchema.ValidateJSON(text)
-		if err != nil {
-			mbErr := NewModelBehaviorError("failed to parse structured output: %v", err)
-			rec, herr := recoverVia("invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr)
-			if herr != nil {
-				return nil, herr
-			}
-			if rec == nil {
-				return nil, mbErr
-			}
-			if rec.message != nil {
-				newStepItems = append(newStepItems, rec.message)
-			}
-			final = rec.finalOutput
-		}
-	} else {
+	if text == "" {
 		mbErr := NewModelBehaviorError("model returned no final output for the structured output type")
-		rec, herr := recoverVia("invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr)
-		if herr != nil {
-			return nil, herr
+		final, ok, err := recoverVia("invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr)
+		if err != nil {
+			return nil, err
 		}
-		if rec == nil {
+		if !ok {
 			return &singleStepResult{NewStepItems: newStepItems, NextStep: stepRunAgain}, nil
 		}
-		if rec.message != nil {
-			newStepItems = append(newStepItems, rec.message)
-		}
-		final = rec.finalOutput
+		return finalOutput(final)
 	}
-	return &singleStepResult{NewStepItems: newStepItems, NextStep: stepFinalOutput, FinalOutput: final}, nil
+	final, err := outputSchema.ValidateJSON(text)
+	if err != nil {
+		mbErr := NewModelBehaviorError("failed to parse structured output: %v", err)
+		var ok bool
+		final, ok, err = recoverVia("invalid_final_output", r.opts.Exec.ErrorHandlers.InvalidFinalOutput, mbErr)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, mbErr
+		}
+	}
+	return finalOutput(final)
 }
 
 // orderToolResults merges every group of results back into the model's call

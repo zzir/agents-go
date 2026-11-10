@@ -22,7 +22,7 @@ func (r *runner) baseResult() *RunResult {
 		LastAgent:        r.state.agent,
 		Usage:            r.usageSnapshot(),
 		GuardrailResults: r.snapshotGuardrailResults(),
-		Diagnostics:      r.diagnostics.All(),
+		Diagnostics:      r.diagnostics.all(),
 	}
 }
 
@@ -38,19 +38,13 @@ func (r *runner) finishRun(ctx context.Context, finalOutput any) (*RunResult, er
 	// Output guardrails: run-level ones first, then the producing agent's.
 	// A Replace decision substitutes the final output and the run continues.
 	if outGuardrails := selectStage(r.runGuardrails(agent), StageOutput); len(outGuardrails) > 0 {
-		// Its own span: the likeliest place for a slow LLM-based guardrail, not
-		// to be misreported under the turn's last phase.
-		gspan := r.trace.StartGuardrailSpan("output", r.agentParentID())
-		res, gerr := runStageConcurrent(ctx, r.rc, outGuardrails,
-			GuardrailPayload{Stage: StageOutput, Agent: agent, Output: finalOutput})
-		r.recordGuardrailResults(res...)
-		annotateGuardrailSpan(gspan, res)
+		res, gerr := r.guardStage(StageOutput, func() ([]GuardrailResult, error) {
+			return runStageConcurrent(ctx, r.rc, outGuardrails,
+				GuardrailPayload{Stage: StageOutput, Agent: agent, Output: finalOutput})
+		})
 		if gerr != nil {
-			gspan.SetError(gerr.Error(), nil)
-			gspan.Finish()
 			return nil, r.refuseFinalTurn(ctx, gerr)
 		}
-		gspan.Finish()
 		for _, g := range res {
 			if g.Decision.Action == GuardrailReplace {
 				finalOutput = g.Decision.Message

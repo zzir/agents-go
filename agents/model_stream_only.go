@@ -37,22 +37,9 @@ func (m *streamOnlyModel) StreamResponse(ctx context.Context, req ModelRequest) 
 
 var _ Model = (*streamOnlyModel)(nil)
 
-// streamOnlyProvider wraps every Model from inner with NewStreamOnlyModel.
-type streamOnlyProvider struct {
-	inner ModelProvider
-}
-
 // NewStreamOnlyProvider is the provider-level NewStreamOnlyModel. Compose it
 // innermost, next to the backend it adapts, so decorators above see ordinary
 // Respond errors.
 func NewStreamOnlyProvider(inner ModelProvider) ModelProvider {
-	return &streamOnlyProvider{inner: inner}
-}
-
-func (p *streamOnlyProvider) Model(name string) (Model, error) {
-	m, err := p.inner.Model(name)
-	if err != nil {
-		return nil, err
-	}
-	return NewStreamOnlyModel(m), nil
+	return decoratedProvider{inner: inner, wrap: NewStreamOnlyModel}
 }

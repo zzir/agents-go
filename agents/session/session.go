@@ -147,23 +147,6 @@ type ListOptions struct {
 	Limit int
 }
 
-// Settings configures how a run reads a Session.
-type Settings struct {
-	// Limit caps how many of the most recent entries a run loads at start;
-	// anything not positive means no limit.
-	Limit int
-}
-
-// ResolveLimit resolves how many recent entries a run loads; zero is no limit.
-// A negative Settings.Limit clamps to zero: passed through, Cursor would read
-// it as the oldest N.
-func ResolveLimit(s Settings) int {
-	if s.Limit > 0 {
-		return s.Limit
-	}
-	return 0
-}
-
 // CompactionArgs carry what a CompactionAware storage needs to decide whether
 // and how to compact after a run.
 type CompactionArgs struct {
