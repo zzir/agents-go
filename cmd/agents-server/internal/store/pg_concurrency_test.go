@@ -149,6 +149,81 @@ func TestPGWorkspaceCreateVsSandboxDeleteNeverOrphans(t *testing.T) {
 	}
 }
 
+// An agent create and the delete of a provider it names race on the provider
+// row's lock: the create lands and the delete refuses, or the delete wins and
+// the create is refused — never an agent naming a deleted provider, as its
+// primary or as a fallback.
+func TestPGAgentCreateVsProviderDeleteNeverDangles(t *testing.T) {
+	ctx := context.Background()
+	db := pgTestDB(t)
+	providers := NewProviderStore(db)
+	agents := NewAgentConfigStore(db)
+
+	for i := range 60 {
+		pv := &Provider{ID: NewID(), Name: fmt.Sprintf("pv-%d", i), Type: "openai", Scope: ScopePrivate, OwnerID: LocalUserID}
+		if err := providers.Create(ctx, pv); err != nil {
+			t.Fatal(err)
+		}
+		ac := &AgentConfig{ID: NewID(), Name: fmt.Sprintf("a-%d", i), Model: "m", Scope: ScopePrivate, OwnerID: LocalUserID}
+		if i%2 == 0 {
+			ac.ProviderID = pv.ID
+		} else {
+			ac.Resilience.FallbackModels = FallbackModels{{ProviderID: pv.ID, Model: "alt"}}
+		}
+		var wg sync.WaitGroup
+		var createErr, delErr error
+		wg.Go(func() { createErr = agents.Create(ctx, ac) })
+		wg.Go(func() { _, delErr = providers.DeleteIfUnreferenced(ctx, pv.ID, LocalUserID) })
+		wg.Wait()
+		if createErr != nil && !errors.Is(createErr, ErrProviderRef) {
+			t.Fatalf("round %d: create: %v", i, createErr)
+		}
+		if delErr != nil {
+			t.Fatalf("round %d: delete: %v", i, delErr)
+		}
+		_, perr := providers.Get(ctx, pv.ID)
+		if perr != nil && !errors.Is(perr, ErrNotFound) {
+			t.Fatal(perr)
+		}
+		if createErr == nil && perr != nil {
+			t.Fatalf("round %d: the agent names a deleted provider", i)
+		}
+	}
+}
+
+// Two agents naming each other's primary as their fallback take the same two
+// provider locks in opposite orders; shared locks keep that from deadlocking.
+func TestPGCrossedProviderReferencesNeverDeadlock(t *testing.T) {
+	ctx := context.Background()
+	db := pgTestDB(t)
+	providers := NewProviderStore(db)
+	agents := NewAgentConfigStore(db)
+	a := &Provider{ID: NewID(), Name: "a", Type: "openai", Scope: ScopePrivate, OwnerID: LocalUserID}
+	b := &Provider{ID: NewID(), Name: "b", Type: "openai", Scope: ScopePrivate, OwnerID: LocalUserID}
+	for _, pv := range []*Provider{a, b} {
+		if err := providers.Create(ctx, pv); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 40)
+	for i := range 20 {
+		for _, pair := range [][2]*Provider{{a, b}, {b, a}} {
+			ac := &AgentConfig{ID: NewID(), Name: fmt.Sprintf("%s-%d", pair[0].Name, i), Model: "m",
+				ProviderID: pair[0].ID, Scope: ScopePrivate, OwnerID: LocalUserID,
+				Resilience: ResilienceGroup{FallbackModels: FallbackModels{{ProviderID: pair[1].ID, Model: "alt"}}}}
+			wg.Go(func() { errs <- agents.Create(ctx, ac) })
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("crossed provider references: %v", err)
+		}
+	}
+}
+
 // Two appends racing on one session — the run's persist and a task's display
 // update land on the parent from different goroutines — must extend ONE
 // branch: the append point is read under the session row's lock. Without it,

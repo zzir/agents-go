@@ -189,9 +189,19 @@ func (s *CrudStore[T]) Update(ctx context.Context, id string, m *T) error {
 // UPDATE on PostgreSQL; SQLite's one connection serializes by itself.
 // ErrNotFound when none.
 func lockRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) error {
+	return readLocked(ctx, tx, model, "UPDATE", where, arg)
+}
+
+// shareRow is lockRow for a row the transaction only references — FOR SHARE:
+// referencing writes do not wait on each other, the row's own writers do.
+func shareRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) error {
+	return readLocked(ctx, tx, model, "SHARE", where, arg)
+}
+
+func readLocked(ctx context.Context, tx bun.Tx, model any, strength, where string, arg any) error {
 	q := tx.NewSelect().Model(model).Where(where, arg)
 	if tx.Dialect().Name() == dialect.PG {
-		q = q.For("UPDATE")
+		q = q.For(strength)
 	}
 	if err := q.Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

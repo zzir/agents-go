@@ -23,14 +23,14 @@ var ErrProviderRef = errors.New("provider_id names no provider")
 var ErrProviderScope = errors.New("provider_id names a provider outside the agent's scope")
 
 // writeReferencingProvider runs write in ONE transaction that first reads (on
-// PostgreSQL locks) the provider row the write references; write receives it,
-// nil when providerID is empty.
+// PostgreSQL share-locks) the provider row the write references; write
+// receives it, nil when providerID is empty.
 func writeReferencingProvider(ctx context.Context, db *bun.DB, providerID string, write func(ctx context.Context, tx bun.Tx, pv *Provider) error) error {
 	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var pv *Provider
 		if providerID != "" {
 			pv = new(Provider)
-			if err := lockRow(ctx, tx, pv, "id = ?", providerID); err != nil {
+			if err := shareRow(ctx, tx, pv, "id = ?", providerID); err != nil {
 				if errors.Is(err, ErrNotFound) {
 					return ErrProviderRef
 				}
@@ -97,47 +97,31 @@ func (s *ProviderStore) ClearChatGPTToken(ctx context.Context, id string) error 
 // primary or in a resilience.fallback_models entry (the group is JSON text).
 const agentReferencesProvider = `(provider_id = ? OR resilience LIKE '%' || ? || '%')`
 
-// providerUnreferenced is the clause that keeps a delete from stranding a
-// reference: an agent pointing here blocks it.
-const providerUnreferenced = `NOT EXISTS (SELECT 1 FROM agent_configs WHERE ` + agentReferencesProvider + `)`
-
 // DeleteIfUnreferenced deletes the provider only while nothing references it,
-// in one atomic statement. It returns how many references blocked the
-// delete: 0 with a nil error means deleted; a missing provider is ErrNotFound.
+// under the row lock every referencing write shares. It returns how many
+// references blocked the delete: 0 with a nil error means deleted; a missing
+// provider is ErrNotFound.
 func (s *ProviderStore) DeleteIfUnreferenced(ctx context.Context, id, expectOwner string) (refs int, err error) {
-	res, err := s.db.NewDelete().Model((*Provider)(nil)).
-		Where("id = ?", id).
-		Where("owner_id = ?", expectOwner). // the pair the caller was authorized against
-		Where(providerUnreferenced, id, id).
-		Exec(ctx)
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		pv := new(Provider)
+		if err := lockRow(ctx, tx, pv, "id = ?", id); err != nil {
+			return err
+		}
+		if pv.OwnerID != expectOwner { // the pair the caller was authorized against
+			return ErrOwnershipChanged
+		}
+		n, err := tx.NewSelect().Model((*AgentConfig)(nil)).Where(agentReferencesProvider, id, id).Count(ctx)
+		if err != nil || n > 0 {
+			refs = n
+			return err
+		}
+		_, err = tx.NewDelete().Model((*Provider)(nil)).Where("id = ?", id).Exec(ctx)
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("deleting provider %s: %w", id, err)
 	}
-	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
-		return 0, nil
-	}
-	cur, gerr := s.Get(ctx, id)
-	if gerr == nil && cur.OwnerID != expectOwner {
-		return 0, fmt.Errorf("deleting provider %s: %w", id, ErrOwnershipChanged)
-	}
-	return s.explainRefusal(ctx, id)
-}
-
-// explainRefusal tells "no such provider" apart from "still referenced" after a
-// conditional delete matched nothing.
-func (s *ProviderStore) explainRefusal(ctx context.Context, id string) (int, error) {
-	exists, err := s.db.NewSelect().Model((*Provider)(nil)).Where("id = ?", id).Exists(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("deleting provider %s: %w", id, err)
-	}
-	if !exists {
-		return 0, fmt.Errorf("deleting provider %s: %w", id, ErrNotFound)
-	}
-	agents, err := s.db.NewSelect().Model((*AgentConfig)(nil)).Where(agentReferencesProvider, id, id).Count(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("counting agents on provider %s: %w", id, err)
-	}
-	return agents, nil
+	return refs, nil
 }
 
 // NormalizeProvider trims the fields whose spelling is noise and fills the

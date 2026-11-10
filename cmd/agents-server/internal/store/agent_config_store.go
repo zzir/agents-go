@@ -4,7 +4,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -162,17 +161,17 @@ func (s *AgentConfigStore) rewriteScopeOrOwner(ctx context.Context, id string, w
 	})
 }
 
-// checkFallbackRefs re-reads each fallback provider inside the write's
-// transaction: gone is ErrProviderRef, out of the row's reach is
-// ErrProviderScope. An entry naming an endpoint instead is resolved at run time.
+// checkFallbackRefs reads each fallback provider under the lock the primary
+// takes: gone is ErrProviderRef, out of the row's reach is ErrProviderScope.
+// An entry naming an endpoint instead is resolved at run time.
 func checkFallbackRefs(ctx context.Context, tx bun.Tx, entries FallbackModels, holderScope, holderOwner string) error {
 	for _, e := range entries {
 		if e.ProviderID == "" {
 			continue
 		}
 		pv := new(Provider)
-		if err := tx.NewSelect().Model(pv).Where("id = ?", e.ProviderID).Scan(ctx); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+		if err := shareRow(ctx, tx, pv, "id = ?", e.ProviderID); err != nil {
+			if errors.Is(err, ErrNotFound) {
 				return ErrProviderRef
 			}
 			return err

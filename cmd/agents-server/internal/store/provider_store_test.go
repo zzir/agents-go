@@ -117,3 +117,27 @@ func TestProviderUpdateChatGPTTokenFollowsAuthMode(t *testing.T) {
 		t.Fatalf("token after leaving chatgpt_login = %q, want cleared", got.ChatGPTToken)
 	}
 }
+
+// The delete answers each way it can end: gone, never there, or no longer the
+// caller's to delete.
+func TestProviderDeleteIfUnreferencedOutcomes(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	id := ids(t)
+	providers := NewProviderStore(db)
+	if err := providers.Create(ctx, &Provider{ID: id("pv"), Name: "pv", Type: "openai", OwnerID: id("u"), Scope: ScopePrivate}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := providers.DeleteIfUnreferenced(ctx, id("pv"), id("other")); !errors.Is(err, ErrOwnershipChanged) {
+		t.Fatalf("delete as a former owner = %v, want ErrOwnershipChanged", err)
+	}
+	if _, err := providers.Get(ctx, id("pv")); err != nil {
+		t.Fatalf("a refused delete must leave the provider: %v", err)
+	}
+	if refs, err := providers.DeleteIfUnreferenced(ctx, id("pv"), id("u")); err != nil || refs != 0 {
+		t.Fatalf("delete of an unreferenced provider: refs=%d err=%v", refs, err)
+	}
+	if _, err := providers.DeleteIfUnreferenced(ctx, id("pv"), id("u")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete of a missing provider = %v, want ErrNotFound", err)
+	}
+}
