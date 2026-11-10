@@ -54,8 +54,8 @@ func (e *StaleApprovalAttemptError) Error() string {
 // persistInterruption writes an interrupted run's SDK state and pending calls
 // BEFORE the pause is announced; a failure fails the segment instead.
 func (r *Runner) persistInterruption(result *RunOutcome) error {
-	if r.Deps.PendingApprovals == nil || result == nil || !result.Interrupted || result.SDKState == nil {
-		return nil
+	if result.SDKState == nil {
+		return errors.New("the paused run carries no state to resume from")
 	}
 	stateJSON, err := result.SDKState.MarshalJSON()
 	if err != nil {
@@ -82,7 +82,7 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 	}
 	// A task's run pauses its TASK in the same write (TaskStore.Pause) —
 	// invariant 37; the manager's later mark finds the row already paused.
-	if info, ok := r.hub.Info(result.RunID); ok && info.Task != nil && info.Task.TaskID != "" && r.Deps.Tasks != nil {
+	if info, ok := r.hub.Info(result.RunID); ok && info.Task != nil && info.Task.TaskID != "" {
 		won, err := r.Deps.Tasks.Pause(context.Background(), info.Task.TaskID, result.RunID, nil, approval)
 		if err != nil {
 			return err
@@ -196,9 +196,6 @@ func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPha
 // fires when the continuation terminates. sessionID is set whenever the row was
 // loaded.
 func (r *Runner) ResolveApproval(ctx context.Context, toolCallID string, approve bool, scope ApprovalScope, reason string, onDone func(*RunOutcome)) (runID, sessionID string, err error) {
-	if r.Deps.PendingApprovals == nil {
-		return "", "", errors.New("approvals are not persisted")
-	}
 	pending, _, err := r.Deps.PendingApprovals.FindByToolCall(ctx, toolCallID)
 	if err != nil {
 		return "", "", err
@@ -241,9 +238,6 @@ var ErrNothingToApproveAll = errors.New("every call of this pause is confirmed o
 // the perCallApprovals, and resumes the run once; n is how many it approved.
 // A session with no pause of its own is ErrNotFound.
 func (r *Runner) ApproveAll(ctx context.Context, sessionID string, onDone func(*RunOutcome)) (runID string, n int, err error) {
-	if r.Deps.PendingApprovals == nil {
-		return "", 0, errors.New("approvals are not persisted")
-	}
 	rows, err := r.Deps.PendingApprovals.ListBySession(ctx, sessionID)
 	if err != nil {
 		return "", 0, err
@@ -424,9 +418,6 @@ var ErrSessionAwaitingApproval = errors.New("the session is paused on an approva
 
 // pausedOnApproval reports whether the session holds an unanswered approval.
 func (r *Runner) pausedOnApproval(ctx context.Context, sessionID string) (bool, error) {
-	if r.Deps.PendingApprovals == nil {
-		return false, nil
-	}
 	rows, err := r.Deps.PendingApprovals.ListBySession(ctx, sessionID)
 	if err != nil {
 		return false, err
@@ -437,9 +428,6 @@ func (r *Runner) pausedOnApproval(ctx context.Context, sessionID string) (bool, 
 // abandonPaused abandons the session's chat run paused for approval, if any
 // (invariant 19); a task's paused run is left to its task.
 func (r *Runner) abandonPaused(ctx context.Context, sessionID, reason string) {
-	if r.Deps.PendingApprovals == nil {
-		return
-	}
 	rows, err := r.Deps.PendingApprovals.ListBySession(ctx, sessionID)
 	if err != nil {
 		logging.Ctx(ctx).Warn("listing the session's pending approvals", "error", err, "session_id", sessionID)
@@ -555,7 +543,7 @@ const execCommandToolName = "exec_command"
 // applyCommandTrust records an exec_command grant per scope on the session,
 // or on the run when it runs on its own grants — invariant 84.
 func (r *Runner) applyCommandTrust(scope ApprovalScope, item *agents.ToolApprovalItem, sessionID, runID string) {
-	if item.ToolName != execCommandToolName || sessionID == "" || r.Deps.SandboxManager == nil {
+	if item.ToolName != execCommandToolName || sessionID == "" {
 		return
 	}
 	store := r.Deps.SandboxManager.Trust()

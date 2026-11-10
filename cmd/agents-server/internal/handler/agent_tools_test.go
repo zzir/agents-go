@@ -9,9 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge/bridgetest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -27,9 +26,7 @@ func TestAgentToolSurfaceCarriesSourceAndReadOnly(t *testing.T) {
 	if err := agents.Create(context.Background(), ac); err != nil {
 		t.Fatal(err)
 	}
-	deps := &bridge.AgentDeps{AgentConfigs: agents, Providers: store.NewProviderStore(db), Sessions: store.NewSessionStore(db),
-		Tasks: store.NewTaskStore(db), Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db), Traces: store.NewTraceStore(db)}
-	bridge.NewRunner(t.Context(), db, deps)
+	deps := bridgetest.NewRunner(t, db).Deps
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
 	s.RegisterAPI(Handlers{Agents: testAgentConfigHandler(db), Playground: NewPlaygroundHandler(deps)}.Register)
 

@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -19,13 +17,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{
-		AgentConfigs: s,
-		Settings:     settings.NewReader(store.NewSettingStore(db)),
-		Skills:       store.NewSkillStore(db),
-		Memories:     store.NewMemoryStore(db),
-		Guardrails:   guardrails.NewResolver(store.NewGuardrailStore(db)),
-	}
+	deps := testRunner(ctx, t, db).Deps
 
 	cases := []struct {
 		name    string
@@ -76,12 +68,7 @@ func TestBuildFullAgentPromotesGuardrailsToRunLevel(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{
-		AgentConfigs: s,
-		Settings:     settings.NewReader(store.NewSettingStore(db)),
-		Memories:     store.NewMemoryStore(db),
-		Guardrails:   guardrails.NewResolver(store.NewGuardrailStore(db)),
-	}
+	deps := testRunner(ctx, t, db).Deps
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:  "guarded",
 		Model: "gpt-test",

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -56,11 +55,7 @@ func TestBuildFullAgentBuildsErrorHandlers(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{
-		AgentConfigs: s,
-		Settings:     settings.NewReader(store.NewSettingStore(db)),
-		Memories:     store.NewMemoryStore(db),
-	}
+	deps := testRunner(ctx, t, db).Deps
 
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:  "recovering",
@@ -127,11 +122,7 @@ func TestBuildFullAgentFailsOnBadErrorHandlers(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{
-		AgentConfigs: s,
-		Settings:     settings.NewReader(store.NewSettingStore(db)),
-		Memories:     store.NewMemoryStore(db),
-	}
+	deps := testRunner(ctx, t, db).Deps
 
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:          "broken",

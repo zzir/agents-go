@@ -166,7 +166,10 @@ func run(cmd *cobra.Command, _ []string) error {
 	if flagAuditRetention > 0 {
 		go bridge.RunAuditRetention(bgCtx, st.Audit, flagAuditRetention)
 	}
-	svc := newBridge(ctx, bgCtx, db, st, recordAudit)
+	svc, err := newBridge(ctx, bgCtx, db, st, recordAudit)
+	if err != nil {
+		return err
+	}
 	defer svc.Close()
 	hs := newHandlers(st, svc, recordAudit, baseURL, handler.ServerInfo{
 		Version:           buildVersion,

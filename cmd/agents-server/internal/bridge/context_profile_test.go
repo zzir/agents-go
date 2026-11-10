@@ -15,7 +15,6 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -28,10 +27,7 @@ func profileDeps(t *testing.T) (*AgentDeps, *store.AgentConfig) {
 	if err := agentConfigs.Create(context.Background(), ac); err != nil {
 		t.Fatal(err)
 	}
-	return &AgentDeps{
-		AgentConfigs: agentConfigs, Providers: store.NewProviderStore(db),
-		Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
-	}, ac
+	return testRunner(context.Background(), t, db).Deps, ac
 }
 
 // The preamble and submit_plan are sent only while the session is planning,
@@ -153,10 +149,7 @@ func TestBuildFullAgentProfileCarriesMCPBuckets(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	deps := &AgentDeps{
-		AgentConfigs: agentConfigs, Providers: store.NewProviderStore(db), McpServers: mcpStore, McpManager: manager,
-		Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
-	}
+	deps := testRunner(ctx, t, db, func(d *AgentDeps) { d.McpManager = manager }).Deps
 	built, err := buildFullAgent(ctx, deps, ac.ID, "", false, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)

@@ -54,6 +54,7 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
+	spawnTool := runner.Deps.SpawnTool
 	runner.Deps.SpawnTool = func(context.Context, string, *BuildResult) *agents.Tool { panic("build exploded") }
 
 	var outcome *RunOutcome
@@ -111,7 +112,7 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 		t.Fatalf("the panic left no annotation on the turn; entries = %+v", views)
 	}
 	// And the session runs again.
-	runner.Deps.SpawnTool = nil
+	runner.Deps.SpawnTool = spawnTool
 	again := make(chan struct{})
 	if _, err := runner.StartRun(sess.ID, ac.ID, "", TextInput("again"), nil, func(*RunOutcome) { close(again) }); err != nil {
 		t.Fatalf("the session must accept a run after the panic: %v", err)

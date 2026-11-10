@@ -60,9 +60,6 @@ func (r *Runner) validateAttachments(ctx context.Context, ownerID string, ids []
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	if r.Deps.Attachments == nil {
-		return nil, fmt.Errorf("attachments are not supported on this server")
-	}
 	if len(ids) > attachments.MaxPerMessage {
 		return nil, fmt.Errorf("a message carries at most %d images, got %d", attachments.MaxPerMessage, len(ids))
 	}

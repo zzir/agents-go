@@ -18,15 +18,12 @@ func (r *Runner) withholdsTrust(ctx context.Context, runID string, task *TaskMet
 
 // runWithheld reports whether runID was started without standing trust.
 func (r *Runner) runWithheld(runID string) bool {
-	return runID != "" && r.Deps.SandboxManager != nil && r.Deps.SandboxManager.Trust().RunTrust(runID) != nil
+	return runID != "" && r.Deps.SandboxManager.Trust().RunTrust(runID) != nil
 }
 
 // workflowFromTrigger reports whether the task is a workflow execution a
 // trigger started. A row or state that cannot be read counts as one.
 func (r *Runner) workflowFromTrigger(ctx context.Context, taskID string) bool {
-	if r.Deps.Tasks == nil {
-		return false
-	}
 	row, err := r.Deps.Tasks.Get(ctx, taskID)
 	if err != nil {
 		return true

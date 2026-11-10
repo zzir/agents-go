@@ -8,7 +8,6 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -37,14 +36,7 @@ func TestResolveApprovalBusyKeepsPending(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs:     agentConfigs,
-		Providers:        store.NewProviderStore(db),
-		Sessions:         sessions,
-		Settings:         settings.NewReader(store.NewSettingStore(db)),
-		Memories:         store.NewMemoryStore(db),
-		PendingApprovals: approvals,
-	})
+	runner := testRunner(ctx, t, db)
 
 	// Serialize a real interrupted RunState so ResolveApproval exercises the
 	// genuine restore path. Raw must be a valid output item — the state
@@ -130,14 +122,7 @@ func TestResolveApprovalDeletingSessionDoesNotRestore(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs:     agentConfigs,
-		Providers:        store.NewProviderStore(db),
-		Sessions:         sessions,
-		Settings:         settings.NewReader(store.NewSettingStore(db)),
-		Memories:         store.NewMemoryStore(db),
-		PendingApprovals: approvals,
-	})
+	runner := testRunner(ctx, t, db)
 	var rawCall agents.OutputItem
 	if err := json.Unmarshal([]byte(`{"type":"function_call","call_id":"call-del-1","name":"shell","arguments":"{}"}`), &rawCall); err != nil {
 		t.Fatal(err)
@@ -190,14 +175,7 @@ func TestResolveApprovalStaleSchemaDiscarded(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs:     agentConfigs,
-		Providers:        store.NewProviderStore(db),
-		Sessions:         sessions,
-		Settings:         settings.NewReader(store.NewSettingStore(db)),
-		Memories:         store.NewMemoryStore(db),
-		PendingApprovals: approvals,
-	})
+	runner := testRunner(ctx, t, db)
 
 	// A state stamped below the SDK's decode floor — the current binary can
 	// never decode it, whatever else moves.
@@ -248,14 +226,7 @@ func TestResolveApprovalOlderDecodableSchemaNotDiscarded(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs:     agentConfigs,
-		Providers:        store.NewProviderStore(db),
-		Sessions:         sessions,
-		Settings:         settings.NewReader(store.NewSettingStore(db)),
-		Memories:         store.NewMemoryStore(db),
-		PendingApprovals: approvals,
-	})
+	runner := testRunner(ctx, t, db)
 
 	if !agents.RunStateVersionSupported("1.5") {
 		t.Fatal("precondition: 1.5 must be inside the SDK's decode window")
@@ -321,15 +292,7 @@ func TestResolveApprovalTaskNotYetInputRequiredKeepsPending(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs:     agentConfigs,
-		Providers:        store.NewProviderStore(db),
-		Sessions:         sessions,
-		Settings:         settings.NewReader(store.NewSettingStore(db)),
-		Memories:         store.NewMemoryStore(db),
-		PendingApprovals: approvals,
-		Tasks:            tasks,
-	})
+	runner := testRunner(ctx, t, db)
 
 	var rawCall agents.OutputItem
 	if err := json.Unmarshal([]byte(`{"type":"function_call","call_id":"call-race-1","name":"shell","arguments":"{}"}`), &rawCall); err != nil {

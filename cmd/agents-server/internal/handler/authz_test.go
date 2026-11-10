@@ -17,9 +17,9 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge/bridgetest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -57,8 +57,7 @@ func authzRig(t *testing.T) rig {
 	sessions := store.NewSessionStore(db)
 	agents := store.NewAgentConfigStore(db)
 	tasks, approvals, triggers := store.NewTaskStore(db), store.NewPendingApprovalStore(db), store.NewTriggerStore(db)
-	deps := &bridge.AgentDeps{AgentConfigs: agents, Sessions: sessions, Traces: store.NewTraceStore(db), PendingApprovals: approvals}
-	runner := bridge.NewRunner(t.Context(), db, deps)
+	runner := bridgetest.NewRunner(t, db)
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
 	s.RegisterAPI(Handlers{
 		Authz:     AuthzDeps{Sessions: sessions, Tasks: tasks, Approvals: approvals, Triggers: triggers, Hub: runner.Hub()},
@@ -610,10 +609,7 @@ func TestSessionReassignRefusesALiveTaskInTheTree(t *testing.T) {
 	if err := agents.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{
-		AgentConfigs: agents, Providers: store.NewProviderStore(db), Sessions: sessions,
-		Traces: store.NewTraceStore(db), Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
-	})
+	runner := bridgetest.NewRunner(t, db)
 	// The task at work: a run live on the hidden child, held by the slow model.
 	runID, err := runner.StartRun(child.ID, ac.ID, "", bridge.TextInput("work"), nil, nil)
 	if err != nil {
@@ -662,9 +658,7 @@ func TestRunEventsStayWithTheOwner(t *testing.T) {
 	if err := sessions.Create(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
-	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{
-		AgentConfigs: store.NewAgentConfigStore(db), Sessions: sessions, Traces: store.NewTraceStore(db),
-	})
+	runner := bridgetest.NewRunner(t, db)
 	wsh := NewWSHandler(runner, sessions, store.NewPendingApprovalStore(db))
 	engine := gin.New()
 	engine.GET("/ws", server.HandleWSWithAuth(wsh.Handle, usersByToken, nil, nil))
@@ -904,9 +898,7 @@ func TestAgentToolSurfaceFollowsTheRunRule(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	deps := &bridge.AgentDeps{AgentConfigs: agents, Providers: store.NewProviderStore(db), Sessions: store.NewSessionStore(db),
-		Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db), Traces: store.NewTraceStore(db)}
-	bridge.NewRunner(t.Context(), db, deps)
+	deps := bridgetest.NewRunner(t, db).Deps
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
 	s.RegisterAPI(Handlers{Agents: testAgentConfigHandler(db), Playground: NewPlaygroundHandler(deps)}.Register)
 

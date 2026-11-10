@@ -64,7 +64,4 @@ func TestHistorySourceScopesToOwnTasks(t *testing.T) {
 			t.Fatalf("scope %q: err = %v", scope, err)
 		}
 	}
-	if _, err := historySource(ctx, db, nil, parent, "mine"); err == nil || !strings.Contains(err.Error(), "not available") {
-		t.Fatalf("no task store: err = %v", err)
-	}
 }

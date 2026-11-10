@@ -36,12 +36,7 @@ func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 		t.Fatalf("plant legacy session JSON: %v", err)
 	}
 
-	deps := &AgentDeps{
-		AgentConfigs: agentConfigs,
-		Providers:    store.NewProviderStore(db),
-		Settings:     settings.NewReader(store.NewSettingStore(db)),
-		Memories:     store.NewMemoryStore(db),
-	}
+	deps := testRunner(ctx, t, db).Deps
 	built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("a legacy row with the stale key must build: %v", err)
@@ -63,12 +58,7 @@ func TestBackgroundBuildIsToldNobodyIsReading(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	deps := &AgentDeps{
-		AgentConfigs: agentConfigs,
-		Providers:    store.NewProviderStore(db),
-		Settings:     settings.NewReader(store.NewSettingStore(db)),
-		Memories:     store.NewMemoryStore(db),
-	}
+	deps := testRunner(ctx, t, db).Deps
 	instructionsOf := func(background bool) string {
 		built, err := buildFullAgent(ctx, deps, ac.ID, "", background, "")
 		if err != nil {
@@ -106,12 +96,7 @@ func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
-	deps := &AgentDeps{
-		AgentConfigs: agentConfigs,
-		Providers:    store.NewProviderStore(db),
-		Settings:     settings.NewReader(store.NewSettingStore(db)),
-		Memories:     store.NewMemoryStore(db),
-	}
+	deps := testRunner(ctx, t, db).Deps
 	built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -152,7 +137,7 @@ func TestAgentProviderRechecksScope(t *testing.T) {
 		store.NewID(), pv.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AgentProvider(ctx, &AgentDeps{Providers: providers}, ac); err == nil || !strings.Contains(err.Error(), "scope") {
+	if _, err := AgentProvider(ctx, testDeps(t, db), ac); err == nil || !strings.Contains(err.Error(), "scope") {
 		t.Fatalf("global agent on a demoted provider = %v, want a scope refusal", err)
 	}
 }
@@ -168,12 +153,7 @@ func TestBuildFullAgentOverridesSystemPrompt(t *testing.T) {
 	if err := settingStore.Set(ctx, settings.KeySystemPrompt, "Global rules."); err != nil {
 		t.Fatal(err)
 	}
-	deps := &AgentDeps{
-		AgentConfigs: agentConfigs,
-		Providers:    store.NewProviderStore(db),
-		Settings:     settings.NewReader(settingStore),
-		Memories:     store.NewMemoryStore(db),
-	}
+	deps := testRunner(ctx, t, db).Deps
 	resolve := func(a *agents.Agent) string {
 		t.Helper()
 		if a.Instructions == nil {
@@ -243,12 +223,7 @@ func TestChecklistIsOptIn(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{
-		AgentConfigs: agentConfigs,
-		Providers:    store.NewProviderStore(db),
-		Settings:     settings.NewReader(store.NewSettingStore(db)),
-		Memories:     store.NewMemoryStore(db),
-	}
+	deps := testRunner(ctx, t, db).Deps
 	has := func(ac *store.AgentConfig, background bool) (bool, *BuildResult) {
 		t.Helper()
 		built, err := buildFullAgent(ctx, deps, ac.ID, "", background, "")
@@ -302,10 +277,7 @@ func TestChecklistIsRefusedWhilePlanning(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	built, err := BuildFullAgent(ctx, &AgentDeps{
-		AgentConfigs: agentConfigs, Providers: store.NewProviderStore(db),
-		Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
-	}, ac.ID, "", store.LocalUserID)
+	built, err := BuildFullAgent(ctx, testRunner(ctx, t, db).Deps, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}

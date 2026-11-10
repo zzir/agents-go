@@ -29,8 +29,8 @@ type Runner struct {
 	db   *bun.DB
 	Deps *AgentDeps
 	hub  *RunHub
-	// tasks owns the background-task lifecycle; nil without a task store. It
-	// keeps no wake-up state: the debt lives in wakeups (see Waker).
+	// tasks owns the background-task lifecycle. It keeps no wake-up state: the
+	// debt lives in wakeups (see Waker).
 	tasks *tasks.Manager
 	// commands holds the background commands this process runs (invariant 96).
 	commands commandRuns
@@ -48,40 +48,43 @@ type Runner struct {
 }
 
 // NewRunner creates a Runner backed by the given database and agent
-// dependencies; rootCtx scopes every run's lifetime (see RunHub).
-func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
+// dependencies, refusing a set missing a required one (invariant 104);
+// rootCtx scopes every run's lifetime (see RunHub).
+func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) (*Runner, error) {
+	if db == nil || deps == nil {
+		return nil, errors.New("bridge: NewRunner needs a database and its dependencies")
+	}
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
 	r := &Runner{
 		db:   db,
 		Deps: deps,
 		hub:  NewRunHub(rootCtx),
 	}
 	// The per-parent task cap is a live setting, resolved at each check by both gates.
-	if deps.Settings != nil {
-		r.hub.maxTasks = func() int { return deps.Settings.Int(rootCtx, settings.KeyMaxTasksPerSession) }
-	}
-	if deps.Tasks != nil {
-		r.tasks = tasks.New(tasks.Config{
-			Store: store.NewTaskAdapter(deps.Tasks),
-			Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(ref session.Ref) session.Storage {
-				return store.NewEntryStoreFor(db, ref)
-			}),
-			Resolver:               taskResolver{r}.Resolve,
-			Launcher:               taskLauncher{r}.Launch,
-			Stopper:                taskStopper{r}.Stop,
-			OnFinished:             r.taskFinished,
-			OnResultDelivered:      r.taskResultDelivered,
-			MaxConcurrentPerParent: r.hub.maxTasks,
-			OnTaskUpdate:           r.onTaskUpdate,
-			NewID:                  store.NewID,
-			// A command cannot resume from where it stopped: one attempt.
-			MaxAttemptsFor: maxAttemptsFor,
-			// A workflow execution is a task of several runs; this is what
-			// moves it from step to step.
-			Continue: r.continueTask,
-			// …and this is how task_status says where one stands.
-			DescribeState: describeTaskState,
-		})
-	}
+	r.hub.maxTasks = func() int { return deps.Settings.Int(rootCtx, settings.KeyMaxTasksPerSession) }
+	r.tasks = tasks.New(tasks.Config{
+		Store: store.NewTaskAdapter(deps.Tasks),
+		Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(ref session.Ref) session.Storage {
+			return store.NewEntryStoreFor(db, ref)
+		}),
+		Resolver:               taskResolver{r}.Resolve,
+		Launcher:               taskLauncher{r}.Launch,
+		Stopper:                taskStopper{r}.Stop,
+		OnFinished:             r.taskFinished,
+		OnResultDelivered:      r.taskResultDelivered,
+		MaxConcurrentPerParent: r.hub.maxTasks,
+		OnTaskUpdate:           r.onTaskUpdate,
+		NewID:                  store.NewID,
+		// A command cannot resume from where it stopped: one attempt.
+		MaxAttemptsFor: maxAttemptsFor,
+		// A workflow execution is a task of several runs; this is what
+		// moves it from step to step.
+		Continue: r.continueTask,
+		// …and this is how task_status says where one stands.
+		DescribeState: describeTaskState,
+	})
 	// Agent building reaches the task tools through the manager; the spawn and
 	// workflow tools are the server's own, built per run.
 	deps.TaskManager = r.tasks
@@ -91,15 +94,12 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) *Runner {
 	deps.MemoryTools = r.memoryTools
 	deps.KeepChecklist = r.keepChecklist
 	deps.BackgroundCommand = r.backgroundCommand
-	return r
+	return r, nil
 }
 
 // keepSessionMemory writes content under one of the keys the workbench keeps
 // in a session's memory, replacing what an earlier write kept there.
 func (r *Runner) keepSessionMemory(ctx context.Context, ref session.Ref, ownerID, key, content, source, writtenBy string) error {
-	if r.Deps.Memories == nil {
-		return nil
-	}
 	sc := store.SessionMemoryScope(ref)
 	return r.Deps.Memories.Upsert(ctx, &store.Memory{
 		ScopeKind: sc.Kind, ScopeID: sc.ID, Gen: sc.Gen, Key: key, Content: content,
@@ -332,7 +332,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 		task, ownerID = info.Task, info.OwnerID
 	}
 	// The run's own grants, kept by run id for a resume and the tasks it spawns.
-	if r.Deps.SandboxManager != nil && r.withholdsTrust(ctx, runID, task, spec.fresh, spec.withholdTrust) {
+	if r.withholdsTrust(ctx, runID, task, spec.fresh, spec.withholdTrust) {
 		own := r.Deps.SandboxManager.Trust().WithholdRun(trustSessionID(sessionID, task), runID)
 		ctx = sandboxes.WithRunTrust(ctx, own)
 	}
@@ -515,10 +515,8 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	}
 	// The profile as this segment sends it, for the Context panel; a failure
 	// costs a panel section, never the run.
-	if r.Deps.ContextProfiles != nil {
-		if err := r.Deps.ContextProfiles.Save(ctx, sessionID, built.SentProfile()); err != nil {
-			log.Warn("failed to record the session's context profile", "error", err)
-		}
+	if err := r.Deps.ContextProfiles.Save(ctx, sessionID, built.SentProfile()); err != nil {
+		log.Warn("failed to record the session's context profile", "error", err)
 	}
 	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, r.Deps.Settings.SpanDataCap(ctx), r.traceAttachmentRefs)
 

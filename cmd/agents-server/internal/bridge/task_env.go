@@ -98,10 +98,8 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 		return tasks.StopCancelled, nil
 	}
 	// Not running: paused on an approval, already over, or never started.
-	if t.r.Deps.PendingApprovals != nil {
-		if err := t.r.Deps.PendingApprovals.Delete(ctx, runID); err != nil && !errors.Is(err, store.ErrNotFound) {
-			logging.Ctx(ctx).Warn("discarding pending approval on stop", "error", err, "run_id", runID)
-		}
+	if err := t.r.Deps.PendingApprovals.Delete(ctx, runID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		logging.Ctx(ctx).Warn("discarding pending approval on stop", "error", err, "run_id", runID)
 	}
 	if !live {
 		// No hub record (never registered, or collected): the SDK records the
@@ -131,7 +129,7 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 	}
 	// Never a non-terminal status over a task the store says is terminal
 	// (invariant 23).
-	if !isTerminalTaskStatus(string(t.Status)) && r.Deps.Tasks != nil {
+	if !isTerminalTaskStatus(string(t.Status)) {
 		if cur, err := r.Deps.Tasks.Get(ctx, t.ID); err == nil && isTerminalTaskStatus(cur.Status) {
 			return
 		}
@@ -167,9 +165,6 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 // store outside the manager (the approval reaper's expiry); a task ended while
 // its run sat paused in the hub ends that run too.
 func (r *Runner) AnnounceTask(ctx context.Context, taskID string) {
-	if r.Deps.Tasks == nil {
-		return
-	}
 	t, err := store.NewTaskAdapter(r.Deps.Tasks).Get(ctx, taskID)
 	if err != nil {
 		return
@@ -208,7 +203,7 @@ func (r *Runner) publishTaskUpdated(ctx context.Context, t *tasks.Task) {
 		upd.Dismissed = row.Dismissed
 	}
 	// A paused task names its decision.
-	if t.Status == tasks.StatusInputRequired && r.Deps.PendingApprovals != nil {
+	if t.Status == tasks.StatusInputRequired {
 		if p, err := r.Deps.PendingApprovals.Get(ctx, t.RunID); err == nil {
 			if calls := p.ParsedToolCalls(); len(calls) > 0 {
 				upd.PendingCallID, upd.PendingToolName = calls[0].ToolCallID, calls[0].ToolName

@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge/bridgetest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -20,9 +20,7 @@ import (
 func TestNumericQueryParamsRefuseGarbage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
-	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{
-		AgentConfigs: store.NewAgentConfigStore(db), Sessions: store.NewSessionStore(db), Traces: store.NewTraceStore(db),
-	})
+	runner := bridgetest.NewRunner(t, db)
 	local := &store.User{ID: store.LocalUserID, Email: "local@localhost", Role: store.RoleAdmin}
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
 	s.RegisterAPI(Handlers{

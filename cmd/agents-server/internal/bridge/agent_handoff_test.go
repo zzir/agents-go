@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -38,7 +36,7 @@ func TestBuildFullAgentDiamondHandoffNotACycle(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db)}
+	deps := testRunner(ctx, t, db).Deps
 
 	d := mkAgent(t, s, "D")
 	b := mkAgent(t, s, "B", d)
@@ -83,10 +81,7 @@ func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{
-		AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
-		Guardrails: guardrails.NewResolver(store.NewGuardrailStore(db)),
-	}
+	deps := testRunner(ctx, t, db).Deps
 
 	// Target B has a broken output_schema; A hands off to B.
 	bad := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "B", Model: "gpt-test", Guardrails: store.GuardrailGroup{OutputSchema: "{not json"}}
@@ -107,7 +102,7 @@ func TestBuildFullAgentRealCycleBroken(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{AgentConfigs: s, Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db)}
+	deps := testRunner(ctx, t, db).Deps
 
 	// Create A and B, then point B back at A to form the cycle.
 	a := mkAgent(t, s, "A")

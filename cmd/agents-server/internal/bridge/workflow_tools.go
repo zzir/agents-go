@@ -128,19 +128,17 @@ func (r *Runner) saveWorkflowDescription(ctx context.Context, ownerID string) st
 		"that spawn_task(workflow=<name>) runs in the background. Saving under a name that exists replaces that definition " +
 		"(executions in flight keep their snapshot). Steps, agents and edges are named, not numbered. " +
 		"Every save is shown to the person for approval before it is written; a definition that would not save is refused to you at once instead.")
-	if r.Deps.AgentConfigs != nil {
-		list, err := r.visibleAgentConfigs(ctx, ownerID)
-		if err != nil {
-			logging.Ctx(ctx).Warn("save_workflow: listing agents for the description", "error", err)
+	list, err := r.visibleAgentConfigs(ctx, ownerID)
+	if err != nil {
+		logging.Ctx(ctx).Warn("save_workflow: listing agents for the description", "error", err)
+	}
+	if len(list) > 0 {
+		names := make([]string, 0, len(list))
+		for i := range list {
+			names = append(names, list[i].Name)
 		}
-		if len(list) > 0 {
-			names := make([]string, 0, len(list))
-			for i := range list {
-				names = append(names, list[i].Name)
-			}
-			slices.Sort(names)
-			b.WriteString("\n\nAgents available for steps: " + strings.Join(names, ", ") + ".")
-		}
+		slices.Sort(names)
+		b.WriteString("\n\nAgents available for steps: " + strings.Join(names, ", ") + ".")
 	}
 	return b.String()
 }
@@ -148,9 +146,6 @@ func (r *Runner) saveWorkflowDescription(ctx context.Context, ownerID string) st
 // getWorkflow answers get_workflow: the definition in the model's shape, or
 // what there is to choose from.
 func (r *Runner) getWorkflow(ctx context.Context, ownerID, name string) (agents.ToolResult, error) {
-	if r.Deps.Workflows == nil {
-		return agents.TextResult("Workflows are not available on this server."), nil
-	}
 	list, err := r.visibleWorkflows(ctx, ownerID)
 	if err != nil {
 		return agents.ToolResult{}, err
@@ -240,13 +235,10 @@ func (r *Runner) auditWorkflowSave(ctx context.Context, ownerID string, wf *stor
 }
 
 // auditAs records an act the server performed on a session owner's behalf,
-// attributed to that owner; nothing without an audit sink.
+// attributed to that owner.
 func (r *Runner) auditAs(ctx context.Context, ownerID, action, resource, detail string) {
-	if r.Deps.Audit == nil {
-		return
-	}
 	actor := protocol.UserInfo{ID: ownerID}
-	if r.Deps.Users != nil && ownerID != "" {
+	if ownerID != "" {
 		if u, err := r.Deps.Users.ByID(ctx, ownerID); err == nil {
 			actor = protocol.UserInfo{ID: u.ID, Email: u.Email, Role: u.Role}
 		}
@@ -281,9 +273,6 @@ func (r *Runner) globalAgentByName(ctx context.Context, ownerID, name string) (*
 // resolveWorkflowSpec turns the model's spec into a stored definition: names
 // become ids, a kept step name keeps its id (invariant 39); existing is the row named.
 func (r *Runner) resolveWorkflowSpec(ctx context.Context, ownerID string, spec workflowSpec) (wf, existing *store.Workflow, err error) {
-	if r.Deps.Workflows == nil {
-		return nil, nil, errors.New("workflows are not available on this server")
-	}
 	name := strings.TrimSpace(spec.Name)
 	if name == "" {
 		return nil, nil, invalidWorkflowf("name is required")

@@ -2307,3 +2307,26 @@ package seeds a row its store would refuse in SQL. `DeleteOwnedBy`,
 `SetScopeOf` and `SetOwnerOf` still accept any store's `CrudStore`.
 
 Rules: workbench invariant 103.
+
+### 5.108 The bridge's dependencies are validated once
+
+Decided 2026-11-10.
+
+**Decision.** `bridge.NewRunner` returns an error for an `AgentDeps` missing
+any dependency the composition root injects, and the bridge stops nil-checking
+them. Tests build the complete set over the test database (`testRunner`,
+`bridgetest.NewRunner`) instead of a partial one.
+
+**Rejected.** A nil check at each use, so that a test may inject three stores —
+each check's fallback was a second behavior production never ran, and one
+(`persistInterruption`) announced a pause it had not recorded. A `validate` the
+composition root calls beside the constructor — a second caller could forget
+it. A panic in the constructor, as `providers.NewChatGPTOAuth` does — `run`
+already returns startup errors, and an error names every missing field at once.
+
+**Cost accepted.** Every bridge test runs with every store and both connection
+managers wired, so a built agent carries the task tools whether or not the test
+is about them. The complete set is written twice: the bridge's own tests cannot
+import `bridgetest`.
+
+Rules: workbench invariant 104.

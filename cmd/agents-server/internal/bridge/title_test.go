@@ -15,7 +15,7 @@ func TestMaybeGenerateTitleGuards(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
-	runner := NewRunner(ctx, db, &AgentDeps{Sessions: sessions})
+	runner := testRunner(ctx, t, db)
 
 	// Already-titled session: no-op even with a user message (name guard runs
 	// first, before touching a model).

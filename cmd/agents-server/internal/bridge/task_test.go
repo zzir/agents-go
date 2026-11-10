@@ -12,7 +12,6 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 	sdktasks "github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -42,22 +41,7 @@ func newTaskTestRunner(t *testing.T) (*Runner, *store.SessionStore, *store.TaskS
 	if _, err := users.EnsureLocalUser(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	runner := NewRunner(context.Background(), db, &AgentDeps{
-		AgentConfigs:     agentConfigs,
-		Providers:        store.NewProviderStore(db),
-		Sessions:         sessions,
-		Users:            users,
-		Settings:         settings.NewReader(store.NewSettingStore(db)),
-		Memories:         store.NewMemoryStore(db),
-		PendingApprovals: store.NewPendingApprovalStore(db),
-		Tasks:            tasks,
-		// Wired here rather than per test: a run's spans are persisted on the
-		// run's own goroutine, so a nil store panics the test binary from a
-		// stack that has nothing to do with what the test is checking. The
-		// wake-up debts are the same kind of trap.
-		Traces:  store.NewTraceStore(db),
-		Wakeups: store.NewWakeupStore(db),
-	})
+	runner := testRunner(context.Background(), t, db)
 	return runner, sessions, tasks, agentConfigs
 }
 

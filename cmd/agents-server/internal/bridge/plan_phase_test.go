@@ -9,9 +9,6 @@ import (
 	"github.com/zzir/agents-go/agents/memory"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/session"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -74,14 +71,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs:   store.NewAgentConfigStore(db),
-		Settings:       settings.NewReader(store.NewSettingStore(db)),
-		Memories:       store.NewMemoryStore(db),
-		McpServers:     store.NewMcpServerStore(db),
-		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
-		SandboxManager: sandboxes.NewManager(),
-	})
+	runner := testRunner(ctx, t, db)
 
 	ref0, err := store.RefFor(ctx, db, sess.ID)
 	if err != nil {
@@ -138,14 +128,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	if err := sessions2.Create(ctx, sess2); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	broken := NewRunner(ctx, dbBroken, &AgentDeps{
-		AgentConfigs:   store.NewAgentConfigStore(dbBroken),
-		Settings:       settings.NewReader(store.NewSettingStore(dbBroken)),
-		Memories:       store.NewMemoryStore(dbBroken),
-		McpServers:     store.NewMcpServerStore(dbBroken),
-		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(dbBroken)),
-		SandboxManager: sandboxes.NewManager(),
-	})
+	broken := testRunner(ctx, t, dbBroken)
 	if err := dbBroken.Close(); err != nil {
 		t.Fatalf("close db: %v", err)
 	}

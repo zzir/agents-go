@@ -9,7 +9,6 @@ import (
 
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -65,10 +64,7 @@ func TestAbandonPausedApproval(t *testing.T) {
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	approvals := store.NewPendingApprovalStore(db)
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs: store.NewAgentConfigStore(db), Providers: store.NewProviderStore(db), Sessions: sessions,
-		Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db), PendingApprovals: approvals,
-	})
+	runner := testRunner(ctx, t, db)
 	newSession := func() string {
 		sess := &store.Session{OwnerID: store.LocalUserID, ID: store.NewID(), Name: "s"}
 		if err := sessions.Create(ctx, sess); err != nil {

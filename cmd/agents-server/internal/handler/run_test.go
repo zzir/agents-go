@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge/bridgetest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -130,10 +130,7 @@ func TestCreateRunHonorsPreferWait(t *testing.T) {
 	if err := agents.Create(t.Context(), ac); err != nil {
 		t.Fatal(err)
 	}
-	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{
-		AgentConfigs: agents, Providers: store.NewProviderStore(db), Sessions: sessions,
-		Traces: store.NewTraceStore(db), Settings: settings.NewReader(store.NewSettingStore(db)), Memories: store.NewMemoryStore(db),
-	})
+	runner := bridgetest.NewRunner(t, db)
 	h := NewRunHandler(runner)
 	engine := newTestEngine()
 	engine.POST("/sessions/:id/runs", wrap(h.Create))

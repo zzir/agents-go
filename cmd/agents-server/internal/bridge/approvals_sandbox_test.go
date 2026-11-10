@@ -9,10 +9,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 	"github.com/zzir/agents-go/sandbox"
@@ -38,18 +35,7 @@ func TestBuildAgentRegistryIncludesSandboxTools(t *testing.T) {
 		t.Fatalf("create target: %v", err)
 	}
 
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs:   agentConfigs,
-		Providers:      store.NewProviderStore(db),
-		Sandboxes:      targets,
-		Settings:       settings.NewReader(store.NewSettingStore(db)),
-		Memories:       store.NewMemoryStore(db),
-		McpServers:     store.NewMcpServerStore(db),
-		Guardrails:     guardrails.NewResolver(store.NewGuardrailStore(db)),
-		McpManager:     mcpservers.NewManager(ctx),
-		SandboxManager: sandboxes.NewManager(),
-		Workspaces:     store.NewWorkspaceStore(db),
-	})
+	runner := testRunner(ctx, t, db)
 	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
 	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
 		t.Fatalf("create workspace: %v", err)
@@ -119,19 +105,7 @@ func TestResumeBuildsTheAgentOnce(t *testing.T) {
 	var releases atomic.Int32
 	mgr.SetIdleTimeout(func() time.Duration { releases.Add(1); return 0 })
 
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs:     agentConfigs,
-		Providers:        store.NewProviderStore(db),
-		Sessions:         sessions,
-		Users:            users,
-		Sandboxes:        targets,
-		Workspaces:       store.NewWorkspaceStore(db),
-		Settings:         settings.NewReader(store.NewSettingStore(db)),
-		Memories:         store.NewMemoryStore(db),
-		PendingApprovals: store.NewPendingApprovalStore(db),
-		SandboxManager:   mgr,
-		Traces:           store.NewTraceStore(db),
-	})
+	runner := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr })
 	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
 	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)

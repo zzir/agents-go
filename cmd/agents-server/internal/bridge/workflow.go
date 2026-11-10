@@ -25,9 +25,6 @@ var ErrWorkflowUnavailable = errors.New("workflow unavailable")
 // step. input is the brief; toolCallID the spawn_task call its card follows
 // (invariant 30); origin who started it when no run did (zero for a tool call's).
 func (r *Runner) StartWorkflow(ctx context.Context, workflowID, parentSessionID, input, toolCallID string, origin store.WorkflowOrigin) (*tasks.Info, error) {
-	if r.Deps.Workflows == nil || r.tasks == nil {
-		return nil, errors.New("workflows are not wired")
-	}
 	wf, err := r.Deps.Workflows.Get(ctx, workflowID)
 	if err != nil {
 		return nil, err
@@ -293,9 +290,6 @@ func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 // pauseWorkflowStep holds the sequence before a PauseBefore step: the turn is
 // kept in the state and a step approval filed — invariant 37. No run exists yet.
 func (r *Runner) pauseWorkflowStep(ctx context.Context, req tasks.LaunchRequest, st *store.WorkflowState, step *store.WorkflowStep) error {
-	if r.Deps.PendingApprovals == nil {
-		return fmt.Errorf("%w: step %q asks for approval, but approvals are not persisted", ErrWorkflowUnavailable, stepName(step))
-	}
 	st.PendingInput = req.Input
 	args, _ := json.Marshal(map[string]any{
 		"step": stepName(step), "index": st.StepIndex(step.ID) + 1, "count": len(st.Steps),

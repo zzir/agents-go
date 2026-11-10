@@ -11,9 +11,9 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge/bridgetest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -26,11 +26,7 @@ func statusRig(t *testing.T) rig {
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	tasks, approvals := store.NewTaskStore(db), store.NewPendingApprovalStore(db)
-	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{
-		AgentConfigs: store.NewAgentConfigStore(db), Providers: store.NewProviderStore(db), Sessions: sessions,
-		Traces: store.NewTraceStore(db), Settings: settings.NewReader(store.NewSettingStore(db)),
-		Memories: store.NewMemoryStore(db), PendingApprovals: approvals, Tasks: tasks, Wakeups: store.NewWakeupStore(db),
-	})
+	runner := bridgetest.NewRunner(t, db)
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
 	s.RegisterAPI(Handlers{
 		Authz:     AuthzDeps{Sessions: sessions, Tasks: tasks, Approvals: approvals, Triggers: store.NewTriggerStore(db), Hub: runner.Hub()},

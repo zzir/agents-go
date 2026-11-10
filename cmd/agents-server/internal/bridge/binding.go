@@ -3,7 +3,6 @@ package bridge
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
@@ -36,9 +35,6 @@ func (r *Runner) planWorkspaceBinding(ctx context.Context, sess *store.Session, 
 	}
 	if workspaceID == "" {
 		return bindingPlan{}, nil
-	}
-	if r.Deps.Workspaces == nil {
-		return bindingPlan{}, fmt.Errorf("no workspace store is wired")
 	}
 	ws, err := r.Deps.Workspaces.Get(ctx, workspaceID)
 	if err != nil {

@@ -117,8 +117,6 @@ func (c *commandRuns) ofWorkspace(workspaceID string) []*commandRun {
 func (r *Runner) backgroundCommand(ctx context.Context, tc *agents.ToolContext, cmd *sandbox.Command) (agents.ToolResult, error) {
 	parent, _ := tc.Context.(string)
 	switch {
-	case r.tasks == nil:
-		return agents.ToolResult{}, errors.New("exec_command: background commands need the task store")
 	case parent == "":
 		return agents.ToolResult{}, errors.New("exec_command: no session in the run context")
 	case cmd.CallID == "":
@@ -179,7 +177,7 @@ func (r *Runner) launchCommand(ctx context.Context, req tasks.LaunchRequest) err
 		return errors.New("a background command runs once: run it again instead")
 	}
 	in := store.DecodeInherit(req.Inherit)
-	if in.WorkspaceID == "" || r.Deps.Workspaces == nil || r.Deps.SandboxManager == nil {
+	if in.WorkspaceID == "" {
 		return errors.New("a background command needs the session's workspace")
 	}
 	ws, err := r.Deps.Workspaces.Get(ctx, in.WorkspaceID)
@@ -230,9 +228,6 @@ func (r *Runner) launchCommand(ctx context.Context, req tasks.LaunchRequest) err
 // and waits for their sandbox leases to go, so a sandbox stop that follows
 // finds the compute free; bounded by ctx and the teardown wait.
 func (r *Runner) StopWorkspaceCommands(ctx context.Context, workspaceID string) {
-	if r.tasks == nil {
-		return
-	}
 	runs := r.commands.ofWorkspace(workspaceID)
 	for _, run := range runs {
 		if _, err := r.tasks.Stop(ctx, run.taskID, false); err != nil {

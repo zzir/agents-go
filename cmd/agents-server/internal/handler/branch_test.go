@@ -12,6 +12,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge/bridgetest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -132,7 +133,7 @@ func TestBranchFencesTheSessionAgainstRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{AgentConfigs: store.NewAgentConfigStore(db), Sessions: sessions, Traces: store.NewTraceStore(db)})
+	runner := bridgetest.NewRunner(t, db)
 	probe := &fenceProbe{Runner: runner}
 	h := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions, d.Stopper = sessions, probe }))
 	engine := newTestEngine()

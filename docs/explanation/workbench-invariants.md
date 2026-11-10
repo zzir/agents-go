@@ -601,3 +601,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      exports that method and no forwarder beside it: there is no plain `Delete`
      on agents, providers, sandboxes or workspaces, and no plain `Update` on
      triggers or memories — decisions §5.107.
+104. **The bridge's dependencies are checked once, at construction.**
+     `bridge.NewRunner` refuses an `AgentDeps` missing a field the composition
+     root injects, and bridge code then calls them without a nil check; a
+     dependency production may lack is declared optional on its field (none is
+     today). The hooks the WS handler wires afterwards (`OnRunAttach`,
+     `OnBroadcast`) stay "when set" — see decisions §5.108.

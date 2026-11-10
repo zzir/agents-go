@@ -115,7 +115,7 @@ type services struct {
 
 // newBridge builds the bridge on the stores and starts the two loops that
 // need nothing above it: MCP auto-connect and trace retention, on bgCtx.
-func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protocol.AuditFunc) *services {
+func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protocol.AuditFunc) (*services, error) {
 	svc := &services{
 		Guardrails: guardrails.NewResolver(st.Guardrails),
 		Mcp:        mcpservers.NewManager(ctx),
@@ -127,8 +127,6 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 	svc.Sandboxes.SetIdleTimeout(func() time.Duration {
 		return time.Duration(st.SettingReader.Int(context.Background(), settings.KeySandboxIdleMinutes)) * time.Minute
 	})
-	go mcpservers.ConnectEnabled(bgCtx, svc.Mcp, st.McpServers, svc.OAuth)
-	go bridge.RunTraceRetention(bgCtx, st.SettingReader, st.Traces)
 	svc.Deps = &bridge.AgentDeps{
 		AgentConfigs:     st.AgentConfigs,
 		Providers:        st.Providers,
@@ -153,9 +151,15 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 		Attachments:      st.Attachments,
 		Audit:            audit,
 	}
-	svc.Runner = bridge.NewRunner(ctx, db, svc.Deps)
+	// Refuses an incomplete dependency set — invariant 104.
+	var err error
+	if svc.Runner, err = bridge.NewRunner(ctx, db, svc.Deps); err != nil {
+		return nil, err
+	}
 	svc.Scheduler = bridge.NewTriggerScheduler(svc.Runner, st.Triggers)
-	return svc
+	go mcpservers.ConnectEnabled(bgCtx, svc.Mcp, st.McpServers, svc.OAuth)
+	go bridge.RunTraceRetention(bgCtx, st.SettingReader, st.Traces)
+	return svc, nil
 }
 
 // Close releases what the bridge holds open: MCP connections and sandbox

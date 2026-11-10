@@ -30,13 +30,9 @@ type spawnArgs struct {
 // spawnTool is the server's spawn_task: the SDK's plus a workflow field,
 // built per run with the workflows and handoff targets on offer — invariant 75.
 func (r *Runner) spawnTool(ctx context.Context, ownerID string, entry *BuildResult) *agents.Tool {
-	var offered []store.Workflow
-	if r.Deps.Workflows != nil {
-		list, err := r.visibleWorkflows(ctx, ownerID)
-		if err != nil {
-			logging.Ctx(ctx).Warn("spawn_task: listing workflows for the description", "error", err)
-		}
-		offered = list
+	offered, err := r.visibleWorkflows(ctx, ownerID)
+	if err != nil {
+		logging.Ctx(ctx).Warn("spawn_task: listing workflows for the description", "error", err)
 	}
 	var b strings.Builder
 	b.WriteString("Start a background task: an agent works on the input while you continue — you, or one of the agents you can hand off to (agent_name). " +
@@ -115,9 +111,6 @@ func spawnTargets(entry *BuildResult) []*agents.Agent {
 // spawnWorkflow is spawn_task's workflow branch; the workflows are read NOW,
 // not from the description.
 func (r *Runner) spawnWorkflow(ctx context.Context, tc *agents.ToolContext, parent, ownerID, name, input string) (agents.ToolResult, error) {
-	if r.Deps.Workflows == nil {
-		return agents.TextResult("Workflows are not available on this server. Leave workflow empty for a free-form task."), nil
-	}
 	offered, err := r.visibleWorkflows(ctx, ownerID)
 	if err != nil {
 		return agents.TextResult(fmt.Sprintf("Could not look up workflows right now: %s. Try again, or leave workflow empty for a free-form task.", err.Error())), nil

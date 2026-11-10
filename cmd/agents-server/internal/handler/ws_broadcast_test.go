@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge/bridgetest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -70,12 +70,7 @@ func TestRunEventsBroadcastToAllConnections(t *testing.T) {
 	if err := sessions.Create(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
-	deps := &bridge.AgentDeps{
-		AgentConfigs: store.NewAgentConfigStore(db),
-		Sessions:     sessions,
-		Traces:       store.NewTraceStore(db),
-	}
-	runner := bridge.NewRunner(t.Context(), db, deps)
+	runner := bridgetest.NewRunner(t, db)
 	wsh := NewWSHandler(runner, sessions, store.NewPendingApprovalStore(db))
 	engine := newTestEngine()
 	engine.GET("/ws", server.HandleWSWithAuth(wsh.Handle, testAuthFunc(testWSToken), nil, nil))

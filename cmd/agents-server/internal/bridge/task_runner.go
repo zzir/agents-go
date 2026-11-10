@@ -115,9 +115,6 @@ func (r *Runner) agentConfigByName(ctx context.Context, ownerID, name string) (*
 // taskMeta reports whether sessionID is a task's hidden child session, with its
 // parent linkage (nil, nil for chat sessions). The row exists before the run starts.
 func (r *Runner) taskMeta(ctx context.Context, sessionID string) (*TaskMeta, error) {
-	if r.Deps.Tasks == nil {
-		return nil, nil
-	}
 	task, err := r.Deps.Tasks.ByChildSession(ctx, sessionID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -152,9 +149,6 @@ func trustSessionID(sessionID string, task *TaskMeta) string {
 // StopTask cancels a background task for the REST stop endpoint, with the
 // task_stop tool's semantics.
 func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
-	if r.tasks == nil {
-		return nil, fmt.Errorf("task_stop: tasks are not configured")
-	}
 	info, err := r.tasks.Stop(r.hub.rootCtx, taskID, graceful)
 	if err != nil {
 		if final, ok := errors.AsType[*tasks.AlreadyFinalError](err); ok {
@@ -168,9 +162,6 @@ func (r *Runner) StopTask(taskID string, graceful bool) (*TaskInfo, error) {
 // RetryTask resumes a failed background task for the REST endpoint, with the
 // task_retry tool's semantics, under the hub's root context.
 func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
-	if r.tasks == nil {
-		return nil, fmt.Errorf("task_retry: tasks are not configured")
-	}
 	// A workflow at a bound is refused HERE, before the claim (a refusal after
 	// it owes a wake-up).
 	if row, err := r.Deps.Tasks.Get(r.hub.rootCtx, taskID); err == nil && row.Kind == store.TaskKindWorkflow {
@@ -194,9 +185,6 @@ func (r *Runner) RetryTask(taskID string) (*TaskInfo, error) {
 // MaxTaskAttempts is the ceiling a task of kind's attempt count is measured
 // against: one for a command, the manager's for the rest.
 func (r *Runner) MaxTaskAttempts(kind string) int {
-	if r.tasks == nil {
-		return 0
-	}
 	if kind == store.TaskKindCommand {
 		return commandAttempts
 	}
@@ -209,9 +197,6 @@ func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 	ctx := r.hub.rootCtx
 	// A run ending frees the session: the moment a debt owed to it can be paid.
 	(Waker{r}).Drain(ctx, sessionID)
-	if r.tasks == nil {
-		return
-	}
 	info, ok := r.hub.Info(runID)
 	if !ok {
 		return
@@ -235,9 +220,6 @@ func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 // FailOrphanedTasks is the first half of the restart reconciliation: tasks the
 // restart interrupted are failed, owing their parents a wake-up — invariant 32.
 func (r *Runner) FailOrphanedTasks(ctx context.Context) {
-	if r.tasks == nil {
-		return
-	}
 	if err := r.tasks.FailOrphans(ctx); err != nil {
 		logging.Ctx(ctx).Warn("failing tasks orphaned by the restart", "error", err)
 	}
@@ -288,28 +270,26 @@ func (r *Runner) StopSessionTree(sessionID string) {
 		r.hub.Cancel(rid)
 		waits = append(waits, rid)
 	}
-	if r.tasks != nil {
-		// The run ids as they were while live, collected BEFORE stopping.
-		live, err := r.Deps.Tasks.ListByParent(ctx, sessionID)
-		if err != nil {
-			logging.Ctx(ctx).Warn("listing tasks for session stop", "error", err, "session_id", sessionID)
+	// The run ids as they were while live, collected BEFORE stopping.
+	live, err := r.Deps.Tasks.ListByParent(ctx, sessionID)
+	if err != nil {
+		logging.Ctx(ctx).Warn("listing tasks for session stop", "error", err, "session_id", sessionID)
+	}
+	for i := range live {
+		if isTerminalTaskStatus(live[i].Status) {
+			continue
 		}
-		for i := range live {
-			if isTerminalTaskStatus(live[i].Status) {
-				continue
-			}
-			if info, ok := r.hub.Info(live[i].RunID); ok && info.Status == RunRunning {
-				waits = append(waits, live[i].RunID)
-			}
+		if info, ok := r.hub.Info(live[i].RunID); ok && info.Status == RunRunning {
+			waits = append(waits, live[i].RunID)
 		}
-		// The manager cancels each and finalizes the rows, one at a time under
-		// the teardown deadline.
-		stopCtx, cancelStop := context.WithDeadline(ctx, deadline)
-		err = r.tasks.StopTree(stopCtx, sessionID)
-		cancelStop()
-		if err != nil {
-			logging.Ctx(ctx).Warn("stopping session tasks", "error", err, "session_id", sessionID)
-		}
+	}
+	// The manager cancels each and finalizes the rows, one at a time under
+	// the teardown deadline.
+	stopCtx, cancelStop := context.WithDeadline(ctx, deadline)
+	err = r.tasks.StopTree(stopCtx, sessionID)
+	cancelStop()
+	if err != nil {
+		logging.Ctx(ctx).Warn("stopping session tasks", "error", err, "session_id", sessionID)
 	}
 	for _, rid := range waits {
 		r.hub.waitDone(rid, deadline)
@@ -342,7 +322,5 @@ func (r *Runner) ReleaseSessionBinding(workspaceID string) {
 // ForgetSessionTrust drops a deleted session's exec_command trust grants,
 // keyed by the root chat session id (trustSessionID).
 func (r *Runner) ForgetSessionTrust(sessionID string) {
-	if r.Deps.SandboxManager != nil {
-		r.Deps.SandboxManager.Trust().Forget(sessionID)
-	}
+	r.Deps.SandboxManager.Trust().Forget(sessionID)
 }

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 	"github.com/zzir/agents-go/sandbox"
@@ -40,15 +39,7 @@ func TestBuildFullAgentAppendsSandboxPrompt(t *testing.T) {
 	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
 		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: t.TempDir()}), nil
 	})
-	deps := &AgentDeps{
-		AgentConfigs:   agentConfigs,
-		Providers:      store.NewProviderStore(db),
-		Settings:       settings.NewReader(store.NewSettingStore(db)),
-		Memories:       store.NewMemoryStore(db),
-		Sandboxes:      sandboxStore,
-		Workspaces:     workspaces,
-		SandboxManager: mgr,
-	}
+	deps := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr }).Deps
 
 	built, err := BuildFullAgent(ctx, deps, ac.ID, ws.ID, store.LocalUserID)
 	if err != nil {
@@ -98,15 +89,7 @@ func TestBuildFullAgentNoSandboxPromptWhenEmpty(t *testing.T) {
 	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
 		return sandbox.NewLocalWithOptions(sandbox.LocalOptions{WorkDir: t.TempDir()}), nil
 	})
-	deps := &AgentDeps{
-		AgentConfigs:   agentConfigs,
-		Providers:      store.NewProviderStore(db),
-		Settings:       settings.NewReader(store.NewSettingStore(db)),
-		Memories:       store.NewMemoryStore(db),
-		Sandboxes:      sandboxStore,
-		Workspaces:     workspaces,
-		SandboxManager: mgr,
-	}
+	deps := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr }).Deps
 
 	built, err := BuildFullAgent(ctx, deps, ac.ID, ws.ID, store.LocalUserID)
 	if err != nil {

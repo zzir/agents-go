@@ -21,7 +21,7 @@ type Waker struct{ r *Runner }
 // Owe records that sessionID is owed a turn. The caller fills Kind, SourceID,
 // Payload, Inherit and ParentRunID; everything else is the row's own.
 func (w Waker) Owe(ctx context.Context, wk *store.Wakeup) error {
-	if w.r.Deps.Wakeups == nil || wk.SessionID == "" {
+	if wk.SessionID == "" {
 		return nil
 	}
 	return w.r.Deps.Wakeups.Owe(ctx, wk)
@@ -30,9 +30,6 @@ func (w Waker) Owe(ctx context.Context, wk *store.Wakeup) error {
 // Cancel drops what a source still owes for one attempt (a task's run id):
 // its result reached the session another way, or the work was cancelled.
 func (w Waker) Cancel(ctx context.Context, kind, sourceID, attempt string) {
-	if w.r.Deps.Wakeups == nil {
-		return
-	}
 	if err := w.r.Deps.Wakeups.CancelFor(ctx, kind, sourceID, attempt); err != nil {
 		logging.Ctx(ctx).Warn("cancelling a wake-up debt", "error", err, "kind", kind, "source_id", sourceID)
 	}
@@ -41,7 +38,7 @@ func (w Waker) Cancel(ctx context.Context, kind, sourceID, attempt string) {
 // Drain wakes the session with everything it is owed, if it can be woken now;
 // a refusal leaves the debts pending for the next boundary.
 func (w Waker) Drain(ctx context.Context, sessionID string) {
-	if w.r.Deps.Wakeups == nil || sessionID == "" {
+	if sessionID == "" {
 		return
 	}
 	if !w.canWake(ctx, sessionID) {
@@ -123,9 +120,6 @@ func (w Waker) canWake(ctx context.Context, sessionID string) bool {
 // DrainAll pays every session owed something: the restart sweep, after the
 // reconciliation (FailOrphanedTasks) has written every debt.
 func (w Waker) DrainAll(ctx context.Context) {
-	if w.r.Deps.Wakeups == nil {
-		return
-	}
 	sessions, err := w.r.Deps.Wakeups.PendingSessions(ctx)
 	if err != nil {
 		logging.Ctx(ctx).Warn("listing sessions owed a wake-up", "error", err)

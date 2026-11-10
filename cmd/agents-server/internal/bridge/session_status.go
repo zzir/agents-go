@@ -102,61 +102,54 @@ func (r *Runner) SessionStatuses(ctx context.Context, ownerID string, ids []stri
 	}
 	entries := store.NewSharedEntryStore(r.db)
 
-	if r.Deps.PendingApprovals != nil {
-		open, err := r.Deps.PendingApprovals.ListOpen(ctx, ownerID, ids)
-		if err != nil {
-			return states, err
-		}
-		var ttl time.Duration
-		if r.Deps.Settings != nil {
-			ttl = time.Duration(r.Deps.Settings.Int(ctx, settings.KeyApprovalTTLMinutes)) * time.Minute
-		}
-		offPath := map[string]map[string]bool{}
-		for i := range open {
-			a := &open[i]
-			// A pause whose run was branched away is out of view — invariant 19.
-			if a.TaskID == "" {
-				off, read := offPath[a.SessionID]
-				if !read {
-					ref, err := store.RefFor(ctx, r.db, a.SessionID)
-					if err != nil {
-						return states, err
-					}
-					if off, err = entries.RunsOffPath(ctx, ref); err != nil {
-						return states, err
-					}
-					offPath[a.SessionID] = off
+	open, err := r.Deps.PendingApprovals.ListOpen(ctx, ownerID, ids)
+	if err != nil {
+		return states, err
+	}
+	ttl := time.Duration(r.Deps.Settings.Int(ctx, settings.KeyApprovalTTLMinutes)) * time.Minute
+	offPath := map[string]map[string]bool{}
+	for i := range open {
+		a := &open[i]
+		// A pause whose run was branched away is out of view — invariant 19.
+		if a.TaskID == "" {
+			off, read := offPath[a.SessionID]
+			if !read {
+				ref, err := store.RefFor(ctx, r.db, a.SessionID)
+				if err != nil {
+					return states, err
 				}
-				if off[a.RunID] {
-					continue
+				if off, err = entries.RunsOffPath(ctx, ref); err != nil {
+					return states, err
 				}
+				offPath[a.SessionID] = off
 			}
-			sig := of(a.OpenSessionID)
-			for _, c := range a.Calls() {
-				call := PendingCall{
-					ToolCallID: c.ToolCallID, ToolName: c.ToolName, Kind: a.Kind, RunID: a.RunID,
-					SessionID: a.OpenSessionID, TaskID: a.TaskID, TaskLabel: a.TaskLabel, CreatedAt: a.CreatedAt,
-				}
-				if ttl > 0 {
-					at := a.CreatedAt.Add(ttl)
-					call.ExpiresAt = &at
-				}
-				sig.pending = append(sig.pending, call)
+			if off[a.RunID] {
+				continue
 			}
+		}
+		sig := of(a.OpenSessionID)
+		for _, c := range a.Calls() {
+			call := PendingCall{
+				ToolCallID: c.ToolCallID, ToolName: c.ToolName, Kind: a.Kind, RunID: a.RunID,
+				SessionID: a.OpenSessionID, TaskID: a.TaskID, TaskLabel: a.TaskLabel, CreatedAt: a.CreatedAt,
+			}
+			if ttl > 0 {
+				at := a.CreatedAt.Add(ttl)
+				call.ExpiresAt = &at
+			}
+			sig.pending = append(sig.pending, call)
 		}
 	}
-	if r.Deps.Tasks != nil {
-		rows, err := r.Deps.Tasks.LiveSignals(ctx, ownerID, ids)
-		if err != nil {
-			return states, err
-		}
-		for _, t := range rows {
-			switch t.Status {
-			case protocol.TaskInputRequired:
-				of(t.ParentSessionID).waiting = true
-			case protocol.TaskWorking:
-				of(t.ParentSessionID).working = true
-			}
+	rows, err := r.Deps.Tasks.LiveSignals(ctx, ownerID, ids)
+	if err != nil {
+		return states, err
+	}
+	for _, t := range rows {
+		switch t.Status {
+		case protocol.TaskInputRequired:
+			of(t.ParentSessionID).waiting = true
+		case protocol.TaskWorking:
+			of(t.ParentSessionID).working = true
 		}
 	}
 	failed, err := entries.EndedInError(ctx, ownerID, ids)

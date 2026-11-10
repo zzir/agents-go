@@ -15,13 +15,10 @@ import (
 
 // AgentProvider loads the endpoint an agent reaches its model through. An
 // empty provider_id yields the ZERO provider (keyless openai, which fails
-// pre-flight — decisions §5.30); a named one with no store is an error.
+// pre-flight — decisions §5.30).
 func AgentProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig) (store.Provider, error) {
 	if ac.ProviderID == "" {
 		return store.Provider{}, nil
-	}
-	if deps.Providers == nil {
-		return store.Provider{}, fmt.Errorf("agent %q names provider %s but no provider store is wired", ac.Name, ac.ProviderID)
 	}
 	pv, err := deps.Providers.Get(ctx, ac.ProviderID)
 	if err != nil {
@@ -81,7 +78,7 @@ func buildProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, 
 	}
 	apiKey := pv.APIKey
 	var chatgptCreds *providers.ChatGPTCredentials
-	if pv.AuthMode == providers.AuthModeChatGPTLogin && deps.ChatGPTOAuth != nil {
+	if pv.AuthMode == providers.AuthModeChatGPTLogin {
 		if creds, err := deps.ChatGPTOAuth.GetCredentials(ctx, pv.ID); err == nil {
 			apiKey = creds.AccessToken
 			chatgptCreds = creds
@@ -106,9 +103,6 @@ func buildProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, 
 // may reference, pinned to the entry's model; an entry that resolves to no
 // such provider fails the build — decisions §5.69.
 func fallbackProviders(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig, entries []store.FallbackModel) (fallbacks []agents.ModelProvider, anthropic bool, err error) {
-	if deps.Providers == nil {
-		return nil, false, fmt.Errorf("agent %q names fallback providers but no provider store is wired", ac.Name)
-	}
 	fallbacks = make([]agents.ModelProvider, 0, len(entries))
 	for i, e := range entries {
 		pv, err := fallbackProvider(ctx, deps, ac, i, e)

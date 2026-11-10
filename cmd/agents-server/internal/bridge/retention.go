@@ -47,15 +47,11 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 		}
 		for _, p := range expired {
 			// Claimed in the SAME transaction as the task it ends — invariant 37.
-			var task *store.Task
 			claimed := false
-			if tasks != nil {
-				var terr error
-				task, terr = tasks.ByChildSession(ctx, p.SessionID)
-				if terr != nil && !errors.Is(terr, store.ErrNotFound) {
-					log.Warn("expiring an approval: its task could not be read; kept for the next round", "error", terr, "run_id", p.RunID)
-					continue
-				}
+			task, terr := tasks.ByChildSession(ctx, p.SessionID)
+			if terr != nil && !errors.Is(terr, store.ErrNotFound) {
+				log.Warn("expiring an approval: its task could not be read; kept for the next round", "error", terr, "run_id", p.RunID)
+				continue
 			}
 			if task != nil {
 				// Against p.RunID, the attempt this approval belongs to, never
@@ -66,7 +62,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 					log.Warn("expiring an approval; kept for the next round", "error", err, "run_id", p.RunID)
 					continue
 				}
-				if ended && announce != nil {
+				if ended {
 					// Cancellations owe no wake-up (dropped in the same write).
 					announce(ctx, task.ID)
 				}
@@ -89,9 +85,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 				}
 				_ = entries.AppendAnnotation(ctx, ref, p.RunID, banner)
 			}
-			if onExpire != nil {
-				onExpire(ctx, p.SessionID)
-			}
+			onExpire(ctx, p.SessionID)
 			log.Info("expired pending approval", "run_id", p.RunID, "session_id", p.SessionID)
 		}
 	}

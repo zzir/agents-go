@@ -14,7 +14,6 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 	"github.com/zzir/agents-go/sandbox"
@@ -101,12 +100,7 @@ func TestApproveAllResumesOnce(t *testing.T) {
 	}
 	mgr := sandboxes.NewManager()
 	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) { return sandbox.NewLocal(), nil })
-	runner := NewRunner(ctx, db, &AgentDeps{
-		AgentConfigs: agentConfigs, Providers: store.NewProviderStore(db), Sessions: sessions, Users: users,
-		Sandboxes: targets, Workspaces: store.NewWorkspaceStore(db), Settings: settings.NewReader(store.NewSettingStore(db)),
-		Memories: store.NewMemoryStore(db), PendingApprovals: store.NewPendingApprovalStore(db), SandboxManager: mgr,
-		Traces: store.NewTraceStore(db),
-	})
+	runner := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr })
 	ws := &store.Workspace{OwnerID: store.LocalUserID, SandboxID: tg.ID, Name: "p"}
 	if err := runner.Deps.Workspaces.Create(ctx, ws); err != nil {
 		t.Fatal(err)

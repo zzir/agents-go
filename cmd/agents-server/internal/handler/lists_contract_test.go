@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge/bridgetest"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
@@ -32,7 +32,7 @@ func TestListsNeverNull(t *testing.T) {
 	engine.GET("/memories", wrap(NewMemoryHandler(store.NewMemoryStore(db), store.NewSessionStore(db), store.NewAgentConfigStore(db), store.NewSharedEntryStore(db)).List))
 	engine.GET("/skills", wrap(NewSkillHandler(store.NewSkillStore(db)).List))
 	engine.GET("/sessions/:id/traces", wrap(NewTraceHandler(store.NewTraceStore(db), settings.NewReader(store.NewSettingStore(db))).ListBySession))
-	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{AgentConfigs: store.NewAgentConfigStore(db), Sessions: store.NewSessionStore(db), Traces: store.NewTraceStore(db)})
+	runner := bridgetest.NewRunner(t, db)
 	engine.GET("/sessions/:id/tasks", wrap(NewTaskHandler(store.NewTaskStore(db), runner).ListBySession))
 
 	// Guardrails is omitted: its resolver always returns the built-in defs, so

@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -16,11 +15,7 @@ func TestExecCommandRoutedOffSDKApproveList(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := &AgentDeps{
-		AgentConfigs: s,
-		Settings:     settings.NewReader(store.NewSettingStore(db)),
-		Memories:     store.NewMemoryStore(db),
-	}
+	deps := testRunner(ctx, t, db).Deps
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "a", Model: "gpt-test", Approval: store.ApprovalGroup{ApproveTools: store.StringList{"exec_command", "other_tool"}}}
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
