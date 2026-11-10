@@ -207,13 +207,6 @@ func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.App
 }
 
 func (h *ApprovalHandler) resolveError(err error) error {
-	// Draining: retryable, not an internal failure.
-	if down, ok := errors.AsType[bridge.ErrShuttingDown](err); ok {
-		return unavailable(down.Error())
-	}
-	if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
-		return conflict("session already has an active run: " + busy.RunID)
-	}
 	// Unresumable by version: 409 with the reason; the stale record is already
 	// discarded.
 	if stale, ok := errors.AsType[*bridge.StaleApprovalStateError](err); ok {
@@ -235,10 +228,7 @@ func (h *ApprovalHandler) resolveError(err error) error {
 	if notReady, ok := errors.AsType[*bridge.ApprovalNotReadyError](err); ok {
 		return conflict(notReady.Error())
 	}
-	if deleting, ok := errors.AsType[bridge.ErrSessionDeleting](err); ok {
-		return conflict(deleting.Error())
-	}
-	return err
+	return err // busy, deleting, draining: classify
 }
 
 // auditDecision is the audit detail of an approval decision: the verdict,

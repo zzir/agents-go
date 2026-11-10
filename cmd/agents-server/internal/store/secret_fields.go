@@ -6,20 +6,7 @@ import (
 )
 
 // The credential fields of each entity, sealed at rest: each store installs
-// its pair with withSecrets, and custom write paths wrap with sealedWrite.
-
-// sealedWrite runs exec with m's credentials sealed, then opens them again
-// whatever exec returned, so the caller keeps a plaintext struct.
-func sealedWrite[T any](m *T, seal, open func(*T) error, exec func() error) error {
-	if err := seal(m); err != nil {
-		return err
-	}
-	err := exec()
-	if oerr := open(m); err == nil {
-		err = oerr
-	}
-	return err
-}
+// its pair with withSecrets, and custom write paths wrap with CrudStore.sealedWrite.
 
 // The labels every sealed value is bound to: "table.column", and for a
 // credential inside a JSON column the field appended by sealJSONKeys.

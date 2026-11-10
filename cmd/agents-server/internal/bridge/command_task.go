@@ -111,7 +111,7 @@ func (c *commandRuns) ofWorkspace(workspaceID string) []*commandRun {
 	return out
 }
 
-// backgroundCommand is AgentDeps.BackgroundCommand: the command is parked under
+// backgroundCommand runs an exec_command background call: the command is parked under
 // its call id and a task of kind command spawned on it; the task's card is the
 // exec_command call's (invariant 21).
 func (r *Runner) backgroundCommand(ctx context.Context, tc *agents.ToolContext, cmd *sandbox.Command) (agents.ToolResult, error) {

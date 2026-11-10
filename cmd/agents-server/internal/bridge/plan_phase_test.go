@@ -28,14 +28,14 @@ func TestPlanUnlockClearsThePhase(t *testing.T) {
 	sa := store.NewEntryStoreFor(db, ref)
 
 	phase := &middleware.PlanPhase{}
-	armPlanUnlock(phase, sa, ref, nil)
+	armPlanUnlock(phase, sa, nil)
 	if err := phase.Unlock(); err != nil {
 		t.Fatalf("unlock: %v", err)
 	}
 	if !phase.Executing() {
 		t.Fatal("phase must be executing after a successful unlock")
 	}
-	if planning, err := sa.SessionIsPlanning(ctx, ref); err != nil || planning {
+	if planning, err := sa.SessionIsPlanning(ctx); err != nil || planning {
 		t.Fatalf("session still planning after unlock (err=%v)", err)
 	}
 	// A second unlock is a no-op — still cleared.
@@ -51,7 +51,7 @@ func TestPlanUnlockClearsThePhase(t *testing.T) {
 		t.Fatalf("close db: %v", err)
 	}
 	phase2 := &middleware.PlanPhase{}
-	armPlanUnlock(phase2, sa2, ref2, nil)
+	armPlanUnlock(phase2, sa2, nil)
 	if err := phase2.Unlock(); err == nil {
 		t.Fatal("a failed write must fail the unlock")
 	}
@@ -92,7 +92,7 @@ func TestRestorePlanPhase(t *testing.T) {
 
 	// Asked for one: the locked marker puts the next run into planning, and the
 	// armed hook persists the unlock when THIS run's plan is approved.
-	if err := sa.SetSessionPlanning(ctx, ref0, true); err != nil {
+	if err := sa.SetSessionPlanning(ctx, true); err != nil {
 		t.Fatalf("set planning: %v", err)
 	}
 	phase := &middleware.PlanPhase{}
@@ -117,7 +117,7 @@ func TestRestorePlanPhase(t *testing.T) {
 	if !phase2.Executing() {
 		t.Fatal("an unlocked session must restore the executing phase")
 	}
-	if planning, err := sa.SessionIsPlanning(ctx, ref0); err != nil || planning {
+	if planning, err := sa.SessionIsPlanning(ctx); err != nil || planning {
 		t.Fatalf("session must read as unlocked after the approved plan (err=%v)", err)
 	}
 
@@ -168,7 +168,7 @@ func TestPlanIntentIsNotAppliedWhenTheRunIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	planning, err := store.NewEntryStoreFor(runner.db, ref).SessionIsPlanning(ctx, ref)
+	planning, err := store.NewEntryStoreFor(runner.db, ref).SessionIsPlanning(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestApprovedPlanIsKeptInSessionMemory(t *testing.T) {
 	if kept.Content != plan || kept.Metadata != store.ApprovedPlanSource || kept.WrittenBy != store.MemoryWrittenByUser {
 		t.Errorf("kept = %q (%s, by %s), want the plan, marked as approved by the person", kept.Content, kept.Metadata, kept.WrittenBy)
 	}
-	if planning, err := store.NewEntryStoreFor(runner.db, mustRef(t, runner.db, sess.ID)).SessionIsPlanning(ctx, mustRef(t, runner.db, sess.ID)); err != nil || planning {
+	if planning, err := store.NewEntryStoreFor(runner.db, mustRef(t, runner.db, sess.ID)).SessionIsPlanning(ctx); err != nil || planning {
 		t.Errorf("planning = %v (%v), want the phase cleared by the approval", planning, err)
 	}
 

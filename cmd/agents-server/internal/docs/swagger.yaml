@@ -463,21 +463,6 @@ components:
         tool_call_id:
           type: string
       type: object
-    docker.ManagedContainer:
-      properties:
-        created:
-          type: string
-        image:
-          type: string
-        name:
-          type: string
-        state:
-          description: running | exited | ...
-          type: string
-        status:
-          description: human-readable, e.g. "Up 2 hours"
-          type: string
-      type: object
     guardrails.Def:
       properties:
         blocking:
@@ -1390,26 +1375,13 @@ components:
           uniqueItems: false
         name:
           type: string
+        revision:
+          description: Revision is the revision an update was made against (optional);
+            a create ignores it.
+          type: integer
         sandbox_id:
           description: SandboxID is what the workspace runs on — the machine and the
             image.
-          type: string
-      required:
-      - name
-      - sandbox_id
-      type: object
-    handler.workspaceUpdateReq:
-      properties:
-        env:
-          items:
-            $ref: '#/components/schemas/store.EnvVar'
-          type: array
-          uniqueItems: false
-        name:
-          type: string
-        revision:
-          type: integer
-        sandbox_id:
           type: string
       required:
       - name
@@ -5291,111 +5263,6 @@ paths:
       summary: Update sandbox
       tags:
       - sandboxes
-  /sandboxes/{id}/containers:
-    get:
-      parameters:
-      - description: Sandbox id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/docker.ManagedContainer'
-                type: array
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Not Found
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: List the sandbox's managed containers
-      tags:
-      - sandboxes
-  /sandboxes/{id}/containers/{name}:
-    delete:
-      parameters:
-      - description: Sandbox id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      - description: Container name (agents-…)
-        in: path
-        name: name
-        required: true
-        schema:
-          type: string
-      responses:
-        "204":
-          description: removed
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: Remove a managed container (rebuild)
-      tags:
-      - sandboxes
-  /sandboxes/{id}/containers/{name}/stop:
-    post:
-      parameters:
-      - description: Sandbox id
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      - description: Container name (agents-…)
-        in: path
-        name: name
-        required: true
-        schema:
-          type: string
-      responses:
-        "204":
-          description: stopped
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Request
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/handler.ErrorResponse'
-          description: Bad Gateway
-      security:
-      - BearerAuth: []
-      summary: Stop a managed container
-      tags:
-      - sandboxes
   /sandboxes/{id}/test:
     post:
       description: Runs "echo ok" in a throw-away sandbox — a container for a docker
@@ -7421,7 +7288,8 @@ paths:
         so the brief is what it works from). The result comes back to the session
         as a notification, like any task's. 400 when the workflow has no runnable
         steps or an agent is gone, 404 for an unknown workflow or session, 409 when
-        the session is at its background-task cap.
+        the session is at its background-task cap or being deleted, 503 while the
+        server shuts down.
       parameters:
       - description: Workflow ID
         in: path
@@ -7465,6 +7333,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/handler.ErrorResponse'
           description: Conflict
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handler.ErrorResponse'
+          description: the server is shutting down
       security:
       - BearerAuth: []
       summary: Run a workflow (optionally binding the session's workspace first)
@@ -7659,7 +7533,7 @@ paths:
             schema:
               oneOf:
               - type: object
-              - $ref: '#/components/schemas/handler.workspaceUpdateReq'
+              - $ref: '#/components/schemas/handler.workspaceReq'
                 description: Name and environment
                 summary: workspace
         description: Name and environment

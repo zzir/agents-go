@@ -54,18 +54,17 @@ type ContextReport struct {
 	Prompt *PromptProfile `json:"prompt,omitempty"`
 }
 
-// ContextReport measures what the session named by ref puts in its model's
-// context window: the ACTIVE branch, from lifted columns — invariant 28. The
-// caller fills in Model, ContextWindow and the compaction settings.
-func (s *EntryStore) ContextReport(ctx context.Context, ref session.Ref) (*ContextReport, error) {
+// ContextReport measures what the session puts in its model's context
+// window: the ACTIVE branch, from lifted columns — invariant 28. The caller
+// fills in Model, ContextWindow and the compaction settings.
+func (s *EntryStore) ContextReport(ctx context.Context) (*ContextReport, error) {
 	var rows []entryRow
-	if err := s.db.NewSelect().Model(&rows).
+	if err := s.scoped(s.db.NewSelect().Model(&rows)).
 		ExcludeColumn("entry").
-		Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
 		OrderExpr("seq ASC").Scan(ctx); err != nil {
-		return nil, fmt.Errorf("reading entries for the context report of session %s: %w", ref.ID, err)
+		return nil, fmt.Errorf("reading entries for the context report of session %s: %w", s.ref.ID, err)
 	}
-	onPath, err := s.activeBranchOfRows(ctx, ref, rows)
+	on, err := s.activePath(ctx, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +72,7 @@ func (s *EntryStore) ContextReport(ctx context.Context, ref session.Ref) (*Conte
 	rep := &ContextReport{}
 	var active []ContextSize // the history the compaction pass would size
 	for i := range rows {
-		if !onPath[rows[i].EntryID] {
+		if !on[rows[i].EntryID] {
 			continue
 		}
 		size := sizeOfRow(rows[i])
@@ -99,14 +98,13 @@ func (s *EntryStore) ContextReport(ctx context.Context, ref session.Ref) (*Conte
 
 // UsageTotals sums input plus output tokens of every model call on the
 // session, every branch and compacted entry included — a workflow's token budget ruler.
-func (s *EntryStore) UsageTotals(ctx context.Context, ref session.Ref) (int, error) {
+func (s *EntryStore) UsageTotals(ctx context.Context) (int, error) {
 	var rows []entryRow
-	if err := s.db.NewSelect().Model(&rows).
+	if err := s.scoped(s.db.NewSelect().Model(&rows)).
 		Column("usage").
-		Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
 		Where("usage IS NOT NULL").
 		Scan(ctx); err != nil {
-		return 0, fmt.Errorf("reading usage of session %s: %w", ref.ID, err)
+		return 0, fmt.Errorf("reading usage of session %s: %w", s.ref.ID, err)
 	}
 	total := 0
 	for i := range rows {
@@ -117,46 +115,13 @@ func (s *EntryStore) UsageTotals(ctx context.Context, ref session.Ref) (int, err
 	return total, nil
 }
 
-// activeBranchOfRows marks the active branch over rows read without bodies;
-// only the leaf markers' bodies are fetched. Shared by the report and the
-// compaction pass.
-func (s *EntryStore) activeBranchOfRows(ctx context.Context, ref session.Ref, rows []entryRow) (map[string]bool, error) {
-	var leaves []string
-	for i := range rows {
-		if rows[i].Kind == string(session.EntryKindLeaf) {
-			leaves = append(leaves, rows[i].ID)
-		}
-	}
-	bodies := map[string]session.Entry{}
-	if len(leaves) > 0 {
-		var err error
-		if bodies, err = s.entryBodies(ctx, ref, leaves); err != nil {
-			return nil, err
-		}
-	}
-	skeletons := make([]session.Entry, 0, len(rows))
-	for i := range rows {
-		if e, ok := bodies[rows[i].ID]; ok {
-			skeletons = append(skeletons, e)
-			continue
-		}
-		skeletons = append(skeletons, session.Entry{
-			ID:       rows[i].EntryID,
-			ParentID: rows[i].ParentID,
-			Kind:     session.EntryKind(rows[i].Kind),
-		})
-	}
-	return activeBranch(skeletons), nil
-}
-
 // entryBodies decodes the named rows' entries, keyed by row id.
-func (s *EntryStore) entryBodies(ctx context.Context, ref session.Ref, ids []string) (map[string]session.Entry, error) {
+func (s *EntryStore) entryBodies(ctx context.Context, ids []string) (map[string]session.Entry, error) {
 	var rows []entryRow
-	if err := s.db.NewSelect().Model(&rows).
+	if err := s.scoped(s.db.NewSelect().Model(&rows)).
 		Column("id", "entry").
-		Where("session_id = ?", ref.ID).Where("gen = ?", ref.Gen).
 		Where("id IN (?)", bun.List(ids)).Scan(ctx); err != nil {
-		return nil, fmt.Errorf("reading entry bodies for session %s: %w", ref.ID, err)
+		return nil, fmt.Errorf("reading entry bodies for session %s: %w", s.ref.ID, err)
 	}
 	out := make(map[string]session.Entry, len(rows))
 	for i := range rows {

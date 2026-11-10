@@ -27,30 +27,15 @@ func NewRunner(tb testing.TB, db *bun.DB) *bridge.Runner {
 		mcp.CloseAll()
 		sandboxMgr.CloseAll()
 	})
-	providerStore := store.NewProviderStore(db)
+	st := store.NewStores(db)
 	r, err := bridge.NewRunner(tb.Context(), db, &bridge.AgentDeps{
-		AgentConfigs:     store.NewAgentConfigStore(db),
-		Providers:        providerStore,
-		McpServers:       store.NewMcpServerStore(db),
-		Sandboxes:        store.NewSandboxStore(db),
-		Skills:           store.NewSkillStore(db),
-		Workspaces:       store.NewWorkspaceStore(db),
-		Memories:         store.NewMemoryStore(db),
-		Settings:         settings.NewReader(store.NewSettingStore(db)),
-		Sessions:         store.NewSessionStore(db),
-		Traces:           store.NewTraceStore(db),
-		Guardrails:       guardrails.NewResolver(store.NewGuardrailStore(db)),
-		McpManager:       mcp,
-		SandboxManager:   sandboxMgr,
-		ChatGPTOAuth:     providers.NewChatGPTOAuth(providerStore),
-		PendingApprovals: store.NewPendingApprovalStore(db),
-		Tasks:            store.NewTaskStore(db),
-		ContextProfiles:  store.NewContextProfileStore(db),
-		Workflows:        store.NewWorkflowStore(db),
-		Wakeups:          store.NewWakeupStore(db),
-		Attachments:      store.NewAttachmentStore(db),
-		Audit:            func(context.Context, protocol.AuditRecord) {},
-		Users:            store.NewUserStore(db),
+		Stores:            st,
+		SettingReader:     settings.NewReader(st.Settings),
+		GuardrailResolver: guardrails.NewResolver(st.Guardrails),
+		McpManager:        mcp,
+		SandboxManager:    sandboxMgr,
+		ChatGPTOAuth:      providers.NewChatGPTOAuth(st.Providers),
+		RecordAudit:       func(context.Context, protocol.AuditRecord) {},
 	})
 	if err != nil {
 		tb.Fatal(err)

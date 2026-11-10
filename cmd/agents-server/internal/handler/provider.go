@@ -15,20 +15,22 @@ import (
 	openaisdk "github.com/openai/openai-go/v3"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
 // ProviderHandler serves CRUD endpoints for provider endpoints and their
 // credentials — the ONLY surface a model-API key crosses.
 type ProviderHandler struct {
-	store  *store.ProviderStore
+	store *store.ProviderStore
+	// oauth runs a provider's ChatGPT login (chatgpt_oauth.go).
+	oauth  *providers.ChatGPTOAuth
 	models modelListCache
 }
 
-// NewProviderHandler returns a handler backed by the given store.
-func NewProviderHandler(s *store.ProviderStore) *ProviderHandler {
-	return &ProviderHandler{store: s}
+// NewProviderHandler returns a handler backed by the given store and the
+// ChatGPT OAuth manager its login routes run on.
+func NewProviderHandler(s *store.ProviderStore, oauth *providers.ChatGPTOAuth) *ProviderHandler {
+	return &ProviderHandler{store: s, oauth: oauth}
 }
 
 // modelListCache keeps a provider's live model list for modelListTTL, keyed by
@@ -88,9 +90,7 @@ func (h *ProviderHandler) listModels(ctx context.Context, pv *store.Provider) ([
 	if err != nil {
 		return nil, providerFailure(err)
 	}
-	if models == nil {
-		models = []providers.ModelInfo{}
-	}
+	models = nonNilList(models)
 	h.models.put(key, models)
 	return models, nil
 }
@@ -176,10 +176,8 @@ func (h *ProviderHandler) Test(c *gin.Context) error {
 		return err
 	}
 	var req providerTestReq
-	if c.Request.ContentLength != 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			return badRequest(err.Error())
-		}
+	if err := bindOptional(c, &req); err != nil {
+		return err
 	}
 	if pv.AuthMode == providers.AuthModeChatGPTLogin {
 		if pv.ChatGPTToken == "" {
@@ -328,39 +326,17 @@ func sameScope(kind, current, requested string) error {
 //	@Security	BearerAuth
 //	@Router		/providers/{id}/scope [post]
 func (h *ProviderHandler) SetScope(c *gin.Context) error {
-	scope, err := bindScope(c)
-	if err != nil {
-		return err
-	}
-	ctx, id := c.Request.Context(), c.Param("id")
-	pv, err := h.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := scopeChangeAllowed(c, scope, pv.Scope, pv.OwnerID); err != nil {
-		return err
-	}
-	if err := sameScope("provider", pv.Scope, scope); err != nil {
-		return err
-	}
-	if scope == store.ScopePrivate {
-		refs, err := h.store.DemoteToPrivate(ctx, id)
-		if err != nil {
-			return err // name collision in the target scope -> 409
-		}
-		if refs > 0 {
-			return conflict(fmt.Sprintf("%d agent(s) outside the owner's private set still reference this provider; repoint them first", refs))
-		}
-		server.SetAuditDetail(c, "scope="+scope)
-		c.Status(http.StatusNoContent)
-		return nil
-	}
-	if err := h.store.SetScope(ctx, id, scope, pv.OwnerID); err != nil {
-		return err // name collision in the target scope -> 409
-	}
-	server.SetAuditDetail(c, "scope="+scope)
-	c.Status(http.StatusNoContent)
-	return nil
+	return setScope(c, h.store.CrudStore, "provider", providerScope, nil,
+		func(ctx context.Context, id, scope, owner string) error {
+			if scope == store.ScopeGlobal {
+				return h.store.SetScope(ctx, id, scope, owner)
+			}
+			refs, err := h.store.DemoteToPrivate(ctx, id)
+			if err == nil && refs > 0 {
+				return conflict(fmt.Sprintf("%d agent(s) outside the owner's private set still reference this provider; repoint them first", refs))
+			}
+			return err
+		})
 }
 
 // SetOwner transfers the provider, credential included, to another account
@@ -377,23 +353,13 @@ func (h *ProviderHandler) SetScope(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/providers/{id}/owner [put]
 func (h *ProviderHandler) SetOwner(c *gin.Context) error {
-	var req SetOwnerRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		return badRequest("user_id is required")
-	}
-	refs, err := h.store.TransferOwner(c.Request.Context(), c.Param("id"), req.UserID)
-	if err != nil {
-		if errors.Is(err, store.ErrNoSuchUser) {
-			return badRequest("no such user")
+	return setOwner(c, func(ctx context.Context, id, userID string) error {
+		refs, err := h.store.TransferOwner(ctx, id, userID)
+		if err == nil && refs > 0 {
+			return conflict(fmt.Sprintf("%d agent(s) outside the new owner's private set reference this provider; repoint them first", refs))
 		}
 		return err
-	}
-	if refs > 0 {
-		return conflict(fmt.Sprintf("%d agent(s) outside the new owner's private set reference this provider; repoint them first", refs))
-	}
-	server.SetAuditDetail(c, "owner="+req.UserID)
-	c.Status(http.StatusNoContent)
-	return nil
+	})
 }
 
 // Create stores a new provider.
@@ -457,7 +423,7 @@ func (h *ProviderHandler) Update(c *gin.Context) error {
 		func(prev *store.Provider) error {
 			pv.Scope, pv.OwnerID = prev.Scope, prev.OwnerID
 			if pv.APIKey == SecretMask && prev.APIKey != "" &&
-				credentialTargetChanged(prev.Type, prev.BaseURL, pv.Type, pv.BaseURL) {
+				!providers.SameEndpoint(prev.Type, prev.BaseURL, pv.Type, pv.BaseURL) {
 				return badRequest("type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
 			}
 			pv.APIKey = resolveSecret(pv.APIKey, prev.APIKey)

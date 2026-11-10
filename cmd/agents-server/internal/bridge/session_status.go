@@ -100,13 +100,12 @@ func (r *Runner) SessionStatuses(ctx context.Context, ownerID string, ids []stri
 		}
 		return states.signals[id]
 	}
-	entries := store.NewSharedEntryStore(r.db)
 
 	open, err := r.Deps.PendingApprovals.ListOpen(ctx, ownerID, ids)
 	if err != nil {
 		return states, err
 	}
-	ttl := time.Duration(r.Deps.Settings.Int(ctx, settings.KeyApprovalTTLMinutes)) * time.Minute
+	ttl := time.Duration(r.Deps.SettingReader.Int(ctx, settings.KeyApprovalTTLMinutes)) * time.Minute
 	offPath := map[string]map[string]bool{}
 	for i := range open {
 		a := &open[i]
@@ -114,11 +113,11 @@ func (r *Runner) SessionStatuses(ctx context.Context, ownerID string, ids []stri
 		if a.TaskID == "" {
 			off, read := offPath[a.SessionID]
 			if !read {
-				ref, err := store.RefFor(ctx, r.db, a.SessionID)
+				entries, err := r.Deps.Sessions.OpenEntries(ctx, a.SessionID)
 				if err != nil {
 					return states, err
 				}
-				if off, err = entries.RunsOffPath(ctx, ref); err != nil {
+				if off, err = entries.RunsOffPath(ctx); err != nil {
 					return states, err
 				}
 				offPath[a.SessionID] = off
@@ -152,7 +151,7 @@ func (r *Runner) SessionStatuses(ctx context.Context, ownerID string, ids []stri
 			of(t.ParentSessionID).working = true
 		}
 	}
-	failed, err := entries.EndedInError(ctx, ownerID, ids)
+	failed, err := r.Deps.Sessions.EndedInError(ctx, ownerID, ids)
 	if err != nil {
 		return states, err
 	}
@@ -160,11 +159,6 @@ func (r *Runner) SessionStatuses(ctx context.Context, ownerID string, ids []stri
 		of(id).failed = true
 	}
 	return states, nil
-}
-
-// LiveRun reports the conversation's own executing run; a paused run is not live.
-func (r *Runner) LiveRun(sessionID string) (string, bool) {
-	return r.hub.ActiveRunForSession(sessionID)
 }
 
 // statusStripes bounds the locks that order one conversation's status broadcasts.

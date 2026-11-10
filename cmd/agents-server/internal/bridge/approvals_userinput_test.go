@@ -56,17 +56,12 @@ func TestPersistInterruptionStoresUserInput(t *testing.T) {
 	approvals := store.NewPendingApprovalStore(db)
 	runner := testRunner(ctx, t, db)
 
-	result := &RunOutcome{
-		RunID:       runID,
-		SessionID:   store.NewID(),
-		Interrupted: true,
-		SDKState:    pausedState(t),
-		Interruptions: []*agents.ToolApprovalItem{
-			{ToolName: "shell", CallID: "call-1"},
-		},
+	result := &agents.RunResult{
+		State:         pausedState(t),
+		Interruptions: []*agents.ToolApprovalItem{{ToolName: "shell", CallID: "call-1"}},
 	}
 
-	if err := runner.persistInterruption(result); err != nil {
+	if err := runner.persistInterruption(result, runID, store.NewID(), "", ""); err != nil {
 		t.Fatalf("persistInterruption: %v", err)
 	}
 	got, err := approvals.Get(ctx, runID)
@@ -79,16 +74,16 @@ func TestPersistInterruptionStoresUserInput(t *testing.T) {
 }
 
 // A pause is durable or it is an error, never a silent skip: no Runner exists
-// without the approval store, a pause with nothing to resume from is refused,
+// without its stores, a pause with nothing to resume from is refused,
 // and a failed write fails the segment before the pause is announced.
 func TestAPauseThatCannotBePersistedIsNeverAnnounced(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 
 	deps := testDeps(t, db)
-	deps.PendingApprovals = nil
-	if _, err := NewRunner(ctx, db, deps); err == nil || !strings.Contains(err.Error(), "PendingApprovals") {
-		t.Fatalf("NewRunner without the approval store: err = %v, want a refusal naming it", err)
+	deps.Stores = nil
+	if _, err := NewRunner(ctx, db, deps); err == nil || !strings.Contains(err.Error(), "Stores") {
+		t.Fatalf("NewRunner without the stores: err = %v, want a refusal naming them", err)
 	}
 
 	runner := testRunner(ctx, t, db)

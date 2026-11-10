@@ -43,7 +43,7 @@ func TestBodyLimitRejectsOversizedRequest(t *testing.T) {
 	}
 
 	// A path with its own, larger limit takes what the default refuses.
-	s.SetBodyLimit("/wide", func() int64 { return maxBodyBytes * 4 })
+	s.SetBodyLimit("/wide", maxBodyBytes*4)
 	s.Engine.POST("/wide", func(c *gin.Context) {
 		var v map[string]any
 		if err := c.ShouldBindJSON(&v); err != nil {

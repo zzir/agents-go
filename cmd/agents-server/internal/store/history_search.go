@@ -31,7 +31,7 @@ func (s *EntryStore) SearchHistory(ctx context.Context, q session.HistoryQuery) 
 		Scan(ctx); err != nil {
 		return nil, false, fmt.Errorf("history search: loading entries: %w", err)
 	}
-	onPath, err := s.activeBranchOfRows(ctx, s.ref, rows)
+	on, err := s.activePath(ctx, rows)
 	if err != nil {
 		return nil, false, fmt.Errorf("history search: resolving the active branch: %w", err)
 	}
@@ -57,7 +57,7 @@ func (s *EntryStore) SearchHistory(ctx context.Context, q session.HistoryQuery) 
 	var cands []entryRow
 	for i := len(rows) - 1; i >= 0; i-- {
 		r := rows[i]
-		if r.Kind != string(session.EntryKindItem) || !onPath[r.EntryID] || r.Seq >= beforeSeq {
+		if r.Kind != string(session.EntryKindItem) || !on[r.EntryID] || r.Seq >= beforeSeq {
 			continue
 		}
 		if keep != nil && !keep[r.ID] {
@@ -75,7 +75,7 @@ func (s *EntryStore) SearchHistory(ctx context.Context, q session.HistoryQuery) 
 	var hits []session.Entry
 	for start := 0; start < len(cands); start += historyPage {
 		page := cands[start:min(start+historyPage, len(cands))]
-		bodies, err := s.entryBodies(ctx, s.ref, rowIDs(page))
+		bodies, err := s.entryBodies(ctx, rowIDs(page))
 		if err != nil {
 			return nil, false, err
 		}

@@ -193,7 +193,7 @@ func TestMemoryFollowsTheSessionLifecycle(t *testing.T) {
 	seed(t, NewEntryStoreFor(db, srcRef), userEntry(t, "hi"))
 
 	dst := &Session{ID: NewID(), OwnerID: LocalUserID, Name: "fork"}
-	if _, err := NewEntryStoreFor(db, srcRef).ForkSession(ctx, dst, srcRef, "", false); err != nil {
+	if _, err := NewEntryStoreFor(db, srcRef).ForkSession(ctx, dst, "", false); err != nil {
 		t.Fatal(err)
 	}
 	dstRef, err := RefFor(ctx, db, dst.ID)

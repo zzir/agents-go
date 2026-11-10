@@ -36,14 +36,14 @@ func TestBuildFullAgentDiamondHandoffNotACycle(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 
 	d := mkAgent(t, s, "D")
 	b := mkAgent(t, s, "B", d)
 	c := mkAgent(t, s, "C", d)
 	a := mkAgent(t, s, "A", b, c)
 
-	built, err := BuildFullAgent(ctx, deps, a, "", store.LocalUserID)
+	built, err := runner.BuildFullAgent(ctx, a, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build A: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 
 	// Target B has a broken output_schema; A hands off to B.
 	bad := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "B", Model: "gpt-test", Guardrails: store.GuardrailGroup{OutputSchema: "{not json"}}
@@ -90,7 +90,7 @@ func TestBuildFullAgentHandoffTargetErrorPropagates(t *testing.T) {
 	}
 	a := mkAgent(t, s, "A", bad.ID)
 
-	_, err := BuildFullAgent(ctx, deps, a, "", store.LocalUserID)
+	_, err := runner.BuildFullAgent(ctx, a, "", store.LocalUserID)
 	if err == nil || !strings.Contains(err.Error(), "output_schema") {
 		t.Fatalf("a broken handoff target must fail the build, got %v", err)
 	}
@@ -102,7 +102,7 @@ func TestBuildFullAgentRealCycleBroken(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 
 	// Create A and B, then point B back at A to form the cycle.
 	a := mkAgent(t, s, "A")
@@ -113,7 +113,7 @@ func TestBuildFullAgentRealCycleBroken(t *testing.T) {
 		t.Fatalf("update A: %v", err)
 	}
 
-	built, err := BuildFullAgent(ctx, deps, a, "", store.LocalUserID)
+	built, err := runner.BuildFullAgent(ctx, a, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build A (cycle must be broken, not error): %v", err)
 	}

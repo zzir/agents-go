@@ -40,12 +40,12 @@ func TestMcpServerReqValidate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.req.validate()
-			if tc.wantSub == "" && got != "" {
-				t.Fatalf("want valid, got %q", got)
+			err := tc.req.validate()
+			if tc.wantSub == "" && err != nil {
+				t.Fatalf("want valid, got %v", err)
 			}
-			if tc.wantSub != "" && !strings.Contains(got, tc.wantSub) {
-				t.Fatalf("want error containing %q, got %q", tc.wantSub, got)
+			if tc.wantSub != "" && (err == nil || !strings.Contains(err.Error(), tc.wantSub)) {
+				t.Fatalf("want error containing %q, got %v", tc.wantSub, err)
 			}
 		})
 	}

@@ -13,30 +13,17 @@ import (
 )
 
 // AgentSpec is an agent config's JSON-encoded fields decoded once into typed
-// values, through DecodeAgentSpec at save time and at build time alike.
-// External resolution (guardrail names, MCP server ids, sandbox) is NOT here.
+// values, through DecodeAgentSpec at save time and at build time alike; what
+// the config already holds typed is read off the config.
 type AgentSpec struct {
 	// ModelSettings is nil when unset. extra_body (which ModelSettings does not
 	// itself model) is merged in from the same JSON object.
 	ModelSettings *agents.ModelSettings
 	// OutputType is nil when no structured-output schema is configured.
 	OutputType agents.OutputSchema
-	// Approval is the HITL selection: the mode and the tool-name list (nil when
-	// unset/empty).
-	Approval store.ApprovalGroup
-	// Tools is the selected MCP server id list (nil when unset).
-	Tools []string
-	// Skills is the per-agent skill selection (stored ids); SkillsSet tells an
-	// unset selection (every stored skill) from an explicit empty one.
-	Skills    []string
-	SkillsSet bool
-	// Handoffs is the handoff target agent-id list (nil when unset).
-	Handoffs []string
 	// RetryPolicy is decoded unconditionally (the zero value is a valid policy)
 	// and applied only when RetryEnabled.
 	RetryPolicy agents.RetryPolicy
-	// FallbackModels is the fallback provider chain (nil when unset).
-	FallbackModels []store.FallbackModel
 	// ErrorHandlers is the declarative run-error recovery config (nil when
 	// unset): per-error-kind static fallback outputs.
 	ErrorHandlers *ErrorHandlersSpec
@@ -201,21 +188,12 @@ func DecodeAgentSpec(ac *store.AgentConfig) (*AgentSpec, error) {
 	if ac.Approval.Asks() && slices.Contains(ac.Approval.ApproveTools, "*") {
 		return nil, fmt.Errorf("approve_tools %q: with approval mode %s, name the tools to add or leave the list empty", "*", ac.Approval.Mode)
 	}
-	spec.Approval = ac.Approval
-	spec.Tools = ac.Tools
-	spec.Handoffs = ac.Handoffs
-	// A nil selection is "every skill"; an explicit [] is none.
-	spec.Skills, spec.SkillsSet = ac.Skills, ac.Skills != nil
 
 	if ac.Resilience.RetryPolicy != "" {
 		if err := json.Unmarshal([]byte(ac.Resilience.RetryPolicy), &spec.RetryPolicy); err != nil {
 			return nil, fmt.Errorf("retry_policy is invalid: %w", err)
 		}
 	}
-	// An entry without provider_id names an endpoint, resolved when the run
-	// builds (provider_resolve.go).
-	spec.FallbackModels = ac.Resilience.FallbackModels
-
 	if ac.ErrorHandlers != "" {
 		// Depends on spec.OutputType (decoded above): a plain-text agent's
 		// fallback must be a JSON string.

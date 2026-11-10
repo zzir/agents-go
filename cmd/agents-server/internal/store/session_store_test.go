@@ -261,7 +261,7 @@ func TestNameIfDefaultKeepsAPersonsRename(t *testing.T) {
 	if won, err := sessions.NameIfDefault(ctx, sess.ID, "Something else"); err != nil || won {
 		t.Fatalf("second naming = %v, %v — want it to lose", won, err)
 	}
-	if err := sessions.Update(ctx, sess.ID, "My name"); err != nil {
+	if err := sessions.UpdateFields(ctx, sess.ID, new("My name"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if won, _ := sessions.NameIfDefault(ctx, sess.ID, "Generated"); won {
@@ -393,7 +393,6 @@ func TestPlanningIsKeyedByGeneration(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	sessions := NewSessionStore(db)
-	entries := NewSharedEntryStore(db)
 
 	sid := NewID()
 	if err := sessions.Create(ctx, &Session{OwnerID: LocalUserID, ID: sid, Name: "first"}); err != nil {
@@ -403,10 +402,10 @@ func TestPlanningIsKeyedByGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := entries.SetSessionPlanning(ctx, first, true); err != nil {
+	if err := NewEntryStoreFor(db, first).SetSessionPlanning(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := entries.SessionIsPlanning(ctx, first); err != nil || !got {
+	if got, err := NewEntryStoreFor(db, first).SessionIsPlanning(ctx); err != nil || !got {
 		t.Fatalf("first generation planning = %v, %v; want true", got, err)
 	}
 	if err := sessions.Delete(ctx, sid); err != nil {
@@ -419,19 +418,19 @@ func TestPlanningIsKeyedByGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := entries.SessionIsPlanning(ctx, first); err != nil || got {
+	if got, err := NewEntryStoreFor(db, first).SessionIsPlanning(ctx); err != nil || got {
 		t.Fatalf("stale handle reads planning = %v, %v; want false", got, err)
 	}
-	if err := entries.SetSessionPlanning(ctx, first, true); err != nil {
+	if err := NewEntryStoreFor(db, first).SetSessionPlanning(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := entries.SessionIsPlanning(ctx, second); err != nil || got {
+	if got, err := NewEntryStoreFor(db, second).SessionIsPlanning(ctx); err != nil || got {
 		t.Fatalf("a stale handle's write reached the replacement: planning = %v, %v", got, err)
 	}
-	if err := entries.SetSessionPlanning(ctx, second, true); err != nil {
+	if err := NewEntryStoreFor(db, second).SetSessionPlanning(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := entries.SessionIsPlanning(ctx, second); err != nil || !got {
+	if got, err := NewEntryStoreFor(db, second).SessionIsPlanning(ctx); err != nil || !got {
 		t.Fatalf("second generation planning = %v, %v; want true", got, err)
 	}
 }
@@ -453,7 +452,7 @@ func TestMetadataUpdatesKeepTheListingOrder(t *testing.T) {
 	if _, err := sessions.NameIfDefault(ctx, sess.ID, "Generated"); err != nil {
 		t.Fatal(err)
 	}
-	if err := sessions.Update(ctx, sess.ID, "Renamed"); err != nil {
+	if err := sessions.UpdateFields(ctx, sess.ID, new("Renamed"), nil); err != nil {
 		t.Fatal(err)
 	}
 	pinned := true

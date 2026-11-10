@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	sdktasks "github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -380,12 +381,12 @@ func TestTriggerWorkflowStateCarriesOrigin(t *testing.T) {
 	deadline := time.Now().Add(15 * time.Second)
 	wakeRun := ""
 	for wakeRun == "" {
-		views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref)
+		views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, v := range views {
-			if strings.HasPrefix(v.Content, protocol.TaskNotificationPrefix) {
+			if strings.HasPrefix(v.Content, sdktasks.NotificationPrefix) {
 				wakeRun = v.RunID
 			}
 		}

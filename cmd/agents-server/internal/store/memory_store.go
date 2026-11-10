@@ -42,11 +42,11 @@ type MemoryStore struct {
 
 // NewMemoryStore returns a MemoryStore backed by db.
 func NewMemoryStore(db *bun.DB) *MemoryStore {
-	return &MemoryStore{CrudStore: NewCrudStore[Memory](db, "memory", "updated_at DESC"), db: db}
+	return &MemoryStore{CrudStore: NewCrudStore[Memory](db, "memory"), db: db}
 }
 
-// ListInjectable returns what an agent's instructions carry: every scope the
-// policy injects, an allow-list, never "all but session".
+// ListInjectable returns what an agent's instructions carry: global memory
+// and the agent's own — an allow-list, never "all but session".
 func (s *MemoryStore) ListInjectable(ctx context.Context, agentConfigID string) ([]Memory, error) {
 	var memories []Memory
 	q := s.db.NewSelect().Model(&memories)
@@ -141,7 +141,7 @@ func (s *MemoryStore) write(ctx context.Context, m *Memory, appendTo bool, guard
 }
 
 func upsertMemory(ctx context.Context, tx bun.Tx, m *Memory, appendTo bool, guard func(ctx context.Context, tx bun.Tx) error) error {
-	policy, ok := MemoryPolicyFor(m.ScopeKind)
+	policy, ok := MemoryPolicies[m.ScopeKind]
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrMemoryScope, m.ScopeKind)
 	}
@@ -153,11 +153,7 @@ func upsertMemory(ctx context.Context, tx bun.Tx, m *Memory, appendTo bool, guar
 	// Read under a lock: two appends never start from the same content.
 	sc := MemoryScope{Kind: m.ScopeKind, ID: m.ScopeID, Gen: m.Gen}
 	prev := new(Memory)
-	q := scopedMemories(tx.NewSelect().Model(prev), sc).Where("mem.key = ?", m.Key)
-	if tx.Dialect().Name() == dialect.PG {
-		q = q.For("UPDATE")
-	}
-	err := q.Scan(ctx)
+	err := rowLock(scopedMemories(tx.NewSelect().Model(prev), sc).Where("mem.key = ?", m.Key), "UPDATE").Scan(ctx)
 	if err == nil && appendTo {
 		m.Content = prev.Content + m.Content
 	}

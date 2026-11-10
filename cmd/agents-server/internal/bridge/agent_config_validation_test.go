@@ -17,7 +17,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 
 	cases := []struct {
 		name    string
@@ -44,7 +44,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 			if err := s.Create(ctx, ac); err != nil {
 				t.Fatalf("create: %v", err)
 			}
-			_, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
+			_, err := runner.BuildFullAgent(ctx, ac.ID, "", store.LocalUserID)
 			if err == nil || !strings.Contains(err.Error(), tc.wantSub) {
 				t.Fatalf("want error containing %q, got %v", tc.wantSub, err)
 			}
@@ -56,7 +56,7 @@ func TestBuildFullAgentFailsOnBadCriticalConfig(t *testing.T) {
 	if err := s.Create(ctx, ok); err != nil {
 		t.Fatalf("create ok: %v", err)
 	}
-	if _, err := BuildFullAgent(ctx, deps, ok.ID, "", store.LocalUserID); err != nil {
+	if _, err := runner.BuildFullAgent(ctx, ok.ID, "", store.LocalUserID); err != nil {
 		t.Fatalf("built-in guardrail should build: %v", err)
 	}
 }
@@ -68,7 +68,7 @@ func TestBuildFullAgentPromotesGuardrailsToRunLevel(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:  "guarded",
 		Model: "gpt-test",
@@ -79,7 +79,7 @@ func TestBuildFullAgentPromotesGuardrailsToRunLevel(t *testing.T) {
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
+	built, err := runner.BuildFullAgent(ctx, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}

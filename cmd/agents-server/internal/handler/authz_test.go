@@ -898,9 +898,9 @@ func TestAgentToolSurfaceFollowsTheRunRule(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	deps := bridgetest.NewRunner(t, db).Deps
+	runner := bridgetest.NewRunner(t, db)
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
-	s.RegisterAPI(Handlers{Agents: testAgentConfigHandler(db), Playground: NewPlaygroundHandler(deps)}.Register)
+	s.RegisterAPI(Handlers{Agents: testAgentConfigHandler(db), Playground: NewPlaygroundHandler(runner)}.Register)
 
 	cases := []struct {
 		user protocol.UserInfo

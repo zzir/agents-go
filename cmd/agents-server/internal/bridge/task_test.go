@@ -64,7 +64,7 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	}
 
 	// Spawn through the SDK manager — the same path the spawn_task tool takes.
-	info, err := runner.Tasks().Spawn(ctx, sdktasks.SpawnRequest{
+	info, err := runner.tasks.Spawn(ctx, sdktasks.SpawnRequest{
 		ParentSessionID: parent.ID,
 		AgentName:       "worker",
 		Input:           "audit the code",
@@ -116,13 +116,6 @@ func TestSpawnTaskCreatesHiddenSessionAndRow(t *testing.T) {
 	}
 	if runInfo.Task == nil || runInfo.Task.ParentSessionID != parent.ID || runInfo.Task.TaskID != task.ID {
 		t.Fatalf("hub run task meta = %+v", runInfo.Task)
-	}
-	hub := runner.Hub()
-	hub.mu.Lock()
-	live := hub.liveTaskCountLocked(parent.ID)
-	hub.mu.Unlock()
-	if live != 1 {
-		t.Fatalf("live task count = %d, want 1", live)
 	}
 
 	if _, err := runner.StopTask(task.ID, false); err != nil {
@@ -186,21 +179,20 @@ func TestDrainTaskNotificationsQueuesWhileBusy(t *testing.T) {
 	// no API key, so the run fails at the provider stage — but that failure
 	// path persists the prompt, which is exactly the observable we need.
 	runner.hub.finish("busy-run", false)
-	(Waker{runner}).Drain(ctx, parent.ID)
+	runner.drainWakeups(ctx, parent.ID)
 
 	// The notification run executes on a background goroutine; poll for its
 	// persisted prompt (the keyless test config fails at the provider stage,
 	// and that failure path saves the prompt).
-	entries := store.NewSharedEntryStore(runner.db)
 	found := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !found && time.Now().Before(deadline) {
-		rows, err := entries.GetEntries(ctx, mustRef(t, runner.db, parent.ID))
+		rows, err := store.NewEntryStoreFor(runner.db, mustRef(t, runner.db, parent.ID)).GetEntries(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, m := range rows {
-			if strings.HasPrefix(m.Content, protocol.TaskNotificationPrefix) && strings.Contains(m.Content, "audit") {
+			if strings.HasPrefix(m.Content, sdktasks.NotificationPrefix) && strings.Contains(m.Content, "audit") {
 				found = true
 			}
 		}
@@ -248,16 +240,15 @@ func TestStartupSweepDeliversPendingNotifications(t *testing.T) {
 	runner.FailOrphanedTasks(ctx)
 	runner.DrainPendingWakeups(ctx)
 
-	entries := store.NewSharedEntryStore(runner.db)
 	found := false
 	deadline := time.Now().Add(5 * time.Second)
 	for !found && time.Now().Before(deadline) {
-		rows, err := entries.GetEntries(ctx, mustRef(t, runner.db, parent.ID))
+		rows, err := store.NewEntryStoreFor(runner.db, mustRef(t, runner.db, parent.ID)).GetEntries(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, m := range rows {
-			if strings.HasPrefix(m.Content, protocol.TaskNotificationPrefix) && strings.Contains(m.Content, "orphaned") && strings.Contains(m.Content, "failed") {
+			if strings.HasPrefix(m.Content, sdktasks.NotificationPrefix) && strings.Contains(m.Content, "orphaned") && strings.Contains(m.Content, "failed") {
 				found = true
 			}
 		}
@@ -281,14 +272,14 @@ func TestBuildFullAgentTaskDepthCap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chat, err := buildFullAgent(ctx, runner.Deps, ac.ID, "", false, "")
+	chat, err := runner.buildFullAgent(ctx, ac.ID, "", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !hasTool(chat, "spawn_task") {
 		t.Fatal("chat agent missing spawn_task")
 	}
-	taskAgent, err := buildFullAgent(ctx, runner.Deps, ac.ID, "", true, "")
+	taskAgent, err := runner.buildFullAgent(ctx, ac.ID, "", true, "")
 	if err != nil {
 		t.Fatal(err)
 	}

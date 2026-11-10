@@ -45,12 +45,12 @@ func TestSessionDeleteUnbindsTheAttachmentsOnlyItReferenced(t *testing.T) {
 	s := storeFor(t, db, src.ID)
 	seed(t, s, userEntry(t, "hi"), imageEntry(t, own.ID, shared.ID), imageEntry(t, shared.ID))
 	// The fork copies the entries, shared reference included, up to the cut.
-	all, err := s.GetEntries(ctx, refOf(t, db, src.ID))
+	all, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fork := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "fork"}
-	if _, err := s.ForkSession(ctx, fork, refOf(t, db, src.ID), all[2].ID, true); err != nil {
+	if _, err := s.ForkSession(ctx, fork, all[2].ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.NewUpdate().Model((*entryRow)(nil)).

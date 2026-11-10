@@ -79,17 +79,15 @@ var ErrRevisionConflict = errors.New("the record changed concurrently; re-read a
 type CrudStore[T any] struct {
 	db    *bun.DB
 	label string // human-readable name for error messages, e.g. "agent config"
-	order string // ORDER BY expression for List, e.g. "updated_at DESC"
 	// seal/open transform the entity's credential fields around the database
 	// (withSecrets); the caller's value is plaintext before and after every call.
 	seal func(*T) error
 	open func(*T) error
 }
 
-// NewCrudStore returns a CrudStore for T using label in error messages and order
-// as the List ORDER BY expression.
-func NewCrudStore[T any](db *bun.DB, label, order string) *CrudStore[T] {
-	return &CrudStore[T]{db: db, label: label, order: order}
+// NewCrudStore returns a CrudStore for T using label in error messages.
+func NewCrudStore[T any](db *bun.DB, label string) *CrudStore[T] {
+	return &CrudStore[T]{db: db, label: label}
 }
 
 // withSecrets installs the seal/open transforms for T's credential fields.
@@ -112,29 +110,35 @@ func (s *CrudStore[T]) opened(m *T) error {
 	return s.open(m)
 }
 
-// create inserts m as a new row.
-func (s *CrudStore[T]) create(ctx context.Context, m *T) error {
+// sealedWrite runs exec with m's credentials sealed, then opens them again
+// whatever exec returned, so the caller keeps a plaintext struct.
+func (s *CrudStore[T]) sealedWrite(m *T, exec func() error) error {
 	if err := s.sealed(m); err != nil {
-		return fmt.Errorf("creating %s: %w", s.label, err)
+		return err
 	}
-	_, err := s.db.NewInsert().Model(m).Exec(ctx)
+	err := exec()
 	if oerr := s.opened(m); err == nil {
 		err = oerr
 	}
+	return err
+}
+
+// create inserts m as a new row.
+func (s *CrudStore[T]) create(ctx context.Context, m *T) error {
+	err := s.sealedWrite(m, func() error {
+		_, err := s.db.NewInsert().Model(m).Exec(ctx)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", s.label, err)
 	}
 	return nil
 }
 
-// List returns all rows ordered by the store's configured ORDER BY expression.
+// List returns all rows, newest first.
 func (s *CrudStore[T]) List(ctx context.Context) ([]T, error) {
 	var out []T
-	q := s.db.NewSelect().Model(&out)
-	if s.order != "" {
-		q = q.OrderExpr(s.order)
-	}
-	if err := q.Scan(ctx); err != nil {
+	if err := s.db.NewSelect().Model(&out).OrderExpr("created_at DESC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing %s: %w", s.label, err)
 	}
 	for i := range out {
@@ -148,15 +152,9 @@ func (s *CrudStore[T]) List(ctx context.Context) ([]T, error) {
 // Get returns the row with the given id, or an ErrNotFound-wrapping error
 // when it doesn't exist.
 func (s *CrudStore[T]) Get(ctx context.Context, id string) (*T, error) {
-	if !IsID(id) {
-		return nil, fmt.Errorf("getting %s %s: %w", s.label, id, ErrNotFound)
-	}
-	m := new(T)
-	if err := s.db.NewSelect().Model(m).Where("id = ?", id).Scan(ctx); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			err = ErrNotFound
-		}
-		return nil, fmt.Errorf("getting %s %s: %w", s.label, id, err)
+	m, err := getByID[T](ctx, s.db, s.label, id)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.opened(m); err != nil {
 		return nil, fmt.Errorf("getting %s %s: %w", s.label, id, err)
@@ -164,22 +162,35 @@ func (s *CrudStore[T]) Get(ctx context.Context, id string) (*T, error) {
 	return m, nil
 }
 
+// getByID reads the row of T keyed by id; a miss, or an id no row is keyed
+// by (IsID), is an ErrNotFound-wrapping error.
+func getByID[T any](ctx context.Context, db bun.IDB, label, id string) (*T, error) {
+	if !IsID(id) {
+		return nil, fmt.Errorf("getting %s %s: %w", label, id, ErrNotFound)
+	}
+	m := new(T)
+	if err := db.NewSelect().Model(m).Where("id = ?", id).Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrNotFound
+		}
+		return nil, fmt.Errorf("getting %s %s: %w", label, id, err)
+	}
+	return m, nil
+}
+
 // update overwrites every column of the row except id and created_at.
 // Returns an ErrNotFound-wrapping error when the row doesn't exist.
 func (s *CrudStore[T]) update(ctx context.Context, id string, m *T) error {
-	if err := s.sealed(m); err != nil {
-		return fmt.Errorf("updating %s %s: %w", s.label, id, err)
-	}
-	res, err := s.db.NewUpdate().Model(m).
-		ExcludeColumn("id", "created_at").
-		Where("id = ?", id).
-		Exec(ctx)
-	if err == nil {
-		err = requireRows(res)
-	}
-	if oerr := s.opened(m); err == nil {
-		err = oerr
-	}
+	err := s.sealedWrite(m, func() error {
+		res, err := s.db.NewUpdate().Model(m).
+			ExcludeColumn("id", "created_at").
+			Where("id = ?", id).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		return requireRows(res)
+	})
 	if err != nil {
 		return fmt.Errorf("updating %s %s: %w", s.label, id, err)
 	}
@@ -201,17 +212,22 @@ func shareRow(ctx context.Context, tx bun.Tx, model any, where string, arg any) 
 }
 
 func readLocked(ctx context.Context, tx bun.Tx, model any, strength, where string, arg any) error {
-	q := tx.NewSelect().Model(model).Where(where, arg)
-	if tx.Dialect().Name() == dialect.PG {
-		q = q.For(strength)
-	}
-	if err := q.Scan(ctx); err != nil {
+	if err := rowLock(tx.NewSelect().Model(model).Where(where, arg), strength).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
 	}
 	return nil
+}
+
+// rowLock makes q a locking read on PostgreSQL (FOR strength); SQLite's one
+// connection serializes by itself.
+func rowLock(q *bun.SelectQuery, strength string) *bun.SelectQuery {
+	if q.Dialect().Name() == dialect.PG {
+		return q.For(strength)
+	}
+	return q
 }
 
 // updateFrom is the read-modify-write behind every credential-keeping Update:
@@ -230,20 +246,41 @@ func (s *CrudStore[T]) updateFrom(ctx context.Context, tx bun.Tx, id string, m *
 			return err
 		}
 	}
-	if err := s.sealed(m); err != nil {
-		return err
+	return s.sealedWrite(m, func() error {
+		res, err := tx.NewUpdate().Model(m).
+			ExcludeColumn(append([]string{"id", "created_at"}, keep...)...).
+			Where("id = ?", id).
+			Exec(ctx)
+		if err != nil {
+			return err
+		}
+		return requireRows(res)
+	})
+}
+
+// updateInTx is updateFrom in a transaction of its own: the whole Update of
+// an entity with nothing else to write beside the row.
+func (s *CrudStore[T]) updateInTx(ctx context.Context, id string, m *T, prepare func(prev *T) error, keep ...string) error {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		return s.updateFrom(ctx, tx, id, m, prepare, keep...)
+	})
+	if err != nil {
+		return fmt.Errorf("updating %s %s: %w", s.label, id, err)
 	}
-	res, err := tx.NewUpdate().Model(m).
-		ExcludeColumn(append([]string{"id", "created_at"}, keep...)...).
-		Where("id = ?", id).
-		Exec(ctx)
-	if err == nil {
-		err = requireRows(res)
+	return nil
+}
+
+// staleOrMissing explains a compare-and-set on revision that matched no row:
+// the row is gone (ErrNotFound) or its revision moved (ErrRevisionConflict).
+func (s *CrudStore[T]) staleOrMissing(ctx context.Context, id string) error {
+	exists, err := s.db.NewSelect().Model((*T)(nil)).Where("id = ?", id).Exists(ctx)
+	if err != nil {
+		return fmt.Errorf("updating %s %s: %w", s.label, id, err)
 	}
-	if oerr := s.opened(m); err == nil {
-		err = oerr
+	if !exists {
+		return fmt.Errorf("updating %s %s: %w", s.label, id, ErrNotFound)
 	}
-	return err
+	return ErrRevisionConflict
 }
 
 // delete removes the row with the given id. Returns an ErrNotFound-wrapping

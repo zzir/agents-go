@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect"
 
 	"github.com/zzir/agents-go/agents/session"
 )
@@ -23,6 +22,18 @@ type SessionStore struct {
 // NewSessionStore returns a SessionStore backed by db.
 func NewSessionStore(db *bun.DB) *SessionStore {
 	return &SessionStore{db: db}
+}
+
+// Ref addresses the session's entries: its id and the generation owning them.
+func (s *Session) Ref() session.Ref { return session.Ref{ID: s.ID, Gen: s.Gen} }
+
+// OpenEntries returns the entry store of the session currently answering to id.
+func (s *SessionStore) OpenEntries(ctx context.Context, id string) (*EntryStore, error) {
+	ref, err := RefFor(ctx, s.db, id)
+	if err != nil {
+		return nil, err
+	}
+	return NewEntryStoreFor(s.db, ref), nil
 }
 
 // Create inserts sess, stamping its timestamps; an owner is required.
@@ -145,25 +156,7 @@ func (s *SessionStore) ListPage(ctx context.Context, ownerID string, page Sessio
 // Get returns the session with the given id, or an ErrNotFound-wrapping error
 // when it doesn't exist.
 func (s *SessionStore) Get(ctx context.Context, id string) (*Session, error) {
-	if !IsID(id) {
-		return nil, fmt.Errorf("getting session %s: %w", id, ErrNotFound)
-	}
-	sess := new(Session)
-	if err := s.db.NewSelect().Model(sess).
-		Where("id = ?", id).
-		Scan(ctx); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			err = ErrNotFound
-		}
-		return nil, fmt.Errorf("getting session %s: %w", id, err)
-	}
-	return sess, nil
-}
-
-// Update renames the session with the given id.
-func (s *SessionStore) Update(ctx context.Context, id string, name string) error {
-	np := &name
-	return s.UpdateFields(ctx, id, np, nil)
+	return getByID[Session](ctx, s.db, "session", id)
 }
 
 // DefaultSessionName is the name a session is created with until it is named
@@ -277,24 +270,20 @@ func (s *SessionStore) BindWorkspaceIfEmpty(ctx context.Context, id, workspaceID
 }
 
 // CountWorkspaceRefs reports how many sessions bind workspaceID — the unit the
-// SandboxManager caches an instance per. An empty id counts the unbound (NULL,
-// see boundTo).
+// SandboxManager caches an instance per. An empty id counts the unbound (NULL).
 func (s *SessionStore) CountWorkspaceRefs(ctx context.Context, workspaceID string) (int, error) {
-	n, err := boundTo(s.db.NewSelect().Model((*Session)(nil)), "workspace_id", workspaceID).Count(ctx)
+	q := s.db.NewSelect().Model((*Session)(nil))
+	if workspaceID == "" {
+		// PostgreSQL refuses "" as a uuid; SQLite would merely match nothing.
+		q = q.Where("workspace_id IS NULL")
+	} else {
+		q = q.Where("workspace_id = ?", workspaceID)
+	}
+	n, err := q.Count(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("counting sessions bound to workspace %s: %w", workspaceID, err)
 	}
 	return n, nil
-}
-
-// boundTo narrows a nullable uuid column to one id, or for the empty id to the
-// rows that carry none (NULL): PostgreSQL refuses "" as a uuid, SQLite merely
-// matches nothing.
-func boundTo(q *bun.SelectQuery, column, id string) *bun.SelectQuery {
-	if id == "" {
-		return q.Where("? IS NULL", bun.Ident(column))
-	}
-	return q.Where("? = ?", bun.Ident(column), id)
 }
 
 // Delete removes the session with everything keyed by it and cascades through
@@ -376,12 +365,8 @@ func sessionTree(ctx context.Context, db bun.IDB, id string) ([]string, error) {
 func deleteSessionRows(ctx context.Context, tx bun.Tx, id string, mustExist bool) error {
 	// The session row's lock first, the order every entry write takes
 	// (EntryStore.lockSessionIn).
-	if tx.Dialect().Name() == dialect.PG {
-		err := tx.NewSelect().Model((*Session)(nil)).Column("id").
-			Where("id = ?", id).For("UPDATE").Scan(ctx, new(string))
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("deleting session %s: %w", id, err)
-		}
+	if err := lockRow(ctx, tx, new(Session), "id = ?", id); err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("deleting session %s: %w", id, err)
 	}
 	attachmentIDs, err := attachmentRefsOf(ctx, tx, id)
 	if err != nil {
@@ -492,10 +477,7 @@ func (s *SessionStore) DeleteTaskSessionsBefore(ctx context.Context, cutoff time
 		// Locked after the session (the cascade's order): a retry claimed
 		// meanwhile keeps the row.
 		q := done(tx.NewSelect().Model((*Task)(nil)).Column("id").Where("t.child_session_id = ?", id))
-		if tx.Dialect().Name() == dialect.PG {
-			q = q.For("UPDATE")
-		}
-		err := q.Scan(ctx, new(string))
+		err := rowLock(q, "UPDATE").Scan(ctx, new(string))
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}

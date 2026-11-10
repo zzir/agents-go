@@ -8,8 +8,6 @@ export const EV = {
   runCreate: 'run.create',
   runCancel: 'run.cancel',
   runSubscribe: 'run.subscribe',
-  // Queue input on a live run; the payload's queue field is an InjectQueue.
-  runInject: 'run.inject',
   toolApprove: 'tool.approve',
   toolReject: 'tool.reject',
 
@@ -87,7 +85,7 @@ export const ERR = {
   unknown: 'unknown',
 } as const;
 
-// Mirror of protocol.TaskNotificationPrefix: the user-input message the
+// Mirror of the SDK's tasks.NotificationPrefix: the user-input message the
 // server injects when a background task finishes (invariant 21).
 export const TASK_NOTIFICATION_PREFIX = '[task-notification] ';
 
@@ -131,8 +129,7 @@ export function parseTaskNotification(content: string | undefined | null): null 
   return { text, label: first ? first.label : null, taskId: first ? first.taskId : null, items };
 }
 
-// The queues run.inject and POST /runs/:id/inject take (mirror of
-// protocol.InjectQueue*).
+// The queues POST /runs/:id/inject takes (mirror of protocol.InjectQueue*).
 export type InjectQueue = 'steer' | 'next_turn' | 'follow_up';
 
 // A session's derived status (mirror of protocol.Session*), highest priority first.

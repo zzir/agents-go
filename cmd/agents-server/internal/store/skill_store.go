@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
-	"github.com/uptrace/bun/dialect"
 )
 
 // repoLabelOf reduces an import source to the prefix its skills' names carry:
@@ -51,7 +50,7 @@ type SkillStore struct {
 // NewSkillStore returns a SkillStore backed by db. Names are unique per scope
 // (partial indexes, decisions §5.29); a duplicate is a UNIQUE error.
 func NewSkillStore(db *bun.DB) *SkillStore {
-	return &SkillStore{CrudStore: NewCrudStore[Skill](db, "skill", "name ASC"), db: db}
+	return &SkillStore{CrudStore: NewCrudStore[Skill](db, "skill"), db: db}
 }
 
 // Create inserts the skill.
@@ -76,13 +75,7 @@ func (s *SkillStore) SetOwner(ctx context.Context, id, ownerID string) error {
 // Update overwrites the skill in one transaction that reads the stored row
 // (locked) and hands it to prepare, the shape every scoped entity uses.
 func (s *SkillStore) Update(ctx context.Context, id string, m *Skill, prepare func(prev *Skill) error) error {
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		return s.updateFrom(ctx, tx, id, m, prepare)
-	})
-	if err != nil {
-		return fmt.Errorf("updating skill %s: %w", id, err)
-	}
-	return nil
+	return s.updateInTx(ctx, id, m, prepare)
 }
 
 // ListMeta returns the skills ownerID may see in scopedListOrder, without
@@ -152,12 +145,8 @@ var ErrGroupExists = errors.New("the new owner already has this repository")
 // holds one, ErrNoSuchUser when the account is gone, a taken name a UNIQUE error.
 func (s *SkillStore) SetRepoOwner(ctx context.Context, repo, ownerID, newOwner string) error {
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		exists, err := tx.NewSelect().Model((*User)(nil)).Where("id = ?", newOwner).Exists(ctx)
-		if err != nil {
+		if err := requireUser(ctx, tx, newOwner); err != nil {
 			return err
-		}
-		if !exists {
-			return ErrNoSuchUser
 		}
 		if _, held, err := lockedRepoGroup(ctx, tx, repo, ownerID); err != nil {
 			return err
@@ -250,13 +239,10 @@ func (s *SkillStore) ApplyImport(ctx context.Context, repo, owner, wantScope str
 // SQLite's single writer serializes).
 func lockedRepoGroup(ctx context.Context, tx bun.Tx, repo, owner string) (scope string, existed bool, err error) {
 	m := new(Skill)
-	q := tx.NewSelect().Model(m).Column("scope").
+	q := rowLock(tx.NewSelect().Model(m).Column("scope").
 		Where("source_repo = ?", repo).
 		Where("owner_id = ?", owner).
-		Limit(1)
-	if tx.Dialect().Name() == dialect.PG {
-		q = q.For("UPDATE")
-	}
+		Limit(1), "UPDATE")
 	if err := q.Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", false, nil

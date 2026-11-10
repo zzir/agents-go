@@ -45,7 +45,7 @@ func newMemoryRig(t *testing.T) (*memoryRig, *store.SessionStore, *store.AgentCo
 	db := testdb.New(t)
 	sessions := store.NewSessionStore(db)
 	agents := store.NewAgentConfigStore(db)
-	h := NewMemoryHandler(store.NewMemoryStore(db), sessions, agents, store.NewSharedEntryStore(db))
+	h := NewMemoryHandler(store.NewMemoryStore(db), sessions, agents)
 	r := &memoryRig{t: t, h: h, aliceID: store.NewID(), bobID: store.NewID()}
 	r.admin = engineAs(store.LocalUserID, store.RoleAdmin, h)
 	r.alice = engineAs(r.aliceID, store.RoleMember, h)
@@ -186,7 +186,7 @@ func TestAgentDeleteCascadesItsMemoryOverHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	memories, agents := store.NewMemoryStore(db), store.NewAgentConfigStore(db)
-	mh := NewMemoryHandler(memories, store.NewSessionStore(db), agents, store.NewSharedEntryStore(db))
+	mh := NewMemoryHandler(memories, store.NewSessionStore(db), agents)
 	ah := testAgentConfigHandler(db)
 	aliceID := store.NewID()
 	mount := func(id, role string) *gin.Engine {

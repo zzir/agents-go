@@ -9,20 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
-
-// WorkflowStarter starts an execution for a session with a brief; implemented
-// by the bridge Runner.
-type WorkflowStarter interface {
-	RunWorkflow(ctx context.Context, workflowID, sessionID, input string, origin store.WorkflowOrigin) (*bridge.TaskInfo, error)
-	// BindSessionWorkspace gives a still-unbound session the workspace the start
-	// carries, before the start; a bound session keeps its binding.
-	BindSessionWorkspace(ctx context.Context, sessionID, workspaceID string) (bool, error)
-}
 
 // WorkflowHandler serves the workflow DEFINITIONS and starts executions.
 // Executions are tasks (kind "workflow"), managed through the task endpoints.
@@ -30,12 +19,13 @@ type WorkflowHandler struct {
 	store    *store.WorkflowStore
 	agents   *store.AgentConfigStore
 	sessions *store.SessionStore
-	starter  WorkflowStarter
+	runner   *bridge.Runner
 }
 
-// NewWorkflowHandler returns a handler backed by the given stores and starter.
-func NewWorkflowHandler(s *store.WorkflowStore, agents *store.AgentConfigStore, sessions *store.SessionStore, starter WorkflowStarter) *WorkflowHandler {
-	return &WorkflowHandler{store: s, agents: agents, sessions: sessions, starter: starter}
+// NewWorkflowHandler returns a handler backed by the given stores; the runner
+// starts the executions.
+func NewWorkflowHandler(s *store.WorkflowStore, agents *store.AgentConfigStore, sessions *store.SessionStore, runner *bridge.Runner) *WorkflowHandler {
+	return &WorkflowHandler{store: s, agents: agents, sessions: sessions, runner: runner}
 }
 
 // runWorkflowReq is the body of a manual run: the session the result comes back
@@ -51,7 +41,7 @@ type runWorkflowReq struct {
 // Run starts an execution of the workflow for a session, with the person's brief.
 //
 //	@Summary		Run a workflow (optionally binding the session's workspace first)
-//	@Description	Starts an execution as a background task of the given session, with the brief in the body (the workflow's session cannot see the conversation, so the brief is what it works from). The result comes back to the session as a notification, like any task's. 400 when the workflow has no runnable steps or an agent is gone, 404 for an unknown workflow or session, 409 when the session is at its background-task cap.
+//	@Description	Starts an execution as a background task of the given session, with the brief in the body (the workflow's session cannot see the conversation, so the brief is what it works from). The result comes back to the session as a notification, like any task's. 400 when the workflow has no runnable steps or an agent is gone, 404 for an unknown workflow or session, 409 when the session is at its background-task cap or being deleted, 503 while the server shuts down.
 //	@Tags			workflows
 //	@Accept			json
 //	@Produce		json
@@ -61,6 +51,7 @@ type runWorkflowReq struct {
 //	@Failure		400		{object}	ErrorResponse
 //	@Failure		404		{object}	ErrorResponse
 //	@Failure		409		{object}	ErrorResponse
+//	@Failure		503		{object}	ErrorResponse	"the server is shutting down"
 //	@Security		BearerAuth
 //	@Router			/workflows/{id}/runs [post]
 func (h *WorkflowHandler) Run(c *gin.Context) error {
@@ -73,36 +64,22 @@ func (h *WorkflowHandler) Run(c *gin.Context) error {
 	if _, err := requireOwnedSession(c, h.sessions, req.SessionID); err != nil {
 		return err
 	}
-	wf, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
+	if _, err := gatedRow(c, h.store.CrudStore, workflowScope, visibleRow); err != nil {
 		return err
 	}
-	if err := visibleRow(c, wf.Scope, wf.OwnerID); err != nil {
-		return err
-	}
+	// A still-unbound session takes the workspace the start carries; a bound
+	// one keeps its binding.
 	if req.WorkspaceID != "" {
-		if _, err := h.starter.BindSessionWorkspace(c.Request.Context(), req.SessionID, req.WorkspaceID); err != nil {
-			_, invalidBinding := errors.AsType[bridge.ErrInvalidBinding](err)
-			switch {
-			case invalidBinding:
-				return badRequest(err.Error())
-			case errors.Is(err, bridge.ErrBindingContention): // transient: the config is being edited, retry
-				return conflict(err.Error())
-			default:
-				return err
-			}
+		if _, err := h.runner.BindSessionWorkspace(c.Request.Context(), req.SessionID, req.WorkspaceID); err != nil {
+			return err
 		}
 	}
-	info, err := h.starter.RunWorkflow(c.Request.Context(), c.Param("id"), req.SessionID, strings.TrimSpace(req.Input), store.WorkflowOrigin{Kind: store.OriginPerson})
+	info, err := h.runner.RunWorkflow(c.Request.Context(), c.Param("id"), req.SessionID, strings.TrimSpace(req.Input), store.WorkflowOrigin{Kind: store.OriginPerson})
 	if err != nil {
-		switch {
-		case errors.Is(err, bridge.ErrWorkflowUnavailable):
+		if errors.Is(err, bridge.ErrWorkflowUnavailable) {
 			return badRequest(err.Error())
-		case errors.Is(err, tasks.ErrTaskLimit):
-			return conflict(err.Error())
-		default:
-			return err // not-found (workflow or session) -> 404, anything else -> 500
 		}
+		return err
 	}
 	c.JSON(http.StatusCreated, info)
 	return nil
@@ -123,19 +100,20 @@ func (h *WorkflowHandler) bind(c *gin.Context, wf *store.Workflow) error {
 // validateStepAgents checks each step's agent exists AND is one this
 // workflow's scope may reference (decisions §5.29); runs after the scope is stamped.
 func (h *WorkflowHandler) validateStepAgents(c *gin.Context, wf *store.Workflow) error {
-	for i := range wf.Steps {
-		ac, err := h.agents.Get(c.Request.Context(), wf.Steps[i].AgentConfigID)
+	for _, step := range wf.Steps {
+		absent := badRequest("step " + step.ID + ": agent_config_id names no agent")
+		ac, err := h.agents.Get(c.Request.Context(), step.AgentConfigID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				return badRequest("step " + wf.Steps[i].ID + ": agent_config_id names no agent")
+				return absent
 			}
 			return err
 		}
-		if !store.RefVisible(ac.Scope, ac.OwnerID, wf.Scope, wf.OwnerID) {
-			if !callerSees(c, ac.Scope, ac.OwnerID) {
-				return badRequest("step " + wf.Steps[i].ID + ": agent_config_id names no agent")
-			}
-			return badRequest("step " + wf.Steps[i].ID + ": " + refScopeError("agent", ac.Name, wf.Scope))
+		switch reason, hidden := refRefusal(c, "agent", ac.Name, ac.Scope, ac.OwnerID, wf.Scope, wf.OwnerID); {
+		case hidden:
+			return absent
+		case reason != "":
+			return badRequest("step " + step.ID + ": " + reason)
 		}
 	}
 	return nil
@@ -271,13 +249,9 @@ func (h *WorkflowHandler) Update(c *gin.Context) error {
 //	@Security		BearerAuth
 //	@Router			/workflows/{id} [delete]
 func (h *WorkflowHandler) Delete(c *gin.Context) error {
-	cur, err := gatedRow(c, h.store.CrudStore, workflowScope, deletableRow)
-	if err != nil {
-		return err
-	}
 	// The workflow store's own delete: its triggers go with it.
-	if err := h.store.DeleteOwnedBy(c.Request.Context(), c.Param("id"), cur.OwnerID); err != nil {
-		return err // moved since the check -> 409
+	if err := deleteOwned(c, h.store.CrudStore, workflowScope, h.store.DeleteOwnedBy); err != nil {
+		return err
 	}
 	c.Status(http.StatusNoContent)
 	return nil
@@ -297,31 +271,12 @@ func (h *WorkflowHandler) Delete(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/workflows/{id}/scope [post]
 func (h *WorkflowHandler) SetScope(c *gin.Context) error {
-	scope, err := bindScope(c)
-	if err != nil {
-		return err
-	}
-	ctx, id := c.Request.Context(), c.Param("id")
-	wf, err := h.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := scopeChangeAllowed(c, scope, wf.Scope, wf.OwnerID); err != nil {
-		return err
-	}
-	if err := sameScope("workflow", wf.Scope, scope); err != nil {
-		return err
-	}
-	wf.Scope = scope
-	if err := h.validateStepAgents(c, wf); err != nil {
-		return err
-	}
-	if err := h.store.SetScope(ctx, id, scope, wf.OwnerID); err != nil {
-		return err
-	}
-	server.SetAuditDetail(c, "scope="+scope)
-	c.Status(http.StatusNoContent)
-	return nil
+	return setScope(c, h.store.CrudStore, "workflow", workflowScope,
+		func(wf *store.Workflow, target string) error {
+			wf.Scope = target
+			return h.validateStepAgents(c, wf)
+		},
+		h.store.SetScope)
 }
 
 // SetOwner transfers the workflow to another account (admin).
@@ -337,27 +292,16 @@ func (h *WorkflowHandler) SetScope(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/workflows/{id}/owner [put]
 func (h *WorkflowHandler) SetOwner(c *gin.Context) error {
-	var req SetOwnerRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		return badRequest("user_id is required")
-	}
-	ctx, id := c.Request.Context(), c.Param("id")
-	wf, err := h.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	// Step agents are re-validated AS THE NEW OWNER — decisions §5.29.
-	wf.OwnerID = req.UserID
-	if err := h.validateStepAgents(c, wf); err != nil {
-		return err
-	}
-	if err := h.store.SetOwner(ctx, id, req.UserID); err != nil {
-		if errors.Is(err, store.ErrNoSuchUser) {
-			return badRequest("no such user")
+	return setOwner(c, func(ctx context.Context, id, userID string) error {
+		wf, err := h.store.Get(ctx, id)
+		if err != nil {
+			return err
 		}
-		return err
-	}
-	server.SetAuditDetail(c, "owner="+req.UserID)
-	c.Status(http.StatusNoContent)
-	return nil
+		// Step agents are re-validated AS THE NEW OWNER — decisions §5.29.
+		wf.OwnerID = userID
+		if err := h.validateStepAgents(c, wf); err != nil {
+			return err
+		}
+		return h.store.SetOwner(ctx, id, userID)
+	})
 }

@@ -20,10 +20,6 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// MaxAttachmentBytes aliases the attachments-package limit for the wire-up
-// in cmd (body cap for the upload route).
-const MaxAttachmentBytes = attachments.MaxBytes
-
 // AttachmentHandler serves image-attachment upload, revocation, the
 // client-facing feature config, and the storage section's form endpoints.
 type AttachmentHandler struct {
@@ -123,7 +119,7 @@ func (h *AttachmentHandler) Upload(c *gin.Context) error {
 		return unavailable("image attachments are not configured — an admin must fill the Attachment storage settings")
 	}
 	// The request body is capped by the route's limit (SetBodyLimit in the
-	// composition root: MaxAttachmentBytes plus multipart slack).
+	// composition root: attachments.MaxBytes plus multipart slack).
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
 		return badRequest("multipart field \"file\" is required (max 10 MiB)")
@@ -254,23 +250,23 @@ func (h *AttachmentHandler) resolve(ctx context.Context, req storageReq) setting
 }
 
 // checkStorage validates a non-empty section and probes the bucket end to end
-// (signed upload, anonymous read, delete). Returns the 400 message, "" when usable.
-func (h *AttachmentHandler) checkStorage(ctx context.Context, cfg settings.S3Config) string {
+// (signed upload, anonymous read, delete); a failure is the 400.
+func (h *AttachmentHandler) checkStorage(ctx context.Context, cfg settings.S3Config) error {
 	if !cfg.Complete() {
-		return "all fields are required (region is optional and defaults to auto)"
+		return badRequest("all fields are required (region is optional and defaults to auto)")
 	}
 	for key, v := range map[string]string{settings.KeyS3Endpoint: cfg.Endpoint, settings.KeyS3PublicBaseURL: cfg.PublicBaseURL} {
 		if err := settings.Validate(key, v); err != nil {
-			return err.Error()
+			return badRequest(err.Error())
 		}
 	}
 	client := attachments.ClientFrom(cfg)
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := client.Probe(probeCtx); err != nil {
-		return err.Error()
+		return badRequest(err.Error())
 	}
-	return ""
+	return nil
 }
 
 // isStorageClear reports an all-empty submission — the form's Clear.
@@ -305,8 +301,8 @@ func (h *AttachmentHandler) SaveStorage(c *gin.Context) error {
 	}
 	if !req.isStorageClear() {
 		cfg := h.resolve(ctx, req)
-		if msg := h.checkStorage(ctx, cfg); msg != "" {
-			return badRequest(msg)
+		if err := h.checkStorage(ctx, cfg); err != nil {
+			return err
 		}
 		kv[settings.KeyS3Endpoint] = cfg.Endpoint
 		kv[settings.KeyS3Region] = cfg.Region
@@ -342,8 +338,8 @@ func (h *AttachmentHandler) TestStorage(c *gin.Context) error {
 		return badRequest(err.Error())
 	}
 	ctx := c.Request.Context()
-	if msg := h.checkStorage(ctx, h.resolve(ctx, req)); msg != "" {
-		return badRequest(msg)
+	if err := h.checkStorage(ctx, h.resolve(ctx, req)); err != nil {
+		return err
 	}
 	c.Status(http.StatusNoContent)
 	return nil

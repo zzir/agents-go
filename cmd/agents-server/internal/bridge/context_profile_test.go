@@ -19,7 +19,7 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
-func profileDeps(t *testing.T) (*AgentDeps, *store.AgentConfig) {
+func profileRunner(t *testing.T) (*Runner, *store.AgentConfig) {
 	t.Helper()
 	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
@@ -27,15 +27,15 @@ func profileDeps(t *testing.T) (*AgentDeps, *store.AgentConfig) {
 	if err := agentConfigs.Create(context.Background(), ac); err != nil {
 		t.Fatal(err)
 	}
-	return testRunner(context.Background(), t, db).Deps, ac
+	return testRunner(context.Background(), t, db), ac
 }
 
 // The preamble and submit_plan are sent only while the session is planning,
 // so the profile the panel reads counts them only then. The build's own
 // profile keeps both: the phase is the session's, read at run time.
 func TestContextProfileCountsPlanOnlyWhilePlanning(t *testing.T) {
-	deps, ac := profileDeps(t)
-	built, err := buildFullAgent(context.Background(), deps, ac.ID, "", false, store.LocalUserID)
+	runner, ac := profileRunner(t)
+	built, err := runner.buildFullAgent(context.Background(), ac.ID, "", false, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +63,8 @@ func TestContextProfileCountsPlanOnlyWhilePlanning(t *testing.T) {
 // A background run is told it is one; the panel counts that suffix, and
 // nothing of plan mode, which a background run never enters.
 func TestContextProfileCountsTheBackgroundSuffix(t *testing.T) {
-	deps, ac := profileDeps(t)
-	bg, err := buildFullAgent(context.Background(), deps, ac.ID, "", true, store.LocalUserID)
+	runner, ac := profileRunner(t)
+	bg, err := runner.buildFullAgent(context.Background(), ac.ID, "", true, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestContextProfileCountsTheBackgroundSuffix(t *testing.T) {
 	if sent := bg.SentProfile(); sent.BackgroundChars != len(BackgroundInstructions) {
 		t.Fatalf("sent background profile dropped the suffix: %d", sent.BackgroundChars)
 	}
-	chat, err := buildFullAgent(context.Background(), deps, ac.ID, "", false, store.LocalUserID)
+	chat, err := runner.buildFullAgent(context.Background(), ac.ID, "", false, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,8 +149,8 @@ func TestBuildFullAgentProfileCarriesMCPBuckets(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	deps := testRunner(ctx, t, db, func(d *AgentDeps) { d.McpManager = manager }).Deps
-	built, err := buildFullAgent(ctx, deps, ac.ID, "", false, store.LocalUserID)
+	runner := testRunner(ctx, t, db, func(d *AgentDeps) { d.McpManager = manager })
+	built, err := runner.buildFullAgent(ctx, ac.ID, "", false, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}

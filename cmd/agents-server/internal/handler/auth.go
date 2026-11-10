@@ -54,10 +54,7 @@ func (h *AuthHandler) ListAudit(c *gin.Context) error {
 	if err != nil {
 		return err
 	}
-	if list == nil {
-		list = []store.AuditEvent{}
-	}
-	c.JSON(http.StatusOK, list)
+	c.JSON(http.StatusOK, nonNilList(list))
 	return nil
 }
 
@@ -75,14 +72,11 @@ func (h *AuthHandler) ListUsers(c *gin.Context) error {
 	if err != nil {
 		return err
 	}
-	if list == nil {
-		list = []store.User{}
-	}
-	c.JSON(http.StatusOK, list)
+	c.JSON(http.StatusOK, nonNilList(list))
 	return nil
 }
 
-// UserLabel is one entry of the id→person directory every member may read.
+// UserLabel is one entry of the id→person directory the admin's owner pickers read.
 type UserLabel struct {
 	ID    string `json:"id"`
 	Name  string `json:"name,omitempty"`
@@ -343,12 +337,11 @@ func (h *AuthHandler) Login(c *gin.Context) error {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return badRequest("invalid request")
 	}
-	if !h.svc.StaticOK(req.Token) {
+	u, err := h.svc.Authenticate(c.Request.Context(), req.Token)
+	if err != nil {
 		return unauthorized("invalid token")
 	}
-	if u, err := h.svc.Authenticate(c.Request.Context(), req.Token); err == nil {
-		server.SetAuditActor(c, u) // a login is the one line worth having on this route
-	}
+	server.SetAuditActor(c, u) // a login is the one line worth having on this route
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 	return nil
 }

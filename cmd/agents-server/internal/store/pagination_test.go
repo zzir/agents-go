@@ -21,7 +21,7 @@ func TestGetEntriesReturnsAllOldestFirst(t *testing.T) {
 		seed(t, s, userEntry(t, fmt.Sprint(i)))
 	}
 
-	all, err := s.GetEntries(ctx, session.Direct(id("s1")))
+	all, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}

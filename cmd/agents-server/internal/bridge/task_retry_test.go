@@ -56,9 +56,7 @@ func TestTaskAdapter_InheritKeepsTheTaskAgent(t *testing.T) {
 func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
 	ctx := context.Background()
 	runner, _, _, _ := newTaskTestRunner(t)
-	stopper := taskStopper{runner}
-
-	out, err := stopper.Stop(ctx, "never-started", false)
+	out, err := runner.stopTaskRun(ctx, "never-started", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +72,7 @@ func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
 	}
 	defer seg.finalize()
 	runner.hub.setControl("live-run", &fakeControl{})
-	if out, err = stopper.Stop(ctx, "live-run", true); err != nil || out != tasks.StopAfterTurn {
+	if out, err = runner.stopTaskRun(ctx, "live-run", true); err != nil || out != tasks.StopAfterTurn {
 		t.Errorf("graceful stop of a live run = %v (err %v), want StopAfterTurn", out, err)
 	}
 	// Without a control there is nothing to defer to, so the run is cancelled
@@ -84,7 +82,7 @@ func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer seg3.finalize()
-	if out, err = stopper.Stop(ctx, "no-ctrl", true); err != nil || out != tasks.StopCancelled {
+	if out, err = runner.stopTaskRun(ctx, "no-ctrl", true); err != nil || out != tasks.StopCancelled {
 		t.Errorf("graceful stop with no control = %v (err %v), want StopCancelled", out, err)
 	}
 
@@ -107,7 +105,7 @@ func TestTaskStopper_ReportsWhatItActuallyDid(t *testing.T) {
 	}
 	defer detach()
 
-	if out, err = stopper.Stop(ctx, "done-run", false); err != nil || out == tasks.StopAfterTurn {
+	if out, err = runner.stopTaskRun(ctx, "done-run", false); err != nil || out == tasks.StopAfterTurn {
 		t.Errorf("stop of a finished run = %v (err %v), want it reported as over", out, err)
 	}
 	if info, _ := runner.hub.Info("done-run"); info.Status != RunCompleted {

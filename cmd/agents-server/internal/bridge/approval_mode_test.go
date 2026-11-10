@@ -99,7 +99,7 @@ func approvalModeRunner(t *testing.T, mode string, approveTools ...string) (*Run
 // plan mode never touches — invariant 90.
 func TestApprovalModeOnChangeGatesExactlyThePlanDenySet(t *testing.T) {
 	runner, entry, ws := approvalModeRunner(t, store.ApprovalModeOnChange)
-	built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, false, store.LocalUserID)
+	built, err := runner.buildFullAgent(context.Background(), entry.ID, ws.ID, false, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestApprovalModeOnChangeGatesExactlyThePlanDenySet(t *testing.T) {
 	planned, phase := built.plan().Apply(target)
 	compare("target", planned, phase)
 	// And a background build, which plan mode never wraps, asks the same.
-	bg, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, true, store.LocalUserID)
+	bg, err := runner.buildFullAgent(context.Background(), entry.ID, ws.ID, true, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestApprovalModeOnChangeFollowsTheMCPAllowList(t *testing.T) {
 		return &BuildResult{
 			Agent:        &agents.Agent{Name: "a", MCPServers: []agents.MCPServer{srv}},
 			PlanReadOnly: []string{"docs__search"},
-			Approval:     store.ApprovalGroup{Mode: store.ApprovalModeOnChange},
+			Config:       store.AgentConfig{Approval: store.ApprovalGroup{Mode: store.ApprovalModeOnChange}},
 		}
 	}
 	r := build()
@@ -213,7 +213,7 @@ func TestApprovalModeOnChangeFollowsTheMCPAllowList(t *testing.T) {
 // through the per-command gate: a command the session trusts is not asked.
 func TestApprovalModeAlwaysKeepsPerCommandExec(t *testing.T) {
 	runner, entry, ws := approvalModeRunner(t, store.ApprovalModeAlways)
-	built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, true, store.LocalUserID)
+	built, err := runner.buildFullAgent(context.Background(), entry.ID, ws.ID, true, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestApprovalModeAlwaysKeepsPerCommandExec(t *testing.T) {
 func TestEmptyModeKeepsLegacyBehavior(t *testing.T) {
 	for _, mode := range []string{"", store.ApprovalModeNever} {
 		runner, entry, ws := approvalModeRunner(t, mode, "write_file", execCommandToolName)
-		built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, true, store.LocalUserID)
+		built, err := runner.buildFullAgent(context.Background(), entry.ID, ws.ID, true, store.LocalUserID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -261,7 +261,7 @@ func TestEmptyModeKeepsLegacyBehavior(t *testing.T) {
 	}
 	// With nothing listed, never installs nothing at all.
 	runner, entry, ws := approvalModeRunner(t, store.ApprovalModeNever)
-	built, err := buildFullAgent(context.Background(), runner.Deps, entry.ID, ws.ID, true, store.LocalUserID)
+	built, err := runner.buildFullAgent(context.Background(), entry.ID, ws.ID, true, store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}

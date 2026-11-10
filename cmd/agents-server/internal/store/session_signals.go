@@ -114,7 +114,7 @@ func (s *TaskStore) LiveSignals(ctx context.Context, ownerID string, ids []strin
 
 // EndedInError returns the owner's conversations whose newest run-written
 // entry is an error notice: the body is read for annotation rows alone.
-func (s *EntryStore) EndedInError(ctx context.Context, ownerID string, ids []string) (map[string]bool, error) {
+func (s *SessionStore) EndedInError(ctx context.Context, ownerID string, ids []string) (map[string]bool, error) {
 	if ownerID == "" {
 		return nil, errListNoOwner
 	}
@@ -152,30 +152,16 @@ func (s *EntryStore) EndedInError(ctx context.Context, ownerID string, ids []str
 
 // RunsOffPath returns the runs holding an entry off the session's active
 // branch — attempts a branch move left behind — from the rows' columns alone.
-func (s *EntryStore) RunsOffPath(ctx context.Context, ref session.Ref) (map[string]bool, error) {
-	scoped := s.forRef(ref)
+func (s *EntryStore) RunsOffPath(ctx context.Context) (map[string]bool, error) {
 	var rows []entryRow
-	if err := scoped.scoped(s.db.NewSelect().Model(&rows)).
+	if err := s.scoped(s.db.NewSelect().Model(&rows)).
 		Column("entry_id", "parent_id", "run_id").
 		OrderExpr("seq ASC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("reading the session tree: %w", err)
 	}
-	at, err := scoped.appendPointIn(ctx, s.db)
+	on, err := s.activePath(ctx, rows)
 	if err != nil {
 		return nil, err
-	}
-	parent := make(map[string]string, len(rows))
-	for i := range rows {
-		parent[rows[i].EntryID] = rows[i].ParentID
-	}
-	on := make(map[string]bool, len(rows))
-	for id := at.Leaf; id != "" && !on[id]; {
-		p, ok := parent[id]
-		if !ok {
-			break
-		}
-		on[id] = true
-		id = p
 	}
 	off := map[string]bool{}
 	for i := range rows {

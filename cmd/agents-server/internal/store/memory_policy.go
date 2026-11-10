@@ -25,39 +25,25 @@ const (
 	ChecklistSource = "checklist"
 )
 
-// Who may write a scope over the API, and whether the model may.
+// Who may write a scope over the API.
 const (
 	MemoryWriteAdmin        = "admin"
 	MemoryWriteAgentEditor  = "agent_editor"
 	MemoryWriteSessionOwner = "session_owner"
-
-	ModelWriteNever   = ""
-	ModelWriteFree    = "free"
-	ModelWriteApprove = "approve"
 )
 
-// MemoryPolicy is one scope kind's rules: the matrix's only home (invariant 64).
+// MemoryPolicy is one scope kind's API-write rule and limits (invariant 64).
 type MemoryPolicy struct {
-	// Injected renders the scope into the agent's instructions every request.
-	Injected bool
-	// Write names who may write over the API; ModelWrite whether the model
-	// may: never, freely, or after approval.
-	Write      string
-	ModelWrite string
+	// Write names who may write the scope over the API.
+	Write string
 	// MaxBytes caps one memory's content, MaxKeys the memories of one scope.
 	MaxBytes int
 	MaxKeys  int
 }
 
-// MemoryPolicies is the matrix by scope kind.
+// MemoryPolicies is the matrix by scope kind; a kind it lacks is no scope.
 var MemoryPolicies = map[string]MemoryPolicy{
-	MemoryScopeGlobal:  {Injected: true, Write: MemoryWriteAdmin, ModelWrite: ModelWriteNever, MaxBytes: 8 << 10, MaxKeys: 64},
-	MemoryScopeAgent:   {Injected: true, Write: MemoryWriteAgentEditor, ModelWrite: ModelWriteApprove, MaxBytes: 8 << 10, MaxKeys: 64},
-	MemoryScopeSession: {Injected: false, Write: MemoryWriteSessionOwner, ModelWrite: ModelWriteFree, MaxBytes: 1_000_000, MaxKeys: 100},
-}
-
-// MemoryPolicyFor looks a kind up; ok is false for a kind the matrix lacks.
-func MemoryPolicyFor(kind string) (MemoryPolicy, bool) {
-	p, ok := MemoryPolicies[kind]
-	return p, ok
+	MemoryScopeGlobal:  {Write: MemoryWriteAdmin, MaxBytes: 8 << 10, MaxKeys: 64},
+	MemoryScopeAgent:   {Write: MemoryWriteAgentEditor, MaxBytes: 8 << 10, MaxKeys: 64},
+	MemoryScopeSession: {Write: MemoryWriteSessionOwner, MaxBytes: 1_000_000, MaxKeys: 100},
 }

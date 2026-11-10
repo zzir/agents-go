@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"net/http"
 
@@ -210,16 +210,16 @@ func (h *SkillHandler) Delete(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/skills/{id}/scope [post]
 func (h *SkillHandler) SetScope(c *gin.Context) error {
-	// Visibility decides first, so the refusal below is never an existence
-	// oracle (decisions §5.29).
-	sk, err := gatedRow(c, h.store.CrudStore, skillScope, visibleRow)
-	if err != nil {
-		return err
-	}
-	if sk.SourceRepo != "" {
-		return badRequest("an imported skill changes scope with its repository — use the repository scope action")
-	}
-	return setScopePlain(c, h.store.CrudStore, "skill", skillScope, h.store.SetScope)
+	// setScope has decided visibility by the time this refusal runs, so it is
+	// never an existence oracle (decisions §5.29).
+	return setScope(c, h.store.CrudStore, "skill", skillScope,
+		func(sk *store.Skill, _ string) error {
+			if sk.SourceRepo != "" {
+				return badRequest("an imported skill changes scope with its repository — use the repository scope action")
+			}
+			return nil
+		},
+		h.store.SetScope)
 }
 
 // repoScopeReq is the body of POST /skill-repos/scope: the repo group to
@@ -294,25 +294,14 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/skills/{id}/owner [put]
 func (h *SkillHandler) SetOwner(c *gin.Context) error {
-	ctx := c.Request.Context()
-	sk, err := h.store.Get(ctx, c.Param("id"))
-	if err != nil {
-		return err
-	}
-	if sk.SourceRepo == "" {
-		return setOwnerPlain(c, h.store.SetOwner)
-	}
-	var req SetOwnerRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		return badRequest("user_id is required")
-	}
-	if err := h.store.SetRepoOwner(ctx, sk.SourceRepo, sk.OwnerID, req.UserID); err != nil {
-		if errors.Is(err, store.ErrNoSuchUser) {
-			return badRequest("no such user")
+	return setOwner(c, func(ctx context.Context, id, userID string) error {
+		sk, err := h.store.Get(ctx, id)
+		if err != nil {
+			return err
 		}
-		return err // name collision in the target owner's namespace -> 409
-	}
-	server.SetAuditDetail(c, "owner="+req.UserID)
-	c.Status(http.StatusNoContent)
-	return nil
+		if sk.SourceRepo == "" {
+			return h.store.SetOwner(ctx, id, userID)
+		}
+		return h.store.SetRepoOwner(ctx, sk.SourceRepo, sk.OwnerID, userID)
+	})
 }

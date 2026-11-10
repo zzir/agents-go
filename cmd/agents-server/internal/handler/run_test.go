@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,34 +16,6 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
-
-// StartRun's failure modes must map to distinct status codes rather than
-// all collapsing to 404 "session not found". A busy session or a task-limit hit
-// is a 409, an unknown session is a 404, and any other DB error is a 500.
-func TestStartErrorMapping(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	h := &RunHandler{}
-
-	cases := []struct {
-		name string
-		err  error
-		want int
-	}{
-		{"session busy", bridge.ErrSessionBusy{RunID: "r1"}, http.StatusConflict},
-		{"task limit", bridge.ErrTaskLimit{Limit: 6}, http.StatusConflict},
-		{"unknown session", fmt.Errorf("getting session s1: %w", store.ErrNotFound), http.StatusNotFound},
-		{"transient db error", errors.New("database is locked"), http.StatusInternalServerError},
-	}
-	for _, tc := range cases {
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-		writeError(c, h.startError(tc.err))
-		if w.Code != tc.want {
-			t.Errorf("%s: startError -> %d, want %d", tc.name, w.Code, tc.want)
-		}
-	}
-}
 
 // Prefer: wait=N is read per RFC 7240 — case-insensitively, among other
 // preferences, across repeated headers — and only a positive N asks to wait.

@@ -17,7 +17,8 @@ func TestFallbackProvidersResolveByIDOrEndpoint(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	providers := store.NewProviderStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
+	deps := runner.Deps
 	mk := func(name, typ, baseURL, key, scope, owner string) *store.Provider {
 		t.Helper()
 		pv := &store.Provider{Name: name, Type: typ, BaseURL: baseURL, APIKey: key, Scope: scope, OwnerID: owner}
@@ -70,7 +71,8 @@ func TestProviderChainWithAnthropicIsPrefixBound(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	providers := store.NewProviderStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
+	deps := runner.Deps
 	mk := func(name, typ string) *store.Provider {
 		t.Helper()
 		pv := &store.Provider{Name: name, Type: typ, APIKey: "sk-" + name, Scope: store.ScopeGlobal, OwnerID: store.LocalUserID}

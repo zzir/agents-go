@@ -10,6 +10,7 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/tracing"
 )
@@ -42,16 +43,16 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		Conversation: agents.ConversationOptions{
 			Session: sess,
 			// A non-positive HistoryLimit means "no limit" on both sides.
-			HistoryLimit: built.Session.HistoryLimit,
+			HistoryLimit: built.Config.Session.HistoryLimit,
 		},
 		Exec: agents.ExecOptions{
-			MaxTurns:              built.Behavior.MaxTurns,
-			MaxToolConcurrency:    built.Behavior.MaxToolConcurrency,
+			MaxTurns:              built.Config.Behavior.MaxTurns,
+			MaxToolConcurrency:    built.Config.Behavior.MaxToolConcurrency,
 			ErrorHandlers:         built.ErrorHandlers,
-			ReasoningItemIDPolicy: built.ReasoningItemIDPolicy,
-			ToolNotFoundBehavior:  toolNotFoundBehavior(built.Behavior.ToolNotFoundBehavior),
-			ToolLoop:              toolLoopPolicy(built.Behavior.ToolLoop),
-			ShouldStopAfterTurn:   stopAtTools(built.StopAtTools),
+			ReasoningItemIDPolicy: reasoningItemIDPolicy(built.Config.Behavior.ReasoningItemIDPolicy),
+			ToolNotFoundBehavior:  toolNotFoundBehavior(built.Config.Behavior.ToolNotFoundBehavior),
+			ToolLoop:              toolLoopPolicy(built.Config.Behavior.ToolLoop),
+			ShouldStopAfterTurn:   stopAtTools(settings.SplitList(built.Config.Behavior.StopAtTools)),
 			// Overflow → forced compaction → retry, on a compaction-aware
 			// session (spec §2.5g).
 			Overflow: agents.OverflowPolicy{MaxRetries: 2},
@@ -62,7 +63,7 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 		// The run loop's own records join the server's stream (mostly Debug).
 		Log: agents.LogConfig{Logger: log, SensitiveData: built.LogSensitive},
 	}
-	if built.Behavior.HandoffInputFilter == "nest_history" {
+	if built.Config.Behavior.HandoffInputFilter == "nest_history" {
 		opts.Exec.HandoffInputFilter = agents.NestHandoffHistory
 	}
 	if budget.Window > 0 {
@@ -81,17 +82,17 @@ func runOptionsFor(built *BuildResult, sess *session.Session, provider agents.Mo
 
 // contextBudget is what the model is told about its window: the config's
 // declared size and the last measured call (invariant 28). No window, nothing.
-func contextBudget(ctx context.Context, built *BuildResult, sa *store.EntryStore, ref session.Ref) agents.ContextBudget {
-	if built.ContextWindow <= 0 {
+func contextBudget(ctx context.Context, built *BuildResult, sa *store.EntryStore) agents.ContextBudget {
+	if built.Config.ContextWindow <= 0 {
 		return agents.ContextBudget{}
 	}
-	b := agents.ContextBudget{Window: built.ContextWindow, WindowFor: func(a *agents.Agent) int {
+	b := agents.ContextBudget{Window: built.Config.ContextWindow, WindowFor: func(a *agents.Agent) int {
 		if a == nil {
 			return 0
 		}
 		return built.ContextWindows[a.Name]
 	}}
-	rep, err := sa.ContextReport(ctx, ref)
+	rep, err := sa.ContextReport(ctx)
 	if err != nil {
 		logging.Ctx(ctx).Warn("context budget: reading the last measured call; the first call carries no figure", "error", err)
 		return b
@@ -109,6 +110,15 @@ func toolNotFoundBehavior(s string) agents.ToolNotFoundBehavior {
 	return agents.ParseToolNotFoundBehavior(s)
 }
 
+// reasoningItemIDPolicy: "omit" drops reasoning-item ids across turns; unset
+// preserves them.
+func reasoningItemIDPolicy(s string) agents.ReasoningItemIDPolicy {
+	if s == "omit" {
+		return agents.ReasoningItemIDOmit
+	}
+	return agents.ReasoningItemIDPreserve
+}
+
 // toolLoopPolicy maps the agent's tool_loop setting; unset is the SDK default.
 func toolLoopPolicy(s string) agents.ToolLoopPolicy {
 	switch s {
@@ -123,15 +133,15 @@ func toolLoopPolicy(s string) agents.ToolLoopPolicy {
 // wrapCompaction wraps sa with the compaction adapter when the config enables
 // it; an empty summary model falls back to the agent's own.
 func wrapCompaction(sa *store.EntryStore, built *BuildResult, provider agents.ModelProvider, send func(string, any), runID string, memories *store.MemoryStore, background bool) *session.Session {
-	if !built.Compaction.Enabled || provider == nil {
+	if !built.Config.Compaction.Enabled || provider == nil {
 		return session.NewSession(sa)
 	}
-	summaryModel, err := summaryModelFor(provider, built.Compaction, built.Agent.Model)
+	summaryModel, err := summaryModelFor(provider, built.Config.Compaction, built.Agent.Model)
 	if err != nil || summaryModel == nil {
 		return session.NewSession(sa)
 	}
 	ca := store.NewCompactionAdapter(sa, summaryModel,
-		built.Compaction.Threshold, built.Compaction.Window, built.Compaction.Prompt,
+		built.Config.Compaction.Threshold, built.Config.Compaction.Window, built.Config.Compaction.Prompt,
 		compactionNotifier(send, runID),
 	)
 	ca.Mode, ca.Memories = compactionModeFor(built, background), memories
@@ -144,7 +154,7 @@ func compactionModeFor(built *BuildResult, background bool) string {
 	if background {
 		return store.CompactionModeSummary
 	}
-	return built.Compaction.Mode
+	return built.Config.Compaction.Mode
 }
 
 // summaryModelFor resolves the compaction summary model — compaction_model,

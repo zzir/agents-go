@@ -89,7 +89,7 @@ against graduates into §1.2 above.
   instance: `RunHub` (a run is 404 everywhere but its instance; the
   one-run-per-session rule holds only by the entries unique index); the
   orphan sweep at startup fails every `working` task, including the other
-  instance's; the `Waker` reads the local hub, so two instances can wake one
+  instance's; the waker reads the local hub, so two instances can wake one
   session into concurrent runs; `ConnRegistry` broadcasts reach local
   connections only; the cron table is loaded per instance, so every schedule
   fires once per instance; the webhook replay guard, the OAuth pending-login

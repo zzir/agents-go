@@ -59,7 +59,7 @@ type ProviderStore struct {
 // NewProviderStore returns a ProviderStore backed by db. Names are unique per
 // scope (partial indexes, decisions §5.29); a duplicate is a UNIQUE error.
 func NewProviderStore(db *bun.DB) *ProviderStore {
-	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider", "created_at DESC").withSecrets(sealProvider, openProvider), db: db}
+	return &ProviderStore{CrudStore: NewCrudStore[Provider](db, "provider").withSecrets(sealProvider, openProvider), db: db}
 }
 
 // Create inserts the provider, its credentials sealed.
@@ -76,19 +76,13 @@ func (s *ProviderStore) SetScope(ctx context.Context, id, scope, expectOwner str
 // provider keeps its chatgpt_token; any other mode clears it.
 func (s *ProviderStore) Update(ctx context.Context, id string, p *Provider, prepare func(prev *Provider) error) error {
 	p.ID = id
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		var keep []string
-		if p.AuthMode == AuthModeChatGPTLogin {
-			keep = []string{"chatgpt_token"}
-		} else {
-			p.ChatGPTToken = ""
-		}
-		return s.updateFrom(ctx, tx, id, p, prepare, keep...)
-	})
-	if err != nil {
-		return fmt.Errorf("updating provider %s: %w", id, err)
+	var keep []string
+	if p.AuthMode == AuthModeChatGPTLogin {
+		keep = []string{"chatgpt_token"}
+	} else {
+		p.ChatGPTToken = ""
 	}
-	return nil
+	return s.updateInTx(ctx, id, p, prepare, keep...)
 }
 
 // SaveChatGPTToken persists the serialized OAuth token, updating only that
@@ -200,12 +194,8 @@ func countStrandedRefs(ctx context.Context, tx bun.Tx, providerID, owner string)
 func (s *ProviderStore) TransferOwner(ctx context.Context, id, newOwner string) (int, error) {
 	var refs int
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		exists, err := tx.NewSelect().Model((*User)(nil)).Where("id = ?", newOwner).Exists(ctx)
-		if err != nil {
+		if err := requireUser(ctx, tx, newOwner); err != nil {
 			return err
-		}
-		if !exists {
-			return ErrNoSuchUser
 		}
 		pv := new(Provider)
 		if err := lockRow(ctx, tx, pv, "id = ?", id); err != nil {

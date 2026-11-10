@@ -216,32 +216,15 @@ func TraceAttachmentIDs(data string) []string {
 // references, with one batch read; a deleted row simply drops off the span.
 func (s *TraceStore) attachAttachments(ctx context.Context, events []*TraceEvent) {
 	perEvent := make([][]string, len(events))
-	var all []string
 	for i, ev := range events {
 		perEvent[i] = TraceAttachmentIDs(ev.Data)
-		for _, id := range perEvent[i] {
-			if !slices.Contains(all, id) {
-				all = append(all, id)
-			}
-		}
 	}
-	if len(all) == 0 {
-		return
-	}
-	var rows []Attachment
-	if err := s.db.NewSelect().Model(&rows).Where("id IN (?)", bun.List(all)).Scan(ctx); err != nil {
+	byID, err := attachmentsByID(ctx, s.db, slices.Concat(perEvent...))
+	if err != nil {
 		return // a panel nicety, never worth failing the span
 	}
-	byID := make(map[string]Attachment, len(rows))
-	for _, a := range rows {
-		byID[a.ID] = a
-	}
 	for i, ids := range perEvent {
-		for _, id := range ids {
-			if a, ok := byID[id]; ok {
-				events[i].Attachments = append(events[i].Attachments, EntryAttachment{ID: a.ID, Key: a.Key})
-			}
-		}
+		events[i].Attachments = entryAttachments(byID, ids)
 	}
 }
 

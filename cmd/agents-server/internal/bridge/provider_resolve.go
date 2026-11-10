@@ -50,8 +50,9 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 	if ac.Resilience.RetryEnabled {
 		provider = agents.NewRetryProvider(provider, spec.RetryPolicy)
 	}
-	if len(spec.FallbackModels) > 0 {
-		fallbacks, anthropic, err := fallbackProviders(ctx, deps, ac, spec.FallbackModels)
+	// An entry without provider_id names an endpoint, resolved here.
+	if len(ac.Resilience.FallbackModels) > 0 {
+		fallbacks, anthropic, err := fallbackProviders(ctx, deps, ac, ac.Resilience.FallbackModels)
 		if err != nil {
 			return nil, "", false, err
 		}
@@ -61,7 +62,7 @@ func resolveProvider(ctx context.Context, deps *AgentDeps, ac *store.AgentConfig
 	// Outermost: every model, fallbacks included, resolves attachment sentinels
 	// (attachment_hydrate.go).
 	provider = hydrateAttachments(provider, deps.Attachments, func(ctx context.Context) string {
-		return deps.Settings.S3Config(ctx).PublicBaseURL
+		return deps.SettingReader.S3Config(ctx).PublicBaseURL
 	})
 	return provider, def.Type, prefixBound, nil
 }

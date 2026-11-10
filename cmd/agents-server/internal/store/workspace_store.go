@@ -19,12 +19,11 @@ type WorkspaceStore struct {
 // NewWorkspaceStore returns a WorkspaceStore backed by db. (owner, sandbox, name)
 // is unique (idx_workspaces_owner_sandbox_name); a duplicate is a UNIQUE error.
 func NewWorkspaceStore(db *bun.DB) *WorkspaceStore {
-	return &WorkspaceStore{CrudStore: NewCrudStore[Workspace](db, "workspace", "name ASC").withSecrets(sealWorkspace, openWorkspace), db: db}
+	return &WorkspaceStore{CrudStore: NewCrudStore[Workspace](db, "workspace").withSecrets(sealWorkspace, openWorkspace), db: db}
 }
 
 // Create inserts the workspace with the sandbox row share-locked for the
-// insert's duration (decisions §5.28); ErrNotFound when it is missing. The insert
-// bypasses the CrudStore write path, hence sealedWrite.
+// insert's duration (decisions §5.28); ErrNotFound when it is missing.
 func (s *WorkspaceStore) Create(ctx context.Context, p *Workspace) error {
 	// The id is assigned before sealing: the env AAD binds to it.
 	if p.ID == "" {
@@ -36,7 +35,7 @@ func (s *WorkspaceStore) Create(ctx context.Context, p *Workspace) error {
 	if p.RuntimeGen == 0 {
 		p.RuntimeGen = 1
 	}
-	err := sealedWrite(p, sealWorkspace, openWorkspace, func() error {
+	err := s.sealedWrite(p, func() error {
 		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			sb := new(Sandbox)
 			if err := shareRow(ctx, tx, sb, "id = ?", p.SandboxID); err != nil {
@@ -67,7 +66,7 @@ func (s *WorkspaceStore) Update(ctx context.Context, id string, p *Workspace, ex
 	}
 	var res sql.Result
 	var newGen int64
-	err := sealedWrite(p, sealWorkspace, openWorkspace, func() error {
+	err := s.sealedWrite(p, func() error {
 		// Both sandbox rows are share-locked for the write's duration: two
 		// workspaces swapping sandboxes take them in opposite orders.
 		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -105,14 +104,7 @@ func (s *WorkspaceStore) Update(ctx context.Context, id string, p *Workspace, ex
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return newGen, nil
 	}
-	exists, eerr := s.db.NewSelect().Model((*Workspace)(nil)).Where("id = ?", id).Exists(ctx)
-	if eerr != nil {
-		return 0, fmt.Errorf("updating workspace %s: %w", id, eerr)
-	}
-	if !exists {
-		return 0, fmt.Errorf("updating workspace %s: %w", id, ErrNotFound)
-	}
-	return 0, ErrRevisionConflict
+	return 0, s.staleOrMissing(ctx, id)
 }
 
 // ErrSandboxMoveDestination refuses a workspace move that would change the

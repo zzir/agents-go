@@ -7,33 +7,19 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// ChatGPTOAuthHandler serves a provider's ChatGPT OAuth flow under
-// /providers/:id/chatgpt/*; the token is the endpoint's, shared by its agents.
-type ChatGPTOAuthHandler struct {
-	oauth     *providers.ChatGPTOAuth
-	providers *store.ProviderStore
+// The ChatGPT OAuth flow of a provider, under /providers/:id/chatgpt/*; the
+// token is the endpoint's, shared by its agents.
+
+// chatgptEditable gates a login/logout: signing a private provider into
+// ChatGPT is its owner's act, a global one an admin's.
+func (h *ProviderHandler) chatgptEditable(c *gin.Context) error {
+	_, err := gatedRow(c, h.store.CrudStore, providerScope, editableRow)
+	return err
 }
 
-// NewChatGPTOAuthHandler creates a handler backed by the given OAuth manager;
-// the provider store answers whose row the login belongs to.
-func NewChatGPTOAuthHandler(oauth *providers.ChatGPTOAuth, providerStore *store.ProviderStore) *ChatGPTOAuthHandler {
-	return &ChatGPTOAuthHandler{oauth: oauth, providers: providerStore}
-}
-
-// editable loads the provider and gates a login/logout on it: signing a
-// private provider into ChatGPT is its owner's act, a global one an admin's.
-func (h *ChatGPTOAuthHandler) editable(c *gin.Context) error {
-	pv, err := h.providers.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		return err
-	}
-	return editableRow(c, pv.Scope, pv.OwnerID)
-}
-
-// Login starts the ChatGPT OAuth flow for the provider identified by the id
+// ChatGPTLogin starts the ChatGPT OAuth flow for the provider identified by the id
 // path parameter and responds with the authorize URL.
 //
 //	@Summary		Start ChatGPT login
@@ -47,8 +33,8 @@ func (h *ChatGPTOAuthHandler) editable(c *gin.Context) error {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/providers/{id}/chatgpt/login [post]
-func (h *ChatGPTOAuthHandler) Login(c *gin.Context) error {
-	if err := h.editable(c); err != nil {
+func (h *ProviderHandler) ChatGPTLogin(c *gin.Context) error {
+	if err := h.chatgptEditable(c); err != nil {
 		return err
 	}
 	result, err := h.oauth.StartLogin(c.Request.Context(), c.Param("id"))
@@ -68,7 +54,7 @@ type chatgptCompleteReq struct {
 	RedirectURL string `json:"redirect_url"`
 }
 
-// Complete finishes the ChatGPT OAuth flow — decisions §5.41.
+// ChatGPTComplete finishes the ChatGPT OAuth flow — decisions §5.41.
 //
 //	@Summary		Complete ChatGPT login
 //	@Description	Redeems the callback URL the user pastes after authorizing (accepts the full URL or its query string).
@@ -82,8 +68,8 @@ type chatgptCompleteReq struct {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/providers/{id}/chatgpt/complete [post]
-func (h *ChatGPTOAuthHandler) Complete(c *gin.Context) error {
-	if err := h.editable(c); err != nil {
+func (h *ProviderHandler) ChatGPTComplete(c *gin.Context) error {
+	if err := h.chatgptEditable(c); err != nil {
 		return err
 	}
 	var req chatgptCompleteReq
@@ -104,7 +90,7 @@ func (h *ChatGPTOAuthHandler) Complete(c *gin.Context) error {
 	return nil
 }
 
-// Logout clears the ChatGPT token for the provider identified by the id path
+// ChatGPTLogout clears the ChatGPT token for the provider identified by the id path
 // parameter.
 //
 //	@Summary	ChatGPT logout
@@ -114,8 +100,8 @@ func (h *ChatGPTOAuthHandler) Complete(c *gin.Context) error {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/providers/{id}/chatgpt/logout [post]
-func (h *ChatGPTOAuthHandler) Logout(c *gin.Context) error {
-	if err := h.editable(c); err != nil {
+func (h *ProviderHandler) ChatGPTLogout(c *gin.Context) error {
+	if err := h.chatgptEditable(c); err != nil {
 		return err
 	}
 	if err := h.oauth.Logout(c.Request.Context(), c.Param("id")); err != nil {

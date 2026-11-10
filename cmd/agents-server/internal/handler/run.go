@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -81,7 +80,7 @@ func (h *RunHandler) Create(c *gin.Context) error {
 
 	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.WorkspaceID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, nil)
 	if err != nil {
-		return h.startError(err)
+		return err // busy, deleting, a bad binding, draining: classify
 	}
 	c.JSON(http.StatusCreated, createRunResp{RunID: runID, SessionID: sessionID, Status: string(bridge.RunRunning)})
 	return nil
@@ -122,7 +121,7 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 		done <- res
 	})
 	if err != nil {
-		return h.startError(err)
+		return err
 	}
 
 	timer := time.NewTimer(wait)
@@ -148,34 +147,6 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 		}
 	}
 	return nil
-}
-
-func (h *RunHandler) startError(err error) error {
-	if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
-		return conflict("session already has an active run: " + busy.RunID)
-	}
-	// A sandbox binding that can never work (unknown id, unhonorable workdir): 400.
-	if invalid, ok := errors.AsType[bridge.ErrInvalidBinding](err); ok {
-		return badRequest(invalid.Error())
-	}
-	// The bind kept losing its race against config edits: transient, retry.
-	if errors.Is(err, bridge.ErrBindingContention) {
-		return conflict(err.Error())
-	}
-	// The session is at its live-task cap: 409.
-	if limit, ok := errors.AsType[bridge.ErrTaskLimit](err); ok {
-		return conflict(limit.Error())
-	}
-	// The session's delete cascade is in progress: 409.
-	if deleting, ok := errors.AsType[bridge.ErrSessionDeleting](err); ok {
-		return conflict(deleting.Error())
-	}
-	// The server is draining: 503, retry against the next process.
-	if down, ok := errors.AsType[bridge.ErrShuttingDown](err); ok {
-		return unavailable(down.Error())
-	}
-	// StartRun's session lookup: unknown session 404, other DB errors 500.
-	return err
 }
 
 // Get reports the current status of the run identified by the id path parameter.
@@ -209,9 +180,6 @@ func (h *RunHandler) Get(c *gin.Context) error {
 //	@Security		BearerAuth
 //	@Router			/runs/{id}/cancel [post]
 func (h *RunHandler) Cancel(c *gin.Context) error {
-	if _, ok := h.runner.Hub().Info(c.Param("id")); !ok {
-		return errNotFound
-	}
 	if c.Query("mode") == "graceful" {
 		h.runner.StopRunAfterTurn(c.Param("id"))
 	} else {

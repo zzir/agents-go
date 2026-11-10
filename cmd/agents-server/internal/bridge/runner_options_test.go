@@ -18,14 +18,16 @@ import (
 // This pins that every configured policy actually lands in the options.
 func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 	built := &BuildResult{
-		Behavior: store.BehaviorGroup{
-			MaxTurns:             7,
-			MaxToolConcurrency:   3,
-			HandoffInputFilter:   "nest_history",
-			ToolNotFoundBehavior: "continue",
+		Config: store.AgentConfig{
+			Behavior: store.BehaviorGroup{
+				MaxTurns:             7,
+				MaxToolConcurrency:   3,
+				HandoffInputFilter:   "nest_history",
+				ToolNotFoundBehavior: "continue",
+				StopAtTools:          "final_answer",
+			},
+			Session: store.SessionGroup{HistoryLimit: 25},
 		},
-		Session:       store.SessionGroup{HistoryLimit: 25},
-		StopAtTools:   []string{"final_answer"},
 		RunGuardrails: []agents.Guardrail{{Name: "g1"}},
 	}
 	opts := runOptionsFor(built, nil, nil, nil, "trust-ctx", nil, agents.ContextBudget{})
@@ -56,7 +58,7 @@ func TestRunOptionsForCarriesEveryPolicy(t *testing.T) {
 	}
 
 	// Without nest_history the filter stays nil — the SDK default.
-	built.Behavior.HandoffInputFilter = ""
+	built.Config.Behavior.HandoffInputFilter = ""
 	if got := runOptionsFor(built, nil, nil, nil, "", nil, agents.ContextBudget{}); got.Exec.HandoffInputFilter != nil {
 		t.Fatal("empty HandoffInputFilter must leave the SDK default")
 	}
@@ -72,7 +74,7 @@ func TestUnknownToolReturnsToTheModelByDefault(t *testing.T) {
 	if got := runOptionsFor(built, nil, nil, nil, "", nil, agents.ContextBudget{}); got.Exec.ToolNotFoundBehavior != agents.ToolNotFoundReturnToModel {
 		t.Fatalf("unset behavior = %v, want return-to-model", got.Exec.ToolNotFoundBehavior)
 	}
-	built.Behavior.ToolNotFoundBehavior = "error"
+	built.Config.Behavior.ToolNotFoundBehavior = "error"
 	if got := runOptionsFor(built, nil, nil, nil, "", nil, agents.ContextBudget{}); got.Exec.ToolNotFoundBehavior != agents.ToolNotFoundError {
 		t.Fatalf("explicit error = %v, want the abort", got.Exec.ToolNotFoundBehavior)
 	}
@@ -130,7 +132,7 @@ func TestRunOptionsForCarriesTheContextBudget(t *testing.T) {
 		t.Fatal("a declared window must install the budget notice")
 	}
 	// No window: the store is not consulted at all.
-	if b := contextBudget(context.Background(), &BuildResult{}, nil, session.Ref{}); b.Window != 0 || b.Occupied != 0 || b.WindowFor != nil {
+	if b := contextBudget(context.Background(), &BuildResult{}, nil); b.Window != 0 || b.Occupied != 0 || b.WindowFor != nil {
 		t.Fatalf("no window must yield the zero budget, got %+v", b)
 	}
 }
@@ -172,7 +174,7 @@ func TestContextBudgetReadsTheLastMeasuredCall(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got := contextBudget(ctx, &BuildResult{ContextWindow: 8000}, sa, ref)
+	got := contextBudget(ctx, &BuildResult{Config: store.AgentConfig{ContextWindow: 8000}}, sa)
 	if got.Window != 8000 || got.Occupied != 2700 {
 		t.Fatalf("contextBudget = %+v, want window 8000 and 2700 occupied", got)
 	}
@@ -182,10 +184,10 @@ func TestContextBudgetReadsTheLastMeasuredCall(t *testing.T) {
 // build reached is in ContextWindows, and an unknown name falls back to the
 // entry's Window.
 func TestContextBudgetKnowsEveryBuiltAgentsWindow(t *testing.T) {
-	built := &BuildResult{ContextWindow: 8000, ContextWindows: map[string]int{"entry": 8000, "specialist": 2000}}
+	built := &BuildResult{Config: store.AgentConfig{ContextWindow: 8000}, ContextWindows: map[string]int{"entry": 8000, "specialist": 2000}}
 	db := testdb.New(t)
 	ref := session.Direct(store.NewID())
-	b := contextBudget(context.Background(), built, store.NewEntryStoreFor(db, ref), ref)
+	b := contextBudget(context.Background(), built, store.NewEntryStoreFor(db, ref))
 	if b.Window != 8000 || b.WindowFor == nil {
 		t.Fatalf("budget = %+v", b)
 	}

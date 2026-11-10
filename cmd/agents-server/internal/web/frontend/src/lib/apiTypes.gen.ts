@@ -4118,177 +4118,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sandboxes/{id}/containers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List the sandbox's managed containers */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Sandbox id */
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["docker.ManagedContainer"][];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Bad Gateway */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sandboxes/{id}/containers/{name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Remove a managed container (rebuild) */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Sandbox id */
-                    id: string;
-                    /** @description Container name (agents-…) */
-                    name: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description removed */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Bad Gateway */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/sandboxes/{id}/containers/{name}/stop": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Stop a managed container */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    /** @description Sandbox id */
-                    id: string;
-                    /** @description Container name (agents-…) */
-                    name: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description stopped */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-                /** @description Bad Gateway */
-                502: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["handler.ErrorResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/sandboxes/{id}/test": {
         parameters: {
             query?: never;
@@ -7244,7 +7073,7 @@ export interface paths {
         put?: never;
         /**
          * Run a workflow (optionally binding the session's workspace first)
-         * @description Starts an execution as a background task of the given session, with the brief in the body (the workflow's session cannot see the conversation, so the brief is what it works from). The result comes back to the session as a notification, like any task's. 400 when the workflow has no runnable steps or an agent is gone, 404 for an unknown workflow or session, 409 when the session is at its background-task cap.
+         * @description Starts an execution as a background task of the given session, with the brief in the body (the workflow's session cannot see the conversation, so the brief is what it works from). The result comes back to the session as a notification, like any task's. 400 when the workflow has no runnable steps or an agent is gone, 404 for an unknown workflow or session, 409 when the session is at its background-task cap or being deleted, 503 while the server shuts down.
          */
         post: {
             parameters: {
@@ -7292,6 +7121,15 @@ export interface paths {
                 };
                 /** @description Conflict */
                 409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["handler.ErrorResponse"];
+                    };
+                };
+                /** @description the server is shutting down */
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -7521,7 +7359,7 @@ export interface paths {
             /** @description Name and environment */
             requestBody: {
                 content: {
-                    "application/json": Record<string, never> | components["schemas"]["handler.workspaceUpdateReq"];
+                    "application/json": Record<string, never> | components["schemas"]["handler.workspaceReq"];
                 };
             };
             responses: {
@@ -8265,15 +8103,6 @@ export interface components {
             task_id?: string;
             tool_call_id?: string;
         };
-        "docker.ManagedContainer": {
-            created?: string;
-            image?: string;
-            name?: string;
-            /** @description running | exited | ... */
-            state?: string;
-            /** @description human-readable, e.g. "Up 2 hours" */
-            status?: string;
-        };
         "guardrails.Def": {
             blocking?: boolean;
             config?: number[];
@@ -8860,13 +8689,9 @@ export interface components {
              */
             env?: components["schemas"]["store.EnvVar"][];
             name: string;
-            /** @description SandboxID is what the workspace runs on — the machine and the image. */
-            sandbox_id: string;
-        };
-        "handler.workspaceUpdateReq": {
-            env?: components["schemas"]["store.EnvVar"][];
-            name: string;
+            /** @description Revision is the revision an update was made against (optional); a create ignores it. */
             revision?: number;
+            /** @description SandboxID is what the workspace runs on — the machine and the image. */
             sandbox_id: string;
         };
         "protocol.APIError": {

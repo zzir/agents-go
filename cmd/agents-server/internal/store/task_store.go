@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/zzir/agents-go/agents/tasks"
 )
 
 // TaskStore persists background task rows — the durable truth for a task's
@@ -50,27 +52,20 @@ func (s *TaskStore) Create(ctx context.Context, t *Task) error {
 
 // Get returns the task with the given id.
 func (s *TaskStore) Get(ctx context.Context, id string) (*Task, error) {
-	t := new(Task)
-	if err := s.db.NewSelect().Model(t).Where("t.id = ?", id).Scan(ctx); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			err = ErrNotFound
-		}
-		return nil, fmt.Errorf("getting task %s: %w", id, err)
-	}
-	return t, nil
+	return getByID[Task](ctx, s.db, "task", id)
 }
 
 // ListByParent returns the tasks spawned from the given chat session, newest
 // first.
 func (s *TaskStore) ListByParent(ctx context.Context, parentSessionID string) ([]Task, error) {
-	var tasks []Task
-	if err := s.db.NewSelect().Model(&tasks).
+	var rows []Task
+	if err := s.db.NewSelect().Model(&rows).
 		Where("parent_session_id = ?", parentSessionID).Where(liveParent).
 		OrderExpr("created_at DESC").
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing tasks for session %s: %w", parentSessionID, err)
 	}
-	return tasks, nil
+	return rows, nil
 }
 
 // TaskWithSession is a task row with the name of the conversation it belongs
@@ -126,14 +121,14 @@ func (s *TaskStore) ListRecent(ctx context.Context, ownerID, kind string, liveOn
 // ListNonTerminalByParent returns the given chat session's still-live tasks,
 // liveParent like every other by-session read (invariant 23).
 func (s *TaskStore) ListNonTerminalByParent(ctx context.Context, parentSessionID string) ([]Task, error) {
-	var tasks []Task
-	if err := s.db.NewSelect().Model(&tasks).
+	var rows []Task
+	if err := s.db.NewSelect().Model(&rows).
 		Where("parent_session_id = ?", parentSessionID).Where(liveParent).
 		Where("status NOT IN " + taskTerminalSet).
 		Scan(ctx); err != nil {
 		return nil, fmt.Errorf("listing live tasks for %s: %w", parentSessionID, err)
 	}
-	return tasks, nil
+	return rows, nil
 }
 
 // Task status values, mirrored from protocol (store cannot import bridge's
@@ -147,12 +142,12 @@ const (
 const taskTerminalSet = "('completed', 'failed', 'cancelled')"
 
 // Finalize is the CAS to a terminal status (on non-terminality AND the
-// attempt named by runID) plus the wake-up debt buildWakeup reads off the row
-// in the SAME tx (nil owes nothing), written only when the CAS won — invariant 32.
-func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, result string, state json.RawMessage, buildWakeup func(*Task) *Wakeup) (bool, error) {
+// attempt named by runID) plus the wake-up debt the task owes its parent in
+// the SAME tx, written only when the CAS won — invariant 32.
+func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, result string, state json.RawMessage) (bool, error) {
 	var won bool
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		row, err := taskRowForWakeup(ctx, tx, id, buildWakeup)
+		row, err := taskRowIn(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -171,9 +166,7 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, re
 		if state != nil {
 			// The wake-up the row owes is built from the row as it stands here.
 			q = q.Set("state = ?", string(state))
-			if row != nil {
-				row.State = state
-			}
+			row.State = state
 		}
 		res, err := q.Exec(ctx)
 		if err != nil {
@@ -184,24 +177,28 @@ func (s *TaskStore) Finalize(ctx context.Context, id, runID, status, summary, re
 		if !won {
 			return casMiss(ctx, tx, id)
 		}
-		if row != nil {
-			if wk := buildWakeup(row); wk != nil {
-				if _, err := tx.NewInsert().Model(wk).Exec(ctx); err != nil {
-					return fmt.Errorf("recording task %s wake-up: %w", id, err)
-				}
-			}
+		if err := oweWakeup(ctx, tx, row, tasks.Status(status), summary, result, runID); err != nil {
+			return fmt.Errorf("recording task %s wake-up: %w", id, err)
 		}
 		return nil
 	})
 	return won, err
 }
 
-// taskRowForWakeup reads the row a debt will be addressed from, inside the
-// caller's tx; nil when no debt is built. A missing row is ErrNotFound.
-func taskRowForWakeup(ctx context.Context, tx bun.Tx, id string, buildWakeup func(*Task) *Wakeup) (*Task, error) {
-	if buildWakeup == nil {
-		return nil, nil
+// oweWakeup records, on the caller's transaction, the wake-up a task ended as
+// st owes its parent; taskWakeup decides whether there is one.
+func oweWakeup(ctx context.Context, tx bun.Tx, row *Task, st tasks.Status, summary, result, attempt string) error {
+	wk := taskWakeup(row, st, summary, result, attempt)
+	if wk == nil {
+		return nil
 	}
+	_, err := tx.NewInsert().Model(wk).Exec(ctx)
+	return err
+}
+
+// taskRowIn reads the row a debt will be addressed from, inside the caller's
+// tx. A missing row is ErrNotFound.
+func taskRowIn(ctx context.Context, tx bun.Tx, id string) (*Task, error) {
 	row := new(Task)
 	if err := tx.NewSelect().Model(row).Where("id = ?", id).Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -320,10 +317,10 @@ func (s *TaskStore) Dismiss(ctx context.Context, id string) (bool, error) {
 // ReleaseRetryClaim undoes a RetryClaim whose run never launched (status,
 // attempt count, the launch failure recorded) and writes a FRESH failure
 // debt in the SAME tx; bound to the claimed run id.
-func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string, buildWakeup func(*Task) *Wakeup) (bool, error) {
+func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (bool, error) {
 	var won bool
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		row, err := taskRowForWakeup(ctx, tx, id, buildWakeup)
+		row, err := taskRowIn(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -346,14 +343,7 @@ func (s *TaskStore) ReleaseRetryClaim(ctx context.Context, id, runID, summary, r
 		if !won {
 			return casMiss(ctx, tx, id)
 		}
-		if row != nil {
-			if wk := buildWakeup(row); wk != nil {
-				if _, err := tx.NewInsert().Model(wk).Exec(ctx); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+		return oweWakeup(ctx, tx, row, tasks.StatusFailed, summary, result, runID)
 	})
 	if err != nil {
 		return false, fmt.Errorf("releasing the retry claim of task %s: %w", id, err)
@@ -400,15 +390,7 @@ func (s *TaskStore) Pause(ctx context.Context, id, runID string, state json.RawM
 			return err
 		}
 		won = true
-		if approval.CreatedAt.IsZero() {
-			approval.CreatedAt = time.Now().UTC()
-		}
-		_, err = tx.NewInsert().Model(approval).
-			On("CONFLICT (run_id) DO UPDATE").
-			Set("state = EXCLUDED.state").
-			Set("tool_calls = EXCLUDED.tool_calls").
-			Exec(ctx)
-		return err
+		return savePendingApproval(ctx, tx, approval)
 	})
 	if err != nil {
 		return false, fmt.Errorf("pausing task %s: %w", id, err)
@@ -553,9 +535,9 @@ func (s *TaskStore) DeleteByID(ctx context.Context, id string) error {
 }
 
 // FailOrphans fails every task left at "working" by a restart and records,
-// in the SAME transaction, the wake-up each owes its parent (buildWakeup; nil
-// owes nothing) — invariant 32. input_required rows keep their pending approval.
-func (s *TaskStore) FailOrphans(ctx context.Context, buildWakeup func(*Task) *Wakeup) ([]Task, error) {
+// in the SAME transaction, the wake-up each owes its parent — invariant 32.
+// input_required rows keep their pending approval.
+func (s *TaskStore) FailOrphans(ctx context.Context) ([]Task, error) {
 	var orphans []Task
 	const summary = "server restarted while the task was running"
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -575,14 +557,10 @@ func (s *TaskStore) FailOrphans(ctx context.Context, buildWakeup func(*Task) *Wa
 			return fmt.Errorf("failing orphaned tasks: %w", err)
 		}
 		for i := range orphans {
-			orphans[i].Status, orphans[i].Summary = "failed", summary
-			if buildWakeup == nil {
-				continue
-			}
-			if wk := buildWakeup(&orphans[i]); wk != nil {
-				if _, err := tx.NewInsert().Model(wk).Exec(ctx); err != nil {
-					return fmt.Errorf("recording orphan %s wake-up: %w", orphans[i].ID, err)
-				}
+			o := &orphans[i]
+			o.Status, o.Summary = "failed", summary
+			if err := oweWakeup(ctx, tx, o, tasks.StatusFailed, o.Summary, o.Result, o.RunID); err != nil {
+				return fmt.Errorf("recording orphan %s wake-up: %w", o.ID, err)
 			}
 		}
 		return nil

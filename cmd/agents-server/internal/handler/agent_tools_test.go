@@ -26,9 +26,9 @@ func TestAgentToolSurfaceCarriesSourceAndReadOnly(t *testing.T) {
 	if err := agents.Create(context.Background(), ac); err != nil {
 		t.Fatal(err)
 	}
-	deps := bridgetest.NewRunner(t, db).Deps
+	runner := bridgetest.NewRunner(t, db)
 	s := server.New(slog.New(slog.DiscardHandler), usersByToken, nil)
-	s.RegisterAPI(Handlers{Agents: testAgentConfigHandler(db), Playground: NewPlaygroundHandler(deps)}.Register)
+	s.RegisterAPI(Handlers{Agents: testAgentConfigHandler(db), Playground: NewPlaygroundHandler(runner)}.Register)
 
 	rec := serve(s.Engine, as(adminUser, http.MethodGet, "/api/v1/agents/"+ac.ID+"/tools", ""))
 	if rec.Code != http.StatusOK {

@@ -248,6 +248,36 @@ func TestReconcileLogsFailedReconnect(t *testing.T) {
 	}
 }
 
+// An OAuth server with no saved token waits for its user: startup must not
+// dial it plainly, which can only fail and log a misleading warning.
+func TestConnectStoredSkipsAnOAuthServerWithNoToken(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	var logs syncBuffer
+	ctx := logging.Into(t.Context(), slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	m := NewManager(ctx)
+
+	cfg := &store.McpServerConfig{
+		ID: store.NewID(), Name: "needs-login", Enabled: true,
+		Config: []byte(`{"endpoint":"` + srv.URL + `","auth_mode":"oauth"}`),
+	}
+	m.connectStored(ctx, cfg, NewOAuthCoordinator(nil), "auto-connect")
+
+	if n := hits.Load(); n != 0 {
+		t.Errorf("the server was dialled %d times, want none before its user authorizes", n)
+	}
+	if got := logs.String(); got != "" {
+		t.Errorf("skipping a server that awaits authorization logged %q", got)
+	}
+	if m.IsConnected(cfg.ID) || m.IsConnecting(cfg.ID) {
+		t.Error("the server must stay disconnected")
+	}
+}
+
 // buildMcpOptions is the single assembly point for an MCP connection's options:
 // it sets the per-server tool-name prefix and maps the stored retry policy.
 func TestBuildMcpOptions(t *testing.T) {

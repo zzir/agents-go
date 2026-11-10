@@ -271,9 +271,10 @@ Besides a final event, the hub tearing the run's subscription down (retention
 passing, a shutdown) closes it, so it never outlives the run. Event payloads
 mirror the WebSocket [server→client events](#server--client).
 
-`POST /runs/:id/inject` queues input on a run that is executing — the REST
-twin of `run.inject`, with the same three queues
-([client→server events](#client--server)). `202` means queued, not read: a
+`POST /runs/:id/inject` queues input on a run that is executing, on one of
+three queues: `steer` changes course inside the current exchange, `next_turn`
+is consumed at the next turn boundary, `follow_up` starts a new exchange once
+this one finishes. `202` means queued, not read: a
 run that ends before its queue is taken drops the input. `409` says why
 nothing was queued: the run is paused for approval (a pause takes no input —
 a new message abandons it, as [Approvals](#approvals--apiv1approvals)
@@ -763,10 +764,6 @@ struct order; a type mismatch on a known field or a malformed host is `400`.
 One decoder answers every question about a config (save-time validation, the
 content comparison, the identity freeze), so they cannot disagree.
 
-The `containers` routes — list, stop, remove by name — are the operator's
-reclaim surface on a daemon, and DOCKER only: a sandbox of another type is
-refused by name (`400`).
-
 Every sandbox can host a web terminal and `exec_command`'s persistent shells
 (spec §2.7k): named shells are scoped to one run, and its teardown closes them
 — an approval pause included, so a resumed run reopens its sessions fresh.
@@ -964,7 +961,6 @@ what those comments cannot.
 | `run.create`    | Start a run in a session; `plan` and `attachment_ids` mean what they do in the REST body, and the workspace named matters only until the session's first workspace-carrying run binds it |
 | `run.subscribe` | (Re)attach to a run's event stream from a cursor; no `from_seq` (or `0`) replays everything retained |
 | `run.cancel`    | Cancel an in-flight run, `graceful` finishing the current turn first; a run paused for approval is abandoned either way ([Approvals](#approvals--apiv1approvals)) |
-| `run.inject`    | Queue input on the live run: `steer` changes course inside the current exchange, `next_turn` is consumed at the next turn boundary, `follow_up` starts a new exchange once this one finishes. REST twin: `POST /runs/:id/inject` |
 | `tool.approve`  | Approve a pending tool call; `scope` widens an `exec_command` approval's trust ([Approvals](#approvals--apiv1approvals)) |
 | `tool.reject`   | Reject a pending tool call, with an optional reason the model reads as the call's result |
 
@@ -981,7 +977,7 @@ what those comments cannot.
 | `run.tool_result`       | A tool's output, with the stored entry's display fields so the live card carries what a reload rebuilds. A multimodal result's `output` is the Responses content list as JSON (SDK spec §2.7b) — the card shows the image and offers the file; anything else is text |
 | `run.handoff`           | Control moved between agents, the config ids riding along for their avatars |
 | `run.compaction`        | Session compaction running at the end of a turn, `started` then `finished` |
-| `run.injected`          | The run read an input queued on it (`run.inject`, `POST /runs/:id/inject`): a user message in the middle of the run, so the turn so far ends and a new one follows; `index` is what a client dedups a hub replay by. A read input stays in the transcript when the run then fails or is stopped |
+| `run.injected`          | The run read an input queued on it (`POST /runs/:id/inject`): a user message in the middle of the run, so the turn so far ends and a new one follows; `index` is what a client dedups a hub replay by. A read input stays in the transcript when the run then fails or is stopped |
 | `run.output`            | The final output |
 | `run.interrupted`       | Paused for tool approval; NOT final: the decision resumes the SAME run id, and its events continue the sequence on the same subscription. Sent only once the pause is durable (the `pending_approvals` row written) — a pause that cannot be recorded ends the run as `run.error` (`persist_error`) instead, so nothing is ever announced as awaiting a decision nobody can make |
 | `run.diagnostic`        | Trouble the run survived; `type` is an open vocabulary, so show unknown kinds generically |
@@ -1023,7 +1019,7 @@ not know renders as a generic error.
 |---|---|---|
 | `session_busy` | workbench | The session already has a live run (precedes `run.started`, carries `session_id`) |
 | `session_not_found` | workbench | No such session, or not the caller's (precedes `run.started`) |
-| `run_not_found` | workbench | A `run.subscribe`, `run.cancel` or `run.inject` named a run the hub does not hold |
+| `run_not_found` | workbench | A `run.subscribe` or `run.cancel` named a run the hub does not hold |
 | `approval_failed` | workbench | A `tool.approve` / `tool.reject` could not resume the run |
 | `config_error` | workbench | The agent could not be built from its configuration (a missing provider, an unresolvable guardrail, a `vision` mismatch) |
 | `persist_error` | workbench | The turn or the pause could not be written to the session |

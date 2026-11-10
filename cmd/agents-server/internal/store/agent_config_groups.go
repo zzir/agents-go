@@ -211,13 +211,13 @@ func (l StringList) Value() (driver.Value, error) {
 	if l == nil {
 		return "", nil
 	}
-	return jsonGroupValue(l)
+	return jsonColumnValue(l)
 }
 
 // Scan implements sql.Scanner.
 func (l *StringList) Scan(src any) error {
 	*l = nil
-	return jsonGroupScan(l, src)
+	return jsonColumnScan(l, src)
 }
 
 // CompactionGroup holds server-side session-compaction settings.
@@ -257,9 +257,9 @@ type MemoryGroup struct {
 	HistoryTools bool `json:"history_tools,omitempty"`
 }
 
-// jsonGroupValue / jsonGroupScan back the driver.Valuer / sql.Scanner
-// implementations below, so each group struct round-trips as a JSON text column.
-func jsonGroupValue(v any) (driver.Value, error) {
+// jsonColumnValue / jsonColumnScan back the driver.Valuer / sql.Scanner pairs
+// of the JSON text columns; an empty or NULL column leaves dst untouched.
+func jsonColumnValue(v any) (driver.Value, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
@@ -267,7 +267,7 @@ func jsonGroupValue(v any) (driver.Value, error) {
 	return string(b), nil
 }
 
-func jsonGroupScan(dst, src any) error {
+func jsonColumnScan(dst, src any) error {
 	if src == nil {
 		return nil
 	}
@@ -278,7 +278,7 @@ func jsonGroupScan(dst, src any) error {
 	case string:
 		b = []byte(s)
 	default:
-		return fmt.Errorf("agent config group: cannot scan %T", src)
+		return fmt.Errorf("json column: cannot scan %T into %T", src, dst)
 	}
 	if len(b) == 0 {
 		return nil
@@ -287,43 +287,43 @@ func jsonGroupScan(dst, src any) error {
 }
 
 // Value implements driver.Valuer.
-func (g BehaviorGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
+func (g BehaviorGroup) Value() (driver.Value, error) { return jsonColumnValue(g) }
 
 // Scan implements sql.Scanner.
-func (g *BehaviorGroup) Scan(src any) error { return jsonGroupScan(g, src) }
+func (g *BehaviorGroup) Scan(src any) error { return jsonColumnScan(g, src) }
 
 // Value implements driver.Valuer.
-func (g ResilienceGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
+func (g ResilienceGroup) Value() (driver.Value, error) { return jsonColumnValue(g) }
 
 // Scan implements sql.Scanner.
-func (g *ResilienceGroup) Scan(src any) error { return jsonGroupScan(g, src) }
+func (g *ResilienceGroup) Scan(src any) error { return jsonColumnScan(g, src) }
 
 // Value implements driver.Valuer.
-func (g GuardrailGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
+func (g GuardrailGroup) Value() (driver.Value, error) { return jsonColumnValue(g) }
 
 // Scan implements sql.Scanner.
-func (g *GuardrailGroup) Scan(src any) error { return jsonGroupScan(g, src) }
+func (g *GuardrailGroup) Scan(src any) error { return jsonColumnScan(g, src) }
 
 // Value implements driver.Valuer.
-func (g SessionGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
+func (g SessionGroup) Value() (driver.Value, error) { return jsonColumnValue(g) }
 
 // Scan implements sql.Scanner.
-func (g *SessionGroup) Scan(src any) error { return jsonGroupScan(g, src) }
+func (g *SessionGroup) Scan(src any) error { return jsonColumnScan(g, src) }
 
 // Value implements driver.Valuer.
-func (g ApprovalGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
+func (g ApprovalGroup) Value() (driver.Value, error) { return jsonColumnValue(g) }
 
 // Scan implements sql.Scanner.
-func (g *ApprovalGroup) Scan(src any) error { return jsonGroupScan(g, src) }
+func (g *ApprovalGroup) Scan(src any) error { return jsonColumnScan(g, src) }
 
 // Value implements driver.Valuer.
-func (g CompactionGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
+func (g CompactionGroup) Value() (driver.Value, error) { return jsonColumnValue(g) }
 
 // Value implements driver.Valuer.
-func (g MemoryGroup) Value() (driver.Value, error) { return jsonGroupValue(g) }
+func (g MemoryGroup) Value() (driver.Value, error) { return jsonColumnValue(g) }
 
 // Scan implements sql.Scanner.
-func (g *MemoryGroup) Scan(src any) error { return jsonGroupScan(g, src) }
+func (g *MemoryGroup) Scan(src any) error { return jsonColumnScan(g, src) }
 
 // Scan implements sql.Scanner.
-func (g *CompactionGroup) Scan(src any) error { return jsonGroupScan(g, src) }
+func (g *CompactionGroup) Scan(src any) error { return jsonColumnScan(g, src) }

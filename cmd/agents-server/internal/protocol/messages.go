@@ -6,8 +6,6 @@ package protocol
 import (
 	"encoding/json"
 	"time"
-
-	"github.com/zzir/agents-go/agents/tasks"
 )
 
 // Envelope is the tagged wrapper for every WebSocket message: a type
@@ -25,10 +23,8 @@ const (
 	EventRunCreate    = "run.create"
 	EventRunCancel    = "run.cancel"
 	EventRunSubscribe = "run.subscribe"
-	// EventRunInject delivers input to a live run (queue: the InjectQueue* constants).
-	EventRunInject   = "run.inject"
-	EventToolApprove = "tool.approve"
-	EventToolReject  = "tool.reject"
+	EventToolApprove  = "tool.approve"
+	EventToolReject   = "tool.reject"
 
 	// Server → client
 	EventAuthOK           = "auth.ok"
@@ -49,7 +45,7 @@ const (
 	EventRunInterrupted  = "run.interrupted"
 	EventRunCancelled    = "run.cancelled"
 	EventRunCompaction   = "run.compaction"
-	// EventRunInjected says the run read input queued on it (run.inject).
+	// EventRunInjected says the run read input queued on it (POST /runs/:id/inject).
 	EventRunInjected = "run.injected"
 	// EventRunDiagnostic reports trouble a run survived (retries, a fallback model).
 	EventRunDiagnostic       = "run.diagnostic"
@@ -128,21 +124,13 @@ type RunCancel struct {
 	Mode string `json:"mode,omitempty"`
 }
 
-// The injection queues a RunInject can name: steer changes course inside the
-// running turn, next-turn rides along with the next, follow-up starts a new exchange.
+// The queues an injection can name: steer changes course inside the running
+// turn, next-turn rides along with the next, follow-up starts a new exchange.
 const (
 	InjectQueueSteer    = "steer"
 	InjectQueueNextTurn = "next_turn"
 	InjectQueueFollowUp = "follow_up"
 )
-
-// RunInject is the client request to deliver input to a live run through the
-// named queue.
-type RunInject struct {
-	RunID string `json:"run_id"`
-	Queue string `json:"queue"`
-	Input string `json:"input"`
-}
 
 // RunSubscribe (re)attaches to a run's event stream, replaying after FromSeq
 // (0: everything retained).
@@ -225,10 +213,6 @@ const (
 	TaskFailed        = "failed"
 	TaskCancelled     = "cancelled"
 )
-
-// TaskNotificationPrefix marks the user-input message injected when a
-// background task finishes; aliased from the SDK.
-const TaskNotificationPrefix = tasks.NotificationPrefix
 
 // RunToolProgress is a partial result from a tool still running, keyed by CallID.
 type RunToolProgress struct {

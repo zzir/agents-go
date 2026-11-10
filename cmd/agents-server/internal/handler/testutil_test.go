@@ -91,7 +91,7 @@ func (noopCompactor) CompactSession(context.Context, string) (bool, int, int, er
 // the runner-side seams stubbed; tune adjusts the deps before construction.
 func testSessionDeps(db *bun.DB, tune ...func(*SessionDeps)) SessionDeps {
 	d := SessionDeps{
-		Sessions: store.NewSessionStore(db), Entries: store.NewSharedEntryStore(db), Traces: store.NewTraceStore(db),
+		Sessions: store.NewSessionStore(db), Traces: store.NewTraceStore(db),
 		Agents: store.NewAgentConfigStore(db), Profiles: store.NewContextProfileStore(db),
 		Users:      store.NewUserStore(db),
 		Workspaces: store.NewWorkspaceStore(db), Stopper: noopStopper{}, Compactor: noopCompactor{}, Statuses: noStatuses{},
@@ -110,11 +110,11 @@ func testAgentConfigHandler(db *bun.DB) *AgentConfigHandler {
 }
 
 // testSandboxHandler wires a SandboxHandler over a database, with a terminal
-// registry and retirer over the same stores.
+// registry over the same stores.
 func testSandboxHandler(db *bun.DB, manager *sandboxes.Manager) *SandboxHandler {
 	sbs, workspaces := store.NewSandboxStore(db), store.NewWorkspaceStore(db)
 	terminals := NewTerminalHandler(sbs, workspaces, manager, settings.NewReader(nil))
-	return NewSandboxHandler(sbs, manager, NewRetirer(workspaces, manager, terminals))
+	return NewSandboxHandler(sbs, workspaces, manager, terminals)
 }
 
 // mkSandboxRow persists a docker sandbox and returns its id — what every

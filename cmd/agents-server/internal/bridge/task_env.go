@@ -15,26 +15,23 @@ import (
 // The three answers only this server can give the task manager; the state
 // machine, the wake-up debt and the compare-and-set live in agents/tasks.
 
-// taskResolver answers "what is this agent called" from the agent-config table.
-type taskResolver struct{ r *Runner }
-
-// Resolve implements tasks.AgentResolver: "" is the parent's own config, a
+// resolveTask is the manager's AgentResolver: "" is the parent's own config, a
 // config id or name is that config; an unknown name fails, listing what exists.
-func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
-	cfg, err := t.r.resolveSpawnAgent(ctx, parentSessionID, name)
+func (r *Runner) resolveTask(ctx context.Context, parentSessionID, name string) (tasks.Spec, error) {
+	cfg, err := r.resolveSpawnAgent(ctx, parentSessionID, name)
 	if err != nil {
 		return tasks.Spec{}, err
 	}
 	// Snapshot the SPAWNING run's setup: the wake-up must use the agent the
 	// parent was talking to (invariant 32).
 	var parentAgentConfigID, parentWorkspaceID string
-	if rid, ok := t.r.hub.ActiveRunForSession(parentSessionID); ok {
-		if info, ok := t.r.hub.Info(rid); ok {
+	if rid, ok := r.hub.ActiveRunForSession(parentSessionID); ok {
+		if info, ok := r.hub.Info(rid); ok {
 			parentAgentConfigID, parentWorkspaceID = info.AgentConfigID, info.WorkspaceID
 		}
 	}
 	if parentAgentConfigID == "" {
-		if sess, err := t.r.Deps.Sessions.Get(ctx, parentSessionID); err == nil {
+		if sess, err := r.Deps.Sessions.Get(ctx, parentSessionID); err == nil {
 			parentAgentConfigID = sess.AgentConfigID
 			if parentWorkspaceID == "" {
 				parentWorkspaceID = sess.WorkspaceID
@@ -55,50 +52,44 @@ func (t taskResolver) Resolve(ctx context.Context, parentSessionID, name string)
 	}, nil
 }
 
-// taskLauncher answers "start a run" through the hub.
-type taskLauncher struct{ r *Runner }
-
-// Launch implements tasks.Launcher.
-func (t taskLauncher) Launch(ctx context.Context, req tasks.LaunchRequest) error {
+// launchTask is the manager's Launcher: it starts a run through the hub.
+func (r *Runner) launchTask(ctx context.Context, req tasks.LaunchRequest) error {
 	// A workflow's run is a STEP: agent and first turn come from the execution's state.
 	if req.Kind == store.TaskKindWorkflow {
-		return t.r.launchWorkflowStep(ctx, req)
+		return r.launchWorkflowStep(ctx, req)
 	}
 	// A command's run is the command itself, on no agent — invariant 96.
 	if req.Kind == store.TaskKindCommand {
-		return t.r.launchCommand(ctx, req)
+		return r.launchCommand(ctx, req)
 	}
 	in := store.DecodeInherit(req.Inherit)
 	// The task's own run shares the parent's workspace, and thereby its command-
 	// trust scope; the child's first run CAS-binds its hidden session with it.
-	_, err := t.r.startRunWithID(req.RunID, req.SessionID, in.TaskAgentID, in.WorkspaceID, TextInput(req.Input), "", nil, nil)
+	_, err := r.startRunReserved(req.RunID, req.SessionID, in.TaskAgentID, in.WorkspaceID, TextInput(req.Input), "", nil, nil, nil)
 	return err
 }
-
-// taskStopper answers "cancel this run".
-type taskStopper struct{ r *Runner }
 
 // taskStopSettleTimeout bounds a stop's wait for a finished task run's segment
 // to drain.
 const taskStopSettleTimeout = approvalSettleTimeout
 
-// Stop implements tasks.Stopper. A task paused on an approval has no run to
-// cancel: the approval is discarded and every client told.
-func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tasks.StopOutcome, error) {
+// stopTaskRun is the manager's Stopper. A task paused on an approval has no
+// run to cancel: the approval is discarded and every client told.
+func (r *Runner) stopTaskRun(ctx context.Context, runID string, graceful bool) (tasks.StopOutcome, error) {
 	// A command has no turn to finish: graceful or not, it is killed.
-	if t.r.commands.cancel(runID) {
+	if r.commands.cancel(runID) {
 		return tasks.StopCancelled, nil
 	}
-	info, live := t.r.hub.Info(runID)
+	info, live := r.hub.Info(runID)
 	if live && info.Status == RunRunning {
-		if graceful && t.r.hub.StopAfterTurn(runID) {
+		if graceful && r.hub.StopAfterTurn(runID) {
 			return tasks.StopAfterTurn, nil
 		}
-		t.r.hub.Cancel(runID)
+		r.hub.Cancel(runID)
 		return tasks.StopCancelled, nil
 	}
 	// Not running: paused on an approval, already over, or never started.
-	if err := t.r.Deps.PendingApprovals.Delete(ctx, runID); err != nil && !errors.Is(err, store.ErrNotFound) {
+	if err := r.Deps.PendingApprovals.Delete(ctx, runID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		logging.Ctx(ctx).Warn("discarding pending approval on stop", "error", err, "run_id", runID)
 	}
 	if !live {
@@ -113,10 +104,10 @@ func (t taskStopper) Stop(ctx context.Context, runID string, graceful bool) (tas
 			// This wait fits inside a caller's own bound (a session teardown).
 			deadline = d
 		}
-		t.r.hub.waitDone(runID, deadline)
+		r.hub.waitDone(runID, deadline)
 		return tasks.StopAlreadyFinished, nil
 	}
-	t.r.publishTaskCancelled(runID)
+	r.publishTaskCancelled(runID)
 	return tasks.StopCancelled, nil
 }
 
@@ -129,8 +120,8 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 	}
 	// Never a non-terminal status over a task the store says is terminal
 	// (invariant 23).
-	if !isTerminalTaskStatus(string(t.Status)) {
-		if cur, err := r.Deps.Tasks.Get(ctx, t.ID); err == nil && isTerminalTaskStatus(cur.Status) {
+	if !t.Status.Terminal() {
+		if cur, err := r.Deps.Tasks.Get(ctx, t.ID); err == nil && tasks.Status(cur.Status).Terminal() {
 			return
 		}
 	}
@@ -150,13 +141,12 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 		// timeline can drop a voided earlier attempt's summary.
 		display.Extra["task_summary_attempt"] = t.AttemptNo()
 	}
-	ref, rerr := store.RefFor(ctx, r.db, t.ParentSessionID)
+	entries, rerr := r.Deps.Sessions.OpenEntries(ctx, t.ParentSessionID)
 	if rerr != nil {
 		logging.Ctx(ctx).Warn("recording task display update", "error", rerr, "task_id", t.ID)
 		return
 	}
-	entries := store.NewEntryStoreFor(r.db, ref)
-	if err := entries.AppendCallDisplayUpdate(ctx, ref, t.ToolCallID, display); err != nil {
+	if err := entries.AppendCallDisplayUpdate(ctx, t.ToolCallID, display); err != nil {
 		logging.Ctx(ctx).Warn("recording task display update", "error", err, "task_id", t.ID)
 	}
 }
@@ -165,12 +155,12 @@ func (r *Runner) onTaskUpdate(ctx context.Context, t *tasks.Task) {
 // store outside the manager (the approval reaper's expiry); a task ended while
 // its run sat paused in the hub ends that run too.
 func (r *Runner) AnnounceTask(ctx context.Context, taskID string) {
-	t, err := store.NewTaskAdapter(r.Deps.Tasks).Get(ctx, taskID)
+	t, err := r.taskRows.Get(ctx, taskID)
 	if err != nil {
 		return
 	}
 	r.onTaskUpdate(ctx, t)
-	if isTerminalTaskStatus(string(t.Status)) {
+	if t.Status.Terminal() {
 		if info, ok := r.hub.Info(t.RunID); ok && info.Status == RunInterrupted {
 			r.publishTaskCancelled(t.RunID)
 		}

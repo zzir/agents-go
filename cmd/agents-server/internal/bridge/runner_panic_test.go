@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -38,15 +37,18 @@ func TestLaunchSegmentRecoversPanic(t *testing.T) {
 }
 
 // A panic inside a run segment — the SDK recovers a tool's own panic into a
-// tool error, so this one is the bridge's: the build hook explodes — fails
-// THAT run with a run.error, records the failure on the turn, and frees the
-// session; the process and every other run carry on.
+// tool error, so this one is the bridge's: the build dereferences a missing
+// resolver — fails THAT run with a run.error, records the failure on the turn,
+// and frees the session; the process and every other run carry on.
 func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 	ctx := context.Background()
 	runner, sessions, _, agentConfigs := newTaskTestRunner(t)
 	_, srv := newRecordingModel(t, func(int, []byte) []any { return sayOutput("ok") })
 	pid := testProvider(t, runner.db, "endpoint", "k", srv.URL)
-	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "worker", Model: "gpt-test", ProviderID: pid}
+	ac := &store.AgentConfig{
+		OwnerID: store.LocalUserID, Name: "worker", Model: "gpt-test", ProviderID: pid,
+		Guardrails: store.GuardrailGroup{Guardrails: `["max_input_length"]`},
+	}
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
@@ -54,8 +56,8 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 	if err := sessions.Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
-	spawnTool := runner.Deps.SpawnTool
-	runner.Deps.SpawnTool = func(context.Context, string, *BuildResult) *agents.Tool { panic("build exploded") }
+	resolver := runner.Deps.GuardrailResolver
+	runner.Deps.GuardrailResolver = nil
 
 	var outcome *RunOutcome
 	done := make(chan struct{})
@@ -80,7 +82,7 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the run did not end")
 	}
-	if outcome == nil || outcome.ErrCode != protocol.CodeInternal || !strings.Contains(outcome.ErrMessage, "build exploded") {
+	if outcome == nil || outcome.ErrCode != protocol.CodeInternal || !strings.Contains(outcome.ErrMessage, "nil pointer") {
 		t.Fatalf("outcome = %+v, want an internal failure carrying the panic", outcome)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -98,13 +100,13 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewSharedEntryStore(runner.db).GetEntries(ctx, ref)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var noted bool
 	for _, v := range views {
-		if v.Display != nil && strings.Contains(v.Display.Text, "build exploded") {
+		if v.Display != nil && strings.Contains(v.Display.Text, "nil pointer") {
 			noted = true
 		}
 	}
@@ -112,7 +114,7 @@ func TestRunPanicFailsTheRunWithAnError(t *testing.T) {
 		t.Fatalf("the panic left no annotation on the turn; entries = %+v", views)
 	}
 	// And the session runs again.
-	runner.Deps.SpawnTool = spawnTool
+	runner.Deps.GuardrailResolver = resolver
 	again := make(chan struct{})
 	if _, err := runner.StartRun(sess.ID, ac.ID, "", TextInput("again"), nil, func(*RunOutcome) { close(again) }); err != nil {
 		t.Fatalf("the session must accept a run after the panic: %v", err)

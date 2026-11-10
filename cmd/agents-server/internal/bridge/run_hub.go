@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents"
-	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
@@ -202,10 +201,6 @@ type runRecord struct {
 type RunHub struct {
 	rootCtx context.Context
 
-	// maxTasks resolves the per-parent live-task cap at each register (a live
-	// setting). Read OUTSIDE mu (it hits the DB), compared under mu.
-	maxTasks func() int
-
 	mu        sync.Mutex
 	runs      map[string]*runRecord
 	bySession map[string]string // sessionID -> live run id (only while running)
@@ -219,15 +214,13 @@ type RunHub struct {
 	fenced map[string]bool
 }
 
-// NewRunHub returns a hub scoped to rootCtx and starts its GC loop; NewRunner
-// overrides the built-in cap resolver with the settings-backed one.
+// NewRunHub returns a hub scoped to rootCtx and starts its GC loop.
 func NewRunHub(rootCtx context.Context) *RunHub {
 	if rootCtx == nil {
 		rootCtx = context.Background()
 	}
 	h := &RunHub{
 		rootCtx:   rootCtx,
-		maxTasks:  func() int { return tasks.DefaultMaxConcurrentPerParent },
 		runs:      make(map[string]*runRecord),
 		bySession: make(map[string]string),
 		deleting:  make(map[string]bool),
@@ -302,23 +295,28 @@ func (h *RunHub) SessionDeleting(sessionID string) bool {
 	return h.deleting[sessionID]
 }
 
-// deletingLocked refuses a run whose session — or, for a task run, PARENT
-// session — is being torn down (a failed task's retry). Callers hold h.mu.
-func (h *RunHub) deletingLocked(sessionID string, task *TaskMeta) error {
-	if h.deleting[sessionID] {
+// admitLocked refuses a run on sessionID while the hub drains, while the
+// session — or, for a task run, its PARENT — is being torn down or is fenced
+// for a write, or while a run is live on it. Callers hold h.mu.
+func (h *RunHub) admitLocked(sessionID string, task *TaskMeta) error {
+	if h.draining {
+		return ErrShuttingDown{}
+	}
+	parent := ""
+	if task != nil {
+		parent = task.ParentSessionID
+	}
+	switch {
+	case h.deleting[sessionID]:
 		return ErrSessionDeleting{SessionID: sessionID}
-	}
-	if task != nil && task.ParentSessionID != "" && h.deleting[task.ParentSessionID] {
-		return ErrSessionDeleting{SessionID: task.ParentSessionID}
-	}
-	return nil
-}
-
-// fencedLocked refuses a run whose session, or task parent, is fenced for a
-// write; the run id is empty since no run holds it. Callers hold h.mu.
-func (h *RunHub) fencedLocked(sessionID string, task *TaskMeta) error {
-	if h.fenced[sessionID] || (task != nil && task.ParentSessionID != "" && h.fenced[task.ParentSessionID]) {
+	case parent != "" && h.deleting[parent]:
+		return ErrSessionDeleting{SessionID: parent}
+	case h.fenced[sessionID], parent != "" && h.fenced[parent]:
+		// No run holds a fenced session, so the run id is empty.
 		return ErrSessionBusy{}
+	}
+	if existing, ok := h.bySession[sessionID]; ok {
+		return ErrSessionBusy{RunID: existing}
 	}
 	return nil
 }
@@ -376,38 +374,13 @@ func (e ErrSessionBusy) Error() string {
 	return "session already has an active run: " + e.RunID
 }
 
-// ErrTaskLimit is returned by register when the parent session is at its
-// live-task cap, enforced inside the hub lock (concurrent spawns in one turn).
-type ErrTaskLimit struct{ Limit int }
-
-func (e ErrTaskLimit) Error() string {
-	return fmt.Sprintf("session already has %d live tasks; wait for one to finish or stop one", e.Limit)
-}
-
 // register creates a fresh run on sessionID, returning the caller's segment (finalize
 // it exactly once) and a hub-root context; ErrSessionBusy when a run is already live.
 func (h *RunHub) register(runID, sessionID, ownerID, agentConfigID, workspaceID string, task *TaskMeta) (*runSegment, context.Context, error) {
-	// The cap is resolved before the lock: the resolver reads the DB.
-	var limit int
-	if task != nil {
-		limit = h.maxTasks()
-	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.draining {
-		return nil, nil, ErrShuttingDown{}
-	}
-	if err := h.deletingLocked(sessionID, task); err != nil {
+	if err := h.admitLocked(sessionID, task); err != nil {
 		return nil, nil, err
-	}
-	if err := h.fencedLocked(sessionID, task); err != nil {
-		return nil, nil, err
-	}
-	if existing, ok := h.bySession[sessionID]; ok {
-		return nil, nil, ErrSessionBusy{RunID: existing}
-	}
-	if task != nil && h.liveTaskCountLocked(task.ParentSessionID) >= limit {
-		return nil, nil, ErrTaskLimit{Limit: limit}
 	}
 	ctx, cancel := context.WithCancelCause(h.rootCtx)
 	seg := &runSegment{done: make(chan struct{}), cancel: cancel}
@@ -437,37 +410,13 @@ func (h *RunHub) unregister(runID string, seg *runSegment) {
 	seg.finalize()
 }
 
-// liveTaskCountLocked counts the live (running or input-required) task runs
-// of the given parent session. Callers hold h.mu.
-func (h *RunHub) liveTaskCountLocked(parentSessionID string) int {
-	n := 0
-	for _, rec := range h.runs {
-		rec.mu.Lock()
-		if rec.info.Task != nil && rec.info.Task.ParentSessionID == parentSessionID &&
-			(rec.info.Status == RunRunning || rec.info.Status == RunInterrupted) {
-			n++
-		}
-		rec.mu.Unlock()
-	}
-	return n
-}
-
 // resume reopens an interrupted run under the same id; a record lost to restart or GC
 // is recreated with seq from zero (reopened says which). Finalize seg exactly once.
 func (h *RunHub) resume(runID, sessionID, ownerID, agentConfigID, workspaceID string, task *TaskMeta) (seg *runSegment, ctx context.Context, reopened bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.draining {
-		return nil, nil, false, ErrShuttingDown{}
-	}
-	if err := h.deletingLocked(sessionID, task); err != nil {
+	if err := h.admitLocked(sessionID, task); err != nil {
 		return nil, nil, false, err
-	}
-	if err := h.fencedLocked(sessionID, task); err != nil {
-		return nil, nil, false, err
-	}
-	if existing, ok := h.bySession[sessionID]; ok {
-		return nil, nil, false, ErrSessionBusy{RunID: existing}
 	}
 	ctx, cancel := context.WithCancelCause(h.rootCtx)
 	seg = &runSegment{done: make(chan struct{}), cancel: cancel}
@@ -551,12 +500,17 @@ func (e ErrRunNotResumable) Error() string {
 	return fmt.Sprintf("run %s is %s and cannot be resumed", e.RunID, e.Status)
 }
 
+// record returns the hub's record of runID, nil when it holds none.
+func (h *RunHub) record(runID string) *runRecord {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.runs[runID]
+}
+
 // publish rings env, fans it out, then advances the status under rec.mu (never held
 // during fan-out); false means the hub has no such run. See invariant 23.
 func (h *RunHub) publish(runID string, env *protocol.Envelope) bool {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
+	rec := h.record(runID)
 	if rec == nil {
 		return false
 	}
@@ -587,9 +541,7 @@ func (h *RunHub) Subscribe(runID string, fromSeq int, sink EventSink) (func(), b
 // a channel closed once the stream ends, and whether the run exists. The sink
 // runs on its own goroutine — invariant 14.
 func (h *RunHub) SubscribeSeq(runID string, fromSeq int, sink SeqSink) (func(), <-chan struct{}, bool) {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
+	rec := h.record(runID)
 	if rec == nil {
 		return nil, nil, false
 	}
@@ -664,9 +616,7 @@ func (h *RunHub) finish(runID string, interrupted bool) {
 // with the reason; false when the hub holds no paused run by that id (a racing
 // resume is refused).
 func (h *RunHub) endPaused(runID, reason string) bool {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
+	rec := h.record(runID)
 	if rec == nil {
 		return false
 	}
@@ -687,9 +637,7 @@ func (h *RunHub) endPaused(runID, reason string) bool {
 // waitDone blocks until the run's current segment has fully finished or the
 // deadline passes. Unknown runs (GC'd, restarted away) return immediately.
 func (h *RunHub) waitDone(runID string, deadline time.Time) {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
+	rec := h.record(runID)
 	if rec == nil {
 		return
 	}
@@ -708,9 +656,7 @@ func (h *RunHub) waitDone(runID string, deadline time.Time) {
 // Cancel cancels the run's context, which unwinds the run goroutine. It
 // reports whether a live run with that id existed.
 func (h *RunHub) Cancel(runID string) bool {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
+	rec := h.record(runID)
 	if rec == nil {
 		return false
 	}
@@ -727,9 +673,7 @@ func (h *RunHub) Cancel(runID string) bool {
 // setControl records a live run's control handle (the run goroutine calls this
 // once its run exists).
 func (h *RunHub) setControl(runID string, ctrl runControl) {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
+	rec := h.record(runID)
 	if rec == nil {
 		return
 	}
@@ -740,9 +684,7 @@ func (h *RunHub) setControl(runID string, ctrl runControl) {
 
 // control returns a live run's control handle, or nil.
 func (h *RunHub) control(runID string) runControl {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
+	rec := h.record(runID)
 	if rec == nil {
 		return nil
 	}
@@ -773,9 +715,7 @@ func (h *RunHub) Inject(runID, queue string, input any) (bool, error) {
 // nextInjection numbers an injected input the run just read, from 1; a run
 // the hub does not hold counts nothing.
 func (h *RunHub) nextInjection(runID string) int {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
+	rec := h.record(runID)
 	if rec == nil {
 		return 0
 	}
@@ -810,9 +750,7 @@ func (h *RunHub) StopAfterTurn(runID string) bool {
 
 // Info returns a snapshot of the run's state, or false if unknown/expired.
 func (h *RunHub) Info(runID string) (RunInfo, bool) {
-	h.mu.Lock()
-	rec := h.runs[runID]
-	h.mu.Unlock()
+	rec := h.record(runID)
 	if rec == nil {
 		return RunInfo{}, false
 	}

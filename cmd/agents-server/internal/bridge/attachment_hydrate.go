@@ -17,9 +17,9 @@ import (
 // — invariant 56; the stored form is never rewritten.
 
 // hydrateAttachments wraps provider so every model it yields resolves
-// attachment sentinels before the request leaves; a nil store is a no-op.
+// attachment sentinels before the request leaves.
 func hydrateAttachments(provider agents.ModelProvider, atts *store.AttachmentStore, base func(ctx context.Context) string) agents.ModelProvider {
-	if provider == nil || atts == nil {
+	if provider == nil {
 		return provider
 	}
 	return hydratingProvider{inner: provider, atts: atts, base: base}

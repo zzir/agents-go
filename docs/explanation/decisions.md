@@ -759,7 +759,7 @@ Decided 2026-08-28.
 
 **Decision.** A docker sandbox whose config leaves `memory_mb` or `cpus` at
 `0` gets the workbench's default cap (4096 MiB, 2 CPUs) in
-`sandboxes.applyImage`: agent code runs there, and an uncapped container is a
+`sandboxes.imageOptions`: agent code runs there, and an uncapped container is a
 host-DoS surface that on a shared workbench is everyone's.
 
 **Rejected.** Putting the default in the SDK's `sandbox` package — its
@@ -1245,23 +1245,22 @@ Rules: spec §2.5i
 Decided 2026-09 with `agents/memory` and the rebuilt memories table.
 
 **Decision.** One memories table keyed by (scope_kind, scope_id, gen, key) —
-global, agent and session scopes — with the rules per kind in one Go table
-(`store.MemoryPolicies`); the model writes session memory freely and proposes
-agent memory through the approval gate save_workflow established (§5.58), under
-the agent's edit rule (§5.29).
+global, agent and session scopes — with each kind's API-write rule and limits
+in one Go table (`store.MemoryPolicies`); the model writes session memory
+freely and proposes agent memory through the approval gate save_workflow
+established (§5.58), under the agent's edit rule (§5.29).
 
 **Rejected.** A separate session_notes table: two concepts for one kind of
 thing, a promotion from session to agent scope crossing tables, and a second
 tool family later. Notes as custom session entries: the compaction pass would
 fold them and the timeline read would carry them. Notes as sandbox files: a
 sandbox retires on a content change, and not every session has one. Model
-writes to global memory: they reach every user's every agent; the policy
-table has the row for it when wanted.
+writes to global memory: they reach every user's every agent.
 
 **Cost accepted.** The memories API is breaking (`scope_kind` and `scope_id`
 replace `agent_config_id`) and the table is rebuilt. One table carries three
 lifecycles — a session's rows following its fork and delete, an agent's its
-delete, global's the database's — and the policy table is what keeps them apart.
+delete, global's the database's.
 
 Rules: spec §2.5i; workbench invariant 64.
 
@@ -2141,19 +2140,26 @@ Decided 2026-11-10.
 
 **Decision.** Every REST handler in `cmd/agents-server` is
 `func(*gin.Context) error` behind `wrap`, and a helper that can refuse returns
-the error. `classify` maps the store's sentinels to a status once; a handler
-that knows a better answer returns it as an `apiError`.
+the error. `classify` maps once what any route can meet: the store's
+sentinels, and the bridge's refusals to start or resume work on a session
+(busy, being deleted, at its task cap, a binding that cannot work or lost its
+race, a draining server). A handler that knows a better answer returns it as
+an `apiError`.
 
 **Rejected.** Helpers that write the response and return `false`, with an
 error mapper per handler file — the mappings had drifted: one malformed id was
 404, 400 or 500 by route, and an owner that moved was 409 on one delete and
 500 on another. Replacing gin with `net/http` in the same change — dependency
 hygiene, not the cause of the drift, and a framework swap would have hidden a
-status change inside it.
+status change inside it. A lifecycle mapper beside each handler that starts
+work — the sets drifted the same way: a workflow run answered 500 for the
+session being deleted and the server draining, where a trigger firing the
+same workflow answered 409 and 503.
 
 **Cost accepted.** A store sentinel reaching a handler that used to force 500
-is now answered by the table: a 404 or 409 where a 500 was. The mappers for
-bridge and task errors stay beside their handlers.
+is now answered by the table: a 404 or 409 where a 500 was. Errors one
+operation owns (a stale or void approval, a task that cannot be retried, a
+disabled trigger, an unavailable workflow) are still mapped beside its handler.
 
 Rules: workbench invariant 100.
 
@@ -2296,7 +2302,9 @@ Decided 2026-11-10.
 
 **Decision.** `bridge.NewRunner` returns an error for an `AgentDeps` missing
 any dependency the composition root injects, and the bridge stops nil-checking
-them. Tests build the complete set over the test database (`testRunner`,
+them. The stores arrive as one `store.Stores`; the tools a build attaches are
+the Runner's own methods, so the build (`BuildFullAgent`) is one too. Tests
+build the complete set over the test database (`testRunner`,
 `bridgetest.NewRunner`) instead of a partial one.
 
 **Rejected.** A nil check at each use, so that a test may inject three stores —
@@ -2305,11 +2313,16 @@ each check's fallback was a second behavior production never ran, and one
 composition root calls beside the constructor — a second caller could forget
 it. A panic in the constructor, as `providers.NewChatGPTOAuth` does — `run`
 already returns startup errors, and an error names every missing field at once.
+Sixteen store handles listed one by one — each wraps the same database, and
+the list was copied by hand in three places. Runner-bound callbacks written
+into the caller's set by `NewRunner` — they existed so a free function could
+build an agent, and gave it the precondition "a set a Runner was built on".
 
 **Cost accepted.** Every bridge test runs with every store and both connection
 managers wired, so a built agent carries the task tools whether or not the test
-is about them. The complete set is written twice: the bridge's own tests cannot
-import `bridgetest`.
+is about them. The six non-store dependencies are written twice: the bridge's
+own tests cannot import `bridgetest`. The stores are checked as one field: a
+`store.Stores` built by hand with a store missing is not caught.
 
 Rules: workbench invariant 104.
 
@@ -2492,3 +2505,45 @@ transport (the module already requires it); a static allow-list is a
 three-line `ToolFilter`.
 
 Rules: [MCP](../howto/mcp.md#connecting-a-server).
+
+### 5.117 An entry store is bound to one session
+
+Decided 2026-11-10.
+
+**Decision.** `store.EntryStore` always addresses one `session.Ref`: its
+methods take no ref, a fork is the source store's `ForkSession`, and a caller
+holding only an id opens the store with `SessionStore.OpenEntries`.
+
+**Rejected.** A shared handle beside the bound one (`NewSharedEntryStore`) —
+sixteen methods took a ref and ignored the receiver's, so a bound store could
+be handed another session's ref and nothing said which one a call meant; nine
+call sites passed the same ref twice. Resolving the generation inside each
+method from a bare id — a second read of a row the caller usually holds, with
+a delete-and-recreate between the two answering for the wrong session.
+
+**Cost accepted.** A handler opens a store per request instead of holding
+one; a read across sessions (`EndedInError`) lives on `SessionStore`.
+
+Rules: workbench invariant 106.
+
+### 5.118 The per-parent task cap has one gate
+
+Decided 2026-11-10.
+
+**Decision.** `max_tasks_per_session` is enforced by the SDK task manager
+alone, at spawn and at retry, counting the parent's non-terminal task rows
+under its spawn lock. The run hub admits a task's run without counting.
+
+**Rejected.** A second count in `RunHub.register`, over the hub's live task
+runs — it predates the manager's per-parent lock, which already makes "count,
+then create" one decision for concurrent spawns in a turn. It also applied to
+every run of a task: a workflow's next step was refused, and the execution
+failed, when the cap was lowered under it. Its own error type
+(`bridge.ErrTaskLimit`) needed a mapping in three handlers beside
+`tasks.ErrTaskLimit`.
+
+**Cost accepted.** A stopped task's row is terminal before its run has
+unwound, so for that moment a parent has one more run in the hub than the cap
+allows. The spawn lock is this process's (scope, Roadmap: multiple instances).
+
+Rules: workbench invariant 107; spec §2.13.

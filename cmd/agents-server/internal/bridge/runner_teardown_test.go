@@ -64,7 +64,7 @@ func TestSegmentPanicStillRunsTeardown(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A debt with no agent config is cancelled by the drain: proof postRun ran.
-	if err := runner.Deps.Wakeups.Owe(ctx, &store.Wakeup{SessionID: sess.ID, Kind: store.WakeKindTask, Payload: "p"}); err != nil {
+	if _, err := runner.db.NewInsert().Model(&store.Wakeup{SessionID: sess.ID, Kind: store.WakeKindTask, Payload: "p"}).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	runID := store.NewID()
@@ -81,7 +81,7 @@ func TestSegmentPanicStillRunsTeardown(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("onDone never fired after the panic")
 	}
-	if out.ErrCode != protocol.CodeInternal || out.RunID != runID || out.AgentConfigID != "agent" || out.WorkspaceID != "ws" {
+	if out.ErrCode != protocol.CodeInternal || out.RunID != runID || out.SessionID != sess.ID {
 		t.Fatalf("onDone got %+v, want an internal failure carrying the run's identity", out)
 	}
 	runner.hub.waitDone(runID, time.Now().Add(5*time.Second))

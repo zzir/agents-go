@@ -13,55 +13,39 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
-	dockersb "github.com/zzir/agents-go/sandbox/docker"
 )
 
-// SandboxHandler serves CRUD endpoints, the health check and the docker
-// operator surface for sandboxes (decisions §5.36).
+// SandboxHandler serves CRUD endpoints and the health check for sandboxes
+// (decisions §5.36).
 type SandboxHandler struct {
 	store   *store.SandboxStore
 	manager *sandboxes.Manager
-	retire  *Retirer
-}
-
-// NewSandboxHandler returns a handler over the sandbox store; the manager runs
-// the health check, and the retirer carries a content change to the workspaces.
-func NewSandboxHandler(s *store.SandboxStore, m *sandboxes.Manager, r *Retirer) *SandboxHandler {
-	if s == nil || m == nil || r == nil {
-		panic("handler: NewSandboxHandler needs the sandbox store, the manager and a retirer")
-	}
-	return &SandboxHandler{store: s, manager: m, retire: r}
-}
-
-// Retirer turns a content change on a sandbox into the workspace generations it
-// invalidates, then retires each workspace's live instance and terminals
-// (decisions §5.33).
-type Retirer struct {
+	// workspaces and terminals are what a content change retires (bump).
 	workspaces *store.WorkspaceStore
-	manager    *sandboxes.Manager
 	terminals  *TerminalHandler
 }
 
-// NewRetirer wires the things a retirement touches.
-func NewRetirer(workspaces *store.WorkspaceStore, m *sandboxes.Manager, terminals *TerminalHandler) *Retirer {
-	if workspaces == nil || terminals == nil {
-		panic("handler: NewRetirer needs the workspace store and the terminal handler")
+// NewSandboxHandler returns a handler over the sandbox store; the manager runs
+// the health check, and a content change retires the workspaces' instances and
+// terminals.
+func NewSandboxHandler(s *store.SandboxStore, workspaces *store.WorkspaceStore, m *sandboxes.Manager, terminals *TerminalHandler) *SandboxHandler {
+	if s == nil || workspaces == nil || m == nil || terminals == nil {
+		panic("handler: NewSandboxHandler needs the stores, the manager and the terminal handler")
 	}
-	return &Retirer{workspaces: workspaces, manager: m, terminals: terminals}
+	return &SandboxHandler{store: s, manager: m, workspaces: workspaces, terminals: terminals}
 }
 
 // bump moves the runtime generation of every workspace on the sandbox and
-// retires what each was serving. A failure answers 500: the row is already written.
-func (r *Retirer) bump(ctx context.Context, sandboxID string) error {
-	gens, err := r.workspaces.BumpRuntimeGen(ctx, sandboxID)
+// retires what each was serving (decisions §5.33). A failure answers 500: the
+// row is already written.
+func (h *SandboxHandler) bump(ctx context.Context, sandboxID string) error {
+	gens, err := h.workspaces.BumpRuntimeGen(ctx, sandboxID)
 	if err != nil {
 		return err
 	}
 	for _, g := range gens {
-		if r.manager != nil {
-			r.manager.RetireWorkspace(g.ID, g.RuntimeGen)
-		}
-		r.terminals.CloseWorkspaceTerminals(g.ID, g.RuntimeGen)
+		h.manager.RetireWorkspace(g.ID, g.RuntimeGen)
+		h.terminals.CloseWorkspaceTerminals(g.ID, g.RuntimeGen)
 	}
 	return nil
 }
@@ -251,7 +235,7 @@ func (h *SandboxHandler) Update(c *gin.Context) error {
 	// change retires.
 	if contentChanged {
 		// WithoutCancel: a disconnect must not skip the generation bump.
-		if err := h.retire.bump(context.WithoutCancel(ctx), id); err != nil {
+		if err := h.bump(context.WithoutCancel(ctx), id); err != nil {
 			return err
 		}
 	}
@@ -315,111 +299,6 @@ func (h *SandboxHandler) Test(c *gin.Context) error {
 		return upstream(err.Error())
 	}
 	c.JSON(http.StatusOK, sandboxTestResp{OK: true})
-	return nil
-}
-
-// Containers lists this package's containers on the sandbox's daemon —
-// running and stopped, foreign containers never included.
-//
-//	@Summary	List the sandbox's managed containers
-//	@Tags		sandboxes
-//	@Produce	json
-//	@Param		id	path		string	true	"Sandbox id"
-//	@Success	200	{array}		dockersb.ManagedContainer
-//	@Failure	404	{object}	ErrorResponse
-//	@Failure	502	{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/sandboxes/{id}/containers [get]
-func (h *SandboxHandler) Containers(c *gin.Context) error {
-	opts, err := h.daemon(c)
-	if err != nil {
-		return err
-	}
-	out, err := dockersb.ListManaged(c.Request.Context(), opts)
-	if err != nil {
-		return upstream(err.Error())
-	}
-	if out == nil {
-		out = []dockersb.ManagedContainer{}
-	}
-	c.JSON(http.StatusOK, out)
-	return nil
-}
-
-// daemon resolves the sandbox named by the id path parameter into its DOCKER
-// connection options; a sandbox of another type is refused by name.
-func (h *SandboxHandler) daemon(c *gin.Context) (dockersb.Options, error) {
-	sb, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		return dockersb.Options{}, err
-	}
-	opts, err := sandboxes.DaemonOptions(sb)
-	if err != nil {
-		return dockersb.Options{}, badRequest(err.Error())
-	}
-	return opts, nil
-}
-
-// containerAct resolves the daemon and the (prefix-checked) container name for
-// the stop/remove endpoints.
-func (h *SandboxHandler) containerAct(c *gin.Context) (dockersb.Options, string, error) {
-	opts, err := h.daemon(c)
-	if err != nil {
-		return dockersb.Options{}, "", err
-	}
-	name := c.Param("name")
-	// The SDK re-verifies ownership by label; the prefix check just refuses
-	// obviously-foreign names before a daemon round-trip.
-	if !strings.HasPrefix(name, dockersb.ManagedNamePrefix) {
-		return dockersb.Options{}, "", badRequest("not a managed container name")
-	}
-	return opts, name, nil
-}
-
-// StopContainer stops one managed container; the next run starts it again.
-//
-//	@Summary	Stop a managed container
-//	@Tags		sandboxes
-//	@Param		id		path	string	true	"Sandbox id"
-//	@Param		name	path	string	true	"Container name (agents-…)"
-//	@Success	204		"stopped"
-//	@Failure	400		{object}	ErrorResponse
-//	@Failure	502		{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/sandboxes/{id}/containers/{name}/stop [post]
-func (h *SandboxHandler) StopContainer(c *gin.Context) error {
-	opts, name, err := h.containerAct(c)
-	if err != nil {
-		return err
-	}
-	if err := dockersb.StopManaged(c.Request.Context(), opts, name); err != nil {
-		return upstream(err.Error())
-	}
-	c.Status(http.StatusNoContent)
-	return nil
-}
-
-// RemoveContainer force-removes one managed container; the volume survives
-// and the next run recreates the container.
-//
-//	@Summary	Remove a managed container (rebuild)
-//	@Tags		sandboxes
-//	@Param		id		path	string	true	"Sandbox id"
-//	@Param		name	path	string	true	"Container name (agents-…)"
-//	@Success	204		"removed"
-//	@Failure	400		{object}	ErrorResponse
-//	@Failure	502		{object}	ErrorResponse
-//	@Security	BearerAuth
-//	@Router		/sandboxes/{id}/containers/{name} [delete]
-func (h *SandboxHandler) RemoveContainer(c *gin.Context) error {
-	opts, name, err := h.containerAct(c)
-	if err != nil {
-		return err
-	}
-	if err := dockersb.RemoveManaged(c.Request.Context(), opts, name); err != nil {
-		return upstream(err.Error())
-	}
-	c.Status(http.StatusNoContent)
 	return nil
 }
 

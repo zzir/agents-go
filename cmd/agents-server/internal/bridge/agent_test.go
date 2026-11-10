@@ -36,14 +36,14 @@ func TestBuildFullAgentIgnoresLegacyUsePreviousResponseID(t *testing.T) {
 		t.Fatalf("plant legacy session JSON: %v", err)
 	}
 
-	deps := testRunner(ctx, t, db).Deps
-	built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
+	runner := testRunner(ctx, t, db)
+	built, err := runner.BuildFullAgent(ctx, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("a legacy row with the stale key must build: %v", err)
 	}
 	// The keys that survived the removal still decode.
-	if built.Session.HistoryLimit != 5 {
-		t.Errorf("history_limit = %d, want 5 — the rest of the session group must still load", built.Session.HistoryLimit)
+	if built.Config.Session.HistoryLimit != 5 {
+		t.Errorf("history_limit = %d, want 5 — the rest of the session group must still load", built.Config.Session.HistoryLimit)
 	}
 }
 
@@ -58,9 +58,9 @@ func TestBackgroundBuildIsToldNobodyIsReading(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 	instructionsOf := func(background bool) string {
-		built, err := buildFullAgent(ctx, deps, ac.ID, "", background, "")
+		built, err := runner.buildFullAgent(ctx, ac.ID, "", background, "")
 		if err != nil {
 			t.Fatalf("build (background=%v): %v", background, err)
 		}
@@ -96,8 +96,8 @@ func TestBuildFullAgentAppliesWorkflowModes(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatalf("create agent config: %v", err)
 	}
-	deps := testRunner(ctx, t, db).Deps
-	built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
+	runner := testRunner(ctx, t, db)
+	built, err := runner.BuildFullAgent(ctx, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -153,7 +153,8 @@ func TestBuildFullAgentOverridesSystemPrompt(t *testing.T) {
 	if err := settingStore.Set(ctx, settings.KeySystemPrompt, "Global rules."); err != nil {
 		t.Fatal(err)
 	}
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
+	deps := runner.Deps
 	resolve := func(a *agents.Agent) string {
 		t.Helper()
 		if a.Instructions == nil {
@@ -194,7 +195,7 @@ func TestBuildFullAgentOverridesSystemPrompt(t *testing.T) {
 		if err := agentConfigs.Create(ctx, ac); err != nil {
 			t.Fatal(err)
 		}
-		built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
+		built, err := runner.BuildFullAgent(ctx, ac.ID, "", store.LocalUserID)
 		if err != nil {
 			t.Fatalf("build %q: %v", ac.Name, err)
 		}
@@ -223,10 +224,10 @@ func TestChecklistIsOptIn(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	agentConfigs := store.NewAgentConfigStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 	has := func(ac *store.AgentConfig, background bool) (bool, *BuildResult) {
 		t.Helper()
-		built, err := buildFullAgent(ctx, deps, ac.ID, "", background, "")
+		built, err := runner.buildFullAgent(ctx, ac.ID, "", background, "")
 		if err != nil {
 			t.Fatalf("build %q (background=%v): %v", ac.Name, background, err)
 		}
@@ -277,7 +278,7 @@ func TestChecklistIsRefusedWhilePlanning(t *testing.T) {
 	if err := agentConfigs.Create(ctx, ac); err != nil {
 		t.Fatal(err)
 	}
-	built, err := BuildFullAgent(ctx, testRunner(ctx, t, db).Deps, ac.ID, "", store.LocalUserID)
+	built, err := testRunner(ctx, t, db).BuildFullAgent(ctx, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatal(err)
 	}

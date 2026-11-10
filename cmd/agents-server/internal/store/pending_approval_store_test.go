@@ -49,7 +49,7 @@ func TestPendingApprovalRoundTrip(t *testing.T) {
 	if err := s.Save(ctx, p); err != nil {
 		t.Fatalf("re-save: %v", err)
 	}
-	all, _ := s.List(ctx)
+	all, _ := s.list(ctx)
 	if len(all) != 1 {
 		t.Fatalf("upsert produced %d rows, want 1", len(all))
 	}
@@ -111,7 +111,7 @@ func TestPendingApprovalReap(t *testing.T) {
 	if len(expired) != 1 || expired[0].RunID != id("old") {
 		t.Fatalf("expired = %+v, want the old one only", expired)
 	}
-	if all, _ := s.List(ctx); len(all) != 2 {
+	if all, _ := s.list(ctx); len(all) != 2 {
 		t.Fatalf("listing must not remove anything: %d rows", len(all))
 	}
 }
@@ -131,7 +131,7 @@ func TestClaimApprovalCancelledIsOneWriteAndExclusive(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A pending debt of this attempt goes with the cancellation.
-	if err := NewWakeupStore(db).Owe(ctx, &Wakeup{SessionID: id("p"), Kind: WakeKindTask, SourceID: row.ID, Attempt: row.RunID, Payload: "x"}); err != nil {
+	if _, err := db.NewInsert().Model(&Wakeup{SessionID: id("p"), Kind: WakeKindTask, SourceID: row.ID, Attempt: row.RunID, Payload: "x"}).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	type result struct{ claimed, ended bool }

@@ -30,7 +30,6 @@ type Handlers struct {
 	Workspaces *WorkspaceHandler
 	Traces     *TraceHandler
 	Playground *PlaygroundHandler
-	ChatGPT    *ChatGPTOAuthHandler
 	Files      *AttachmentHandler
 	// Server is the start-up configuration, served as read-only facts.
 	Server ServerInfo
@@ -199,9 +198,9 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		providers.POST("/:id/test", wrap(h.Providers.Test))
 		providers.PUT("/:id/owner", admin, wrap(h.Providers.SetOwner))
 		// The ChatGPT login is the provider's, gated in the handler (editable).
-		providers.POST("/:id/chatgpt/login", wrap(h.ChatGPT.Login))
-		providers.POST("/:id/chatgpt/complete", wrap(h.ChatGPT.Complete))
-		providers.POST("/:id/chatgpt/logout", wrap(h.ChatGPT.Logout))
+		providers.POST("/:id/chatgpt/login", wrap(h.Providers.ChatGPTLogin))
+		providers.POST("/:id/chatgpt/complete", wrap(h.Providers.ChatGPTComplete))
+		providers.POST("/:id/chatgpt/logout", wrap(h.Providers.ChatGPTLogout))
 	}
 	{
 		workflows := api.Group("/workflows")
@@ -249,9 +248,6 @@ func (h Handlers) Register(api *gin.RouterGroup) {
 		sbs.PUT("/:id", admin, wrap(h.Sandboxes.Update))
 		sbs.DELETE("/:id", admin, wrap(h.Sandboxes.Delete))
 		sbs.POST("/:id/test", admin, wrap(h.Sandboxes.Test))
-		sbs.GET("/:id/containers", admin, wrap(h.Sandboxes.Containers))
-		sbs.POST("/:id/containers/:name/stop", admin, wrap(h.Sandboxes.StopContainer))
-		sbs.DELETE("/:id/containers/:name", admin, wrap(h.Sandboxes.RemoveContainer))
 	}
 	api.POST("/playground/generate", wrap(h.Playground.Generate))
 

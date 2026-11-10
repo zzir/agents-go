@@ -79,14 +79,14 @@ func (r *Runner) RunWorkflow(ctx context.Context, workflowID, sessionID, input s
 		return nil, err
 	}
 	// Best effort, after the start: the note names the task.
-	if ref, rerr := store.RefFor(ctx, r.db, sessionID); rerr == nil {
+	if entries, rerr := r.Deps.Sessions.OpenEntries(ctx, sessionID); rerr == nil {
 		wf, _ := r.Deps.Workflows.Get(ctx, workflowID)
 		name := workflowID
 		if wf != nil {
 			name = wf.Name
 		}
 		note := store.WorkflowStarted{TaskID: info.TaskID, WorkflowID: workflowID, WorkflowName: name, Brief: input, Origin: origin}
-		if aerr := store.NewEntryStoreFor(r.db, ref).AppendWorkflowStarted(ctx, ref, note); aerr != nil {
+		if aerr := entries.AppendWorkflowStarted(ctx, note); aerr != nil {
 			logging.Ctx(ctx).Warn("recording the workflow-started note", "error", aerr, "task_id", info.TaskID)
 		}
 		// A conversation begun by a workflow is named after it (same CAS as the
@@ -142,11 +142,11 @@ func (r *Runner) executionTokens(ctx context.Context, st *store.WorkflowState, c
 	if st.Budget.MaxTokens <= 0 || childSessionID == "" {
 		return 0, nil
 	}
-	ref, err := store.RefFor(ctx, r.db, childSessionID)
+	entries, err := r.Deps.Sessions.OpenEntries(ctx, childSessionID)
 	if err != nil {
 		return 0, fmt.Errorf("reading the execution's usage: %w", err)
 	}
-	tokens, err := store.NewEntryStoreFor(r.db, ref).UsageTotals(ctx, ref)
+	tokens, err := entries.UsageTotals(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("reading the execution's usage: %w", err)
 	}
@@ -283,7 +283,7 @@ func (r *Runner) startWorkflowStep(ctx context.Context, req tasks.LaunchRequest,
 	}
 	// The sandbox comes from the PARENT (Inherit); the agent is the step's own.
 	in := store.DecodeInherit(req.Inherit)
-	_, err = r.startRunWithID(req.RunID, req.SessionID, step.AgentConfigID, in.WorkspaceID, TextInput(req.Input), "", nil, nil)
+	_, err = r.startRunReserved(req.RunID, req.SessionID, step.AgentConfigID, in.WorkspaceID, TextInput(req.Input), "", nil, nil, nil)
 	return err
 }
 
@@ -350,29 +350,21 @@ func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.Pending
 	case store.ClaimTaken:
 		return "", fmt.Errorf("claiming the step approval: %w", store.ErrNotFound)
 	case store.ClaimTaskNotPaused:
-		// As for a tool approval: terminal → void; another attempt → stale;
-		// this attempt not paused → not ready (the row stays).
-		if cur, gerr := r.Deps.Tasks.Get(mctx, row.ID); gerr == nil && !isTerminalTaskStatus(cur.Status) {
-			if cur.RunID != pending.RunID {
-				return "", &StaleApprovalAttemptError{TaskID: row.ID, ApprovalRunID: pending.RunID, CurrentRunID: cur.RunID}
-			}
-			return "", &ApprovalNotReadyError{RunID: pending.RunID}
-		}
-		return "", &ApprovalVoidError{TaskID: row.ID}
+		return "", r.notPausedError(mctx, row.ID, pending.RunID)
 	}
 	// Working again: a failure to start ends the execution failed (the parent
 	// is owed the news); a lost finalize means a stop won.
 	fail := func(reason string, err error) (string, error) {
 		reason += ": " + err.Error()
-		won, ferr := store.NewTaskAdapter(r.Deps.Tasks).Finalize(mctx, row.ID, pending.RunID, tasks.StatusFailed, reason, reason, nil)
+		won, ferr := r.taskRows.Finalize(mctx, row.ID, pending.RunID, tasks.StatusFailed, reason, reason, nil)
 		if ferr == nil && !won {
 			return "", &ApprovalVoidError{TaskID: row.ID}
 		}
 		if ferr == nil {
-			if t, gerr := store.NewTaskAdapter(r.Deps.Tasks).Get(mctx, row.ID); gerr == nil {
+			if t, gerr := r.taskRows.Get(mctx, row.ID); gerr == nil {
 				r.onTaskUpdate(mctx, t)
 			}
-			(Waker{r}).Drain(mctx, row.ParentSessionID)
+			r.drainWakeups(mctx, row.ParentSessionID)
 		}
 		return "", err
 	}
@@ -395,7 +387,7 @@ func (r *Runner) resolveStepApproval(ctx context.Context, pending *store.Pending
 		return fail("could not start step "+stepName(step), lerr)
 	}
 	// Working again: tell the clients — the run's own run.started follows.
-	if t, gerr := store.NewTaskAdapter(r.Deps.Tasks).Get(mctx, row.ID); gerr == nil {
+	if t, gerr := r.taskRows.Get(mctx, row.ID); gerr == nil {
 		r.publishTaskUpdated(mctx, t)
 	}
 	return pending.RunID, nil

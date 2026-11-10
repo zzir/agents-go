@@ -97,41 +97,32 @@ func (r *Resolver) ValidateNames(ctx context.Context, namesJSON string) error {
 // List returns the combined catalog of stored and built-in guardrails.
 func (r *Resolver) List(ctx context.Context) []Def {
 	var all []Def
-	if r.store != nil {
-		stored, _ := r.store.List(ctx)
-		for _, g := range stored {
-			all = append(all, Def{
-				ID:          g.ID,
-				Name:        g.Name,
-				Description: g.Description,
-				Stages:      g.Stages,
-				Mode:        g.Mode,
-				Config:      g.Config,
-				Blocking:    g.Blocking,
-			})
-		}
+	stored, _ := r.store.List(ctx)
+	for _, g := range stored {
+		all = append(all, Def{
+			ID:          g.ID,
+			Name:        g.Name,
+			Description: g.Description,
+			Stages:      g.Stages,
+			Mode:        g.Mode,
+			Config:      g.Config,
+			Blocking:    g.Blocking,
+		})
 	}
-	all = append(all, builtinDefs...)
+	for _, g := range builtins {
+		all = append(all, Def{Name: g.Name, Description: g.Description, Stages: g.Stages, Mode: g.Mode})
+	}
 	return all
 }
 
+// resolve finds name among the stored definitions, then the built-in ones.
 func (r *Resolver) resolve(ctx context.Context, name string) *agents.Guardrail {
-	if r.store != nil {
-		if g := r.findByName(ctx, name); g != nil {
-			return buildFromDef(g)
-		}
-	}
-	return builtin(name)
-}
-
-func (r *Resolver) findByName(ctx context.Context, name string) *store.Guardrail {
-	all, err := r.store.List(ctx)
-	if err != nil {
-		return nil
-	}
-	for i := range all {
-		if all[i].Name == name {
-			return &all[i]
+	stored, _ := r.store.List(ctx)
+	for _, defs := range [][]store.Guardrail{stored, builtins} {
+		for i := range defs {
+			if defs[i].Name == name {
+				return buildFromDef(&defs[i])
+			}
 		}
 	}
 	return nil
@@ -225,51 +216,13 @@ type Def struct {
 	Blocking    bool            `json:"blocking,omitempty"`
 }
 
-var builtinDefs = []Def{
-	{Name: "content_filter", Description: "Block prompt-injection phrasing in input and tool arguments", Stages: []string{"input", "tool_input"}, Mode: "regex"},
+// builtins are the definitions a name resolves to when no stored row has it.
+var builtins = []store.Guardrail{
+	{
+		Name: "content_filter", Description: "Block prompt-injection phrasing in input and tool arguments",
+		Stages: []string{"input", "tool_input"}, Mode: "regex",
+		Config: json.RawMessage(`{"pattern":"(?i)(ignore previous instructions|system prompt|jailbreak)"}`),
+	},
 	{Name: "max_input_length", Description: "Reject input exceeding character limit (default 50000)", Stages: []string{"input"}, Mode: "max_length"},
 	{Name: "max_output_length", Description: "Trip if output exceeds character limit (default 50000)", Stages: []string{"output"}, Mode: "max_length"},
-}
-
-func builtin(name string) *agents.Guardrail {
-	switch name {
-	case "content_filter":
-		// Also at the tool-input stage: the phrasing is as dangerous in a
-		// tool's arguments.
-		return &agents.Guardrail{
-			Stages: []agents.GuardrailStage{agents.StageInput, agents.StageToolInput},
-			Name:   "content_filter",
-			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				forbidden := regexp.MustCompile(`(?i)(ignore previous instructions|system prompt|jailbreak)`)
-				if forbidden.MatchString(inspected(p)) {
-					return agents.Trip("Content filter: potentially harmful input detected"), nil
-				}
-				return agents.Allow(nil), nil
-			},
-		}
-	case "max_input_length":
-		return &agents.Guardrail{
-			Stages: []agents.GuardrailStage{agents.StageInput},
-			Name:   "max_input_length",
-			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				if n := len(inspected(p)); n > 50000 {
-					return agents.Trip(fmt.Sprintf("Input too long: %d chars (max 50000)", n)), nil
-				}
-				return agents.Allow(nil), nil
-			},
-		}
-	case "max_output_length":
-		return &agents.Guardrail{
-			Stages: []agents.GuardrailStage{agents.StageOutput},
-			Name:   "max_output_length",
-			Run: func(_ context.Context, _ *agents.RunContext, p agents.GuardrailPayload) (agents.GuardrailDecision, error) {
-				if n := len(inspected(p)); n > 50000 {
-					return agents.Trip(fmt.Sprintf("Output too long: %d chars (max 50000)", n)), nil
-				}
-				return agents.Allow(nil), nil
-			},
-		}
-	default:
-		return nil
-	}
 }

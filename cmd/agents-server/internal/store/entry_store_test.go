@@ -175,7 +175,7 @@ func TestGetEntriesPreservesWhatTheRunnerWrote(t *testing.T) {
 	call.Diagnostics = []agents.Diagnostic{{Type: agents.DiagToolTimeout, Message: "slow"}}
 	seed(t, s, userEntry(t, "weather?"), call)
 
-	views, err := s.GetEntries(ctx, session.Direct(id("s1")))
+	views, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestGetEntriesFallsBackToItemText(t *testing.T) {
 	s := NewEntryStoreFor(db, session.Direct(id("s1")))
 	seed(t, s, rawEntry(t, `{"type":"message","role":"assistant","content":[{"type":"text","text":"最终回答"}],"status":"completed"}`))
 
-	views, err := s.GetEntries(ctx, session.Direct(id("s1")))
+	views, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestPartialTextAnnotationReadsBackAsAssistant(t *testing.T) {
 		agents.ItemDisplay{Kind: agents.DisplayMessage, Text: "partial answer"},
 		agents.Source{Type: agents.SourceModel}))
 
-	views, err := s.GetEntries(ctx, session.Direct(id("s1")))
+	views, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestGetEntriesReportsWhatACheckpointFolded(t *testing.T) {
 	}
 	seed(t, s, cp)
 
-	views, err := s.GetEntries(ctx, session.Direct(id("s1")))
+	views, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -346,14 +346,14 @@ func TestGetEntriesFoldsUpdates(t *testing.T) {
 	call := rawEntry(t, `{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`)
 	call.Display = &agents.ItemDisplay{Kind: agents.DisplayToolCall, CallID: "c1", ToolName: "f"}
 	seed(t, s, userEntry(t, "one"), call, userEntry(t, "two"), userEntry(t, "three"))
-	if err := s.AppendCallDisplayUpdate(ctx, session.Direct(id("s1")), "c1", agents.ItemDisplay{Output: "done"}); err != nil {
+	if err := s.AppendCallDisplayUpdate(ctx, "c1", agents.ItemDisplay{Output: "done"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if err := s.AppendCallDisplayUpdate(ctx, session.Direct(id("s1")), "c1", agents.ItemDisplay{Text: "finished"}); err != nil {
+	if err := s.AppendCallDisplayUpdate(ctx, "c1", agents.ItemDisplay{Text: "finished"}); err != nil {
 		t.Fatalf("update 2: %v", err)
 	}
 
-	all, err := s.GetEntries(ctx, session.Direct(id("s1")))
+	all, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatalf("get all: %v", err)
 	}
@@ -385,12 +385,12 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	if err != nil || len(stored) != 2 {
 		t.Fatalf("seeded entries: %v %v", stored, err)
 	}
-	if err := s.Branch(ctx, session.Direct(id("s1")), stored[0].ID); err != nil {
+	if err := s.Branch(ctx, stored[0].ID); err != nil {
 		t.Fatalf("branch: %v", err)
 	}
 	seed(t, s, rawEntryFrom(t, `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}`, agents.Source{}))
 
-	views, gerr := s.GetEntries(ctx, session.Direct(id("s1")))
+	views, gerr := s.GetEntries(ctx)
 	if gerr != nil {
 		t.Fatalf("get entries: %v", gerr)
 	}
@@ -432,10 +432,10 @@ func TestBranchMarksTheActiveAttempt(t *testing.T) {
 	if firstID == "" {
 		t.Fatal("the first attempt is not in the listing")
 	}
-	if err := s.Branch(ctx, session.Direct(id("s1")), firstID); err != nil {
+	if err := s.Branch(ctx, firstID); err != nil {
 		t.Fatalf("branch back: %v", err)
 	}
-	views, _ = s.GetEntries(ctx, session.Direct(id("s1")))
+	views, _ = s.GetEntries(ctx)
 	for _, v := range views {
 		if v.Content == "first" && !v.OnPath {
 			t.Error("switching back did not restore the first attempt")
@@ -517,7 +517,7 @@ func TestForkSessionAtomicNoOrphan(t *testing.T) {
 		t.Fatalf("create taken: %v", err)
 	}
 
-	if _, err := s.ForkSession(ctx, &Session{OwnerID: LocalUserID, ID: taken.ID, Name: "fork"}, refOf(t, db, src.ID), "", false); err == nil {
+	if _, err := s.ForkSession(ctx, &Session{OwnerID: LocalUserID, ID: taken.ID, Name: "fork"}, "", false); err == nil {
 		t.Fatal("expected ForkSession to fail on a duplicate session id")
 	}
 	var copied []entryRow
@@ -538,7 +538,7 @@ func TestForkSessionMissingSource(t *testing.T) {
 
 	missing := NewID()
 	s := NewEntryStoreFor(db, session.Direct(missing))
-	if _, err := s.ForkSession(ctx, dst, refOf(t, db, missing), "", false); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ForkSession(ctx, dst, "", false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound for a missing source, got %v", err)
 	}
 	if _, err := NewSessionStore(db).Get(ctx, dst.ID); !errors.Is(err, ErrNotFound) {
@@ -564,14 +564,14 @@ func TestForkEntriesCopiesSnapshot(t *testing.T) {
 	seed(t, s, userEntry(t, "3"))
 
 	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
-	runIDs, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), "", false)
+	runIDs, err := s.ForkSession(ctx, dst, "", false)
 	if err != nil {
 		t.Fatalf("fork: %v", err)
 	}
 	if len(runIDs) != 2 {
 		t.Fatalf("run ids = %v, want 2 deduped", runIDs)
 	}
-	copied, err := s.GetEntries(ctx, refOf(t, db, dst.ID))
+	copied, err := storeFor(t, db, dst.ID).GetEntries(ctx)
 	if err != nil {
 		t.Fatalf("get dst: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestForkEntriesCopiesSnapshot(t *testing.T) {
 			t.Fatalf("entry %d parent = %q, want %q", i, e.ParentID, copied[i-1].EntryID)
 		}
 	}
-	if orig, err := s.GetEntries(ctx, refOf(t, db, src.ID)); err != nil || len(orig) != 3 {
+	if orig, err := s.GetEntries(ctx); err != nil || len(orig) != 3 {
 		t.Fatalf("src changed by fork: %d rows (%v)", len(orig), err)
 	}
 }
@@ -607,26 +607,26 @@ func TestForkEntriesUpToBoundary(t *testing.T) {
 	s.SetRunID(id("r"))
 	seed(t, s, userEntry(t, "1"), userEntry(t, "2"), userEntry(t, "3"))
 
-	all, err := s.GetEntries(ctx, refOf(t, db, src.ID))
+	all, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatalf("get src: %v", err)
 	}
 	cut := all[1].ID
 
 	inc := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "inc"}
-	if _, err := s.ForkSession(ctx, inc, refOf(t, db, src.ID), cut, false); err != nil {
+	if _, err := s.ForkSession(ctx, inc, cut, false); err != nil {
 		t.Fatalf("inclusive fork: %v", err)
 	}
-	got, _ := s.GetEntries(ctx, refOf(t, db, inc.ID))
+	got, _ := storeFor(t, db, inc.ID).GetEntries(ctx)
 	if len(got) != 2 {
 		t.Fatalf("inclusive up-to copied %d, want 2", len(got))
 	}
 
 	exc := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "exc"}
-	if _, err := s.ForkSession(ctx, exc, refOf(t, db, src.ID), cut, true); err != nil {
+	if _, err := s.ForkSession(ctx, exc, cut, true); err != nil {
 		t.Fatalf("exclusive fork: %v", err)
 	}
-	got, _ = s.GetEntries(ctx, refOf(t, db, exc.ID))
+	got, _ = storeFor(t, db, exc.ID).GetEntries(ctx)
 	if len(got) != 1 {
 		t.Fatalf("exclusive up-to copied %d, want 1", len(got))
 	}
@@ -679,13 +679,13 @@ func TestAppendPointMatchesTheFold(t *testing.T) {
 		}},
 		{"annotation", func(t *testing.T) {
 			t.Helper()
-			if err := s.AppendAnnotation(ctx, s.ref, id("r1"), "boom"); err != nil {
+			if err := s.AppendAnnotation(ctx, id("r1"), "boom"); err != nil {
 				t.Fatalf("append annotation: %v", err)
 			}
 		}},
 		{"call display update", func(t *testing.T) {
 			t.Helper()
-			if err := s.AppendCallDisplayUpdate(ctx, s.ref, "c1",
+			if err := s.AppendCallDisplayUpdate(ctx, "c1",
 				agents.ItemDisplay{Kind: agents.DisplayToolCall, CallID: "c1"}); err != nil {
 				t.Fatalf("append display update: %v", err)
 			}
@@ -696,7 +696,7 @@ func TestAppendPointMatchesTheFold(t *testing.T) {
 			if err != nil {
 				t.Fatalf("entries: %v", err)
 			}
-			if err := s.Branch(ctx, s.ref, stored[0].ID); err != nil {
+			if err := s.Branch(ctx, stored[0].ID); err != nil {
 				t.Fatalf("branch: %v", err)
 			}
 		}},
@@ -807,7 +807,7 @@ func TestForkMaterializesTheDestinationAppendPoint(t *testing.T) {
 	seed(t, s, userEntry(t, "one"), userEntry(t, "two"))
 
 	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
-	if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), "", false); err != nil {
+	if _, err := s.ForkSession(ctx, dst, "", false); err != nil {
 		t.Fatalf("fork: %v", err)
 	}
 	forked := storeFor(t, db, dst.ID)
@@ -862,7 +862,7 @@ func TestForkCutOnAFoldedEntry(t *testing.T) {
 	rows := loadRows(t, db, src.ID)
 
 	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
-	if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), rows[1].ID, false); err != nil {
+	if _, err := s.ForkSession(ctx, dst, rows[1].ID, false); err != nil {
 		t.Fatalf("fork: %v", err)
 	}
 	forked := storeFor(t, db, dst.ID)
@@ -891,7 +891,7 @@ func TestForkCutOnAFoldedEntry(t *testing.T) {
 	if len(model) != 1 || model[0].ParentID != "" {
 		t.Fatalf("the model's view = %d entries, first parent %q; want one root", len(model), model[0].ParentID)
 	}
-	view, err := forked.GetEntries(ctx, refOf(t, db, dst.ID))
+	view, err := forked.GetEntries(ctx)
 	if err != nil {
 		t.Fatalf("get entries: %v", err)
 	}
@@ -968,7 +968,7 @@ func TestRunHasItemsIsScopedToTheGeneration(t *testing.T) {
 	}
 	// An annotation is not a replayable item, so a run that only wrote one has
 	// nothing the SDK would have persisted.
-	if err := dead.AppendAnnotation(ctx, dead.ref, id("r2"), "boom"); err != nil {
+	if err := dead.AppendAnnotation(ctx, id("r2"), "boom"); err != nil {
 		t.Fatalf("append annotation: %v", err)
 	}
 	has, err = dead.RunHasItems(ctx, id("r2"))
@@ -1026,7 +1026,7 @@ func TestEntryReadsOrderBySeqNotID(t *testing.T) {
 	if !slices.Equal(got, []string{"first", "second", "third"}) {
 		t.Fatalf("load order = %v, want append order", got)
 	}
-	views, err := s.GetEntries(ctx, ref)
+	views, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1054,14 +1054,14 @@ func TestForkRefusesABoundaryOfAnotherSession(t *testing.T) {
 	seed(t, s, userEntry(t, "1"), userEntry(t, "2"))
 	o := storeFor(t, db, other.ID)
 	seed(t, o, userEntry(t, "x"))
-	foreign, err := o.GetEntries(ctx, refOf(t, db, other.ID))
+	foreign, err := o.GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for _, cut := range []string{foreign[0].ID, NewID()} {
 		dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
-		if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), cut, false); !errors.Is(err, ErrNotFound) {
+		if _, err := s.ForkSession(ctx, dst, cut, false); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("cut %s: want ErrNotFound, got %v", cut, err)
 		}
 		if _, err := sessions.Get(ctx, dst.ID); !errors.Is(err, ErrNotFound) {
@@ -1084,7 +1084,7 @@ func TestForkLeavesAnUndecodableEntryOut(t *testing.T) {
 	s := storeFor(t, db, src.ID)
 	s.SetRunID(id("r"))
 	seed(t, s, userEntry(t, "1"), userEntry(t, "2"), userEntry(t, "3"))
-	all, err := s.GetEntries(ctx, refOf(t, db, src.ID))
+	all, err := s.GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1094,10 +1094,10 @@ func TestForkLeavesAnUndecodableEntryOut(t *testing.T) {
 	}
 
 	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
-	if _, err := s.ForkSession(ctx, dst, refOf(t, db, src.ID), "", false); err != nil {
+	if _, err := s.ForkSession(ctx, dst, "", false); err != nil {
 		t.Fatalf("fork: %v", err)
 	}
-	copied, err := s.GetEntries(ctx, refOf(t, db, dst.ID))
+	copied, err := storeFor(t, db, dst.ID).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

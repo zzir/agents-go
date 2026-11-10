@@ -117,21 +117,32 @@ func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error
 	if cerr := store.DecodeConfig(cfg.Config, &hc); cerr != nil {
 		return fmt.Errorf("mcp server %s: invalid config: %w", cfg.Name, cerr)
 	}
-	transport := m.httpTransport(&hc, nil)
-	opts := buildMcpOptions(cfg.Name, &hc, logging.Ctx(m.rootCtx))
-	// Redial makes the connection self-healing (spec §2.16), on the manager's
-	// own context.
-	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {
-		return m.httpTransport(&hc, nil), nil
-	}
+	return m.connect(ctx, cfg, hc, nil)
+}
 
+// ConnectHTTPWithOAuth connects a streamable HTTP MCP server with the given
+// OAuth handler, blocking until the flow completes or ctx ends (the
+// coordinator calls it in a goroutine).
+func (m *Manager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServerConfig, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) error {
+	return m.connect(ctx, cfg, *hc, oauthHandler)
+}
+
+// connect handshakes cfg's server over hc's transport, with oauthHandler when
+// the server authorizes, and installs it; a no-op when already connected.
+func (m *Manager) connect(ctx context.Context, cfg *store.McpServerConfig, hc store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) error {
 	done, hctx, gen, err := m.beginConnect(ctx, cfg.ID)
 	if err != nil || done {
 		return err // already connected (nil) or another connect is in flight
 	}
-
+	opts := buildMcpOptions(cfg.Name, &hc, logging.Ctx(m.rootCtx))
+	// Redial makes the connection self-healing (spec §2.16) on the manager's
+	// own context, through the handler that holds the persisting token source
+	// (invariant 11).
+	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {
+		return m.httpTransport(&hc, oauthHandler), nil
+	}
 	// Handshake OUTSIDE the lock, under hctx (which Disconnect can cancel).
-	srv, err := mcp.NewWithTransport(hctx, cfg.Name, transport, opts)
+	srv, err := mcp.NewWithTransport(hctx, cfg.Name, m.httpTransport(&hc, oauthHandler), opts)
 	if err != nil {
 		err = fmt.Errorf("connecting MCP server %s: %w", cfg.Name, err)
 	}
@@ -140,8 +151,7 @@ func (m *Manager) Connect(ctx context.Context, cfg *store.McpServerConfig) error
 
 // Reconcile makes the live connection match a server's config after a write:
 // the current connection is dropped, and an enabled server reconnects in the
-// background off the root context (an OAuth one through the coordinator's
-// silent path, waiting for the user when no saved token connects).
+// background off the root context (connectStored).
 func (m *Manager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordinator) {
 	if desired == nil {
 		return
@@ -151,36 +161,36 @@ func (m *Manager) Reconcile(desired *store.McpServerConfig, oauth *OAuthCoordina
 		return
 	}
 	cfg := *desired
-	if IsOAuthConfig(&cfg) {
-		if oauth == nil || cfg.OAuthToken == "" {
-			return
-		}
-		var hc store.HTTPMcpConfig
-		if store.DecodeConfig(cfg.Config, &hc) != nil {
-			return
-		}
-		go func() {
-			ctx, cancel := context.WithTimeout(m.rootCtx, mcpAutoConnectTimeout)
-			defer cancel()
-			// Empty origin = non-interactive: the saved token or needs-authorization.
-			result, err := oauth.ConnectWithOAuth(ctx, m, &cfg, &hc, "")
-			switch {
-			case err != nil:
-				logging.Ctx(ctx).Warn("mcp oauth reconnect after config change failed", "error", err, "mcp", cfg.Name)
-			case !result.Connected:
-				logging.Ctx(ctx).Warn("mcp oauth reconnect after config change needs user authorization", "mcp", cfg.Name)
-			}
-		}()
-		return
-	}
 	go func() {
 		ctx, cancel := context.WithTimeout(m.rootCtx, mcpAutoConnectTimeout)
 		defer cancel()
-		// The only trace a failed reconnect leaves: the write already returned.
-		if err := m.Connect(ctx, &cfg); err != nil {
-			logging.Ctx(ctx).Warn("mcp reconnect after config change failed", "error", err, "mcp", cfg.Name)
-		}
+		m.connectStored(ctx, &cfg, oauth, "reconnect after config change")
 	}()
+}
+
+// connectStored connects a stored, enabled server the way its config asks: an
+// OAuth one silently on its saved token (without one it waits for its user),
+// anything else plainly. A failure is only logged, as what.
+func (m *Manager) connectStored(ctx context.Context, cfg *store.McpServerConfig, oauth *OAuthCoordinator, what string) {
+	log := logging.Ctx(ctx)
+	if !IsOAuthConfig(cfg) {
+		if err := m.Connect(ctx, cfg); err != nil {
+			log.Warn("mcp "+what+" failed", "error", err, "mcp", cfg.Name)
+		}
+		return
+	}
+	var hc store.HTTPMcpConfig
+	if oauth == nil || cfg.OAuthToken == "" || store.DecodeConfig(cfg.Config, &hc) != nil {
+		return
+	}
+	// Empty origin = non-interactive: the saved token or needs-authorization.
+	result, err := oauth.ConnectWithOAuth(ctx, m, cfg, &hc, "")
+	switch {
+	case err != nil:
+		log.Warn("mcp oauth "+what+" failed", "error", err, "mcp", cfg.Name)
+	case !result.Connected:
+		log.Warn("mcp oauth "+what+" needs user authorization", "mcp", cfg.Name)
+	}
 }
 
 // IsOAuthConfig reports whether cfg is a server using OAuth, which connects
@@ -246,31 +256,6 @@ func (rt *errorBodyRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 		io.Closer
 	}{io.MultiReader(bytes.NewReader(head), resp.Body), resp.Body}
 	return resp, nil
-}
-
-// ConnectHTTPWithOAuth connects a streamable HTTP MCP server with the given
-// OAuth handler, blocking until the flow completes or ctx ends (the
-// coordinator calls it in a goroutine).
-func (m *Manager) ConnectHTTPWithOAuth(ctx context.Context, cfg *store.McpServerConfig, hc *store.HTTPMcpConfig, oauthHandler auth.OAuthHandler) error {
-	done, hctx, gen, err := m.beginConnect(ctx, cfg.ID)
-	if err != nil || done {
-		return err
-	}
-
-	transport := m.httpTransport(hc, oauthHandler)
-	opts := buildMcpOptions(cfg.Name, hc, logging.Ctx(m.rootCtx))
-	// The same handler on the re-dial: a healed connection re-authorizes through
-	// the handler that holds the persisting token source (invariant 11).
-	hcCopy := *hc
-	opts.Redial = func(context.Context) (mcpsdk.Transport, error) {
-		return m.httpTransport(&hcCopy, oauthHandler), nil
-	}
-
-	srv, cerr := mcp.NewWithTransport(hctx, cfg.Name, transport, opts)
-	if cerr != nil {
-		cerr = fmt.Errorf("connecting MCP server %s with OAuth: %w", cfg.Name, cerr)
-	}
-	return m.finishConnect(cfg.ID, gen, srv, cerr)
 }
 
 // ToolPrefix is what a server's tool names carry in front when exposed to an
@@ -369,24 +354,7 @@ func ConnectEnabled(ctx context.Context, mgr *Manager, servers *store.McpServerS
 		wg.Go(func() {
 			cctx, cancel := context.WithTimeout(ctx, mcpAutoConnectTimeout)
 			defer cancel()
-			if cfg.OAuthToken != "" {
-				var hc store.HTTPMcpConfig
-				if store.DecodeConfig(cfg.Config, &hc) == nil && hc.AuthMode == "oauth" {
-					result, err := oauth.ConnectWithOAuth(cctx, mgr, cfg, &hc, "")
-					switch {
-					case err != nil:
-						log.Warn("mcp oauth auto-connect failed", "error", err, "mcp", cfg.Name)
-					case result.Connected:
-						log.Info("mcp oauth auto-connected with saved token", "mcp", cfg.Name)
-					default:
-						log.Warn("mcp oauth auto-connect needs user authorization, skipping", "mcp", cfg.Name)
-					}
-					return
-				}
-			}
-			if err := mgr.Connect(cctx, cfg); err != nil {
-				log.Warn("mcp auto-connect failed", "error", err, "mcp", cfg.Name)
-			}
+			mgr.connectStored(cctx, cfg, oauth, "auto-connect")
 		})
 	}
 	wg.Wait()

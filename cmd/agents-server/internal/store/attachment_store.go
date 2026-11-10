@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -53,32 +51,40 @@ func (s *AttachmentStore) Create(ctx context.Context, a *Attachment) error {
 
 // Get returns one attachment, or an ErrNotFound-wrapping error.
 func (s *AttachmentStore) Get(ctx context.Context, id string) (*Attachment, error) {
-	a := new(Attachment)
-	err := s.db.NewSelect().Model(a).Where("id = ?", id).Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("attachment %s: %w", id, ErrNotFound)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("loading attachment %s: %w", id, err)
-	}
-	return a, nil
+	return getByID[Attachment](ctx, s.db, "attachment", id)
 }
 
 // MetaBatch returns the named attachments keyed by id; a missing id is absent
 // from the map.
 func (s *AttachmentStore) MetaBatch(ctx context.Context, ids []string) (map[string]Attachment, error) {
+	return attachmentsByID(ctx, s.db, ids)
+}
+
+// attachmentsByID is MetaBatch on any handle: one read, keyed by id.
+func attachmentsByID(ctx context.Context, db bun.IDB, ids []string) (map[string]Attachment, error) {
 	out := make(map[string]Attachment, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
 	var rows []Attachment
-	if err := s.db.NewSelect().Model(&rows).Where("id IN (?)", bun.List(ids)).Scan(ctx); err != nil {
+	if err := db.NewSelect().Model(&rows).Where("id IN (?)", bun.List(ids)).Scan(ctx); err != nil {
 		return nil, fmt.Errorf("loading attachments: %w", err)
 	}
 	for _, a := range rows {
 		out[a.ID] = a
 	}
 	return out, nil
+}
+
+// entryAttachments resolves ids against byID in order; a deleted row drops off.
+func entryAttachments(byID map[string]Attachment, ids []string) []EntryAttachment {
+	var out []EntryAttachment
+	for _, id := range ids {
+		if a, ok := byID[id]; ok {
+			out = append(out, EntryAttachment{ID: a.ID, Key: a.Key})
+		}
+	}
+	return out
 }
 
 // MarkBound flips the named rows to bound. Idempotent: rebinding an already

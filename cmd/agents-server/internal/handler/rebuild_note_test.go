@@ -47,9 +47,8 @@ func TestRebuildAnnotatesRequestingSession(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	entries := store.NewSharedEntryStore(db)
 	noteCount := func(id string) int {
-		ref, err := entries.RefFor(ctx, id)
+		ref, err := store.RefFor(ctx, db, id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +65,7 @@ func TestRebuildAnnotatesRequestingSession(t *testing.T) {
 		return n
 	}
 	handlerWith := func(fence RunStopper) *WorkspaceHandler {
-		h := &WorkspaceHandler{Notes: &RebuildNoteDeps{Sessions: sessions, Entries: entries, Fence: fence}}
+		h := &WorkspaceHandler{Notes: &RebuildNoteDeps{Sessions: sessions, Fence: fence}}
 		return h
 	}
 	call := func(h *WorkspaceHandler, sessionID string) {
@@ -91,7 +90,7 @@ func TestRebuildAnnotatesRequestingSession(t *testing.T) {
 	if n := noteCount(mine.ID); n != 1 {
 		t.Fatalf("session holds %d rebuilt notes, want 1", n)
 	}
-	ref, _ := entries.RefFor(ctx, mine.ID)
+	ref, _ := store.RefFor(ctx, db, mine.ID)
 	rows, _ := store.NewEntryStoreFor(db, ref).Entries(ctx, session.Cursor{})
 	note := rows[len(rows)-1]
 	if note.Kind != session.EntryKindAnnotation || note.Source.Type != "host" || note.Display.Text == "" {

@@ -129,9 +129,7 @@ func (s *TriggerScheduler) Stop() {
 	default:
 		close(s.stop)
 	}
-	if s.cron != nil {
-		s.cron.Stop()
-	}
+	s.cron.Stop()
 }
 
 // reconcileLoop re-syncs every held trigger against the store on a timer, so
@@ -340,12 +338,12 @@ func (s *TriggerScheduler) fireAgentTurn(ctx context.Context, t *store.Trigger, 
 	// refuses the turn (invariant 19) and leaves no note. Detached context.
 	noteCtx := context.WithoutCancel(ctx)
 	note := func() {
-		ref, rerr := store.RefFor(noteCtx, s.runner.db, t.SessionID)
+		entries, rerr := s.runner.Deps.Sessions.OpenEntries(noteCtx, t.SessionID)
 		if rerr != nil {
 			return
 		}
 		tf := store.TriggerFired{RunID: runID, AgentConfigID: agent.ID, AgentName: agent.Name, Brief: input, Origin: store.OriginOf(t)}
-		if aerr := store.NewEntryStoreFor(s.runner.db, ref).AppendTriggerFired(noteCtx, ref, tf); aerr != nil {
+		if aerr := entries.AppendTriggerFired(noteCtx, tf); aerr != nil {
 			logging.Ctx(noteCtx).Warn("recording the trigger-fired note", "error", aerr, "trigger_id", t.ID)
 		}
 	}

@@ -56,15 +56,6 @@ type getWorkflowArgs struct {
 	Name string `json:"name" jsonschema:"The workflow's name"`
 }
 
-// visibleWorkflows lists what ownerID may see (their own plus the global
-// set); an empty ownerID — an internal caller with no user — sees everything.
-func (r *Runner) visibleWorkflows(ctx context.Context, ownerID string) ([]store.Workflow, error) {
-	if ownerID == "" {
-		return r.Deps.Workflows.List(ctx)
-	}
-	return store.ListVisibleOf(ctx, r.Deps.Workflows.CrudStore, ownerID, false)
-}
-
 // matchWorkflow picks what name resolves to for ownerID: their own row over a
 // global one sharing the name (decisions §5.29). Nil when nothing matches.
 func matchWorkflow(list []store.Workflow, ownerID, name string) *store.Workflow {
@@ -128,7 +119,7 @@ func (r *Runner) saveWorkflowDescription(ctx context.Context, ownerID string) st
 		"that spawn_task(workflow=<name>) runs in the background. Saving under a name that exists replaces that definition " +
 		"(executions in flight keep their snapshot). Steps, agents and edges are named, not numbered. " +
 		"Every save is shown to the person for approval before it is written; a definition that would not save is refused to you at once instead.")
-	list, err := r.visibleAgentConfigs(ctx, ownerID)
+	list, err := visibleRows(ctx, r.Deps.AgentConfigs.CrudStore, ownerID)
 	if err != nil {
 		logging.Ctx(ctx).Warn("save_workflow: listing agents for the description", "error", err)
 	}
@@ -146,7 +137,7 @@ func (r *Runner) saveWorkflowDescription(ctx context.Context, ownerID string) st
 // getWorkflow answers get_workflow: the definition in the model's shape, or
 // what there is to choose from.
 func (r *Runner) getWorkflow(ctx context.Context, ownerID, name string) (agents.ToolResult, error) {
-	list, err := r.visibleWorkflows(ctx, ownerID)
+	list, err := visibleRows(ctx, r.Deps.Workflows.CrudStore, ownerID)
 	if err != nil {
 		return agents.ToolResult{}, err
 	}
@@ -243,7 +234,7 @@ func (r *Runner) auditAs(ctx context.Context, ownerID, action, resource, detail 
 			actor = protocol.UserInfo{ID: u.ID, Email: u.Email, Role: u.Role}
 		}
 	}
-	r.Deps.Audit(context.WithoutCancel(ctx), protocol.AuditRecord{
+	r.Deps.RecordAudit(context.WithoutCancel(ctx), protocol.AuditRecord{
 		Actor: actor, Action: action, Resource: resource, Detail: detail,
 	})
 }
@@ -258,7 +249,7 @@ func stepCount(n int) string {
 // globalAgentByName finds the GLOBAL agent config going by name in the
 // caller's view; nil (no error) when none does.
 func (r *Runner) globalAgentByName(ctx context.Context, ownerID, name string) (*store.AgentConfig, error) {
-	cfgs, err := r.visibleAgentConfigs(ctx, ownerID)
+	cfgs, err := visibleRows(ctx, r.Deps.AgentConfigs.CrudStore, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +268,7 @@ func (r *Runner) resolveWorkflowSpec(ctx context.Context, ownerID string, spec w
 	if name == "" {
 		return nil, nil, invalidWorkflowf("name is required")
 	}
-	list, err := r.visibleWorkflows(ctx, ownerID)
+	list, err := visibleRows(ctx, r.Deps.Workflows.CrudStore, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}

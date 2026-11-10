@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -97,42 +96,36 @@ func setScopeOf[T any](ctx context.Context, s *CrudStore[T], id, scope, expectOw
 // scopeRefusal tells apart the three reasons a conditional scope write
 // matched nothing: gone, already in that scope, or moved to another owner.
 func scopeRefusal[T any](ctx context.Context, s *CrudStore[T], id, scope, expectOwner string) error {
-	m := new(T)
-	if err := s.db.NewSelect().Model(m).Where("id = ?", id).Scan(ctx); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+	var cur string
+	var owner sql.NullString // an ownerless row stores NULL
+	err := s.db.NewSelect().Model((*T)(nil)).Column("scope", "owner_id").Where("id = ?", id).Scan(ctx, &cur, &owner)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrNotFound
+	case err != nil:
 		return err
-	}
-	cur, owner := scopeOwnerOf(m)
-	if owner != expectOwner {
-		return ErrOwnershipChanged
-	}
-	if cur == scope {
+	case owner.String == expectOwner && cur == scope:
 		return ErrSameScope
 	}
 	return ErrOwnershipChanged
 }
 
-// scopeOwnerOf reads the scope/owner pair off any scoped model by reflection
-// (the five share the columns but no interface).
-func scopeOwnerOf(m any) (scope, owner string) {
-	v := reflect.Indirect(reflect.ValueOf(m))
-	if !v.IsValid() || v.Kind() != reflect.Struct {
-		return "", ""
-	}
-	if f := v.FieldByName("Scope"); f.IsValid() && f.Kind() == reflect.String {
-		scope = f.String()
-	}
-	if f := v.FieldByName("OwnerID"); f.IsValid() && f.Kind() == reflect.String {
-		owner = f.String()
-	}
-	return scope, owner
-}
-
 // ErrNoSuchUser marks an owner transfer naming an account that does not
 // exist. Handlers map it to 400.
 var ErrNoSuchUser = errors.New("no such user")
+
+// requireUser is ErrNoSuchUser when no account has id: the scoped tables
+// carry no FK, so a transfer checks its target here.
+func requireUser(ctx context.Context, db bun.IDB, id string) error {
+	exists, err := db.NewSelect().Model((*User)(nil)).Where("id = ?", id).Exists(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNoSuchUser
+	}
+	return nil
+}
 
 // ErrOwnershipChanged marks a write refused because the row's scope or owner
 // moved since the caller's authorization (decisions §5.29). Handlers map it to 409.
@@ -165,13 +158,8 @@ func deleteOwnedBy[T any](ctx context.Context, db bun.IDB, label, id, expectOwne
 // setOwnerOf transfers one scoped row to another user (admin). Scope is
 // untouched; a name collision in the target namespace is a UNIQUE violation.
 func setOwnerOf[T any](ctx context.Context, s *CrudStore[T], id, ownerID string) error {
-	// The scoped tables carry no FK, so the target account is checked here.
-	exists, err := s.db.NewSelect().Model((*User)(nil)).Where("id = ?", ownerID).Exists(ctx)
-	if err != nil {
+	if err := requireUser(ctx, s.db, ownerID); err != nil {
 		return fmt.Errorf("transferring %s %s: %w", s.label, id, err)
-	}
-	if !exists {
-		return fmt.Errorf("transferring %s %s: %w", s.label, id, ErrNoSuchUser)
 	}
 	res, err := s.db.NewUpdate().Model((*T)(nil)).
 		Set("owner_id = ?", ownerID).

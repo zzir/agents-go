@@ -22,17 +22,24 @@ func NewPendingApprovalStore(db *bun.DB) *PendingApprovalStore {
 
 // Save inserts or replaces the pending approval for its run id.
 func (s *PendingApprovalStore) Save(ctx context.Context, p *PendingApproval) error {
-	if p.CreatedAt.IsZero() {
-		p.CreatedAt = time.Now().UTC()
-	}
-	if _, err := s.db.NewInsert().Model(p).
-		On("CONFLICT (run_id) DO UPDATE").
-		Set("state = EXCLUDED.state").
-		Set("tool_calls = EXCLUDED.tool_calls").
-		Exec(ctx); err != nil {
+	if err := savePendingApproval(ctx, s.db, p); err != nil {
 		return fmt.Errorf("saving pending approval %s: %w", p.RunID, err)
 	}
 	return nil
+}
+
+// savePendingApproval is the upsert behind Save, on db or the transaction
+// that pauses the task it belongs to.
+func savePendingApproval(ctx context.Context, db bun.IDB, p *PendingApproval) error {
+	if p.CreatedAt.IsZero() {
+		p.CreatedAt = time.Now().UTC()
+	}
+	_, err := db.NewInsert().Model(p).
+		On("CONFLICT (run_id) DO UPDATE").
+		Set("state = EXCLUDED.state").
+		Set("tool_calls = EXCLUDED.tool_calls").
+		Exec(ctx)
+	return err
 }
 
 // Get returns the pending approval for runID, or an ErrNotFound-wrapping error.
@@ -84,9 +91,9 @@ func (s *PendingApprovalStore) ListByParentTasks(ctx context.Context, parentSess
 	return out, nil
 }
 
-// List returns every pending approval, oldest first. Recovery after a
+// list returns every pending approval, oldest first. Recovery after a
 // restart is lazy: approvals resume from these rows on the next decision.
-func (s *PendingApprovalStore) List(ctx context.Context) ([]PendingApproval, error) {
+func (s *PendingApprovalStore) list(ctx context.Context) ([]PendingApproval, error) {
 	var out []PendingApproval
 	if err := s.db.NewSelect().Model(&out).
 		OrderExpr("created_at ASC").
@@ -99,7 +106,7 @@ func (s *PendingApprovalStore) List(ctx context.Context) ([]PendingApproval, err
 // FindByToolCall returns the pending approval whose tool_calls contains the
 // given tool call id; matching is done in Go.
 func (s *PendingApprovalStore) FindByToolCall(ctx context.Context, toolCallID string) (*PendingApproval, *PendingToolCall, error) {
-	all, err := s.List(ctx)
+	all, err := s.list(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

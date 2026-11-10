@@ -10,6 +10,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/attachments"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/authn"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/docs"
@@ -28,61 +29,17 @@ import (
 // The composition root, in the order the layers stack: stores, bridge,
 // handlers, then auth and the server; run (root.go) calls these in sequence.
 
-// stores is every table's store, on one database.
+// stores is every table's store on one database, with the settings reader
+// over it.
 type stores struct {
-	Sessions         *store.SessionStore
-	Entries          *store.EntryStore
-	Traces           *store.TraceStore
-	AgentConfigs     *store.AgentConfigStore
-	McpServers       *store.McpServerStore
-	Skills           *store.SkillStore
-	Memories         *store.MemoryStore
-	Settings         *store.SettingStore
-	SettingReader    *settings.Reader
-	SandboxDefs      *store.SandboxStore
-	Workspaces       *store.WorkspaceStore
-	Guardrails       *store.GuardrailStore
-	PendingApprovals *store.PendingApprovalStore
-	Tasks            *store.TaskStore
-	Providers        *store.ProviderStore
-	Workflows        *store.WorkflowStore
-	Triggers         *store.TriggerStore
-	Wakeups          *store.WakeupStore
-	Users            *store.UserStore
-	AuthTokens       *store.AuthTokenStore
-	ContextProfiles  *store.ContextProfileStore
-	Audit            *store.AuditStore
-	Attachments      *store.AttachmentStore
+	*store.Stores
+	SettingReader *settings.Reader
 }
 
 func newStores(db *bun.DB) *stores {
-	settingStore := store.NewSettingStore(db)
-	settingStore.SealIf(settings.IsSecret)
-	return &stores{
-		Sessions:         store.NewSessionStore(db),
-		Entries:          store.NewSharedEntryStore(db),
-		Traces:           store.NewTraceStore(db),
-		AgentConfigs:     store.NewAgentConfigStore(db),
-		McpServers:       store.NewMcpServerStore(db),
-		Skills:           store.NewSkillStore(db),
-		Memories:         store.NewMemoryStore(db),
-		Settings:         settingStore,
-		SettingReader:    settings.NewReader(settingStore),
-		SandboxDefs:      store.NewSandboxStore(db),
-		Workspaces:       store.NewWorkspaceStore(db),
-		Guardrails:       store.NewGuardrailStore(db),
-		PendingApprovals: store.NewPendingApprovalStore(db),
-		Tasks:            store.NewTaskStore(db),
-		Providers:        store.NewProviderStore(db),
-		Workflows:        store.NewWorkflowStore(db),
-		Triggers:         store.NewTriggerStore(db),
-		Wakeups:          store.NewWakeupStore(db),
-		Users:            store.NewUserStore(db),
-		AuthTokens:       store.NewAuthTokenStore(db),
-		ContextProfiles:  store.NewContextProfileStore(db),
-		Audit:            store.NewAuditStore(db),
-		Attachments:      store.NewAttachmentStore(db),
-	}
+	st := store.NewStores(db)
+	st.Settings.SealIf(settings.IsSecret)
+	return &stores{Stores: st, SettingReader: settings.NewReader(st.Settings)}
 }
 
 // auditRecorder persists one audit line; a failed write is logged, never
@@ -102,7 +59,6 @@ func auditRecorder(audit *store.AuditStore, log *slog.Logger) protocol.AuditFunc
 // services is the bridge layer: what runs, connects and keeps time.
 type services struct {
 	Runner     *bridge.Runner
-	Deps       *bridge.AgentDeps
 	Mcp        *mcpservers.Manager
 	OAuth      *mcpservers.OAuthCoordinator
 	ChatGPT    *providers.ChatGPTOAuth
@@ -125,33 +81,18 @@ func newBridge(ctx, bgCtx context.Context, db *bun.DB, st *stores, audit protoco
 	svc.Sandboxes.SetIdleTimeout(func() time.Duration {
 		return time.Duration(st.SettingReader.Int(context.Background(), settings.KeySandboxIdleMinutes)) * time.Minute
 	})
-	svc.Deps = &bridge.AgentDeps{
-		AgentConfigs:     st.AgentConfigs,
-		Providers:        st.Providers,
-		McpServers:       st.McpServers,
-		Sandboxes:        st.SandboxDefs,
-		Workspaces:       st.Workspaces,
-		Skills:           st.Skills,
-		Memories:         st.Memories,
-		Settings:         st.SettingReader,
-		Sessions:         st.Sessions,
-		Traces:           st.Traces,
-		Guardrails:       svc.Guardrails,
-		McpManager:       svc.Mcp,
-		SandboxManager:   svc.Sandboxes,
-		ChatGPTOAuth:     svc.ChatGPT,
-		PendingApprovals: st.PendingApprovals,
-		Tasks:            st.Tasks,
-		ContextProfiles:  st.ContextProfiles,
-		Workflows:        st.Workflows,
-		Users:            st.Users,
-		Wakeups:          st.Wakeups,
-		Attachments:      st.Attachments,
-		Audit:            audit,
+	deps := &bridge.AgentDeps{
+		Stores:            st.Stores,
+		SettingReader:     st.SettingReader,
+		GuardrailResolver: svc.Guardrails,
+		McpManager:        svc.Mcp,
+		SandboxManager:    svc.Sandboxes,
+		ChatGPTOAuth:      svc.ChatGPT,
+		RecordAudit:       audit,
 	}
 	// Refuses an incomplete dependency set — invariant 104.
 	var err error
-	if svc.Runner, err = bridge.NewRunner(ctx, db, svc.Deps); err != nil {
+	if svc.Runner, err = bridge.NewRunner(ctx, db, deps); err != nil {
 		return nil, err
 	}
 	svc.Scheduler = bridge.NewTriggerScheduler(svc.Runner, st.Triggers)
@@ -178,14 +119,13 @@ type handlers struct {
 // newHandlers builds the handlers on the stores and the bridge; info is the
 // process facts /server reports. Handlers.Auth is left for newServer.
 func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL string, info handler.ServerInfo) *handlers {
-	terminal := handler.NewTerminalHandler(st.SandboxDefs, st.Workspaces, svc.Sandboxes, st.SettingReader)
+	terminal := handler.NewTerminalHandler(st.Sandboxes, st.Workspaces, svc.Sandboxes, st.SettingReader)
 	terminal.Audit = audit
 	ws := handler.NewWSHandler(svc.Runner, st.Sessions, st.PendingApprovals)
 	ws.Audit = audit
-	workspaces := handler.NewWorkspaceHandler(st.Workspaces, st.SandboxDefs, svc.Sandboxes, terminal, st.SettingReader)
-	retirer := handler.NewRetirer(st.Workspaces, svc.Sandboxes, terminal)
+	workspaces := handler.NewWorkspaceHandler(st.Workspaces, st.Sandboxes, svc.Sandboxes, terminal, st.SettingReader)
 	workspaces.Audit = audit
-	workspaces.Notes = &handler.RebuildNoteDeps{Sessions: st.Sessions, Entries: st.Entries, Fence: svc.Runner}
+	workspaces.Notes = &handler.RebuildNoteDeps{Sessions: st.Sessions, Fence: svc.Runner}
 	workspaces.StopCommands = svc.Runner.StopWorkspaceCommands
 	return &handlers{
 		WS:       ws,
@@ -196,7 +136,7 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 				Triggers: st.Triggers, Hub: svc.Runner.Hub(),
 			},
 			Sessions: handler.NewSessionHandler(handler.SessionDeps{
-				Sessions: st.Sessions, Entries: st.Entries, Traces: st.Traces, Agents: st.AgentConfigs,
+				Sessions: st.Sessions, Traces: st.Traces, Agents: st.AgentConfigs,
 				Profiles: st.ContextProfiles, Users: st.Users,
 				Workspaces: st.Workspaces, Stopper: svc.Runner, Compactor: svc.Runner, Statuses: svc.Runner,
 				Settings: st.SettingReader,
@@ -206,18 +146,17 @@ func newHandlers(st *stores, svc *services, audit protocol.AuditFunc, baseURL st
 			Tasks:      handler.NewTaskHandler(st.Tasks, svc.Runner),
 			Agents:     handler.NewAgentConfigHandler(st.AgentConfigs, st.McpServers, st.Providers, st.Skills, svc.Guardrails),
 			McpServers: handler.NewMcpServerHandler(st.McpServers, svc.Mcp, svc.OAuth, baseURL),
-			Memories:   handler.NewMemoryHandler(st.Memories, st.Sessions, st.AgentConfigs, st.Entries),
+			Memories:   handler.NewMemoryHandler(st.Memories, st.Sessions, st.AgentConfigs),
 			Settings:   handler.NewSettingHandler(st.Settings),
 			Skills:     handler.NewSkillHandler(st.Skills),
-			Providers:  handler.NewProviderHandler(st.Providers),
+			Providers:  handler.NewProviderHandler(st.Providers, svc.ChatGPT),
 			Workflows:  handler.NewWorkflowHandler(st.Workflows, st.AgentConfigs, st.Sessions, svc.Runner),
 			Triggers:   handler.NewTriggerHandler(st.Triggers, st.Sessions, st.Workflows, st.AgentConfigs, svc.Scheduler),
 			Guardrails: handler.NewGuardrailHandler(st.Guardrails, svc.Guardrails),
-			Sandboxes:  handler.NewSandboxHandler(st.SandboxDefs, svc.Sandboxes, retirer),
+			Sandboxes:  handler.NewSandboxHandler(st.Sandboxes, st.Workspaces, svc.Sandboxes, terminal),
 			Workspaces: workspaces,
 			Traces:     handler.NewTraceHandler(st.Traces, st.SettingReader),
-			Playground: handler.NewPlaygroundHandler(svc.Deps),
-			ChatGPT:    handler.NewChatGPTOAuthHandler(svc.ChatGPT, st.Providers),
+			Playground: handler.NewPlaygroundHandler(svc.Runner),
 			Files:      handler.NewAttachmentHandler(st.Attachments, st.SettingReader, st.Settings),
 			Server:     info,
 		},
@@ -277,14 +216,10 @@ func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, au
 	srv.SetImageHosts(imgHosts())
 	hs.API.Files.OnStorageChange = func() { srv.SetImageHosts(imgHosts()) }
 	// A replay posts a stored span payload back, well past the 1 MiB default.
-	srv.SetBodyLimit(server.APIPrefix+"/playground/generate", func() int64 {
-		return handler.MaxReplayBodyBytes
-	})
+	srv.SetBodyLimit(server.APIPrefix+"/playground/generate", handler.MaxReplayBodyBytes)
 	// An image upload legitimately exceeds the 1 MiB default body cap: the
 	// image plus the multipart framing around it.
-	srv.SetBodyLimit(server.APIPrefix+"/attachments", func() int64 {
-		return handler.MaxAttachmentBytes + 64<<10
-	})
+	srv.SetBodyLimit(server.APIPrefix+"/attachments", attachments.MaxBytes+64<<10)
 	if err := trustProxies(srv, cfg, log); err != nil {
 		return nil, err
 	}

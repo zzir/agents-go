@@ -37,7 +37,7 @@ func createWorkspace(t *testing.T, r *Runner, name, sandboxID string) string {
 
 // startAndWait runs StartRun and blocks until the run terminates. The runs in
 // these tests fail on config (no agent provider is wired) — that is fine:
-// the workspace binding happens in startRunWithID BEFORE the launch, which is
+// the workspace binding happens in startRunReserved BEFORE the launch, which is
 // exactly the bind-at-start semantics under test.
 func startAndWait(t *testing.T, r *Runner, sessionID, workspaceID string) string {
 	t.Helper()

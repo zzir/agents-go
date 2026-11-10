@@ -689,7 +689,10 @@ func TestManagerEnsureRunningAndStatus(t *testing.T) {
 	if sb.starts != 1 {
 		t.Errorf("starts = %d, want 1", sb.starts)
 	}
-	if n := m.holders("p"); n != 0 {
+	m.mu.Lock()
+	n := m.workspaceRefsLocked("p")
+	m.mu.Unlock()
+	if n != 0 {
 		t.Errorf("holders after the calls returned = %d, want 0", n)
 	}
 }

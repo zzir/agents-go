@@ -129,7 +129,7 @@ type TriggerStore struct {
 
 // NewTriggerStore returns a TriggerStore backed by db.
 func NewTriggerStore(db *bun.DB) *TriggerStore {
-	return &TriggerStore{NewCrudStore[Trigger](db, "trigger", "created_at DESC").withSecrets(sealTrigger, openTrigger)}
+	return &TriggerStore{NewCrudStore[Trigger](db, "trigger").withSecrets(sealTrigger, openTrigger)}
 }
 
 // referencesExist reports whether the target and the session a trigger names
@@ -170,7 +170,7 @@ func (s *TriggerStore) Create(ctx context.Context, t *Trigger) error {
 		if err := referencesExist(ctx, tx, t); err != nil {
 			return err
 		}
-		err := sealedWrite(t, sealTrigger, openTrigger, func() error {
+		err := s.sealedWrite(t, func() error {
 			_, err := tx.NewInsert().Model(t).Exec(ctx)
 			return err
 		})

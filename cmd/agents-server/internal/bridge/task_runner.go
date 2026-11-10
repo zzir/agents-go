@@ -31,15 +31,6 @@ func (r *Runner) publishTaskCancelled(runID string) {
 	r.hub.finish(runID, false)
 }
 
-// isTerminalTaskStatus reports whether s is one of the three terminal task
-// states (completed / failed / cancelled).
-func isTerminalTaskStatus(s string) bool {
-	return s == protocol.TaskCompleted || s == protocol.TaskFailed || s == protocol.TaskCancelled
-}
-
-// IsTerminalTaskStatus reports whether a task status string is terminal.
-func IsTerminalTaskStatus(s string) bool { return isTerminalTaskStatus(s) }
-
 // resolveSpawnAgent resolves an explicit config id or name; an empty name is
 // the spawning run's agent.
 func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name string) (*store.AgentConfig, error) {
@@ -71,13 +62,13 @@ func (r *Runner) resolveSpawnAgent(ctx context.Context, parentSessionID, name st
 // errNoSuchAgent is agentConfigByName's not-found, distinct from a store fault.
 var errNoSuchAgent = errors.New("no agent")
 
-// visibleAgentConfigs lists what ownerID may see; empty ownerID (an internal
-// caller with no user) sees everything.
-func (r *Runner) visibleAgentConfigs(ctx context.Context, ownerID string) ([]store.AgentConfig, error) {
+// visibleRows lists what ownerID may see of a scoped table (their own plus the
+// global set); an empty ownerID — an internal caller with no user — sees everything.
+func visibleRows[T any](ctx context.Context, s *store.CrudStore[T], ownerID string) ([]T, error) {
 	if ownerID == "" {
-		return r.Deps.AgentConfigs.List(ctx)
+		return s.List(ctx)
 	}
-	return store.ListVisibleOf(ctx, r.Deps.AgentConfigs.CrudStore, ownerID, false)
+	return store.ListVisibleOf(ctx, s, ownerID, false)
 }
 
 // agentConfigByName resolves an agent by config name (or id) within ownerID's
@@ -88,7 +79,7 @@ func (r *Runner) agentConfigByName(ctx context.Context, ownerID, name string) (*
 			return cfg, nil
 		}
 	}
-	cfgs, err := r.visibleAgentConfigs(ctx, ownerID)
+	cfgs, err := visibleRows(ctx, r.Deps.AgentConfigs.CrudStore, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +187,7 @@ func (r *Runner) MaxTaskAttempts(kind string) int {
 func (r *Runner) postRun(runID, sessionID string, result *RunOutcome) {
 	ctx := r.hub.rootCtx
 	// A run ending frees the session: the moment a debt owed to it can be paid.
-	(Waker{r}).Drain(ctx, sessionID)
+	r.drainWakeups(ctx, sessionID)
 	info, ok := r.hub.Info(runID)
 	if !ok {
 		return
@@ -225,10 +216,6 @@ func (r *Runner) FailOrphanedTasks(ctx context.Context) {
 	}
 }
 
-// DrainPendingWakeups is the second half: every session owed a turn is woken.
-// It starts runs, so it runs after the handlers are wired — invariant 32.
-func (r *Runner) DrainPendingWakeups(ctx context.Context) { (Waker{r}).DrainAll(ctx) }
-
 // Shutdown drains the hub: every live run is cancelled and waited for so its
 // partial turn persists before the process exits.
 func (r *Runner) Shutdown(ctx context.Context) { r.hub.Shutdown(ctx) }
@@ -248,7 +235,7 @@ func (r *Runner) WithSessionTreeFenced(ctx context.Context, sessionID string, fn
 	err = fn()
 	release()
 	for _, id := range tree {
-		(Waker{r}).Drain(r.hub.rootCtx, id)
+		r.drainWakeups(r.hub.rootCtx, id)
 	}
 	return err
 }
@@ -276,7 +263,7 @@ func (r *Runner) StopSessionTree(sessionID string) {
 		logging.Ctx(ctx).Warn("listing tasks for session stop", "error", err, "session_id", sessionID)
 	}
 	for i := range live {
-		if isTerminalTaskStatus(live[i].Status) {
+		if tasks.Status(live[i].Status).Terminal() {
 			continue
 		}
 		if info, ok := r.hub.Info(live[i].RunID); ok && info.Status == RunRunning {

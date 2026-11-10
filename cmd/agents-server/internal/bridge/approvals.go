@@ -12,6 +12,7 @@ import (
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
 	"github.com/zzir/agents-go/agents/session"
+	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/sandboxes"
@@ -53,16 +54,16 @@ func (e *StaleApprovalAttemptError) Error() string {
 
 // persistInterruption writes an interrupted run's SDK state and pending calls
 // BEFORE the pause is announced; a failure fails the segment instead.
-func (r *Runner) persistInterruption(result *RunOutcome) error {
-	if result.SDKState == nil {
+func (r *Runner) persistInterruption(res *agents.RunResult, runID, sessionID, agentConfigID, workspaceID string) error {
+	if res.State == nil {
 		return errors.New("the paused run carries no state to resume from")
 	}
-	stateJSON, err := result.SDKState.MarshalJSON()
+	stateJSON, err := res.State.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("serializing run state: %w", err)
 	}
-	calls := make([]store.PendingToolCall, 0, len(result.Interruptions))
-	for _, item := range result.Interruptions {
+	calls := make([]store.PendingToolCall, 0, len(res.Interruptions))
+	for _, item := range res.Interruptions {
 		calls = append(calls, store.PendingToolCall{
 			ToolCallID: item.CallID,
 			ToolName:   item.ToolName,
@@ -71,24 +72,24 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 	}
 	callsJSON, _ := json.Marshal(calls)
 	approval := &store.PendingApproval{
-		RunID:         result.RunID,
-		SessionID:     result.SessionID,
-		AgentConfigID: result.AgentConfigID,
-		WorkspaceID:   result.WorkspaceID,
+		RunID:         runID,
+		SessionID:     sessionID,
+		AgentConfigID: agentConfigID,
+		WorkspaceID:   workspaceID,
 		State:         string(stateJSON),
 		ToolCalls:     callsJSON,
 		// The paused turn's user text, a fallback for a reload during the pause.
-		UserInput: session.UserText(result.SDKState.UserInput),
+		UserInput: session.UserText(res.State.UserInput),
 	}
 	// A task's run pauses its TASK in the same write (TaskStore.Pause) —
 	// invariant 37; the manager's later mark finds the row already paused.
-	if info, ok := r.hub.Info(result.RunID); ok && info.Task != nil && info.Task.TaskID != "" {
-		won, err := r.Deps.Tasks.Pause(context.Background(), info.Task.TaskID, result.RunID, nil, approval)
+	if info, ok := r.hub.Info(runID); ok && info.Task != nil && info.Task.TaskID != "" {
+		won, err := r.Deps.Tasks.Pause(context.Background(), info.Task.TaskID, runID, nil, approval)
 		if err != nil {
 			return err
 		}
 		if !won {
-			return fmt.Errorf("task %s is no longer working on run %s", info.Task.TaskID, result.RunID)
+			return fmt.Errorf("task %s is no longer working on run %s", info.Task.TaskID, runID)
 		}
 		return nil
 	}
@@ -98,7 +99,7 @@ func (r *Runner) persistInterruption(result *RunOutcome) error {
 // buildAgentRegistry builds the agent and its reachable handoff targets by name for
 // agents.RunStateFromJSON; pass the run's workspace, or the re-run agent loses its tools.
 func (r *Runner) buildAgentRegistry(ctx context.Context, agentConfigID, workspaceID string, background bool, ownerID string) (map[string]*agents.Agent, *BuildResult, error) {
-	built, err := buildFullAgent(ctx, r.Deps, agentConfigID, workspaceID, background, ownerID)
+	built, err := r.buildFullAgent(ctx, agentConfigID, workspaceID, background, ownerID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -129,7 +130,7 @@ var errResumeStopped = errors.New("the work was stopped before the approval coul
 
 // armPlanUnlock makes clearing the session's planning column the PRECONDITION
 // of the first unlock; keep then receives the approved plan — invariant 87.
-func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore, ref session.Ref, keep func(ctx context.Context, plan string)) {
+func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore, keep func(ctx context.Context, plan string)) {
 	if phase == nil {
 		return
 	}
@@ -137,7 +138,7 @@ func armPlanUnlock(phase *middleware.PlanPhase, sa *store.EntryStore, ref sessio
 		ctx, cancel := context.WithTimeout(context.Background(), planUnlockPersistTimeout)
 		defer cancel()
 		// Clearing the column IS the durable record of the approval — invariant 33.
-		if err := sa.SetSessionPlanning(ctx, ref, false); err != nil {
+		if err := sa.SetSessionPlanning(ctx, false); err != nil {
 			return fmt.Errorf("persisting the plan-unlock record: %w", err)
 		}
 		if keep != nil && strings.TrimSpace(plan) != "" {
@@ -153,19 +154,18 @@ func (r *Runner) ApplyPlanIntent(ctx context.Context, sessionID string, plan *bo
 	if plan == nil {
 		return nil
 	}
-	ref, err := store.RefFor(ctx, r.db, sessionID)
+	sa, err := r.Deps.Sessions.OpenEntries(ctx, sessionID)
 	if err != nil {
 		return err
 	}
-	sa := store.NewEntryStoreFor(r.db, ref)
-	planning, err := sa.SessionIsPlanning(ctx, ref)
+	planning, err := sa.SessionIsPlanning(ctx)
 	if err != nil {
 		return err
 	}
 	if planning == *plan {
 		return nil
 	}
-	return sa.SetSessionPlanning(ctx, ref, *plan)
+	return sa.SetSessionPlanning(ctx, *plan)
 }
 
 // restorePlanPhase puts a plan-mode run into the SESSION's phase (invariant 33)
@@ -174,7 +174,7 @@ func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPha
 	if phase == nil {
 		return nil
 	}
-	planning, err := sa.SessionIsPlanning(ctx, ref)
+	planning, err := sa.SessionIsPlanning(ctx)
 	if err != nil {
 		return fmt.Errorf("reading plan-unlock marker: %w", err)
 	}
@@ -182,7 +182,7 @@ func (r *Runner) restorePlanPhase(ctx context.Context, phase *middleware.PlanPha
 		// Armed AFTER the read: a replayed unlock must not write the column twice.
 		_ = phase.Unlock()
 	}
-	armPlanUnlock(phase, sa, ref, func(ctx context.Context, plan string) {
+	armPlanUnlock(phase, sa, func(ctx context.Context, plan string) {
 		// Best effort: the approval stands whether or not its plan was kept.
 		if err := r.keepApprovedPlan(ctx, ref, ownerID, plan); err != nil {
 			logging.Ctx(ctx).Warn("keeping the approved plan", "error", err, "session_id", ref.ID)
@@ -351,16 +351,7 @@ func (r *Runner) resolvePending(ctx context.Context, pending *store.PendingAppro
 		case store.ClaimTaken:
 			return "", fmt.Errorf("claiming pending approval: %w", store.ErrNotFound)
 		case store.ClaimTaskNotPaused:
-			// Terminal: void. A different attempt: stale (the row stays and
-			// refuses). Still this attempt, not paused yet: not ready, retry.
-			cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID)
-			if gerr == nil && !isTerminalTaskStatus(cur.Status) {
-				if cur.RunID != pending.RunID {
-					return "", &StaleApprovalAttemptError{TaskID: taskMeta.TaskID, ApprovalRunID: pending.RunID, CurrentRunID: cur.RunID}
-				}
-				return "", &ApprovalNotReadyError{RunID: pending.RunID}
-			}
-			return "", &ApprovalVoidError{TaskID: taskMeta.TaskID}
+			return "", r.notPausedError(mctx, taskMeta.TaskID, pending.RunID)
 		}
 	} else if err := r.Deps.PendingApprovals.Delete(mctx, pending.RunID); err != nil {
 		return "", fmt.Errorf("claiming pending approval: %w", err)
@@ -370,7 +361,7 @@ func (r *Runner) resolvePending(ctx context.Context, pending *store.PendingAppro
 	// registers and BEFORE its goroutine launches (a stop meanwhile wins).
 	verify := func() error {
 		if taskMeta != nil && taskMeta.TaskID != "" {
-			if cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID); gerr == nil && isTerminalTaskStatus(cur.Status) {
+			if cur, gerr := r.Deps.Tasks.Get(mctx, taskMeta.TaskID); gerr == nil && tasks.Status(cur.Status).Terminal() {
 				return errResumeStopped
 			}
 		}
@@ -405,11 +396,25 @@ func (r *Runner) resolvePending(ctx context.Context, pending *store.PendingAppro
 	handedOff = true
 	// Working again: tell the clients — the run's own run.started follows.
 	if taskMeta != nil && taskMeta.TaskID != "" {
-		if t, gerr := store.NewTaskAdapter(r.Deps.Tasks).Get(mctx, taskMeta.TaskID); gerr == nil {
+		if t, gerr := r.taskRows.Get(mctx, taskMeta.TaskID); gerr == nil {
 			r.publishTaskUpdated(mctx, t)
 		}
 	}
 	return runID, nil
+}
+
+// notPausedError names why a task's approval claim found it not paused:
+// terminal is void; another attempt is stale (the row stays and refuses); this
+// attempt not paused yet is not ready, retry.
+func (r *Runner) notPausedError(ctx context.Context, taskID, approvalRunID string) error {
+	cur, err := r.Deps.Tasks.Get(ctx, taskID)
+	if err != nil || tasks.Status(cur.Status).Terminal() {
+		return &ApprovalVoidError{TaskID: taskID}
+	}
+	if cur.RunID != approvalRunID {
+		return &StaleApprovalAttemptError{TaskID: taskID, ApprovalRunID: approvalRunID, CurrentRunID: cur.RunID}
+	}
+	return &ApprovalNotReadyError{RunID: approvalRunID}
 }
 
 // ErrSessionAwaitingApproval refuses a machine-started turn on a session whose

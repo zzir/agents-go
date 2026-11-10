@@ -3,6 +3,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -47,6 +47,7 @@ var avatarPath = regexp.MustCompile(`^/avatars/[A-Za-z0-9_-]+\.svg$`)
 // validateAgentConfig checks a Create/Update body against what a run would
 // otherwise hit at run time.
 func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.AgentConfig) error {
+	ctx := c.Request.Context()
 	if ac.Name == "" {
 		return badRequest("name is required")
 	}
@@ -64,82 +65,73 @@ func (h *AgentConfigHandler) validateAgentConfig(c *gin.Context, ac *store.Agent
 	// A provider that does not exist, or that this scope may not reference,
 	// is refused at save — decisions §5.29.
 	if ac.ProviderID != "" {
-		pv, err := h.providers.Get(c.Request.Context(), ac.ProviderID)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return badRequest("provider_id names no provider")
-			}
+		if err := h.providerRef(c, ac, ac.ProviderID, "provider_id"); err != nil {
 			return err
 		}
-		if !store.RefVisible(pv.Scope, pv.OwnerID, ac.Scope, ac.OwnerID) {
-			if !callerSees(c, pv.Scope, pv.OwnerID) {
-				return badRequest("provider_id names no provider") // foreign private reads as absent
-			}
-			return badRequest(refScopeError("provider", pv.Name, ac.Scope))
-		}
 	}
-	if err := bridge.ValidateAgentToolNames(c.Request.Context(), h.mcpServers, ac.Tools); err != nil {
+	if err := bridge.ValidateAgentToolNames(ctx, h.mcpServers, ac.Tools); err != nil {
 		return badRequest(err.Error())
 	}
 	// The same decode backs the build: what does not parse is refused here.
-	spec, err := bridge.DecodeAgentSpec(ac)
-	if err != nil {
+	if _, err := bridge.DecodeAgentSpec(ac); err != nil {
 		return badRequest(err.Error())
 	}
 	// A fallback provider follows the primary's reference rule; an endpoint-only
 	// entry is checked when the run resolves it.
-	for i, e := range spec.FallbackModels {
+	for i, e := range ac.Resilience.FallbackModels {
 		if e.ProviderID == "" {
 			continue
 		}
-		pv, err := h.providers.Get(c.Request.Context(), e.ProviderID)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return badRequest(fmt.Sprintf("fallback_models[%d].provider_id names no provider", i))
-			}
+		if err := h.providerRef(c, ac, e.ProviderID, fmt.Sprintf("fallback_models[%d].provider_id", i)); err != nil {
 			return err
-		}
-		if !store.RefVisible(pv.Scope, pv.OwnerID, ac.Scope, ac.OwnerID) {
-			if !callerSees(c, pv.Scope, pv.OwnerID) {
-				return badRequest(fmt.Sprintf("fallback_models[%d].provider_id names no provider", i))
-			}
-			return badRequest(refScopeError("provider", pv.Name, ac.Scope))
 		}
 	}
 	// MCP servers, skills and handoff targets must be ones this scope may name;
-	// a missing id is tolerated — invariant 13.
-	for _, id := range spec.Tools {
-		if ms, err := h.mcpServers.Get(c.Request.Context(), id); err == nil {
-			if !store.RefVisible(ms.Scope, ms.OwnerID, ac.Scope, ac.OwnerID) {
-				if !callerSees(c, ms.Scope, ms.OwnerID) {
-					continue // reads as absent; the run drops it the same way
-				}
-				return badRequest(refScopeError("MCP server", ms.Name, ac.Scope))
+	// a missing id, or one the caller cannot see, is dropped by the run the
+	// same way — invariant 13.
+	for _, id := range ac.Tools {
+		if ms, err := h.mcpServers.Get(ctx, id); err == nil {
+			if reason, _ := refRefusal(c, "MCP server", ms.Name, ms.Scope, ms.OwnerID, ac.Scope, ac.OwnerID); reason != "" {
+				return badRequest(reason)
 			}
 		}
 	}
-	for _, id := range spec.Skills {
-		if sk, err := h.skills.Get(c.Request.Context(), id); err == nil {
-			if !store.RefVisible(sk.Scope, sk.OwnerID, ac.Scope, ac.OwnerID) {
-				if !callerSees(c, sk.Scope, sk.OwnerID) {
-					continue // reads as absent; the run drops it the same way
-				}
-				return badRequest(refScopeError("skill", sk.Name, ac.Scope))
+	for _, id := range ac.Skills {
+		if sk, err := h.skills.Get(ctx, id); err == nil {
+			if reason, _ := refRefusal(c, "skill", sk.Name, sk.Scope, sk.OwnerID, ac.Scope, ac.OwnerID); reason != "" {
+				return badRequest(reason)
 			}
 		}
 	}
-	for _, id := range spec.Handoffs {
-		if target, err := h.store.Get(c.Request.Context(), id); err == nil {
-			if !store.RefVisible(target.Scope, target.OwnerID, ac.Scope, ac.OwnerID) {
-				if !callerSees(c, target.Scope, target.OwnerID) {
-					continue // reads as absent; the run drops it the same way
-				}
-				return badRequest(refScopeError("handoff agent", target.Name, ac.Scope))
+	for _, id := range ac.Handoffs {
+		if target, err := h.store.Get(ctx, id); err == nil {
+			if reason, _ := refRefusal(c, "handoff agent", target.Name, target.Scope, target.OwnerID, ac.Scope, ac.OwnerID); reason != "" {
+				return badRequest(reason)
 			}
 		}
 	}
-	if err := h.guardrails.ValidateNames(c.Request.Context(), ac.Guardrails.Guardrails); err != nil {
+	if err := h.guardrails.ValidateNames(ctx, ac.Guardrails.Guardrails); err != nil {
 		return badRequest(err.Error())
+	}
+	return nil
+}
+
+// providerRef checks that the agent may name provider id; field words the
+// refusal. A provider the caller cannot see reads as absent.
+func (h *AgentConfigHandler) providerRef(c *gin.Context, ac *store.AgentConfig, id, field string) error {
+	absent := badRequest(field + " names no provider")
+	pv, err := h.providers.Get(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return absent
+		}
+		return err
+	}
+	switch reason, hidden := refRefusal(c, "provider", pv.Name, pv.Scope, pv.OwnerID, ac.Scope, ac.OwnerID); {
+	case hidden:
+		return absent
+	case reason != "":
+		return badRequest(reason)
 	}
 	return nil
 }
@@ -322,33 +314,14 @@ func (h *AgentConfigHandler) Delete(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/agents/{id}/scope [post]
 func (h *AgentConfigHandler) SetScope(c *gin.Context) error {
-	scope, err := bindScope(c)
-	if err != nil {
-		return err
-	}
-	ctx, id := c.Request.Context(), c.Param("id")
-	ac, err := h.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := scopeChangeAllowed(c, scope, ac.Scope, ac.OwnerID); err != nil {
-		return err
-	}
-	if err := sameScope("agent", ac.Scope, scope); err != nil {
-		return err
-	}
-	// A promote re-runs the reference validation as the target scope.
-	ac.Scope = scope
-	if err := h.validateAgentConfig(c, ac); err != nil {
-		return err
-	}
-	// The store re-checks the provider leg inside its transaction (a racing demote).
-	if err := h.store.SetScope(ctx, id, scope); err != nil {
-		return err
-	}
-	server.SetAuditDetail(c, "scope="+scope)
-	c.Status(http.StatusNoContent)
-	return nil
+	// A promote re-runs the reference validation as the target scope; the store
+	// re-checks the provider leg inside its transaction (a racing demote).
+	return setScope(c, h.store.CrudStore, "agent", agentScope,
+		func(ac *store.AgentConfig, target string) error {
+			ac.Scope = target
+			return h.validateAgentConfig(c, ac)
+		},
+		func(ctx context.Context, id, scope, _ string) error { return h.store.SetScope(ctx, id, scope) })
 }
 
 // SetOwner transfers the agent to another account (admin).
@@ -364,42 +337,23 @@ func (h *AgentConfigHandler) SetScope(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/agents/{id}/owner [put]
 func (h *AgentConfigHandler) SetOwner(c *gin.Context) error {
-	var req SetOwnerRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		return badRequest("user_id is required")
-	}
-	ctx, id := c.Request.Context(), c.Param("id")
-	ac, err := h.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	// References are re-validated as the new owner — decisions §5.29.
-	ac.OwnerID = req.UserID
-	if err := h.validateAgentConfig(c, ac); err != nil {
-		return err
-	}
-	if err := h.store.TransferOwner(ctx, id, req.UserID); err != nil {
-		switch {
-		case errors.Is(err, store.ErrNoSuchUser):
-			return badRequest("no such user")
-		case errors.Is(err, store.ErrProviderScope):
-			return badRequest("the new owner cannot see this agent's provider; repoint or publish it first")
-		default:
+	return setOwner(c, func(ctx context.Context, id, userID string) error {
+		ac, err := h.store.Get(ctx, id)
+		if err != nil {
 			return err
 		}
-	}
-	server.SetAuditDetail(c, "owner="+req.UserID)
-	c.Status(http.StatusNoContent)
-	return nil
+		// References are re-validated as the new owner — decisions §5.29.
+		ac.OwnerID = userID
+		if err := h.validateAgentConfig(c, ac); err != nil {
+			return err
+		}
+		err = h.store.TransferOwner(ctx, id, userID)
+		if errors.Is(err, store.ErrProviderScope) {
+			return badRequest("the new owner cannot see this agent's provider; repoint or publish it first")
+		}
+		return err
+	})
 }
 
 // agentScope reads an agent's (scope, owner) pair for the scoped-CRUD gates.
 func agentScope(a *store.AgentConfig) (string, string) { return a.Scope, a.OwnerID }
-
-// refScopeError words a refused cross-scope reference.
-func refScopeError(kind, name, holderScope string) string {
-	if holderScope == store.ScopeGlobal {
-		return "a global agent can only reference global configuration; " + kind + " " + name + " is private"
-	}
-	return kind + " " + name + " belongs to another user"
-}

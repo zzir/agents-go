@@ -37,20 +37,13 @@ func (dockerBackend) Rebuild(ctx context.Context, spec Spec) error {
 	return nil
 }
 
-// Check runs the health command in a throw-away EPHEMERAL container, no workspace tree.
+// Check runs the health command in a throw-away EPHEMERAL container of the
+// sandbox's image and shape: no workspace, so no name, volume or persistence.
 func (dockerBackend) Check(ctx context.Context, sb *store.Sandbox) error {
-	opts, err := DaemonOptions(sb)
+	opts, err := imageOptions(sb)
 	if err != nil {
 		return err
 	}
-	// Borrow the image and shape, leave the container, volume and persistence
-	// behind.
-	full, err := BuildOptions(Spec{Sandbox: sb, Workspace: &store.Workspace{}})
-	if err != nil {
-		return err
-	}
-	opts.Image, opts.Runtime, opts.User, opts.Network = full.Image, full.Runtime, full.User, full.Network
-	opts.Limits = full.Limits
 	inst, err := dockersb.New(opts)
 	if err != nil {
 		return err

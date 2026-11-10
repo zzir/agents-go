@@ -44,9 +44,8 @@ func inject(r rig, runID, body string) (int, string) {
 	return rec.Code, rec.Body.String()
 }
 
-// POST /runs/:id/inject is run.inject's REST twin: a steer queued on the live
-// run is read by it — the run takes another turn — and lands in the session
-// as the user's message.
+// A steer queued on the live run through POST /runs/:id/inject is read by it —
+// the run takes another turn — and lands in the session as the user's message.
 func TestInjectDeliversToTheLiveRun(t *testing.T) {
 	r := statusRig(t)
 	sessionID, runID, done := liveRun(t, r, 700*time.Millisecond)

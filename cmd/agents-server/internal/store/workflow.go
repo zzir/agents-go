@@ -163,44 +163,12 @@ const defaultMaxLaps = 3
 // WorkflowSteps is the ordered sequence, stored as one JSON column.
 type WorkflowSteps []WorkflowStep
 
-// Value implements driver.Valuer.
-func (s WorkflowSteps) Value() (driver.Value, error) { return jsonSliceValue(s) }
+// Value implements driver.Valuer; a nil sequence never reaches it (nullzero
+// stores NULL).
+func (s WorkflowSteps) Value() (driver.Value, error) { return jsonColumnValue(s) }
 
 // Scan implements sql.Scanner.
-func (s *WorkflowSteps) Scan(src any) error { return scanJSONColumn(src, s, "workflow steps") }
-
-// jsonSliceValue marshals a JSON-backed slice column; nil stores as [] so a
-// reader never has to tell "no rows yet" from "column never written".
-func jsonSliceValue[T any](s []T) (driver.Value, error) {
-	if s == nil {
-		s = []T{}
-	}
-	b, err := json.Marshal(s)
-	if err != nil {
-		return nil, err
-	}
-	return string(b), nil
-}
-
-// scanJSONColumn reads one back. An empty or NULL column leaves dst untouched.
-func scanJSONColumn(src, dst any, what string) error {
-	if src == nil {
-		return nil
-	}
-	var b []byte
-	switch v := src.(type) {
-	case []byte:
-		b = v
-	case string:
-		b = []byte(v)
-	default:
-		return fmt.Errorf("%s: cannot scan %T", what, src)
-	}
-	if len(b) == 0 {
-		return nil
-	}
-	return json.Unmarshal(b, dst)
-}
+func (s *WorkflowSteps) Scan(src any) error { return jsonColumnScan(s, src) }
 
 // Workflow is a fixed, ordered sequence of steps run on ONE session; which
 // step runs next is the definition's answer, not the model's.
@@ -248,16 +216,10 @@ func (b WorkflowBudget) LapBound() int {
 func (b WorkflowBudget) IsZero() bool { return b == WorkflowBudget{} }
 
 // Value implements driver.Valuer.
-func (b WorkflowBudget) Value() (driver.Value, error) {
-	raw, err := json.Marshal(b)
-	if err != nil {
-		return nil, err
-	}
-	return string(raw), nil
-}
+func (b WorkflowBudget) Value() (driver.Value, error) { return jsonColumnValue(b) }
 
 // Scan implements sql.Scanner.
-func (b *WorkflowBudget) Scan(src any) error { return scanJSONColumn(src, b, "workflow budget") }
+func (b *WorkflowBudget) Scan(src any) error { return jsonColumnScan(b, src) }
 
 // BudgetSpent is what an execution has used so far, measured by the driver:
 // steps and minutes from the launch log, tokens from the session's entries.
@@ -631,7 +593,7 @@ type WorkflowStore struct {
 // NewWorkflowStore returns a WorkflowStore backed by db. Names are unique
 // per scope, case-insensitively (partial indexes, decisions §5.29).
 func NewWorkflowStore(db *bun.DB) *WorkflowStore {
-	return &WorkflowStore{NewCrudStore[Workflow](db, "workflow", "created_at DESC")}
+	return &WorkflowStore{NewCrudStore[Workflow](db, "workflow")}
 }
 
 // Create inserts the definition.
@@ -652,43 +614,18 @@ func (s *WorkflowStore) SetOwner(ctx context.Context, id, ownerID string) error 
 // (locked) and hands it to prepare (nil to skip), the shape every scoped entity
 // uses.
 func (s *WorkflowStore) Update(ctx context.Context, id string, m *Workflow, prepare func(prev *Workflow) error) error {
-	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		return s.updateFrom(ctx, tx, id, m, prepare)
-	})
-	if err != nil {
-		return fmt.Errorf("updating workflow %s: %w", id, err)
-	}
-	return nil
+	return s.updateInTx(ctx, id, m, prepare)
 }
 
-// Delete removes a definition and the triggers that fire it; executions keep
-// their snapshot.
-func (s *WorkflowStore) Delete(ctx context.Context, id string) error {
-	return s.DeleteOwnedBy(ctx, id, "")
-}
-
-// DeleteOwnedBy is Delete while the row still belongs to expectOwner ("" skips
-// the check) — decisions §5.29.
+// DeleteOwnedBy removes the definition, while it still belongs to expectOwner,
+// with the triggers that fire it, in one transaction; executions keep their snapshot.
 func (s *WorkflowStore) DeleteOwnedBy(ctx context.Context, id, expectOwner string) error {
 	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if expectOwner != "" {
-			wf := new(Workflow)
-			if err := lockRow(ctx, tx, wf, "id = ?", id); err != nil {
-				return fmt.Errorf("deleting workflow %s: %w", id, err)
-			}
-			if wf.OwnerID != expectOwner {
-				return fmt.Errorf("deleting workflow %s: %w", id, ErrOwnershipChanged)
-			}
+		if err := deleteOwnedBy[Workflow](ctx, tx, s.label, id, expectOwner); err != nil {
+			return err
 		}
 		if _, err := tx.NewDelete().Model((*Trigger)(nil)).Where("workflow_id = ?", id).Exec(ctx); err != nil {
 			return fmt.Errorf("deleting triggers of workflow %s: %w", id, err)
-		}
-		res, err := tx.NewDelete().Model((*Workflow)(nil)).Where("id = ?", id).Exec(ctx)
-		if err == nil {
-			err = requireRows(res)
-		}
-		if err != nil {
-			return fmt.Errorf("deleting workflow %s: %w", id, err)
 		}
 		return nil
 	})

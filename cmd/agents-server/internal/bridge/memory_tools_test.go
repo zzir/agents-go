@@ -11,9 +11,9 @@ import (
 // always the first, writable, approval-free scope.
 func TestMemoryScopesFollowTheEditRule(t *testing.T) {
 	owner, other := store.NewID(), store.NewID()
-	private := &BuildResult{Memory: store.MemoryGroup{Tools: true, AgentWrite: true}, ConfigScope: store.ScopePrivate, ConfigOwnerID: owner}
-	global := &BuildResult{Memory: store.MemoryGroup{Tools: true, AgentWrite: true}, ConfigScope: store.ScopeGlobal, ConfigOwnerID: owner}
-	off := &BuildResult{Memory: store.MemoryGroup{Tools: true}, ConfigScope: store.ScopePrivate, ConfigOwnerID: owner}
+	private := &BuildResult{Config: store.AgentConfig{Memory: store.MemoryGroup{Tools: true, AgentWrite: true}, Scope: store.ScopePrivate, OwnerID: owner}}
+	global := &BuildResult{Config: store.AgentConfig{Memory: store.MemoryGroup{Tools: true, AgentWrite: true}, Scope: store.ScopeGlobal, OwnerID: owner}}
+	off := &BuildResult{Config: store.AgentConfig{Memory: store.MemoryGroup{Tools: true}, Scope: store.ScopePrivate, OwnerID: owner}}
 	cases := []struct {
 		name     string
 		built    *BuildResult

@@ -27,30 +27,15 @@ func testDeps(tb testing.TB, db *bun.DB) *AgentDeps {
 		mcp.CloseAll()
 		sandboxMgr.CloseAll()
 	})
-	providerStore := store.NewProviderStore(db)
+	st := store.NewStores(db)
 	return &AgentDeps{
-		AgentConfigs:     store.NewAgentConfigStore(db),
-		Providers:        providerStore,
-		McpServers:       store.NewMcpServerStore(db),
-		Sandboxes:        store.NewSandboxStore(db),
-		Skills:           store.NewSkillStore(db),
-		Workspaces:       store.NewWorkspaceStore(db),
-		Memories:         store.NewMemoryStore(db),
-		Settings:         settings.NewReader(store.NewSettingStore(db)),
-		Sessions:         store.NewSessionStore(db),
-		Traces:           store.NewTraceStore(db),
-		Guardrails:       guardrails.NewResolver(store.NewGuardrailStore(db)),
-		McpManager:       mcp,
-		SandboxManager:   sandboxMgr,
-		ChatGPTOAuth:     providers.NewChatGPTOAuth(providerStore),
-		PendingApprovals: store.NewPendingApprovalStore(db),
-		Tasks:            store.NewTaskStore(db),
-		ContextProfiles:  store.NewContextProfileStore(db),
-		Workflows:        store.NewWorkflowStore(db),
-		Wakeups:          store.NewWakeupStore(db),
-		Attachments:      store.NewAttachmentStore(db),
-		Audit:            func(context.Context, protocol.AuditRecord) {},
-		Users:            store.NewUserStore(db),
+		Stores:            st,
+		SettingReader:     settings.NewReader(st.Settings),
+		GuardrailResolver: guardrails.NewResolver(st.Guardrails),
+		McpManager:        mcp,
+		SandboxManager:    sandboxMgr,
+		ChatGPTOAuth:      providers.NewChatGPTOAuth(st.Providers),
+		RecordAudit:       func(context.Context, protocol.AuditRecord) {},
 	}
 }
 
@@ -69,11 +54,9 @@ func testRunner(ctx context.Context, tb testing.TB, db *bun.DB, edit ...func(*Ag
 	return r
 }
 
-// Every field of AgentDeps is accounted for: a required one missing refuses
-// the Runner by name, and the rest are the Runner's own to set.
+// Every field of AgentDeps is required: one missing refuses the Runner by name.
 func TestNewRunnerRefusesAnIncompleteDependencySet(t *testing.T) {
 	db := testdb.New(t)
-	built := testRunner(t.Context(), t, db).Deps
 	fields := reflect.TypeFor[AgentDeps]()
 	required := 0
 	for i := range fields.NumField() {
@@ -81,10 +64,7 @@ func TestNewRunnerRefusesAnIncompleteDependencySet(t *testing.T) {
 		deps := testDeps(t, db)
 		injected := reflect.ValueOf(deps).Elem().Field(i)
 		if injected.IsNil() {
-			// Not the composition root's to inject: NewRunner must have set it.
-			if reflect.ValueOf(built).Elem().Field(i).IsNil() {
-				t.Errorf("%s is neither injected by the composition root nor set by NewRunner", name)
-			}
+			t.Errorf("%s is not injected by the test's complete set", name)
 			continue
 		}
 		required++

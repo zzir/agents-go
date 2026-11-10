@@ -132,38 +132,38 @@ func (r *mcpServerReq) toModel() *store.McpServerConfig {
 	}
 }
 
-func (r *mcpServerReq) validate() string {
+func (r *mcpServerReq) validate() error {
 	if r.Name == "" {
-		return "name is required"
+		return badRequest("name is required")
 	}
 	// Validate the config at save, not at the first connect.
 	var hc store.HTTPMcpConfig
 	if len(r.Config) > 0 {
 		if err := json.Unmarshal(r.Config, &hc); err != nil {
-			return "config is not valid JSON: " + err.Error()
+			return badRequest("config is not valid JSON: " + err.Error())
 		}
 	}
 	if hc.Endpoint == "" {
-		return "config.endpoint is required"
+		return badRequest("config.endpoint is required")
 	}
 	if u, err := url.Parse(hc.Endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "config.endpoint must be an absolute http(s) URL"
+		return badRequest("config.endpoint must be an absolute http(s) URL")
 	}
 	switch hc.AuthMode {
 	case "", "header", "oauth":
 	default:
-		return `config.auth_mode must be "header" or "oauth"`
+		return badRequest(`config.auth_mode must be "header" or "oauth"`)
 	}
 	if hc.MaxRetryAttempts < -1 {
-		return "config.max_retry_attempts must be -1 (unlimited), 0 (off), or a retry count"
+		return badRequest("config.max_retry_attempts must be -1 (unlimited), 0 (off), or a retry count")
 	}
 	if hc.RetryBackoffMs < 0 {
-		return "config.retry_backoff_ms cannot be negative"
+		return badRequest("config.retry_backoff_ms cannot be negative")
 	}
 	if v := hc.ProtocolVersion; v != "" && !slices.Contains(mcp.ProtocolVersions(), v) {
-		return "config.protocol_version must be one of " + strings.Join(mcp.ProtocolVersions(), ", ")
+		return badRequest("config.protocol_version must be one of " + strings.Join(mcp.ProtocolVersions(), ", "))
 	}
-	return ""
+	return nil
 }
 
 // Create persists a new MCP server configuration from the request body.
@@ -184,8 +184,8 @@ func (h *McpServerHandler) Create(c *gin.Context) error {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return badRequest(err.Error())
 	}
-	if msg := req.validate(); msg != "" {
-		return badRequest(msg)
+	if err := req.validate(); err != nil {
+		return err
 	}
 	cfg := req.toModel()
 	if err := stampCreateScope(c, &cfg.Scope, &cfg.OwnerID); err != nil {
@@ -250,8 +250,8 @@ func (h *McpServerHandler) Update(c *gin.Context) error {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return badRequest(err.Error())
 	}
-	if msg := req.validate(); msg != "" {
-		return badRequest(msg)
+	if err := req.validate(); err != nil {
+		return err
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
@@ -339,7 +339,7 @@ func (h *McpServerHandler) Delete(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/scope [post]
 func (h *McpServerHandler) SetScope(c *gin.Context) error {
-	return setScopePlain(c, h.store.CrudStore, "MCP server", mcpScope, h.store.SetScope)
+	return setScope(c, h.store.CrudStore, "MCP server", mcpScope, nil, h.store.SetScope)
 }
 
 // SetOwner transfers the MCP server to another account (admin).
@@ -355,7 +355,7 @@ func (h *McpServerHandler) SetScope(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/owner [put]
 func (h *McpServerHandler) SetOwner(c *gin.Context) error {
-	return setOwnerPlain(c, h.store.SetOwner)
+	return setOwner(c, h.store.SetOwner)
 }
 
 // mcpConnectResp is the Connect response: status "connected", or

@@ -119,7 +119,8 @@ func (h *WorkspaceHandler) own(c *gin.Context) (*store.Workspace, error) {
 }
 
 // manage resolves the workspace for an operation on its COMPUTE (status, start,
-// stop, rebuild); an admin passes on any. Export, which discloses files, uses own.
+// stop, rebuild) or its deletion; an admin passes on any. Export, which
+// discloses files, uses own.
 func (h *WorkspaceHandler) manage(c *gin.Context) (*store.Workspace, error) {
 	ownerID, admin, err := callerScope(c)
 	if err != nil {
@@ -163,16 +164,13 @@ func (h *WorkspaceHandler) List(c *gin.Context) error {
 	if err != nil {
 		return err
 	}
-	if out == nil {
-		out = []store.Workspace{}
-	}
 	hosts := map[string]string{}
 	for i := range out {
 		if admin {
 			out[i].StorageHint = h.storageHint(c, hosts, &out[i])
 		}
 	}
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, nonNilList(out))
 	return nil
 }
 
@@ -198,6 +196,7 @@ func (h *WorkspaceHandler) storageHint(c *gin.Context, hints map[string]string, 
 	return "docker volume " + sandboxes.WorkspaceVolumeName(p.ID) + " on " + where
 }
 
+// workspaceReq is the create and update body.
 type workspaceReq struct {
 	Name string `json:"name" binding:"required"`
 	// SandboxID is what the workspace runs on — the machine and the image.
@@ -205,15 +204,8 @@ type workspaceReq struct {
 	// Env is the environment the workspace's container is created with;
 	// optional, and empty means none.
 	Env []store.EnvVar `json:"env,omitempty"`
-}
-
-// workspaceUpdateReq is the update body: the name, the sandbox, the whole
-// environment, and the revision the edit was made against (optional).
-type workspaceUpdateReq struct {
-	Name      string         `json:"name" binding:"required"`
-	SandboxID string         `json:"sandbox_id" binding:"required"`
-	Env       []store.EnvVar `json:"env,omitempty"`
-	Revision  int64          `json:"revision,omitempty"`
+	// Revision is the revision an update was made against (optional); a create ignores it.
+	Revision int64 `json:"revision,omitempty"`
 }
 
 // Create makes a new workspace for the caller on the named sandbox.
@@ -288,8 +280,8 @@ func (h *WorkspaceHandler) Get(c *gin.Context) error {
 //	@Tags			workspaces
 //	@Accept			json
 //	@Produce		json
-//	@Param			id			path		string				true	"Workspace id"
-//	@Param			workspace	body		workspaceUpdateReq	true	"Name and environment"
+//	@Param			id			path		string			true	"Workspace id"
+//	@Param			workspace	body		workspaceReq	true	"Name and environment"
 //	@Success		200			{object}	workspaceDetail
 //	@Failure		400			{object}	ErrorResponse
 //	@Failure		404			{object}	ErrorResponse
@@ -297,7 +289,7 @@ func (h *WorkspaceHandler) Get(c *gin.Context) error {
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id} [put]
 func (h *WorkspaceHandler) Update(c *gin.Context) error {
-	var req workspaceUpdateReq
+	var req workspaceReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return badRequest("name and sandbox_id are required")
 	}
@@ -352,7 +344,6 @@ func (h *WorkspaceHandler) Update(c *gin.Context) error {
 // RebuildNoteDeps is what a rebuild needs to leave its note on a session.
 type RebuildNoteDeps struct {
 	Sessions *store.SessionStore
-	Entries  *store.EntryStore
 	Fence    RunStopper
 }
 
@@ -378,10 +369,8 @@ type rebuildReq struct {
 //	@Router			/workspaces/{id}/sandbox/rebuild [post]
 func (h *WorkspaceHandler) RebuildContainer(c *gin.Context) error {
 	var req rebuildReq
-	if c.Request.ContentLength != 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			return badRequest(err.Error())
-		}
+	if err := bindOptional(c, &req); err != nil {
+		return err
 	}
 	p, err := h.manage(c)
 	if err != nil {
@@ -417,11 +406,11 @@ func (h *WorkspaceHandler) noteRebuild(c *gin.Context, p *store.Workspace, sessi
 		return
 	}
 	err = h.Notes.Fence.WithSessionTreeFenced(ctx, sessionID, func() error {
-		ref, err := h.Notes.Entries.RefFor(ctx, sessionID)
+		es, err := h.Notes.Sessions.OpenEntries(ctx, sessionID)
 		if err != nil {
 			return err
 		}
-		return h.Notes.Entries.AppendContainerRebuilt(ctx, ref, store.ContainerRebuilt{WorkspaceID: p.ID, WorkspaceName: p.Name})
+		return es.AppendContainerRebuilt(ctx, store.ContainerRebuilt{WorkspaceID: p.ID, WorkspaceName: p.Name})
 	})
 	if err != nil {
 		if _, busy := errors.AsType[bridge.ErrSessionBusy](err); !busy {
@@ -524,7 +513,15 @@ func (h *WorkspaceHandler) SandboxHost(c *gin.Context) error {
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id}/sandbox/start [post]
 func (h *WorkspaceHandler) SandboxStart(c *gin.Context) error {
-	return h.containerAct(c, h.manager.EnsureRunning)
+	spec, err := h.spec(c)
+	if err != nil {
+		return err
+	}
+	if err := h.manager.EnsureRunning(c.Request.Context(), spec); err != nil {
+		return upstream(err.Error())
+	}
+	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // SandboxStop releases the compute, keeping the working tree.
@@ -637,20 +634,6 @@ func (h *WorkspaceHandler) specFrom(c *gin.Context, resolve func(*gin.Context) (
 	return spec, nil
 }
 
-// containerAct resolves the workspace into a build spec, then runs one of the
-// manager's sandbox calls against it. Owner or admin (see manage).
-func (h *WorkspaceHandler) containerAct(c *gin.Context, act func(context.Context, sandboxes.Spec) error) error {
-	spec, err := h.spec(c)
-	if err != nil {
-		return err
-	}
-	if err := act(c.Request.Context(), spec); err != nil {
-		return upstream(err.Error())
-	}
-	c.Status(http.StatusNoContent)
-	return nil
-}
-
 // Delete removes the workspace and destroys its storage — decisions §5.33.
 //
 //	@Summary		Delete workspace
@@ -663,16 +646,9 @@ func (h *WorkspaceHandler) containerAct(c *gin.Context, act func(context.Context
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id} [delete]
 func (h *WorkspaceHandler) Delete(c *gin.Context) error {
-	ownerID, admin, err := callerScope(c)
+	p, err := h.manage(c) // a foreign workspace reads as absent
 	if err != nil {
 		return err
-	}
-	p, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		return err
-	}
-	if p.OwnerID != ownerID && !admin {
-		return errNotFound // a foreign workspace reads as absent
 	}
 	refs, err := h.store.DeleteIfUnreferenced(c.Request.Context(), p.ID)
 	if err != nil {

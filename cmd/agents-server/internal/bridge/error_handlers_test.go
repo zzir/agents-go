@@ -55,7 +55,7 @@ func TestBuildFullAgentBuildsErrorHandlers(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:  "recovering",
@@ -68,7 +68,7 @@ func TestBuildFullAgentBuildsErrorHandlers(t *testing.T) {
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	built, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
+	built, err := runner.BuildFullAgent(ctx, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestBuildFullAgentFailsOnBadErrorHandlers(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID,
 		Name:          "broken",
@@ -132,7 +132,7 @@ func TestBuildFullAgentFailsOnBadErrorHandlers(t *testing.T) {
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	_, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
+	_, err := runner.BuildFullAgent(ctx, ac.ID, "", store.LocalUserID)
 	if err == nil || !strings.Contains(err.Error(), "must be a JSON string") {
 		t.Fatalf("want plain-text string error, got %v", err)
 	}

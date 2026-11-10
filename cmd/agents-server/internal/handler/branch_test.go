@@ -51,7 +51,7 @@ func TestBranchRefusesLiveRun(t *testing.T) {
 	if err := entries.Append(ctx, mk("user", "first"), mk("assistant", "a1")); err != nil {
 		t.Fatal(err)
 	}
-	firstLeaf, err := entries.Leaf(ctx, ref)
+	firstLeaf, err := entries.Leaf(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestBranchRefusesLiveRun(t *testing.T) {
 	if err := entries.Append(ctx, mk("user", "second"), mk("assistant", "a2")); err != nil {
 		t.Fatal(err)
 	}
-	secondLeaf, err := entries.Leaf(ctx, ref)
+	secondLeaf, err := entries.Leaf(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestBranchFencesTheSessionAgainstRuns(t *testing.T) {
 		Item: json.RawMessage(`{"role":"user","content":` + string(q) + `}`)}); err != nil {
 		t.Fatal(err)
 	}
-	leaf, err := entries.Leaf(ctx, ref)
+	leaf, err := entries.Leaf(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

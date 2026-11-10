@@ -34,7 +34,7 @@ type Server struct {
 	// Conns tracks the authenticated WebSocket connections.
 	Conns *ConnTracker
 	// bodyLimits are the per-path overrides of maxBodyBytes (SetBodyLimit).
-	bodyLimits map[string]func() int64
+	bodyLimits map[string]int64
 	// cspPolicy is the Content-Security-Policy every response carries: base
 	// from New, extended with inline-script hashes and image hosts. Atomic;
 	// inputs under cspMu.
@@ -57,9 +57,9 @@ func (s *Server) SetImageHosts(hosts []string) {
 // webhook route has a tighter cap, and SetBodyLimit raises one route's.
 const maxBodyBytes = 1 << 20
 
-// SetBodyLimit gives one path its own body cap, read per request. Wire-time
-// only: the map is unsynchronized.
-func (s *Server) SetBodyLimit(path string, limit func() int64) {
+// SetBodyLimit gives one path its own body cap. Wire-time only: the map is
+// unsynchronized.
+func (s *Server) SetBodyLimit(path string, limit int64) {
 	s.bodyLimits[path] = limit
 }
 
@@ -115,7 +115,7 @@ func New(log *slog.Logger, auth AuthFunc, audit protocol.AuditFunc) *Server {
 		gingzip.WithMinLength(gzipMinLength),
 		gingzip.WithCustomShouldCompressFn(shouldGzip),
 	))
-	s := &Server{Engine: engine, auth: auth, guard: NewAuthGuard(), Conns: NewConnTracker(), bodyLimits: map[string]func() int64{}}
+	s := &Server{Engine: engine, auth: auth, guard: NewAuthGuard(), Conns: NewConnTracker(), bodyLimits: map[string]int64{}}
 	s.cspPolicy.Store(buildCSP(nil, nil))
 	engine.Use(s.limitBody)
 	engine.Use(s.securityHeaders())
@@ -130,10 +130,7 @@ func New(log *slog.Logger, auth AuthFunc, audit protocol.AuditFunc) *Server {
 // limitBody caps the request body: a declared length past the cap is 413; an
 // undeclared one is cut by the reader, which the handler's decode reports.
 func (s *Server) limitBody(c *gin.Context) {
-	n := int64(maxBodyBytes)
-	if limit := s.bodyLimits[c.Request.URL.Path]; limit != nil {
-		n = max(n, limit())
-	}
+	n := max(maxBodyBytes, s.bodyLimits[c.Request.URL.Path])
 	if c.Request.ContentLength > n {
 		c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge,
 			protocol.NewErrorResponse(protocol.CodeValidation, fmt.Sprintf("request body exceeds %d bytes", n)))

@@ -45,8 +45,6 @@ const chatgptHTTPTimeout = 30 * time.Second
 // ChatGPTOAuth manages the OAuth flow for ChatGPT subscription authentication.
 type ChatGPTOAuth struct {
 	providers *store.ProviderStore
-	// tokenURL is the token endpoint; tests point it at a fake.
-	tokenURL string
 
 	mu      sync.Mutex
 	pending map[string]*chatgptPending // keyed by state
@@ -69,7 +67,6 @@ func NewChatGPTOAuth(providers *store.ProviderStore) *ChatGPTOAuth {
 	}
 	return &ChatGPTOAuth{
 		providers: providers,
-		tokenURL:  chatgptTokenURL,
 		pending:   make(map[string]*chatgptPending),
 	}
 }
@@ -162,7 +159,7 @@ func (o *ChatGPTOAuth) CompleteLogin(ctx context.Context, providerID, callback s
 		return fmt.Errorf("%w: this callback belongs to a different sign-in", ErrChatGPTCallbackInvalid)
 	}
 
-	tokens, err := exchangeCode(ctx, chatgptHTTPClient, o.tokenURL, code, p.codeVerifier, chatgptRedirectURI)
+	tokens, err := exchangeCode(ctx, code, p.codeVerifier)
 	if err != nil {
 		// A refusal (4xx) is the code's fault: spent, expired, or another
 		// flow's. A 5xx or transport failure stays a server error.
@@ -274,7 +271,7 @@ func (o *ChatGPTOAuth) refreshCredentials(ctx context.Context, providerID string
 		}
 	}
 
-	refreshed, err := refreshToken(ctx, chatgptHTTPClient, o.tokenURL, tok.RefreshToken)
+	refreshed, err := refreshToken(ctx, tok.RefreshToken)
 	if err != nil {
 		return chatgptTokens{}, fmt.Errorf("token refresh failed: %w", err)
 	}
@@ -360,20 +357,20 @@ func (o *ChatGPTOAuth) saveTokens(ctx context.Context, providerID string, tok *c
 	return o.providers.SaveChatGPTToken(ctx, providerID, string(data))
 }
 
-func exchangeCode(ctx context.Context, client *http.Client, tokenURL, code, verifier, redirectURI string) (*chatgptTokens, error) {
+func exchangeCode(ctx context.Context, code, verifier string) (*chatgptTokens, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
-		"redirect_uri":  {redirectURI},
+		"redirect_uri":  {chatgptRedirectURI},
 		"client_id":     {chatgptClientID},
 		"code_verifier": {verifier},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptTokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := client.Do(req)
+	resp, err := chatgptHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request: %w", err)
 	}
@@ -381,18 +378,18 @@ func exchangeCode(ctx context.Context, client *http.Client, tokenURL, code, veri
 	return decodeTokenResponse(resp)
 }
 
-func refreshToken(ctx context.Context, client *http.Client, tokenURL, refresh string) (*chatgptTokens, error) {
+func refreshToken(ctx context.Context, refresh string) (*chatgptTokens, error) {
 	body, _ := json.Marshal(map[string]string{
 		"client_id":     chatgptClientID,
 		"grant_type":    "refresh_token",
 		"refresh_token": refresh,
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptTokenURL, strings.NewReader(string(body)))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := chatgptHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

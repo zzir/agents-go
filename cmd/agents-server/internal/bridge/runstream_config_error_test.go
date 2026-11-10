@@ -49,7 +49,7 @@ func TestRunStreamed_NoAPIKeyPersistsPromptAndError(t *testing.T) {
 // row" is session_not_found; a store that cannot answer is a server-side
 // failure, and labelling it session_not_found tells the client to give up on a
 // session that is still there. Same split the REST path applies to StartRun's
-// own lookup (handler.startError).
+// own lookup (handler classify).
 func TestRunStreamed_ClassifiesTheSessionLookup(t *testing.T) {
 	t.Run("absent session", func(t *testing.T) {
 		runner, _ := newBareRunner(t)

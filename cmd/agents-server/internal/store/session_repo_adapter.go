@@ -51,7 +51,7 @@ func (a *SessionRepoAdapter) Create(ctx context.Context, opts session.CreateOpti
 		return nil, err
 	}
 	// From the row this call just wrote, not a second resolution of the id.
-	return session.NewSession(a.entries(session.Ref{ID: row.ID, Gen: row.Gen})), nil
+	return session.NewSession(a.entries(row.Ref())), nil
 }
 
 // Open implements session.Repo. An unknown id is an error, never an empty
@@ -64,7 +64,7 @@ func (a *SessionRepoAdapter) Open(ctx context.Context, id string) (*session.Sess
 		}
 		return nil, err
 	}
-	return session.NewSession(a.entries(session.Ref{ID: row.ID, Gen: row.Gen})), nil
+	return session.NewSession(a.entries(row.Ref())), nil
 }
 
 // List implements session.Repo: the SDK's view has no owner, so it is every

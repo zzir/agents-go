@@ -371,11 +371,11 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     running tasks (`store/db.go`; multi-instance is scope.md's Roadmap). On
     SQLite it is a no-op: the listen address is bound before the database is
     opened (`cmd/root.go`), which refuses a second start on that address only.
-64. **Memory is one table by scope, and its rules have one home.** A row's
-    `scope_kind` (global, agent, session) decides injection, who writes,
-    whether the model writes and after what, and the limits, all from
-    `store.MemoryPolicies` (decisions §5.62); the handler, the run adapter
-    and the injection query it rather than judge. Session rows follow their
+64. **Memory is one table by scope, and each rule has one home.** A row's
+    `scope_kind` (global, agent, session) decides who writes it over the API
+    and its limits, from `store.MemoryPolicies` (decisions §5.62); which scopes
+    are injected is `MemoryStore.ListInjectable`'s allow-list, and what the
+    model may write is the bridge's `memoryScopes`. Session rows follow their
     session (a fork copies, a delete cascades), agent rows their agent.
 65. **A reset checkpoint carries the session memory and keeps the newest user
     message, and one pass serves every trigger.** In reset or hybrid mode the
@@ -582,8 +582,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 100. **A handler returns its failure; one table answers it.** A REST handler is
      `func(*gin.Context) error` mounted through `wrap`, a helper that can refuse
      returns the error, and nothing writes an error envelope itself. `classify`
-     (`handler/apierror.go`) maps the store's sentinels once; a handler that
-     knows a better answer returns `badRequest`, `conflict`, … — decisions §5.101.
+     (`handler/apierror.go`) maps once the store's sentinels and the bridge's
+     refusals to start or resume work on a session; a handler maps only the
+     errors its own operation owns — decisions §5.101.
 101. **The server is built with its tags.** `nomsgpack` and
      `validator_novalidatefn` (the Makefile's `TAGS`, `.goreleaser.yaml`) keep
      the linker pruning unused methods; a new build definition carries both,
@@ -599,17 +600,28 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      contract.** `CrudStore`'s writes and the scoped helpers (`setScopeOf`,
      `setOwnerOf`, `deleteOwnedBy`) are package-private. A store that guards,
      cascades or column-scopes a write exports that method and no forwarder
-     beside it: no plain `Delete` on agents, providers, sandboxes or workspaces,
-     no plain owner transfer on agents or providers — decisions §5.107.
+     beside it: no plain `Delete` on agents, workflows, providers, sandboxes or
+     workspaces, no plain owner transfer on agents or providers — decisions
+     §5.107.
 104. **The bridge's dependencies are checked once, at construction.**
      `bridge.NewRunner` refuses an `AgentDeps` missing a field the composition
-     root injects, and bridge code then calls them without a nil check; a
-     dependency production may lack is declared optional on its field (none is
-     today). The hooks the WS handler wires afterwards (`OnRunAttach`,
-     `OnBroadcast`) stay "when set" — see decisions §5.108.
+     root injects (the stores as one `store.Stores`), and bridge code then
+     calls them without a nil check; a dependency production may lack is
+     declared optional on its field (none is today). The hooks the WS handler
+     wires afterwards (`OnRunAttach`, `OnBroadcast`) stay "when set" — see
+     decisions §5.108.
 105. **A flag is read once, into the config.** `loadConfig`
      (`cmd/config.go`) is the only reader of the command's flags and of their
      environment fallbacks; `serve` and the wiring functions take the `config`
      it returns. A flag error that needs no database is refused there, before
      the address is bound; `--trusted-proxies` alone is checked on the engine
      (`trustProxies`), still ahead of the orphan sweep — see decisions §5.109.
+106. **An `EntryStore` is one session's.** It is built for a `session.Ref`
+     (`NewEntryStoreFor`, or `SessionStore.OpenEntries` from an id) and every
+     method reads and writes that generation: none takes a ref, and no handle
+     owns no session. A read across sessions belongs to the store of the table
+     it starts from (`SessionStore.EndedInError`) — decisions §5.117.
+107. **The per-parent task cap has one gate.** `max_tasks_per_session` is
+     checked by the SDK task manager at spawn and retry, under the parent's
+     spawn lock; the run hub admits a task's run without counting, so the cap
+     never refuses a running execution its next step — decisions §5.118.

@@ -101,7 +101,6 @@ func (h *TaskHandler) retryError(err error) error {
 		return errNotFound
 	case errors.Is(err, tasks.ErrNotRetryable),
 		errors.Is(err, tasks.ErrRetryLimit),
-		errors.Is(err, tasks.ErrTaskLimit),
 		errors.Is(err, tasks.ErrRetryConflict),
 		errors.Is(err, store.ErrBudgetExhausted),
 		errors.Is(err, store.ErrStepCeiling),
@@ -134,7 +133,7 @@ func (h *TaskHandler) Dismiss(c *gin.Context) error {
 	if err != nil {
 		return err
 	}
-	if !won && !bridge.IsTerminalTaskStatus(t.Status) {
+	if !won && !tasks.Status(t.Status).Terminal() {
 		return conflict("a running task cannot be dismissed — stop it first")
 	}
 	// Every window of the conversation hides it, not only the one that asked.
@@ -209,10 +208,7 @@ func (h *TaskHandler) List(c *gin.Context) error {
 	for i := range rows {
 		h.overlay(&rows[i].Task)
 	}
-	if rows == nil {
-		rows = []store.TaskWithSession{}
-	}
-	c.JSON(http.StatusOK, TaskPage{Items: rows, Total: total})
+	c.JSON(http.StatusOK, TaskPage{Items: nonNilList(rows), Total: total})
 	return nil
 }
 
@@ -220,11 +216,11 @@ func (h *TaskHandler) List(c *gin.Context) error {
 // retry ceiling. Terminal states stay the row's: the hub finishes before the row lands.
 func (h *TaskHandler) overlay(t *store.Task) {
 	t.MaxAttempts = h.runner.MaxTaskAttempts(t.Kind)
-	if bridge.IsTerminalTaskStatus(t.Status) {
+	if tasks.Status(t.Status).Terminal() {
 		return
 	}
 	if info, ok := h.hub.Info(t.RunID); ok {
-		if hs := bridge.TaskStatusFor(info.Status); !bridge.IsTerminalTaskStatus(hs) {
+		if hs := bridge.TaskStatusFor(info.Status); !tasks.Status(hs).Terminal() {
 			t.Status = hs
 		}
 	}

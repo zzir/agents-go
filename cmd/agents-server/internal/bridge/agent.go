@@ -16,7 +16,6 @@ import (
 
 	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/agents/middleware"
-	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/guardrails"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/mcpservers"
@@ -28,62 +27,20 @@ import (
 	"github.com/zzir/agents-go/skills"
 )
 
-// AgentDeps is what building and running an agent draws on. Every field down
-// to Users is REQUIRED: the composition root injects it and NewRunner refuses
-// a set missing one, so nothing here nil-checks them — invariant 104.
+// AgentDeps is what building and running an agent draws on. Every field is
+// REQUIRED: the composition root injects it and NewRunner refuses a set missing
+// one, so nothing here nil-checks them — invariant 104.
 type AgentDeps struct {
-	AgentConfigs     *store.AgentConfigStore
-	Providers        *store.ProviderStore
-	McpServers       *store.McpServerStore
-	Sandboxes        *store.SandboxStore
-	Skills           *store.SkillStore
-	Workspaces       *store.WorkspaceStore
-	Memories         *store.MemoryStore
-	Settings         *settings.Reader
-	Sessions         *store.SessionStore
-	Traces           *store.TraceStore
-	Guardrails       *guardrails.Resolver
-	McpManager       *mcpservers.Manager
-	SandboxManager   *sandboxes.Manager
-	ChatGPTOAuth     *providers.ChatGPTOAuth
-	PendingApprovals *store.PendingApprovalStore
-	Tasks            *store.TaskStore
-	ContextProfiles  *store.ContextProfileStore
-	Workflows        *store.WorkflowStore
-	Wakeups          *store.WakeupStore
-	// Attachments resolves image-attachment sentinels at the model boundary
-	// (see hydratingProvider) and validates a run's attachment_ids.
-	Attachments *store.AttachmentStore
-	// Audit records the acts a run performs on shared configuration (a
+	// Stores is every table's store, on the Runner's database.
+	*store.Stores
+	SettingReader     *settings.Reader
+	GuardrailResolver *guardrails.Resolver
+	McpManager        *mcpservers.Manager
+	SandboxManager    *sandboxes.Manager
+	ChatGPTOAuth      *providers.ChatGPTOAuth
+	// RecordAudit records the acts a run performs on shared configuration (a
 	// save_workflow), attributed to the session's owner.
-	Audit protocol.AuditFunc
-	// Users answers the run owner's role, which gates the tools only an admin gets.
-	Users *store.UserStore
-
-	// The rest is set by NewRunner: the runner-bound tools a build attaches.
-
-	// TaskManager gives chat agents the task tools. A BACKGROUND run never
-	// gets them — invariant 34.
-	TaskManager *tasks.Manager
-	// SpawnTool builds the run's spawn_task per run (invariant 75); never on a
-	// background run.
-	SpawnTool func(ctx context.Context, ownerID string, entry *BuildResult) *agents.Tool
-	// WorkflowTools builds get_workflow / save_workflow per run, when the
-	// config opts in (behavior.workflow_authoring) — invariant 39.
-	WorkflowTools func(ctx context.Context, ownerID string) []*agents.Tool
-	// HistoryTools builds history_search / history_read when the config opts
-	// in (memory.history_tools); chat runs only.
-	HistoryTools func(ctx context.Context, ownerID string) []*agents.Tool
-	// MemoryTools builds the memory_* tools when the config opts in
-	// (memory.memory_tools); chat runs only.
-	MemoryTools func(ctx context.Context, ownerID string, built *BuildResult) []*agents.Tool
-	// KeepChecklist keeps a run's checklist under its own session's
-	// checklist.md (invariant 91).
-	KeepChecklist func(ctx context.Context, sessionID, ownerID, markdown string) error
-	// BackgroundCommand runs an exec_command background call as a task of kind
-	// command; offered on chat runs whose agent opts in
-	// (behavior.background_commands) — invariant 96.
-	BackgroundCommand sandboxes.BackgroundCommand
+	RecordAudit protocol.AuditFunc
 }
 
 // validate names every required dependency the set lacks.
@@ -92,28 +49,13 @@ func (d *AgentDeps) validate() error {
 		name string
 		set  bool
 	}{
-		{"AgentConfigs", d.AgentConfigs != nil},
-		{"Providers", d.Providers != nil},
-		{"McpServers", d.McpServers != nil},
-		{"Sandboxes", d.Sandboxes != nil},
-		{"Skills", d.Skills != nil},
-		{"Workspaces", d.Workspaces != nil},
-		{"Memories", d.Memories != nil},
-		{"Settings", d.Settings != nil},
-		{"Sessions", d.Sessions != nil},
-		{"Traces", d.Traces != nil},
-		{"Guardrails", d.Guardrails != nil},
+		{"Stores", d.Stores != nil},
+		{"SettingReader", d.SettingReader != nil},
+		{"GuardrailResolver", d.GuardrailResolver != nil},
 		{"McpManager", d.McpManager != nil},
 		{"SandboxManager", d.SandboxManager != nil},
 		{"ChatGPTOAuth", d.ChatGPTOAuth != nil},
-		{"PendingApprovals", d.PendingApprovals != nil},
-		{"Tasks", d.Tasks != nil},
-		{"ContextProfiles", d.ContextProfiles != nil},
-		{"Workflows", d.Workflows != nil},
-		{"Wakeups", d.Wakeups != nil},
-		{"Attachments", d.Attachments != nil},
-		{"Audit", d.Audit != nil},
-		{"Users", d.Users != nil},
+		{"RecordAudit", d.RecordAudit != nil},
 	}
 	var missing []string
 	for _, f := range required {
@@ -136,18 +78,9 @@ type BuildResult struct {
 	// events that announce an agent by name. Set only on the entry build.
 	AgentIDs map[string]string
 
-	// Behavior, Compaction and Session are the config's groups AS STORED; a
-	// knob the build converted has a "Derived:" field below.
-	Behavior   store.BehaviorGroup
-	Compaction store.CompactionGroup
-	Session    store.SessionGroup
-	Memory     store.MemoryGroup
-
-	// ConfigID, ConfigScope and ConfigOwnerID identify the entry config and
-	// its edit rule, which the memory tools apply per call.
-	ConfigID      string
-	ConfigScope   string
-	ConfigOwnerID string
+	// Config is the agent config this was built from, as stored; runOptionsFor
+	// converts the knobs the SDK takes in another shape.
+	Config store.AgentConfig
 
 	// ProviderType is the normalized backend selector this agent was built
 	// for ("openai" / "anthropic"); handoff wiring refuses a keyless target on another.
@@ -156,10 +89,8 @@ type BuildResult struct {
 	// top-level config's error_handlers field (zero value when unconfigured).
 	ErrorHandlers agents.RunErrorHandlers
 
-	// ContextWindow is the config's declared window in tokens (0 = unknown,
-	// sends nothing); ContextWindows has every built agent's by name. Set only
-	// on the entry build.
-	ContextWindow  int
+	// ContextWindows has every built agent's declared window in tokens by name
+	// (0 = unknown, sends nothing). Set only on the entry build.
 	ContextWindows map[string]int
 	// PrefixBound reports an anthropic backend in the provider chain, whose runs
 	// carry no budget notice (invariant 83); PrefixBoundAgents is every built agent's.
@@ -180,17 +111,6 @@ type BuildResult struct {
 	// PlanReadOnly are the MCP tools, by exposed name, this agent's servers'
 	// configs let plan mode call — invariant 89.
 	PlanReadOnly []string
-	// Approval is the config's mode and tool list, applied to every built
-	// agent's tools — invariant 90.
-	Approval store.ApprovalGroup
-
-	// ReasoningItemIDPolicy controls whether reasoning-item ids survive across
-	// turns (default preserve). Derived: Behavior stores it as a string.
-	ReasoningItemIDPolicy agents.ReasoningItemIDPolicy
-
-	// StopAtTools ends the run after a turn that called any of these tools;
-	// empty never stops. Derived: Behavior stores it as one comma-separated string.
-	StopAtTools []string
 
 	// RunGuardrails are the entry agent's guardrails lifted to the RUN level (so
 	// the final output is covered after a handoff); cleared off the root agent.
@@ -219,10 +139,9 @@ func (b *BuildResult) Release() {
 
 // BuildFullAgent constructs an *agents.Agent from a config id with everything
 // it names: provider, MCP tools, the workspace's sandbox tools, memories, skills
-// and the global system prompt. forUserID decides which tools the build gets;
-// deps is a set a Runner was built on.
-func BuildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, workspaceID, forUserID string) (*BuildResult, error) {
-	return buildFullAgent(ctx, deps, agentConfigID, workspaceID, false, forUserID)
+// and the global system prompt. forUserID decides which tools the build gets.
+func (r *Runner) BuildFullAgent(ctx context.Context, agentConfigID, workspaceID, forUserID string) (*BuildResult, error) {
+	return r.buildFullAgent(ctx, agentConfigID, workspaceID, false, forUserID)
 }
 
 // BackgroundInstructions is what a run nobody is watching is told (invariant 34).
@@ -234,56 +153,60 @@ with the outcome, not with a question.`
 
 // buildFullAgent is BuildFullAgent with the run-scoped extras: the bound
 // workspace, BACKGROUND (invariant 34), and the owner whose role gates saves.
-func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, workspaceID string, background bool, ownerID string) (*BuildResult, error) {
+func (r *Runner) buildFullAgent(ctx context.Context, agentConfigID, workspaceID string, background bool, ownerID string) (*BuildResult, error) {
 	if agentConfigID == "" {
 		return nil, fmt.Errorf("agent_config_id is required")
 	}
+	deps := r.Deps
 	bc := &agentBuildCtx{
 		stack:       make(map[string]bool),
 		cache:       make(map[string]*BuildResult),
 		workspaceID: workspaceID,
 		ownerID:     ownerID,
-		background:  background,
+	}
+	// Only a watched run may hand a command to the background (invariant 96).
+	if !background {
+		bc.backgroundCommand = r.backgroundCommand
 	}
 	result, err := buildAgentFromConfig(ctx, deps, agentConfigID, bc)
 	if err == nil {
-		result.TraceIncludeSensitive = deps.Settings.Bool(ctx, settings.KeyTraceIncludeSensitiveData)
-		result.LogSensitive = deps.Settings.Bool(ctx, settings.KeyLogSensitiveData)
+		result.TraceIncludeSensitive = deps.SettingReader.Bool(ctx, settings.KeyTraceIncludeSensitiveData)
+		result.LogSensitive = deps.SettingReader.Bool(ctx, settings.KeyLogSensitiveData)
 		result.AgentIDs = make(map[string]string, len(bc.cache))
 		result.ContextWindows = make(map[string]int, len(bc.cache))
 		result.PrefixBoundAgents = make(map[string]bool, len(bc.cache))
 		for id, r := range bc.cache {
 			result.AgentIDs[r.Agent.Name] = id
-			result.ContextWindows[r.Agent.Name] = r.ContextWindow
+			result.ContextWindows[r.Agent.Name] = r.Config.ContextWindow
 			result.PrefixBoundAgents[r.Agent.Name] = r.PrefixBound
 		}
 	}
-	if err == nil && !background && result.Behavior.SubagentsOn() {
+	if err == nil && !background && result.Config.Behavior.SubagentsOn() {
 		// The model's background surface, never for a background run (invariant
 		// 34); an agent may opt out (behavior.subagents=false).
 		mark := len(result.Agent.Tools)
-		result.Agent.Tools = append(result.Agent.Tools, deps.SpawnTool(ctx, ownerID, result))
-		result.Agent.Tools = append(result.Agent.Tools, deps.TaskManager.TaskTools()...)
+		result.Agent.Tools = append(result.Agent.Tools, r.spawnTool(ctx, ownerID, result))
+		result.Agent.Tools = append(result.Agent.Tools, r.tasks.TaskTools()...)
 		bucketToolsSince(result.Agent, mark, store.ToolSourceTasks, &result.Profile)
 	}
 	// Workflow authoring is opt-in per agent and chat-only — invariant 39.
-	if err == nil && !background && result.Behavior.WorkflowAuthoring {
+	if err == nil && !background && result.Config.Behavior.WorkflowAuthoring {
 		mark := len(result.Agent.Tools)
 		// Every owner may save; saveWorkflow applies the REST edit gate per call.
-		result.Agent.Tools = append(result.Agent.Tools, deps.WorkflowTools(ctx, ownerID)...)
+		result.Agent.Tools = append(result.Agent.Tools, r.workflowTools(ctx, ownerID)...)
 		bucketToolsSince(result.Agent, mark, store.ToolSourceWorkflows, &result.Profile)
 	}
 	// The tools read the run context's session, a task's parent's
 	// (trustSessionID). A reset mode implies the memory and history tools.
-	resetMode := err == nil && result.Compaction.Enabled && result.Compaction.ResetMode()
-	if err == nil && !background && (result.Memory.HistoryTools || result.Memory.Tools || resetMode) {
+	resetMode := err == nil && result.Config.Compaction.Enabled && result.Config.Compaction.ResetMode()
+	if err == nil && !background && (result.Config.Memory.HistoryTools || result.Config.Memory.Tools || resetMode) {
 		mark := len(result.Agent.Tools)
-		if result.Memory.HistoryTools || resetMode {
-			result.Agent.Tools = append(result.Agent.Tools, deps.HistoryTools(ctx, ownerID)...)
+		if result.Config.Memory.HistoryTools || resetMode {
+			result.Agent.Tools = append(result.Agent.Tools, r.historyTools(ctx, ownerID)...)
 		}
 		guidance := ""
-		if result.Memory.Tools || resetMode {
-			result.Agent.Tools = append(result.Agent.Tools, deps.MemoryTools(ctx, ownerID, result)...)
+		if result.Config.Memory.Tools || resetMode {
+			result.Agent.Tools = append(result.Agent.Tools, r.memoryTools(ctx, ownerID, result)...)
 			guidance = store.DefaultMemoryGuidance
 		}
 		if resetMode {
@@ -327,13 +250,13 @@ func buildFullAgent(ctx context.Context, deps *AgentDeps, agentConfigID, workspa
 	}
 	// The checklist is the ENTRY agent's, on chat and background runs alike
 	// (invariant 91).
-	if result.Agent != nil && result.Behavior.Checklist {
+	if result.Agent != nil && result.Config.Behavior.Checklist {
 		mark := len(result.Agent.Tools)
 		keep := func(ctx context.Context, markdown string) {
 			if result.runSessionID == "" {
 				return
 			}
-			if err := deps.KeepChecklist(ctx, result.runSessionID, ownerID, markdown); err != nil {
+			if err := r.keepChecklist(ctx, result.runSessionID, ownerID, markdown); err != nil {
 				logging.Ctx(ctx).Warn("keeping the checklist", "error", err, "session_id", result.runSessionID)
 			}
 		}
@@ -425,9 +348,9 @@ type agentBuildCtx struct {
 	// releases collects every sandbox reference the recursion acquired, on the
 	// CONTEXT: only the top-level BuildResult reaches the caller.
 	releases []func()
-	// background is a run nobody is watching (a task's, a workflow step's): it
-	// offers no background hand-off to exec_command.
-	background bool
+	// backgroundCommand runs an exec_command background call as a task of kind
+	// command; nil on a run nobody is watching (a task's, a workflow step's).
+	backgroundCommand sandboxes.BackgroundCommand
 }
 
 // errHandoffCycle marks a back-edge in the handoff graph — recoverable: the
@@ -461,15 +384,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 		HandoffDescription:     ac.Behavior.HandoffDescription,
 		DisableToolChoiceReset: !ac.Behavior.ToolChoiceResetOn(),
 	}
-	result.Behavior = ac.Behavior
-	result.Compaction = ac.Compaction
-	result.Session = ac.Session
-	result.Memory = ac.Memory
-	result.ContextWindow = ac.ContextWindow
-	result.ConfigID, result.ConfigScope, result.ConfigOwnerID = ac.ID, ac.Scope, ac.OwnerID
-	if ac.Behavior.ReasoningItemIDPolicy == "omit" {
-		result.ReasoningItemIDPolicy = agents.ReasoningItemIDOmit
-	}
+	result.Config = *ac
 
 	// Every JSON field is decoded once, up front (DecodeAgentSpec also backs
 	// save-time validation).
@@ -484,11 +399,9 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	agent.ModelSettings = spec.ModelSettings
 	result.ErrorHandlers = spec.ErrorHandlers.BuildErrorHandlers()
 
-	result.StopAtTools = settings.SplitList(ac.Behavior.StopAtTools)
-
 	// A guardrail that cannot be resolved fails the build — invariant 13.
 	if ac.Guardrails.Guardrails != "" {
-		gs, gerr := deps.Guardrails.Build(ctx, ac.Guardrails.Guardrails)
+		gs, gerr := deps.GuardrailResolver.Build(ctx, ac.Guardrails.Guardrails)
 		if gerr != nil {
 			return nil, fmt.Errorf("agent %q: %w", ac.Name, gerr)
 		}
@@ -496,11 +409,10 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	}
 
 	var approveCommands bool
-	agent.ApproveTools, approveCommands = splitApproveTools(spec.Approval.ApproveTools)
+	agent.ApproveTools, approveCommands = splitApproveTools(ac.Approval.ApproveTools)
 	// A mode that asks puts exec_command behind the per-command gate whether
 	// or not the list names it (invariant 90).
-	approveCommands = approveCommands || spec.Approval.Asks()
-	result.Approval = spec.Approval
+	approveCommands = approveCommands || ac.Approval.Asks()
 	agent.OutputType = spec.OutputType
 
 	// Provider + retry/fallback decorators.
@@ -515,7 +427,7 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 
 	// MCP servers — a server not connected is skipped; the entry agent's are
 	// sized once the build is whole (measureMCPTools).
-	result.PlanReadOnly = planReadOnlyNames(attachMCPServers(ctx, deps, agent, spec, bc.ownerID))
+	result.PlanReadOnly = planReadOnlyNames(attachMCPServers(ctx, deps, agent, ac.Tools, bc.ownerID))
 
 	mark := len(agent.Tools)
 
@@ -527,12 +439,12 @@ func buildAgentFromConfig(ctx context.Context, deps *AgentDeps, configID string,
 	mark = bucketToolsSince(agent, mark, store.ToolSourceSandbox, &result.Profile)
 
 	// Skills — loaded from the store; spec may restrict the selection.
-	result.Profile.SkillsIndexChars = attachSkills(ctx, deps, agent, spec, bc.ownerID)
+	result.Profile.SkillsIndexChars = attachSkills(ctx, deps, agent, ac.Skills, bc.ownerID)
 	bucketToolsSince(agent, mark, store.ToolSourceSkills, &result.Profile)
 
 	// Handoffs — recursively built; a target with its own provider gets its
 	// model pre-resolved.
-	if err := buildHandoffs(ctx, deps, bc, agent, result, ac, spec); err != nil {
+	if err := buildHandoffs(ctx, deps, bc, agent, result, ac); err != nil {
 		return nil, err
 	}
 
@@ -559,7 +471,7 @@ func splitApproveTools(names []string) (approveTools []string, approveCommands b
 func layerInstructions(ctx context.Context, deps *AgentDeps, agent *agents.Agent, ac *store.AgentConfig, prof *store.PromptProfile) {
 	prof.InstructionsChars = len(ac.Instructions)
 	if !ac.Behavior.OverrideSystemPrompt {
-		if global := deps.Settings.String(ctx, settings.KeySystemPrompt); global != "" {
+		if global := deps.SettingReader.String(ctx, settings.KeySystemPrompt); global != "" {
 			agent.Instructions = agents.WrapInstructions(agent.Instructions, global, "")
 			prof.GlobalPromptChars = len(global)
 		}
@@ -574,8 +486,8 @@ func layerInstructions(ctx context.Context, deps *AgentDeps, agent *agents.Agent
 
 // buildHandoffs builds each handoff target recursively (a cycle drops the edge;
 // other failures propagate); a keyless target on another backend is refused.
-func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, result *BuildResult, ac *store.AgentConfig, spec *AgentSpec) error {
-	for _, hID := range spec.Handoffs {
+func buildHandoffs(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx, agent *agents.Agent, result *BuildResult, ac *store.AgentConfig) error {
+	for _, hID := range ac.Handoffs {
 		hResult, err := buildAgentFromConfig(ctx, deps, hID, bc)
 		if err != nil {
 			if errors.Is(err, errHandoffCycle) {
@@ -612,9 +524,9 @@ type attachedMCP struct {
 
 // attachMCPServers wires the selected MCP servers, skipping any not connected
 // or not visible to the owner (decisions §5.29); returns the servers attached.
-func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) []attachedMCP {
+func attachMCPServers(ctx context.Context, deps *AgentDeps, agent *agents.Agent, ids []string, ownerID string) []attachedMCP {
 	var attached []attachedMCP
-	for _, id := range spec.Tools {
+	for _, id := range ids {
 		row, err := deps.McpServers.Get(ctx, id)
 		if err != nil || (ownerID != "" && !store.Visible(row.Scope, row.OwnerID, ownerID, false)) {
 			logging.Ctx(ctx).Debug("MCP server not visible to this session, skipping", "mcp_id", id)
@@ -665,8 +577,8 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 		return err
 	}
 	var background sandboxes.BackgroundCommand
-	if backgroundCommands && !bc.background {
-		background = deps.BackgroundCommand
+	if backgroundCommands {
+		background = bc.backgroundCommand
 	}
 	tools, release, err := deps.SandboxManager.SandboxTools(spec, approveCommands, background)
 	if err != nil {
@@ -683,9 +595,10 @@ func attachSandboxTools(ctx context.Context, deps *AgentDeps, bc *agentBuildCtx,
 	return nil
 }
 
-// attachSkills renders the visible skills' index (filtered by spec's selection)
-// with a read_skill tool that resolves own-over-global (decisions §5.29).
-func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spec *AgentSpec, ownerID string) int {
+// attachSkills renders the visible skills' index — every one for a nil
+// selection, none for an empty one — with a read_skill tool that resolves
+// own-over-global (decisions §5.29).
+func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, selected []string, ownerID string) int {
 	// No owner, no view (as attachMCPServers); an empty owner is a type error
 	// on PostgreSQL's uuid column.
 	if ownerID == "" {
@@ -697,9 +610,9 @@ func attachSkills(ctx context.Context, deps *AgentDeps, agent *agents.Agent, spe
 	if err != nil {
 		return 0
 	}
-	if spec.SkillsSet {
-		allowed := make(map[string]bool, len(spec.Skills))
-		for _, id := range spec.Skills {
+	if selected != nil {
+		allowed := make(map[string]bool, len(selected))
+		for _, id := range selected {
 			allowed[id] = true
 		}
 		filtered := stored[:0]

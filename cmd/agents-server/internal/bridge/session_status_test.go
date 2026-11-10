@@ -123,8 +123,8 @@ func TestSessionStatuses(t *testing.T) {
 		before, runID := store.NewID(), store.NewID()
 		appendAs(t, runner, sess.ID, before, userEntry(t, "first"))
 		ref := mustRef(t, runner.db, sess.ID)
-		es := store.NewSharedEntryStore(runner.db)
-		anchor, err := es.Leaf(ctx, ref)
+		es := store.NewEntryStoreFor(runner.db, ref)
+		anchor, err := es.Leaf(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,18 +133,18 @@ func TestSessionStatuses(t *testing.T) {
 		if st := statusOf(t, runner, owner, sess.ID); st.Status != protocol.SessionRequiresAction {
 			t.Fatalf("on path: %q, want requires_action", st.Status)
 		}
-		paused, err := es.Leaf(ctx, ref)
+		paused, err := es.Leaf(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := es.Branch(ctx, ref, anchor); err != nil {
+		if err := es.Branch(ctx, anchor); err != nil {
 			t.Fatal(err)
 		}
 		if st := statusOf(t, runner, owner, sess.ID); st.Status != protocol.SessionIdle || len(st.Pending) != 0 {
 			t.Errorf("branched away: %+v, want idle with nothing pending", st)
 		}
 		// Switching back re-admits the pause.
-		if err := es.Branch(ctx, ref, paused); err != nil {
+		if err := es.Branch(ctx, paused); err != nil {
 			t.Fatal(err)
 		}
 		if st := statusOf(t, runner, owner, sess.ID); st.Status != protocol.SessionRequiresAction {
@@ -367,7 +367,7 @@ func TestTaskApprovalAnswerMovesTheParentStatus(t *testing.T) {
 	rec := &statusRecorder{}
 	runner.OnBroadcast = rec.record
 
-	info, err := runner.Tasks().Spawn(ctx, sdktasks.SpawnRequest{ParentSessionID: sess.ID, AgentName: ac.Name, Input: "build it", Label: "build"})
+	info, err := runner.tasks.Spawn(ctx, sdktasks.SpawnRequest{ParentSessionID: sess.ID, AgentName: ac.Name, Input: "build it", Label: "build"})
 	if err != nil {
 		t.Fatal(err)
 	}

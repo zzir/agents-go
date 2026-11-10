@@ -20,7 +20,7 @@ const liveSpanDataJSON = 256 << 10
 const liveOmitted = "[omitted from the live update — reopen this trace to load it]"
 
 // attachmentResolver turns the attachment ids a span's payload references
-// into the refs the client renders; nil when the server stores no attachments.
+// into the refs the client renders.
 type attachmentResolver func(ctx context.Context, ids []string) []protocol.AttachmentRef
 
 // wsProcessor streams spans to the client unbatched: a pending version on
@@ -140,10 +140,8 @@ func (p *wsProcessor) OnSpanStart(span *tracing.Span) {
 func (p *wsProcessor) OnSpanEnd(span *tracing.Span) {
 	ts := p.spanMessage(span)
 	data := spanDataJSON(span.Data)
-	if p.resolve != nil {
-		if ids := store.TraceAttachmentIDs(data); len(ids) > 0 {
-			ts.Attachments = p.resolve(p.ctx, ids)
-		}
+	if ids := store.TraceAttachmentIDs(data); len(ids) > 0 {
+		ts.Attachments = p.resolve(p.ctx, ids)
 	}
 	p.send(protocol.EventTraceSpan, ts)
 	te := &store.TraceEvent{
@@ -173,15 +171,12 @@ func newTracer(ctx context.Context, send func(string, any), traces *store.TraceS
 // traceAttachmentRefs is the runs' attachmentResolver: ids to the refs run
 // events carry, against the current public base; a missing row drops off.
 func (r *Runner) traceAttachmentRefs(ctx context.Context, ids []string) []protocol.AttachmentRef {
-	if r.Deps.Attachments == nil {
-		return nil
-	}
 	meta, err := r.Deps.Attachments.MetaBatch(ctx, ids)
 	if err != nil {
 		logging.Ctx(ctx).Warn("resolving a trace span's attachments", "error", err)
 		return nil
 	}
-	base := r.Deps.Settings.S3Config(ctx).PublicBaseURL
+	base := r.Deps.SettingReader.S3Config(ctx).PublicBaseURL
 	refs := make([]protocol.AttachmentRef, 0, len(ids))
 	for _, id := range ids {
 		if a, ok := meta[id]; ok {

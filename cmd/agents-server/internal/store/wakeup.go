@@ -72,14 +72,6 @@ func NewWakeupStore(db *bun.DB) *WakeupStore {
 	return &WakeupStore{db: db}
 }
 
-// Owe records a debt.
-func (s *WakeupStore) Owe(ctx context.Context, w *Wakeup) error {
-	if _, err := s.db.NewInsert().Model(w).Exec(ctx); err != nil {
-		return fmt.Errorf("recording a wake-up for session %s: %w", w.SessionID, err)
-	}
-	return nil
-}
-
 // Pending returns the session's outstanding debts, oldest first — one drain
 // pays them all, so a session that piled up three results is woken once.
 func (s *WakeupStore) Pending(ctx context.Context, sessionID string) ([]Wakeup, error) {

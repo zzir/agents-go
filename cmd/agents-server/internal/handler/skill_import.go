@@ -45,10 +45,6 @@ type skillImportResp struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
-// importTargetKey is where resolveImportTarget parks the group an import
-// writes into, for upsertImported to read.
-const importTargetKey = "agents.importTarget"
-
 // importGroup is the group an import writes into, as resolved BEFORE the
 // fetch: whose it is, and the shape the apply re-checks it still has.
 type importGroup struct {
@@ -59,41 +55,32 @@ type importGroup struct {
 
 // resolveImportTarget decides WHOSE group this import refreshes: the caller's
 // own, or another owner's PUBLISHED group (decisions §5.29).
-func (h *SkillHandler) resolveImportTarget(c *gin.Context, repo, wantOwner string) error {
+func (h *SkillHandler) resolveImportTarget(c *gin.Context, repo, wantOwner string) (importGroup, error) {
 	ownerID, admin, err := callerScope(c)
 	if err != nil {
-		return err
+		return importGroup{}, err
 	}
 	ctx := c.Request.Context()
 	if wantOwner == "" || wantOwner == ownerID {
 		scope, existed, err := h.store.RepoGroup(ctx, repo, ownerID)
 		if err != nil {
-			return err
+			return importGroup{}, err
 		}
-		c.Set(importTargetKey, importGroup{owner: ownerID, scope: scope, existed: existed})
-		return nil
+		return importGroup{owner: ownerID, scope: scope, existed: existed}, nil
 	}
 	if !admin {
-		return forbidden("admin role required to sync another member's repository")
+		return importGroup{}, forbidden("admin role required to sync another member's repository")
 	}
 	// The group is looked up by the URL AS GIVEN — the same string the rows
 	// carry — so a raw-URL group is reachable too.
 	scope, found, err := h.store.RepoGroup(ctx, repo, wantOwner)
 	if err != nil {
-		return err
+		return importGroup{}, err
 	}
 	if !found || scope != store.ScopeGlobal {
-		return errNotFound // a member's private group is not an admin's to write
+		return importGroup{}, errNotFound // a member's private group is not an admin's to write
 	}
-	c.Set(importTargetKey, importGroup{owner: wantOwner, scope: scope, existed: true})
-	return nil
-}
-
-// importTarget is the group resolveImportTarget settled on.
-func importTarget(c *gin.Context) importGroup {
-	v, _ := c.Get(importTargetKey)
-	g, _ := v.(importGroup)
-	return g
+	return importGroup{owner: wantOwner, scope: scope, existed: true}, nil
 }
 
 // Import fetches SKILL.md documents from a URL and upserts them; a re-import
@@ -120,7 +107,8 @@ func (h *SkillHandler) Import(c *gin.Context) error {
 	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
 		return badRequest("only http(s) URLs are supported")
 	}
-	if err := h.resolveImportTarget(c, rawURL, req.OwnerID); err != nil {
+	group, err := h.resolveImportTarget(c, rawURL, req.OwnerID)
+	if err != nil {
 		return err
 	}
 	// One deadline over the whole import: a GitHub walk is up to ~202 serial
@@ -130,7 +118,6 @@ func (h *SkillHandler) Import(c *gin.Context) error {
 	c.Request = c.Request.WithContext(ctx)
 	var resp *skillImportResp
 	var docs []store.ImportDoc
-	var err error
 	if owner, repo, ok := parseGitHubRepoURL(rawURL); ok {
 		resp, docs, err = h.importGitHubRepo(c, owner, repo)
 	} else {
@@ -143,7 +130,7 @@ func (h *SkillHandler) Import(c *gin.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := h.apply(c, resp.Repo, docs, resp); err != nil {
+	if err := h.apply(c, group, resp.Repo, docs, resp); err != nil {
 		return err
 	}
 	server.SetAuditResource(c, resp.Repo)
@@ -345,8 +332,7 @@ func collect(docs *[]store.ImportDoc, resp *skillImportResp, path, sha string, c
 
 // apply lands the fetched batch in ONE transaction against the group resolved
 // before the fetch; a transfer or flip that landed meanwhile is 409 — decisions §5.31.
-func (h *SkillHandler) apply(c *gin.Context, repo string, docs []store.ImportDoc, resp *skillImportResp) error {
-	g := importTarget(c)
+func (h *SkillHandler) apply(c *gin.Context, g importGroup, repo string, docs []store.ImportDoc, resp *skillImportResp) error {
 	outcomes, err := h.store.ApplyImport(c.Request.Context(), repo, g.owner, g.scope, g.existed, docs)
 	if err != nil {
 		if errors.Is(err, store.ErrOwnershipChanged) {

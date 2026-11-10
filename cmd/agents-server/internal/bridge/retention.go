@@ -28,14 +28,30 @@ func runEvery(ctx context.Context, period time.Duration, fn func()) {
 	}
 }
 
-// RunApprovalReaper expires pending tool approvals unanswered past the TTL: the
-// record dropped, a session annotation written, onExpire called with the
-// session it was filed on. At startup and hourly until ctx ends — run it in a
-// goroutine.
-func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *store.PendingApprovalStore, entries *store.EntryStore, tasks *store.TaskStore, announce func(ctx context.Context, taskID string), onExpire func(ctx context.Context, sessionID string)) {
+// sweepEvery runs one delete at once and then every period until ctx ends,
+// logging what it removed as what.
+func sweepEvery(ctx context.Context, period time.Duration, what string, sweep func() (int64, error)) {
 	log := logging.Ctx(ctx)
+	runEvery(ctx, period, func() {
+		n, err := sweep()
+		if err != nil {
+			log.Error("pruning "+what+" failed", "error", err)
+			return
+		}
+		if n > 0 {
+			log.Info("pruned "+what, "removed", n)
+		}
+	})
+}
+
+// RunApprovalReaper expires pending tool approvals unanswered past the TTL: the
+// record dropped, a session annotation written, the session's status
+// re-announced. At startup and hourly until ctx ends — run it in a goroutine.
+func (r *Runner) RunApprovalReaper(ctx context.Context) {
+	log := logging.Ctx(ctx)
+	approvals, tasks := r.Deps.PendingApprovals, r.Deps.Tasks
 	reap := func() {
-		ttl := cfg.Int(ctx, settings.KeyApprovalTTLMinutes)
+		ttl := r.Deps.SettingReader.Int(ctx, settings.KeyApprovalTTLMinutes)
 		if ttl <= 0 {
 			return // expiry disabled
 		}
@@ -64,7 +80,7 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 				}
 				if ended {
 					// Cancellations owe no wake-up (dropped in the same write).
-					announce(ctx, task.ID)
+					r.AnnounceTask(ctx, task.ID)
 				}
 			} else if derr := approvals.Delete(ctx, p.RunID); derr == nil {
 				claimed = true
@@ -76,16 +92,16 @@ func RunApprovalReaper(ctx context.Context, cfg *settings.Reader, approvals *sto
 				continue // a decision took it first
 			}
 			// The banner goes to the session the approval was filed on.
-			if ref, rerr := entries.RefFor(ctx, p.SessionID); rerr != nil {
+			if entries, rerr := r.Deps.Sessions.OpenEntries(ctx, p.SessionID); rerr != nil {
 				log.Warn("cannot record an approval-timeout banner", "error", rerr, "session_id", p.SessionID)
 			} else {
 				banner := "Tool approval timed out after " + strconv.Itoa(ttl) + " minutes; the run was terminated."
 				if p.Kind == store.ApprovalKindStep {
 					banner = "Step approval timed out after " + strconv.Itoa(ttl) + " minutes; the workflow was cancelled."
 				}
-				_ = entries.AppendAnnotation(ctx, ref, p.RunID, banner)
+				_ = entries.AppendAnnotation(ctx, p.RunID, banner)
 			}
-			onExpire(ctx, p.SessionID)
+			r.PublishSessionStatus(ctx, p.SessionID)
 			log.Info("expired pending approval", "run_id", p.RunID, "session_id", p.SessionID)
 		}
 	}
@@ -125,19 +141,7 @@ func RunTraceRetention(ctx context.Context, cfg *settings.Reader, traces *store.
 // RunAuthTokenCleanup deletes expired session tokens and PATs at startup and
 // then hourly. It blocks until ctx ends — run it in a goroutine.
 func RunAuthTokenCleanup(ctx context.Context, tokens *store.AuthTokenStore) {
-	log := logging.Ctx(ctx)
-	sweep := func() {
-		n, err := tokens.DeleteExpired(ctx)
-		if err != nil {
-			log.Error("auth token cleanup failed", "error", err)
-			return
-		}
-		if n > 0 {
-			log.Info("removed expired auth tokens", "removed", n)
-		}
-	}
-
-	runEvery(ctx, time.Hour, sweep)
+	sweepEvery(ctx, time.Hour, "expired auth tokens", func() (int64, error) { return tokens.DeleteExpired(ctx) })
 }
 
 // wakeupRetention is how long a settled wake-up row stays readable after the fact.
@@ -146,19 +150,9 @@ const wakeupRetention = 7 * 24 * time.Hour
 // RunWakeupCleanup prunes settled wake-ups older than wakeupRetention at
 // startup and then hourly. It blocks until ctx ends — run it in a goroutine.
 func RunWakeupCleanup(ctx context.Context, wakeups *store.WakeupStore) {
-	log := logging.Ctx(ctx)
-	sweep := func() {
-		n, err := wakeups.DeleteSettledBefore(ctx, time.Now().UTC().Add(-wakeupRetention))
-		if err != nil {
-			log.Error("wake-up cleanup failed", "error", err)
-			return
-		}
-		if n > 0 {
-			log.Info("pruned settled wake-ups", "removed", n)
-		}
-	}
-
-	runEvery(ctx, time.Hour, sweep)
+	sweepEvery(ctx, time.Hour, "settled wake-ups", func() (int64, error) {
+		return wakeups.DeleteSettledBefore(ctx, time.Now().UTC().Add(-wakeupRetention))
+	})
 }
 
 // attachmentGrace is how long an uploaded image may wait unbound before it is a
@@ -206,19 +200,9 @@ func RunAttachmentReaper(ctx context.Context, cfg *settings.Reader, atts *store.
 // RunAuditRetention prunes audit events older than days at startup and then
 // daily. It blocks until ctx ends — run it in a goroutine.
 func RunAuditRetention(ctx context.Context, audit *store.AuditStore, days int) {
-	log := logging.Ctx(ctx)
-	prune := func() {
-		n, err := audit.DeleteOlderThan(ctx, time.Now().UTC().AddDate(0, 0, -days))
-		if err != nil {
-			log.Error("audit retention prune failed", "error", err)
-			return
-		}
-		if n > 0 {
-			log.Info("pruned audit events", "removed", n, "retention_days", days)
-		}
-	}
-
-	runEvery(ctx, 24*time.Hour, prune)
+	sweepEvery(ctx, 24*time.Hour, "audit events", func() (int64, error) {
+		return audit.DeleteOlderThan(ctx, time.Now().UTC().AddDate(0, 0, -days))
+	})
 }
 
 // hiddenSessionGrace spares a spawn between writing its child session and its

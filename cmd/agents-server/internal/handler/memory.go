@@ -22,13 +22,12 @@ type MemoryHandler struct {
 	store    *store.MemoryStore
 	sessions *store.SessionStore
 	agents   *store.AgentConfigStore
-	entries  *store.EntryStore
 }
 
 // NewMemoryHandler returns a handler over the memory store; sessions and
-// agents answer the per-scope ownership questions, entries a session's generation.
-func NewMemoryHandler(memories *store.MemoryStore, sessions *store.SessionStore, agents *store.AgentConfigStore, entries *store.EntryStore) *MemoryHandler {
-	return &MemoryHandler{store: memories, sessions: sessions, agents: agents, entries: entries}
+// agents answer the per-scope ownership questions.
+func NewMemoryHandler(memories *store.MemoryStore, sessions *store.SessionStore, agents *store.AgentConfigStore) *MemoryHandler {
+	return &MemoryHandler{store: memories, sessions: sessions, agents: agents}
 }
 
 // memoryReq is the request body for Create and Update.
@@ -43,27 +42,27 @@ type memoryReq struct {
 	Metadata string `json:"metadata"`
 }
 
-func (r *memoryReq) validate() string {
-	policy, ok := store.MemoryPolicyFor(r.ScopeKind)
+func (r *memoryReq) validate() error {
+	policy, ok := store.MemoryPolicies[r.ScopeKind]
 	if !ok {
-		return "scope_kind must be global, agent or session"
+		return badRequest("scope_kind must be global, agent or session")
 	}
 	if r.ScopeKind == store.MemoryScopeGlobal && r.ScopeID != "" {
-		return "a global memory has no scope_id"
+		return badRequest("a global memory has no scope_id")
 	}
 	if r.ScopeKind != store.MemoryScopeGlobal && r.ScopeID == "" {
-		return "scope_id is required for an " + r.ScopeKind + " memory"
+		return badRequest("scope_id is required for an " + r.ScopeKind + " memory")
 	}
 	if err := memory.ValidKey(r.Key); err != nil {
-		return err.Error()
+		return badRequest(err.Error())
 	}
 	if r.Content == "" {
-		return "content is required"
+		return badRequest("content is required")
 	}
 	if len(r.Content) > policy.MaxBytes {
-		return fmt.Sprintf("content exceeds the %d-byte limit of a %s memory", policy.MaxBytes, r.ScopeKind)
+		return badRequest(fmt.Sprintf("content exceeds the %d-byte limit of a %s memory", policy.MaxBytes, r.ScopeKind))
 	}
-	return ""
+	return nil
 }
 
 // List responds with the configuration memories the caller may see.
@@ -113,8 +112,8 @@ func (h *MemoryHandler) Create(c *gin.Context) error {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return badRequest(err.Error())
 	}
-	if msg := req.validate(); msg != "" {
-		return badRequest(msg)
+	if err := req.validate(); err != nil {
+		return err
 	}
 	m, err := h.writable(c, req)
 	if err != nil {
@@ -176,8 +175,8 @@ func (h *MemoryHandler) Update(c *gin.Context) error {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		return badRequest(err.Error())
 	}
-	if msg := req.validate(); msg != "" {
-		return badRequest(msg)
+	if err := req.validate(); err != nil {
+		return err
 	}
 	if req.ScopeKind != prev.ScopeKind || req.ScopeID != prev.ScopeID || req.Key != prev.Key {
 		return badRequest("scope_kind, scope_id and key identify the memory and cannot change; create another instead")
@@ -251,11 +250,7 @@ func (h *MemoryHandler) ListSession(c *gin.Context) error {
 	if err != nil {
 		return err
 	}
-	ref, err := h.entries.RefFor(ctx, sess.ID)
-	if err != nil {
-		return err
-	}
-	rows, err := h.store.ListScope(ctx, store.SessionMemoryScope(ref))
+	rows, err := h.store.ListScope(ctx, store.SessionMemoryScope(sess.Ref()))
 	if err != nil {
 		return err
 	}
@@ -285,11 +280,7 @@ func (h *MemoryHandler) ReadSession(c *gin.Context) error {
 	if err != nil {
 		return err
 	}
-	ref, err := h.entries.RefFor(ctx, sess.ID)
-	if err != nil {
-		return err
-	}
-	m, err := h.store.GetByKey(ctx, store.SessionMemoryScope(ref), strings.TrimPrefix(c.Param("key"), "/"))
+	m, err := h.store.GetByKey(ctx, store.SessionMemoryScope(sess.Ref()), strings.TrimPrefix(c.Param("key"), "/"))
 	if err != nil {
 		return err
 	}
@@ -305,7 +296,7 @@ func (h *MemoryHandler) writable(c *gin.Context, req memoryReq) (*store.Memory, 
 	if !ok {
 		return nil, errNotFound
 	}
-	policy, _ := store.MemoryPolicyFor(req.ScopeKind)
+	policy := store.MemoryPolicies[req.ScopeKind]
 	m := &store.Memory{
 		ScopeKind: req.ScopeKind, ScopeID: req.ScopeID, Key: req.Key,
 		Content: req.Content, Metadata: req.Metadata,
@@ -329,11 +320,7 @@ func (h *MemoryHandler) writable(c *gin.Context, req memoryReq) (*store.Memory, 
 		if err != nil || sess.OwnerID != u.ID {
 			return nil, errNotFound
 		}
-		ref, err := h.entries.RefFor(ctx, sess.ID)
-		if err != nil {
-			return nil, err
-		}
-		m.Gen = ref.Gen
+		m.Gen = sess.Gen
 	}
 	return m, nil
 }

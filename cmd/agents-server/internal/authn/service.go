@@ -27,11 +27,6 @@ const (
 	ModeOAuth = "oauth"
 )
 
-// ErrUnauthorized is Authenticate's answer to a wrong, expired or revoked
-// credential, indistinguishable on purpose; any other error means the store
-// could not say.
-var ErrUnauthorized = server.ErrUnauthorized
-
 // Service resolves bearer credentials and (in OAuth mode) runs login flows.
 type Service struct {
 	mode string
@@ -136,32 +131,27 @@ func (s *Service) ConfigView() protocol.AuthConfig {
 	return protocol.AuthConfig{Mode: s.mode, Providers: s.providerNames}
 }
 
-// Authenticate resolves a presented bearer to its user, or ErrUnauthorized.
+// Authenticate resolves a presented bearer to its user; server.ErrUnauthorized
+// for a wrong, expired or revoked one, indistinguishable on purpose — any
+// other error means the store could not say.
 func (s *Service) Authenticate(ctx context.Context, bearer string) (protocol.UserInfo, error) {
 	if bearer == "" {
-		return protocol.UserInfo{}, ErrUnauthorized
+		return protocol.UserInfo{}, server.ErrUnauthorized
 	}
 	if s.mode == ModeToken {
 		if s.staticToken == "" || subtle.ConstantTimeCompare([]byte(bearer), []byte(s.staticToken)) != 1 {
-			return protocol.UserInfo{}, ErrUnauthorized
+			return protocol.UserInfo{}, server.ErrUnauthorized
 		}
 		return s.localUser, nil
 	}
 	u, _, err := s.tokens.Authenticate(ctx, bearer)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return protocol.UserInfo{}, ErrUnauthorized
+			return protocol.UserInfo{}, server.ErrUnauthorized
 		}
 		return protocol.UserInfo{}, err
 	}
 	return userInfoOf(u), nil
-}
-
-// StaticOK reports whether token is the static credential — the /auth/login
-// check. Always false in OAuth mode, where token login is disabled.
-func (s *Service) StaticOK(token string) bool {
-	return s.mode == ModeToken && token != "" &&
-		subtle.ConstantTimeCompare([]byte(token), []byte(s.staticToken)) == 1
 }
 
 // Logout revokes the presented session token; a no-op in token mode and for a

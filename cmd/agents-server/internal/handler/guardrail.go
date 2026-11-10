@@ -36,15 +36,15 @@ func (h *GuardrailHandler) List(c *gin.Context) error {
 	return nil
 }
 
-func validateGuardrail(g *store.Guardrail) string {
+func validateGuardrail(g *store.Guardrail) error {
 	if g.Name == "" || len(g.Stages) == 0 || g.Mode == "" {
-		return "name, stages, and mode are required"
+		return badRequest("name, stages, and mode are required")
 	}
 	// Validate the stages, the mode and its config at save time.
 	if err := guardrails.ValidateDef(g); err != nil {
-		return err.Error()
+		return badRequest(err.Error())
 	}
-	return ""
+	return nil
 }
 
 // Create persists a new guardrail definition.
@@ -65,8 +65,8 @@ func (h *GuardrailHandler) Create(c *gin.Context) error {
 	if err := c.ShouldBindJSON(&g); err != nil {
 		return badRequest(err.Error())
 	}
-	if msg := validateGuardrail(&g); msg != "" {
-		return badRequest(msg)
+	if err := validateGuardrail(&g); err != nil {
+		return err
 	}
 	g.ID, g.CreatedAt = "", time.Time{} // server-owned
 	if err := h.store.Create(c.Request.Context(), &g); err != nil {
@@ -115,8 +115,8 @@ func (h *GuardrailHandler) Update(c *gin.Context) error {
 	if err := c.ShouldBindJSON(&g); err != nil {
 		return badRequest(err.Error())
 	}
-	if msg := validateGuardrail(&g); msg != "" {
-		return badRequest(msg)
+	if err := validateGuardrail(&g); err != nil {
+		return err
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")

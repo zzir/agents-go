@@ -164,7 +164,7 @@ func serve(cfg *config) error {
 	go svc.Runner.DrainPendingWakeups(bgCtx)
 	// The reaper and the clock start after the sweep and the handlers: they
 	// announce through hooks the WS handler has only now wired.
-	go bridge.RunApprovalReaper(bgCtx, st.SettingReader, st.PendingApprovals, st.Entries, st.Tasks, svc.Runner.AnnounceTask, svc.Runner.PublishSessionStatus)
+	go svc.Runner.RunApprovalReaper(bgCtx)
 	if err := svc.Scheduler.Start(ctx); err != nil {
 		return fmt.Errorf("starting the trigger scheduler: %w", err)
 	}

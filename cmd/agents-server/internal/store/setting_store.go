@@ -57,8 +57,13 @@ func (s *SettingStore) Get(ctx context.Context, key string) (*Setting, error) {
 
 // Set inserts or updates the value for key (upsert on key conflict).
 func (s *SettingStore) Set(ctx context.Context, key, value string) error {
+	return s.upsert(ctx, s.db, key, value)
+}
+
+// upsert writes key's value, sealed when the key holds a credential.
+func (s *SettingStore) upsert(ctx context.Context, db bun.IDB, key, value string) error {
 	st := &Setting{Key: key, Value: s.seal(key, value)}
-	if _, err := s.db.NewInsert().Model(st).
+	if _, err := db.NewInsert().Model(st).
 		On("CONFLICT (key) DO UPDATE").
 		Set("value = EXCLUDED.value").
 		Exec(ctx); err != nil {
@@ -78,12 +83,8 @@ func (s *SettingStore) SetMany(ctx context.Context, kv map[string]string) error 
 				}
 				continue
 			}
-			st := &Setting{Key: key, Value: s.seal(key, value)}
-			if _, err := tx.NewInsert().Model(st).
-				On("CONFLICT (key) DO UPDATE").
-				Set("value = EXCLUDED.value").
-				Exec(ctx); err != nil {
-				return fmt.Errorf("setting %s: %w", key, err)
+			if err := s.upsert(ctx, tx, key, value); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -113,14 +114,7 @@ func (s *SettingStore) Modify(ctx context.Context, key string, value func(prev s
 		if err != nil {
 			return err
 		}
-		st = &Setting{Key: key, Value: s.seal(key, next)}
-		if _, err := tx.NewInsert().Model(st).
-			On("CONFLICT (key) DO UPDATE").
-			Set("value = EXCLUDED.value").
-			Exec(ctx); err != nil {
-			return fmt.Errorf("setting %s: %w", key, err)
-		}
-		return nil
+		return s.upsert(ctx, tx, key, next)
 	})
 }
 

@@ -51,7 +51,7 @@ func TestContextReportUsageIsPerCallNotCumulative(t *testing.T) {
 		usageEntry(t, "two", 2500, 200, 1800),
 	)
 
-	rep, err := s.ContextReport(ctx, session.Direct(id("s1")))
+	rep, err := s.ContextReport(ctx)
 	if err != nil {
 		t.Fatalf("context report: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestContextReportExcludesCompactedFromContextNotFromSpend(t *testing.T) {
 	fat := toolOutputEntry(t, "call_1", strings40k())
 	seed(t, s, fat, usageEntry(t, "summary", 900, 90, 0))
 
-	before, err := s.ContextReport(ctx, session.Direct(id("s1")))
+	before, err := s.ContextReport(ctx)
 	if err != nil {
 		t.Fatalf("context report: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestContextReportExcludesCompactedFromContextNotFromSpend(t *testing.T) {
 	}
 	markCompacted(t, s, ids...)
 
-	after, err := s.ContextReport(ctx, session.Direct(id("s1")))
+	after, err := s.ContextReport(ctx)
 	if err != nil {
 		t.Fatalf("context report after compaction: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestContextReportCountsOnlyTheActiveBranch(t *testing.T) {
 		t.Fatalf("branch: %v", err)
 	}
 
-	rep, err := s.ContextReport(ctx, session.Direct(id("s1")))
+	rep, err := s.ContextReport(ctx)
 	if err != nil {
 		t.Fatalf("context report: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestContextReportCompactionFigureMatchesTheTrigger(t *testing.T) {
 		toolOutputEntry(t, "call_1", strings40k()),
 		usageEntry(t, "answer", 12000, 500, 0),
 	)
-	priced, err := s.ContextReport(ctx, session.Direct(id("s1")))
+	priced, err := s.ContextReport(ctx)
 	if err != nil {
 		t.Fatalf("context report: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestContextReportCompactionFigureMatchesTheTrigger(t *testing.T) {
 
 	// A turn nobody has priced yet is estimated on top.
 	seed(t, s, toolOutputEntry(t, "call_2", strings40k()))
-	tail, err := s.ContextReport(ctx, session.Direct(id("s1")))
+	tail, err := s.ContextReport(ctx)
 	if err != nil {
 		t.Fatalf("context report: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestContextReportCompactionFigureDropsAtTheFold(t *testing.T) {
 		userEntry(t, strings40k()),
 		usageEntry(t, "answer", 49000, 1000, 0),
 	)
-	before, err := s.ContextReport(ctx, session.Direct(id("s1")))
+	before, err := s.ContextReport(ctx)
 	if err != nil {
 		t.Fatalf("context report: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestContextReportCompactionFigureDropsAtTheFold(t *testing.T) {
 		t.Fatalf("RunCompaction: %v", err)
 	}
 
-	folded, err := s.ContextReport(ctx, session.Direct(id("s1")))
+	folded, err := s.ContextReport(ctx)
 	if err != nil {
 		t.Fatalf("context report after fold: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestContextReportCompactionFigureDropsAtTheFold(t *testing.T) {
 
 	// The next priced call covers the folded view and re-anchors the figure.
 	seed(t, s, usageEntry(t, "re-priced", 2900, 100, 0))
-	rePriced, err := s.ContextReport(ctx, session.Direct(id("s1")))
+	rePriced, err := s.ContextReport(ctx)
 	if err != nil {
 		t.Fatalf("context report after re-pricing: %v", err)
 	}

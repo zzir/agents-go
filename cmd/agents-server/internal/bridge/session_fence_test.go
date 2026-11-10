@@ -41,7 +41,7 @@ func TestWithSessionTreeFencedCoversTheTreeAndDrains(t *testing.T) {
 	seg.finalize()
 
 	// A debt with no agent config is cancelled by a drain: proof one ran.
-	if err := runner.Deps.Wakeups.Owe(ctx, &store.Wakeup{SessionID: parent.ID, Kind: store.WakeKindTask, Payload: "p"}); err != nil {
+	if _, err := runner.db.NewInsert().Model(&store.Wakeup{SessionID: parent.ID, Kind: store.WakeKindTask, Payload: "p"}).Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 	errInside := errors.New("fn's own")

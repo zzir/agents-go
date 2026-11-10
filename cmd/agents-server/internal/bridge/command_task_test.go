@@ -239,7 +239,7 @@ func TestBackgroundCommandOfferedToChatRunsThatOptIn(t *testing.T) {
 		{"chat run, not opted in", plain.ID, false, false},
 	}
 	for _, tc := range cases {
-		built, err := buildFullAgent(ctx, f.runner.Deps, tc.agent, f.workspace.ID, tc.background, store.LocalUserID)
+		built, err := f.runner.buildFullAgent(ctx, tc.agent, f.workspace.ID, tc.background, store.LocalUserID)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}

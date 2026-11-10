@@ -15,14 +15,14 @@ func TestExecCommandRoutedOffSDKApproveList(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	s := store.NewAgentConfigStore(db)
-	deps := testRunner(ctx, t, db).Deps
+	runner := testRunner(ctx, t, db)
 	ac := &store.AgentConfig{OwnerID: store.LocalUserID, Name: "a", Model: "gpt-test", Approval: store.ApprovalGroup{ApproveTools: store.StringList{"exec_command", "other_tool"}}}
 	if err := s.Create(ctx, ac); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	// A background build keeps the raw list (no plan gate), which is where the
 	// routing filter is observable.
-	built, err := buildFullAgent(ctx, deps, ac.ID, "", true, "")
+	built, err := runner.buildFullAgent(ctx, ac.ID, "", true, "")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestExecCommandRoutedOffSDKApproveList(t *testing.T) {
 	// A foreground build hands the (filtered) list to the plan gate, which
 	// translates it into per-tool predicates and clears it — the phase must be
 	// able to suppress approval on a call it is refusing anyway.
-	fg, err := BuildFullAgent(ctx, deps, ac.ID, "", store.LocalUserID)
+	fg, err := runner.BuildFullAgent(ctx, ac.ID, "", store.LocalUserID)
 	if err != nil {
 		t.Fatalf("foreground build: %v", err)
 	}

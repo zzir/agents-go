@@ -100,13 +100,13 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		Scan(ctx); err != nil {
 		return fmt.Errorf("compaction adapter: loading entries: %w", err)
 	}
-	onPath, err := ca.activeBranchOfRows(ctx, ca.ref, rows)
+	on, err := ca.activePath(ctx, rows)
 	if err != nil {
 		return fmt.Errorf("compaction adapter: resolving the active branch: %w", err)
 	}
 	var active []entryRow
 	for i := range rows {
-		if onPath[rows[i].EntryID] && !rows[i].Compacted {
+		if on[rows[i].EntryID] && !rows[i].Compacted {
 			active = append(active, rows[i])
 		}
 	}
@@ -124,7 +124,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 	}
 
 	// Only a firing pass needs bodies, and only the active rows'.
-	bodies, err := ca.entryBodies(ctx, ca.ref, rowIDs(active))
+	bodies, err := ca.entryBodies(ctx, rowIDs(active))
 	if err != nil {
 		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
 	}
@@ -255,7 +255,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 // resetPass folds the active branch down to its newest user message and a
 // checkpoint carrying the session memory (plus a recap in hybrid mode) — spec §2.5i.
 func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.CompactionArgs, active []entryRow) error {
-	bodies, err := ca.entryBodies(ctx, ca.ref, rowIDs(active))
+	bodies, err := ca.entryBodies(ctx, rowIDs(active))
 	if err != nil {
 		return fmt.Errorf("compaction adapter: loading active entries: %w", err)
 	}

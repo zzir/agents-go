@@ -22,7 +22,7 @@ func (b *BuildResult) ReadOnlySet() middleware.ReadOnlySet { return b.plan().Rea
 // applyApprovalMode installs the agent's approval mode on every tool it
 // carries — invariant 90; exec_command keeps its per-command gate in both modes.
 func applyApprovalMode(r *BuildResult) {
-	if r.Agent == nil || !r.Approval.Asks() {
+	if r.Agent == nil || !r.Config.Approval.Asks() {
 		return
 	}
 	readOnly := r.plan().ReadOnlySet()
@@ -30,7 +30,7 @@ func applyApprovalMode(r *BuildResult) {
 		if t.Name == execCommandToolName {
 			return false
 		}
-		return r.Approval.Mode == store.ApprovalModeAlways || !readOnly.Admits(t, fromMCP)
+		return r.Config.Approval.Mode == store.ApprovalModeAlways || !readOnly.Admits(t, fromMCP)
 	}
 	tools := make([]*agents.Tool, len(r.Agent.Tools))
 	for i, t := range r.Agent.Tools {

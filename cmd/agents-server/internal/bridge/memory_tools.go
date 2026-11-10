@@ -24,7 +24,7 @@ func (r *Runner) memoryTools(ctx context.Context, ownerID string, built *BuildRe
 			}
 			return rm, memory.Scope{Kind: store.MemoryScopeSession, ID: sid}, nil
 		case store.MemoryScopeAgent:
-			return rm, memory.Scope{Kind: store.MemoryScopeAgent, ID: built.ConfigID}, nil
+			return rm, memory.Scope{Kind: store.MemoryScopeAgent, ID: built.Config.ID}, nil
 		}
 		return nil, memory.Scope{}, fmt.Errorf("memory: no scope %q", spec.Name)
 	}
@@ -45,11 +45,11 @@ func memoryScopes(built *BuildResult, ownerID string, admin bool) []memory.Scope
 		Name: store.MemoryScopeAgent, MaxBytes: agentP.MaxBytes, MaxKeys: agentP.MaxKeys,
 		Describe: "what every future conversation with this agent should know; short, durable facts.",
 	}
-	editable := ownerID == built.ConfigOwnerID || (built.ConfigScope == store.ScopeGlobal && admin)
+	editable := ownerID == built.Config.OwnerID || (built.Config.Scope == store.ScopeGlobal && admin)
 	switch {
-	case built.Memory.AgentWrite && editable:
+	case built.Config.Memory.AgentWrite && editable:
 		agent.Writable, agent.Approve = true, true
-	case built.Memory.AgentWrite:
+	case built.Config.Memory.AgentWrite:
 		agent.Describe += " Read-only here: the agent belongs to somebody else."
 	default:
 		agent.Describe += " Read-only here: the agent's settings do not let you write it."

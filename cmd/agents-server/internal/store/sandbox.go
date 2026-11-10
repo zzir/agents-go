@@ -341,7 +341,7 @@ type SandboxStore struct {
 // NewSandboxStore returns a store backed by db.
 func NewSandboxStore(db *bun.DB) *SandboxStore {
 	return &SandboxStore{
-		CrudStore: NewCrudStore[Sandbox](db, "sandbox", "created_at DESC").withSecrets(sealSandbox, openSandbox),
+		CrudStore: NewCrudStore[Sandbox](db, "sandbox").withSecrets(sealSandbox, openSandbox),
 		db:        db,
 	}
 }
@@ -375,7 +375,7 @@ func guardSandbox(ctx context.Context, tx bun.Tx, id string) (revision int64, wo
 func (s *SandboxStore) Update(ctx context.Context, id string, sb *Sandbox, expectedRevision int64) error {
 	sb.ID = id
 	var res sql.Result
-	err := sealedWrite(sb, sealSandbox, openSandbox, func() (err error) {
+	err := s.sealedWrite(sb, func() (err error) {
 		res, err = s.db.NewUpdate().Model(sb).
 			ExcludeColumn("id", "created_at", "revision").
 			Set("revision = revision + 1").
@@ -390,7 +390,7 @@ func (s *SandboxStore) Update(ctx context.Context, id string, sb *Sandbox, expec
 	if n, aerr := res.RowsAffected(); aerr == nil && n > 0 {
 		return nil
 	}
-	return s.explainWriteRefusal(ctx, id)
+	return s.staleOrMissing(ctx, id)
 }
 
 // UpdateIdentityIfUnreferenced overwrites the sandbox only while no workspace
@@ -398,7 +398,7 @@ func (s *SandboxStore) Update(ctx context.Context, id string, sb *Sandbox, expec
 // identity moves. Returns the blocking count; a moved revision is ErrRevisionConflict.
 func (s *SandboxStore) UpdateIdentityIfUnreferenced(ctx context.Context, id string, sb *Sandbox, expectedRevision int64) (workspaces int, err error) {
 	sb.ID = id
-	err = sealedWrite(sb, sealSandbox, openSandbox, func() error {
+	err = s.sealedWrite(sb, func() error {
 		return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 			revision, n, err := guardSandbox(ctx, tx, id)
 			if err != nil {
@@ -443,19 +443,6 @@ func (s *SandboxStore) DeleteIfUnreferenced(ctx context.Context, id string) (wor
 		return 0, fmt.Errorf("deleting sandbox %s: %w", id, err)
 	}
 	return workspaces, nil
-}
-
-// explainWriteRefusal disambiguates a zero-row conditional write that carried
-// no reference guard: the row is missing, or its revision moved.
-func (s *SandboxStore) explainWriteRefusal(ctx context.Context, id string) error {
-	exists, err := s.db.NewSelect().Model((*Sandbox)(nil)).Where("id = ?", id).Exists(ctx)
-	if err != nil {
-		return fmt.Errorf("checking sandbox %s: %w", id, err)
-	}
-	if !exists {
-		return fmt.Errorf("updating sandbox %s: %w", id, ErrNotFound)
-	}
-	return ErrRevisionConflict
 }
 
 // canonicalEqual compares two raw payloads through T as canonical JSON: a map

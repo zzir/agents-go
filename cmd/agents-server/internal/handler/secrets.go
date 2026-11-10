@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/providers"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -28,12 +27,6 @@ func resolveSecret(incoming, prev string) string {
 		return prev
 	}
 	return incoming
-}
-
-// credentialTargetChanged reports whether a stored api_key's destination, the
-// (provider_type, base_url) pair, differs between the row and the update (invariant 9).
-func credentialTargetChanged(prevProvider, prevBaseURL, newProvider, newBaseURL string) bool {
-	return !providers.SameEndpoint(prevProvider, prevBaseURL, newProvider, newBaseURL)
 }
 
 // maskJSONFields masks the named string fields of a JSON object, plus every

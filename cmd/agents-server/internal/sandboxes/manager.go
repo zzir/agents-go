@@ -4,6 +4,7 @@
 package sandboxes
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -65,6 +66,18 @@ type sandboxInstance struct {
 	stopOnRelease bool
 
 	closeOnce sync.Once
+}
+
+// fenceStoppingLocked marks the instance as mid-stop: its idle timer is
+// disarmed and an acquire waits on gone (decisions §5.28). Callers hold the
+// manager's mu.
+func (i *sandboxInstance) fenceStoppingLocked() {
+	if i.idle != nil {
+		i.idle.Stop()
+		i.idle = nil
+	}
+	i.expired = true
+	i.gone = make(chan struct{})
 }
 
 // stopTimeout bounds a background pause/stop — an idle expiry or a deferred
@@ -287,8 +300,7 @@ func (m *Manager) release(inst *sandboxInstance) {
 	if dead && stopIntent {
 		// Fence the pause like the idle expiry: reclaim the key as an
 		// expired placeholder so a racing Acquire waits the stop out.
-		inst.expired = true
-		inst.gone = make(chan struct{})
+		inst.fenceStoppingLocked()
 		m.instances[inst.key] = inst
 	}
 	if !dead && inst.refs <= 0 && !m.closed && idle > 0 {
@@ -330,10 +342,8 @@ func (m *Manager) idleExpire(inst *sandboxInstance) {
 		m.mu.Unlock()
 		return
 	}
-	// Fence BEFORE stopping: an acquire during the stop waits on gone —
-	// decisions §5.28.
-	inst.expired = true
-	inst.gone = make(chan struct{})
+	// Fence BEFORE stopping: an acquire during the stop waits on gone.
+	inst.fenceStoppingLocked()
 	m.mu.Unlock()
 	m.stopFenced(inst)
 }
@@ -365,16 +375,17 @@ func (m *Manager) evictLocked(key sandboxKey) (toClose *sandboxInstance) {
 	return inst
 }
 
-// RetireWorkspace evicts every instance of a workspace built before minLive and
-// fences that generation off; live holders finish on what they have (invariant 27).
-func (m *Manager) RetireWorkspace(workspaceID string, minLive int64) {
+// evict drops every cached instance match selects — an idle one closes now, a
+// held one is doomed for its last release — after fence, when set, ran under
+// the same lock.
+func (m *Manager) evict(fence func(), match func(sandboxKey) bool) {
 	var toClose []*sandboxInstance
 	m.mu.Lock()
-	if m.retired[workspaceID] < minLive {
-		m.retired[workspaceID] = minLive
+	if fence != nil {
+		fence()
 	}
 	for key := range m.instances {
-		if key.workspaceID != workspaceID || key.gen >= minLive {
+		if !match(key) {
 			continue
 		}
 		if inst := m.evictLocked(key); inst != nil {
@@ -387,24 +398,18 @@ func (m *Manager) RetireWorkspace(workspaceID string, minLive int64) {
 	}
 }
 
+// RetireWorkspace evicts every instance of a workspace built before minLive and
+// fences that generation off; live holders finish on what they have (invariant 27).
+func (m *Manager) RetireWorkspace(workspaceID string, minLive int64) {
+	m.evict(func() { m.retired[workspaceID] = max(m.retired[workspaceID], minLive) },
+		func(k sandboxKey) bool { return k.workspaceID == workspaceID && k.gen < minLive })
+}
+
 // RemoveWorkspace evicts every cached instance of the workspace and fences its id
 // permanently (ids are never reused); in-flight holders finish on what they acquired.
 func (m *Manager) RemoveWorkspace(workspaceID string) {
-	var toClose []*sandboxInstance
-	m.mu.Lock()
-	m.retired[workspaceID] = maxGen
-	for key := range m.instances {
-		if key.workspaceID != workspaceID {
-			continue
-		}
-		if inst := m.evictLocked(key); inst != nil {
-			toClose = append(toClose, inst)
-		}
-	}
-	m.mu.Unlock()
-	for _, inst := range toClose {
-		inst.close()
-	}
+	m.evict(func() { m.retired[workspaceID] = maxGen },
+		func(k sandboxKey) bool { return k.workspaceID == workspaceID })
 }
 
 // maxGen fences a workspace id permanently: no runtime generation can reach it.
@@ -448,20 +453,7 @@ func (m *Manager) Check(ctx context.Context, sb *store.Sandbox) error {
 // EvictWorkspace drops the workspace's cached instances without fencing the id:
 // the workspace stays acquirable (a rebuild, a last-session-released binding).
 func (m *Manager) EvictWorkspace(workspaceID string) {
-	var toClose []*sandboxInstance
-	m.mu.Lock()
-	for key := range m.instances {
-		if key.workspaceID != workspaceID {
-			continue
-		}
-		if inst := m.evictLocked(key); inst != nil {
-			toClose = append(toClose, inst)
-		}
-	}
-	m.mu.Unlock()
-	for _, inst := range toClose {
-		inst.close()
-	}
+	m.evict(nil, func(k sandboxKey) bool { return k.workspaceID == workspaceID })
 }
 
 // stopWorkspaceOnRelease evicts every instance of the workspace and makes the last
@@ -483,12 +475,7 @@ func (m *Manager) stopWorkspaceOnRelease(workspaceID string) {
 		}
 		// No holders: stop now, fenced under its key like the idle expiry; a
 		// timer fire already in flight no-ops on expired.
-		if inst.idle != nil {
-			inst.idle.Stop()
-			inst.idle = nil
-		}
-		inst.expired = true
-		inst.gone = make(chan struct{})
+		inst.fenceStoppingLocked()
 		toStop = append(toStop, inst)
 	}
 	m.mu.Unlock()
@@ -501,18 +488,7 @@ func (m *Manager) stopWorkspaceOnRelease(workspaceID string) {
 // close now; held ones (including a build still dialing) are doomed and close
 // on their last release — always after their ready gate.
 func (m *Manager) CloseAll() {
-	var toClose []*sandboxInstance
-	m.mu.Lock()
-	m.closed = true
-	for key := range m.instances {
-		if inst := m.evictLocked(key); inst != nil {
-			toClose = append(toClose, inst)
-		}
-	}
-	m.mu.Unlock()
-	for _, inst := range toClose {
-		inst.close()
-	}
+	m.evict(func() { m.closed = true }, func(sandboxKey) bool { return true })
 }
 
 // Output caps for the sandbox tools, above the SDK's 8192 defaults: read_file
@@ -634,12 +610,7 @@ func (m *Manager) detachIfSole(workspaceID string) (finish func(), sole bool) {
 			continue // an idle expiry mid-stop frees its own key
 		}
 		inst.doomed = true
-		if inst.idle != nil {
-			inst.idle.Stop()
-			inst.idle = nil
-		}
-		inst.expired = true
-		inst.gone = make(chan struct{})
+		inst.fenceStoppingLocked()
 		fenced = append(fenced, inst)
 	}
 	return func() {
@@ -732,21 +703,11 @@ func (r *releasingReader) Close() error {
 	return err
 }
 
-// holders counts the live references across every cached generation of the workspace.
-func (m *Manager) holders(workspaceID string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.workspaceRefsLocked(workspaceID)
-}
-
 // BuildOptions assembles the SDK options for spec: the sandbox's daemon,
 // image and limits, and the workspace's container, volume and environment.
 func BuildOptions(spec Spec) (dockersb.Options, error) {
-	opts, err := DaemonOptions(spec.Sandbox)
+	opts, err := imageOptions(spec.Sandbox)
 	if err != nil {
-		return dockersb.Options{}, err
-	}
-	if err := applyImage(&opts, spec.Sandbox); err != nil {
 		return dockersb.Options{}, err
 	}
 	if opts.Env, err = store.EnvMap(spec.Workspace.Env); err != nil {
@@ -764,13 +725,26 @@ func BuildOptions(spec Spec) (dockersb.Options, error) {
 // nothing else. DOCKER ONLY; anything more than one backend reaches goes
 // through Backend.
 func DaemonOptions(sb *store.Sandbox) (dockersb.Options, error) {
-	if sb.Type != "docker" {
-		return dockersb.Options{}, fmt.Errorf("sandbox %q is a %s sandbox; this is a Docker-only operation", sb.Name, sb.Type)
+	dc, err := dockerConfig(sb)
+	if err != nil {
+		return dockersb.Options{}, err
 	}
+	return daemonOptions(dc), nil
+}
+
+// dockerConfig decodes a docker sandbox's config, refusing any other type.
+func dockerConfig(sb *store.Sandbox) (store.DockerConfig, error) {
 	var dc store.DockerConfig
-	if err := store.DecodeConfig(sb.Config, &dc); err != nil {
-		return dockersb.Options{}, fmt.Errorf("docker sandbox: invalid config: %w", err)
+	if sb.Type != "docker" {
+		return dc, fmt.Errorf("sandbox %q is a %s sandbox; this is a Docker-only operation", sb.Name, sb.Type)
 	}
+	if err := store.DecodeConfig(sb.Config, &dc); err != nil {
+		return dc, fmt.Errorf("docker sandbox: invalid config: %w", err)
+	}
+	return dc, nil
+}
+
+func daemonOptions(dc store.DockerConfig) dockersb.Options {
 	opts := dockersb.Options{Host: dc.Host}
 	if strings.HasPrefix(dc.Host, "ssh://") {
 		opts.SSH = dockersb.SSHAuth{
@@ -781,40 +755,34 @@ func DaemonOptions(sb *store.Sandbox) (dockersb.Options, error) {
 			InsecureIgnoreHostKey: dc.SSHInsecureHostKey,
 		}
 	}
-	return opts, nil
+	return opts
 }
 
 // DefaultContainerUser is what a sandbox that names no user runs as — decisions §5.33.
 const DefaultContainerUser = "root"
 
-// applyImage layers the image and container shape onto the daemon options.
-func applyImage(opts *dockersb.Options, sb *store.Sandbox) error {
-	var dc store.DockerConfig
-	if err := store.DecodeConfig(sb.Config, &dc); err != nil {
-		return fmt.Errorf("docker sandbox: invalid config: %w", err)
+// imageOptions is the daemon plus the image and container shape: everything a
+// container of this sandbox has before a workspace gives it a name and a volume.
+func imageOptions(sb *store.Sandbox) (dockersb.Options, error) {
+	dc, err := dockerConfig(sb)
+	if err != nil {
+		return dockersb.Options{}, err
 	}
 	if dc.Image == "" {
-		return fmt.Errorf("docker sandbox %s requires an image", sb.Name)
+		return dockersb.Options{}, fmt.Errorf("docker sandbox %s requires an image", sb.Name)
 	}
+	opts := daemonOptions(dc)
 	opts.Image = dc.Image
 	opts.Runtime = dc.Runtime
-	opts.User = dc.User
-	if opts.User == "" {
-		opts.User = DefaultContainerUser
-	}
+	opts.User = cmp.Or(dc.User, DefaultContainerUser)
 	opts.Network = dc.Network
 	// A blank limit takes the workbench default — decisions §5.38.
-	mem := dc.MemoryMB
-	if mem == 0 {
-		mem = DefaultMemoryMB
+	opts.Limits = sandbox.Limits{
+		MemoryBytes: cmp.Or(dc.MemoryMB, DefaultMemoryMB) << 20,
+		CPUs:        cmp.Or(dc.CPUs, DefaultCPUs),
 	}
-	cpus := dc.CPUs
-	if cpus == 0 {
-		cpus = DefaultCPUs
-	}
-	opts.Limits = sandbox.Limits{MemoryBytes: mem << 20, CPUs: cpus}
 	opts.MaxReadFileBytes = dc.MaxReadFileBytes
-	return nil
+	return opts, nil
 }
 
 // Default resource caps for a docker sandbox that leaves them blank — decisions §5.38.

@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -153,6 +152,14 @@ func (d AuthzDeps) approvalGate() gin.HandlerFunc {
 	})
 }
 
+// triggerKey is where triggerGate parks the row for the handler.
+const triggerKey = "agents.trigger"
+
+// gatedTrigger returns the trigger triggerGate loaded for this request.
+func gatedTrigger(c *gin.Context) *store.Trigger {
+	return c.MustGet(triggerKey).(*store.Trigger)
+}
+
 // triggerGate gates /triggers/:id/* on owning the session the trigger fires
 // into.
 func (d AuthzDeps) triggerGate() gin.HandlerFunc {
@@ -161,8 +168,11 @@ func (d AuthzDeps) triggerGate() gin.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		_, err = requireOwnedSession(c, d.Sessions, t.SessionID)
-		return err
+		if _, err := requireOwnedSession(c, d.Sessions, t.SessionID); err != nil {
+			return err
+		}
+		c.Set(triggerKey, t)
+		return nil
 	})
 }
 
@@ -254,9 +264,10 @@ func scopeChangeAllowed(c *gin.Context, target, rowScope, rowOwner string) error
 	return nil
 }
 
-// setScopePlain is the /scope POST body for entities with no extra validation
-// (MCP servers): bind, authorize, refuse the same scope, flip.
-func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, scopeOf func(*T) (scope, owner string), set func(ctx context.Context, id, scope, expectOwner string) error) error {
+// setScope is the /scope POST body of every scoped entity: bind, authorize,
+// refuse the same scope, run the entity's own check on the row as it would
+// stand (nil for none), flip.
+func setScope[T any](c *gin.Context, s *store.CrudStore[T], kind string, scopeOf func(*T) (scope, owner string), check func(row *T, target string) error, set func(ctx context.Context, id, scope, expectOwner string) error) error {
 	scope, err := bindScope(c)
 	if err != nil {
 		return err
@@ -273,6 +284,11 @@ func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, sc
 	if err := sameScope(kind, cur, scope); err != nil {
 		return err
 	}
+	if check != nil {
+		if err := check(row, scope); err != nil {
+			return err
+		}
+	}
 	if err := set(ctx, id, scope, owner); err != nil {
 		return err // name collision in the target scope -> 409
 	}
@@ -281,18 +297,15 @@ func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, sc
 	return nil
 }
 
-// setOwnerPlain is the /owner PUT body shared by the scoped entities (the
-// route carries the admin gate): the row moves, scope stays; a taken name is 409.
-func setOwnerPlain(c *gin.Context, set func(ctx context.Context, id, ownerID string) error) error {
+// setOwner is the /owner PUT body of every transferable row (the route carries
+// the admin gate): bind the new owner, move the row through set, record it.
+func setOwner(c *gin.Context, set func(ctx context.Context, id, ownerID string) error) error {
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
 		return badRequest("user_id is required")
 	}
 	if err := set(c.Request.Context(), c.Param("id"), req.UserID); err != nil {
-		if errors.Is(err, store.ErrNoSuchUser) {
-			return badRequest("no such user")
-		}
-		return err // name collision in the target owner's namespace -> 409
+		return err // no such user -> 400, a taken name in the owner's namespace -> 409
 	}
 	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
@@ -318,6 +331,22 @@ func ownershipGuard[T any](scope, owner string, scopeOf func(*T) (string, string
 func callerSees(c *gin.Context, scope, rowOwner string) bool {
 	u, ok := server.CurrentUser(c)
 	return ok && store.Visible(scope, rowOwner, u.ID, u.Role == store.RoleAdmin)
+}
+
+// refRefusal says why a holder may not reference the row (kind, name), or ""
+// when it may. hidden is a row the caller cannot see either: it reads as
+// absent, never as refused — decisions §5.29.
+func refRefusal(c *gin.Context, kind, name, refScope, refOwner, holderScope, holderOwner string) (reason string, hidden bool) {
+	if store.RefVisible(refScope, refOwner, holderScope, holderOwner) {
+		return "", false
+	}
+	if !callerSees(c, refScope, refOwner) {
+		return "", true
+	}
+	if holderScope == store.ScopeGlobal {
+		return "a global agent can only reference global configuration; " + kind + " " + name + " is private", false
+	}
+	return kind + " " + name + " belongs to another user", false
 }
 
 // runnableRow gates the RUN surface of an agent (a bound session, its tool

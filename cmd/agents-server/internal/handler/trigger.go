@@ -16,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -176,14 +175,14 @@ func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, error) {
 	}
 	// A workflow target must be one the session's owner may see (decisions
 	// §5.29): the execution runs under their identity.
-	if t.WorkflowID != "" && h.workflows != nil {
+	if t.WorkflowID != "" {
 		wf, err := h.workflows.Get(ctx, t.WorkflowID)
 		if err != nil || !store.Visible(wf.Scope, wf.OwnerID, sess.OwnerID, false) {
 			return nil, badRequest("workflow_id names no workflow")
 		}
 	}
 	// An agent target follows the same rule.
-	if t.AgentConfigID != "" && h.agents != nil {
+	if t.AgentConfigID != "" {
 		ac, err := h.agents.Get(ctx, t.AgentConfigID)
 		if err != nil || !store.Visible(ac.Scope, ac.OwnerID, sess.OwnerID, false) {
 			return nil, badRequest("agent_config_id names no agent")
@@ -227,11 +226,7 @@ func (h *TriggerHandler) List(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/triggers/{id} [get]
 func (h *TriggerHandler) Get(c *gin.Context) error {
-	t, err := h.store.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		return err
-	}
-	c.JSON(http.StatusOK, viewOf(t, ""))
+	c.JSON(http.StatusOK, viewOf(gatedTrigger(c), ""))
 	return nil
 }
 
@@ -298,17 +293,13 @@ func (h *TriggerHandler) saveError(err error) error {
 //	@Router		/triggers/{id} [put]
 func (h *TriggerHandler) Update(c *gin.Context) error {
 	ctx, id := c.Request.Context(), c.Param("id")
-	cur, err := h.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
 	t, err := h.bind(c)
 	if err != nil {
 		return err
 	}
 	// The kind is fixed at creation; UpdateSettings touches the settable
 	// columns only, so a racing rotation or fire is not undone.
-	if t.Kind != cur.Kind {
+	if t.Kind != gatedTrigger(c).Kind {
 		return badRequest("kind cannot change; create another trigger")
 	}
 	if err := h.store.UpdateSettings(ctx, id, t); err != nil {
@@ -365,10 +356,8 @@ type fireReq struct {
 //	@Router			/triggers/{id}/fire [post]
 func (h *TriggerHandler) Fire(c *gin.Context) error {
 	var req fireReq
-	if c.Request.ContentLength != 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			return badRequest(err.Error())
-		}
+	if err := bindOptional(c, &req); err != nil {
+		return err
 	}
 	return h.fire(c, c.Param("id"), req.Payload, bridge.FireManual)
 }
@@ -378,19 +367,13 @@ func (h *TriggerHandler) Fire(c *gin.Context) error {
 func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) error {
 	fired, err := h.firer.Fire(c.Request.Context(), id, payload, source)
 	if err != nil {
-		_, bridgeLimit := errors.AsType[bridge.ErrTaskLimit](err)
-		_, busy := errors.AsType[bridge.ErrSessionBusy](err)
-		_, deleting := errors.AsType[bridge.ErrSessionDeleting](err)
-		_, draining := errors.AsType[bridge.ErrShuttingDown](err)
 		switch {
 		case errors.Is(err, bridge.ErrWorkflowUnavailable), errors.Is(err, bridge.ErrTriggerTarget):
 			return badRequest(err.Error())
-		case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrSessionAwaitingApproval), errors.Is(err, tasks.ErrTaskLimit), bridgeLimit, busy, deleting:
+		case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrSessionAwaitingApproval):
 			return conflict(err.Error())
-		case draining:
-			return unavailable(err.Error())
 		default:
-			return err
+			return err // busy, deleting, at the task cap, draining: classify
 		}
 	}
 	c.JSON(http.StatusCreated, fired)
@@ -411,10 +394,7 @@ func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) error 
 //	@Router			/triggers/{id}/rotate-secret [post]
 func (h *TriggerHandler) RotateSecret(c *gin.Context) error {
 	ctx, id := c.Request.Context(), c.Param("id")
-	t, err := h.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
+	t := gatedTrigger(c)
 	if t.Kind != store.TriggerKindWebhook {
 		return badRequest("only a webhook trigger has a secret")
 	}

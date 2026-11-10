@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/zzir/agents-go/agents/tasks"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/logging"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
@@ -77,9 +79,14 @@ func classify(err error) *apiError {
 	if e, ok := errors.AsType[*apiError](err); ok {
 		return e
 	}
+	if e := lifecycle(err); e != nil {
+		return e
+	}
 	switch cols, unique := store.UniqueViolation(err); {
 	case unique:
 		return conflict("already in use: " + cols)
+	case errors.Is(err, store.ErrNoSuchUser):
+		return badRequest("no such user")
 	case errors.Is(err, store.ErrProviderRef), errors.Is(err, store.ErrProviderScope):
 		return badRequest(err.Error())
 	case errors.Is(err, store.ErrSameScope), errors.Is(err, store.ErrOwnershipChanged),
@@ -93,6 +100,27 @@ func classify(err error) *apiError {
 		return badRequest("malformed id")
 	}
 	return &apiError{status: http.StatusInternalServerError, code: protocol.CodeInternal, message: "internal error", cause: err}
+}
+
+// lifecycle answers the bridge's refusals to start or resume work on a
+// session, the same from every route that can meet one; nil for anything else.
+func lifecycle(err error) *apiError {
+	if e, ok := errors.AsType[bridge.ErrShuttingDown](err); ok {
+		return unavailable(e.Error()) // retry against the next process
+	}
+	if e, ok := errors.AsType[bridge.ErrInvalidBinding](err); ok {
+		return badRequest(e.Error())
+	}
+	if e, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
+		return conflict(e.Error())
+	}
+	if e, ok := errors.AsType[bridge.ErrSessionDeleting](err); ok {
+		return conflict(e.Error())
+	}
+	if errors.Is(err, bridge.ErrBindingContention) || errors.Is(err, tasks.ErrTaskLimit) {
+		return conflict(err.Error())
+	}
+	return nil
 }
 
 // writeError answers a failure with its classified envelope and ends the chain.
@@ -112,13 +140,6 @@ func wrap(h func(c *gin.Context) error) gin.HandlerFunc {
 			writeError(c, err)
 		}
 	}
-}
-
-// pageParams reads the backwards-pagination query parameters before_id
-// (exclusive upper bound) and limit (absent or 0 = unbounded); a bad limit is 400.
-func pageParams(c *gin.Context) (beforeID string, limit int, err error) {
-	limit, err = queryInt(c, "limit")
-	return c.Query("before_id"), limit, err
 }
 
 // queryInt reads a non-negative integer query parameter (absent = 0); an

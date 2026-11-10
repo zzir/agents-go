@@ -197,14 +197,6 @@ func (h *WSHandler) Handle(conn *server.WSConn) {
 				h.runner.CancelRun(msg.RunID)
 			}
 
-		case protocol.EventRunInject:
-			var msg protocol.RunInject
-			if err := json.Unmarshal(env.Payload, &msg); err != nil {
-				log.Error("unmarshal run injection", "error", err, "type", env.Type)
-				continue
-			}
-			h.inject(conn, msg)
-
 		default:
 			log.Warn("unknown ws message type", "type", env.Type)
 		}
@@ -246,9 +238,8 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 	}
 	if err != nil {
 		// These fire before any run.started, so carry the session id; classify
-		// like the REST path (busy/limit/deleting are session-busy conflicts).
+		// like the REST path (busy/deleting are session-busy conflicts).
 		busy, isBusy := errors.AsType[bridge.ErrSessionBusy](err)
-		_, atTaskLimit := errors.AsType[bridge.ErrTaskLimit](err)
 		_, deleting := errors.AsType[bridge.ErrSessionDeleting](err)
 		_, draining := errors.AsType[bridge.ErrShuttingDown](err)
 		var runID string
@@ -256,7 +247,7 @@ func (h *WSHandler) handleRunCreate(conn *server.WSConn, msg protocol.RunCreate)
 		switch {
 		case isBusy:
 			code, runID = protocol.CodeSessionBusy, busy.RunID
-		case atTaskLimit, deleting, draining:
+		case deleting, draining:
 			code = protocol.CodeSessionBusy
 		case errors.Is(err, store.ErrNotFound):
 			code = protocol.CodeSessionNotFound
@@ -308,26 +299,4 @@ func (h *WSHandler) resolve(conn *server.WSConn, toolCallID string, approve bool
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
-}
-
-// inject delivers client input to a live run through the queue the message
-// names. A run that has already finished is reported, not ignored.
-func (h *WSHandler) inject(conn *server.WSConn, msg protocol.RunInject) {
-	if !h.ownsRun(conn, msg.RunID) {
-		refuseRun(conn, msg.RunID)
-		return
-	}
-	delivered, err := h.runner.Hub().Inject(msg.RunID, msg.Queue, msg.Input)
-	if err != nil {
-		logging.Ctx(conn.Context()).Error("run injection", "error", err, "queue", msg.Queue)
-	}
-	if delivered && err == nil {
-		return
-	}
-	info, _ := h.runner.Hub().Info(msg.RunID)
-	_ = conn.WriteJSON(&protocol.Envelope{Type: protocol.EventRunError, Payload: mustJSON(protocol.RunError{
-		RunID:   msg.RunID,
-		Code:    protocol.CodeRunNotFound,
-		Message: injectRefusal(info.Status),
-	})})
 }

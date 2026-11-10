@@ -51,12 +51,11 @@ func (r *Runner) savePartialTurn(t partialTurn) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ref, refErr := store.RefFor(ctx, r.db, t.sessionID)
+	es, refErr := r.Deps.Sessions.OpenEntries(ctx, t.sessionID)
 	if refErr != nil {
 		logging.Ctx(r.hub.rootCtx).Warn("persisting partial turn", "error", refErr, "run_id", t.runID, "session_id", t.sessionID)
 		return
 	}
-	es := store.NewEntryStoreFor(r.db, ref)
 	es.SetRunID(t.runID)
 	es.SetModel(t.model)
 

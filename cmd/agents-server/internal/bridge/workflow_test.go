@@ -15,6 +15,7 @@ import (
 
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
+	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
@@ -98,7 +99,7 @@ func awaitWorkflow(t *testing.T, runner *Runner, taskID string, within time.Dura
 		if err != nil {
 			t.Fatal(err)
 		}
-		if isTerminalTaskStatus(row.Status) || time.Now().After(deadline) {
+		if tasks.Status(row.Status).Terminal() || time.Now().After(deadline) {
 			st, err := store.DecodeWorkflowState(row.State)
 			if err != nil {
 				t.Fatalf("task %s carries no workflow state: %v", taskID, err)
@@ -166,7 +167,7 @@ func TestWorkflowRunsEveryStepInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +193,7 @@ func TestWorkflowRunsEveryStepInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parentRows, err := store.NewEntryStoreFor(runner.db, parentRef).GetEntries(ctx, parentRef)
+	parentRows, err := store.NewEntryStoreFor(runner.db, parentRef).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +330,7 @@ func TestWorkflowFailureEdgeLoopsBackAndCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +393,7 @@ func TestWorkflowRetryPastTheCeilingIsRefusedBeforeARun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +494,7 @@ func TestWorkflowRefusesPastTheBackgroundBudget(t *testing.T) {
 	defer srv.Close()
 	runner, sess, wf := workflowFixture(t, srv.URL)
 
-	for range runner.hub.maxTasks() {
+	for range runner.Deps.SettingReader.Int(ctx, settings.KeyMaxTasksPerSession) {
 		if err := runner.Deps.Tasks.Create(ctx, &store.Task{
 			ID: store.NewID(), RunID: store.NewID(), ParentSessionID: sess.ID, ChildSessionID: store.NewID(),
 			Label: "other", Status: "working",
@@ -522,7 +523,7 @@ func TestWorkflowRunCarriesItsOwnSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartWorkflow: %v", err)
 	}
-	if err := runner.Deps.Workflows.Delete(ctx, wf.ID); err != nil {
+	if err := runner.Deps.Workflows.DeleteOwnedBy(ctx, wf.ID, wf.OwnerID); err != nil {
 		t.Fatal(err)
 	}
 	done, st := awaitWorkflow(t, runner, info.TaskID, 15*time.Second)
@@ -643,7 +644,7 @@ func TestWorkflowCompactsBeforeAStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -730,7 +731,7 @@ func TestRetryWorkflowResumesFromTheFailedStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -911,7 +912,7 @@ func pausedFixture(t *testing.T, modelURL string) (*Runner, *store.Session, *tas
 			}
 			return runner, sess, info, pending
 		}
-		if isTerminalTaskStatus(row.Status) || time.Now().After(deadline) {
+		if tasks.Status(row.Status).Terminal() || time.Now().After(deadline) {
 			t.Fatalf("execution never paused: %s (%s)", row.Status, row.Summary)
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -1234,7 +1235,7 @@ func TestRunWorkflowStartsAnExecutionForAPerson(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -143,12 +143,9 @@ func (a *TaskAdapter) ListByParent(ctx context.Context, parentSessionID string) 
 	return toSDKSlice(rows), nil
 }
 
-// Finalize implements tasks.Store. The closure builds the wake-up the
-// finished task owes its parent inside the SAME transaction — invariant 32.
+// Finalize implements tasks.Store.
 func (a *TaskAdapter) Finalize(ctx context.Context, id, runID string, st tasks.Status, summary, result string, state json.RawMessage) (bool, error) {
-	won, err := a.store.Finalize(ctx, id, runID, string(st), summary, result, state, func(row *Task) *Wakeup {
-		return taskWakeup(row, st, summary, result, runID)
-	})
+	won, err := a.store.Finalize(ctx, id, runID, string(st), summary, result, state)
 	return won, mapNotFound(err)
 }
 
@@ -191,9 +188,7 @@ func (a *TaskAdapter) RetryClaim(ctx context.Context, id, newRunID string, maxAt
 // ReleaseRetryClaim implements tasks.Store. A retry that never launched
 // leaves the task failed again, owing a fresh failure notification in the same tx.
 func (a *TaskAdapter) ReleaseRetryClaim(ctx context.Context, id, runID, summary, result string) (bool, error) {
-	won, err := a.store.ReleaseRetryClaim(ctx, id, runID, summary, result, func(row *Task) *Wakeup {
-		return taskWakeup(row, tasks.StatusFailed, summary, result, runID)
-	})
+	won, err := a.store.ReleaseRetryClaim(ctx, id, runID, summary, result)
 	return won, mapNotFound(err)
 }
 
@@ -210,11 +205,7 @@ func (a *TaskAdapter) ReclaimWorking(ctx context.Context, id, runID string) (boo
 
 // FailOrphans implements tasks.Store.
 func (a *TaskAdapter) FailOrphans(ctx context.Context) ([]tasks.Task, error) {
-	// Each orphan's wake-up lands in the same transaction as its failure, so a
-	// second crash mid-sweep cannot fail a task and forget its parent.
-	rows, err := a.store.FailOrphans(ctx, func(row *Task) *Wakeup {
-		return taskWakeup(row, tasks.StatusFailed, row.Summary, row.Result, row.RunID)
-	})
+	rows, err := a.store.FailOrphans(ctx)
 	if err != nil {
 		return nil, err
 	}

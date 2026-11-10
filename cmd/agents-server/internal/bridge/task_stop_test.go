@@ -159,7 +159,7 @@ func TestStopTaskCancelsALiveRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := runner.Tasks().Spawn(ctx, sdktasks.SpawnRequest{
+	info, err := runner.tasks.Spawn(ctx, sdktasks.SpawnRequest{
 		ParentSessionID: parent.ID, AgentName: "worker", Input: "run forever", Label: "probe",
 	})
 	if err != nil {
@@ -230,7 +230,7 @@ func TestStopTaskCancelsARunInsideATool(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	info, err := runner.Tasks().Spawn(ctx, sdktasks.SpawnRequest{
+	info, err := runner.tasks.Spawn(ctx, sdktasks.SpawnRequest{
 		ParentSessionID: parent.ID, AgentName: "worker", Input: "run a long command", Label: "probe",
 	})
 	if err != nil {

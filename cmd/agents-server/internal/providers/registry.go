@@ -167,16 +167,14 @@ func ApplyThinking(p agents.ModelProvider, mode string, binding bool) agents.Mod
 	return p
 }
 
-func normalizeType(t string) string {
+// NormalizeType maps the empty provider selector to its meaning ("openai"),
+// so a comparison of two rows' backends treats "" and "openai" as one.
+func NormalizeType(t string) string {
 	if t == "" {
 		return TypeOpenAI
 	}
 	return t
 }
-
-// NormalizeType maps the empty provider selector to its meaning ("openai"),
-// so a comparison of two rows' backends treats "" and "openai" as one.
-func NormalizeType(t string) string { return normalizeType(t) }
 
 // NormalizeBaseURL canonicalizes a base_url for comparing two rows' endpoints:
 // whitespace and the trailing slash only, never anything that could equate two hosts.
@@ -186,13 +184,13 @@ func NormalizeBaseURL(u string) string {
 
 // SameEndpoint reports whether two (type, base_url) pairs reach the same backend.
 func SameEndpoint(typeA, baseA, typeB, baseB string) bool {
-	return normalizeType(typeA) == normalizeType(typeB) && NormalizeBaseURL(baseA) == NormalizeBaseURL(baseB)
+	return NormalizeType(typeA) == NormalizeType(typeB) && NormalizeBaseURL(baseA) == NormalizeBaseURL(baseB)
 }
 
 // DefFor resolves a provider selector to its definition; the error names the
 // valid set, and no construction path defaults past it.
 func DefFor(t string) (Def, error) {
-	t = normalizeType(t)
+	t = NormalizeType(t)
 	for _, d := range providerDefs {
 		if d.Type == t {
 			return d, nil
@@ -203,13 +201,6 @@ func DefFor(t string) (Def, error) {
 		types[i] = d.Type
 	}
 	return Def{}, fmt.Errorf("unknown provider %q (valid: %s)", t, strings.Join(types, ", "))
-}
-
-// ValidateType rejects a provider selector outside the registry; both save
-// time and build time run it.
-func ValidateType(t string) error {
-	_, err := DefFor(t)
-	return err
 }
 
 // Validate checks a provider row's cross-field constraints: a registered

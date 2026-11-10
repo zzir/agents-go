@@ -54,7 +54,6 @@ type SessionStatuser interface {
 // NewSessionHandler refuses a nil.
 type SessionDeps struct {
 	Sessions *store.SessionStore
-	Entries  *store.EntryStore
 	Traces   *store.TraceStore
 	Agents   *store.AgentConfigStore
 	// Profiles serves the Context report: the build's snapshot of what a run sends.
@@ -74,36 +73,19 @@ type SessionDeps struct {
 }
 
 // SessionHandler serves CRUD endpoints for chat sessions and their entries.
-type SessionHandler struct {
-	sessions   *store.SessionStore
-	entries    *store.EntryStore
-	traces     *store.TraceStore
-	agents     *store.AgentConfigStore
-	profiles   *store.ContextProfileStore
-	users      *store.UserStore
-	workspaces *store.WorkspaceStore
-	stopper    RunStopper
-	compactor  SessionCompactor
-	statuses   SessionStatuser
-	settings   *settings.Reader
-}
+type SessionHandler struct{ SessionDeps }
 
 // NewSessionHandler returns a handler over d. It panics on a missing
 // dependency: that is a wiring error, not a runtime condition.
 func NewSessionHandler(d SessionDeps) *SessionHandler {
 	switch {
-	case d.Sessions == nil, d.Entries == nil, d.Traces == nil, d.Agents == nil,
+	case d.Sessions == nil, d.Traces == nil, d.Agents == nil,
 		d.Profiles == nil, d.Users == nil, d.Workspaces == nil:
 		panic("handler: SessionDeps has a nil store")
 	case d.Stopper == nil, d.Compactor == nil, d.Statuses == nil, d.Settings == nil:
 		panic("handler: SessionDeps has a nil stopper, compactor, statuses or settings")
 	}
-	return &SessionHandler{
-		sessions: d.Sessions, entries: d.Entries, traces: d.Traces, agents: d.Agents,
-		profiles: d.Profiles, users: d.Users,
-		workspaces: d.Workspaces, stopper: d.Stopper, compactor: d.Compactor, statuses: d.Statuses,
-		settings: d.Settings,
-	}
+	return &SessionHandler{d}
 }
 
 // sessionView is a session with its derived status.
@@ -167,7 +149,7 @@ func (h *SessionHandler) List(c *gin.Context) error {
 		return err
 	}
 	ctx := c.Request.Context()
-	sessions, err := h.sessions.ListPage(ctx, owner, store.SessionPage{Limit: limit, Before: c.Query("before"), Query: strings.TrimSpace(c.Query("q"))})
+	sessions, err := h.Sessions.ListPage(ctx, owner, store.SessionPage{Limit: limit, Before: c.Query("before"), Query: strings.TrimSpace(c.Query("q"))})
 	if err != nil {
 		return err // an unknown cursor → 404
 	}
@@ -175,7 +157,7 @@ func (h *SessionHandler) List(c *gin.Context) error {
 	for i := range sessions {
 		ids = append(ids, sessions[i].ID)
 	}
-	states, err := h.statuses.SessionStatuses(ctx, owner, ids)
+	states, err := h.Statuses.SessionStatuses(ctx, owner, ids)
 	if err != nil {
 		return err
 	}
@@ -221,7 +203,7 @@ func (h *SessionHandler) Create(c *gin.Context) error {
 	if req.AgentConfigID != "" {
 		// A foreign private agent reads as absent to a member, 403 to an admin
 		// — decisions §5.29.
-		ac, err := h.agents.Get(ctx, req.AgentConfigID)
+		ac, err := h.Agents.Get(ctx, req.AgentConfigID)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
@@ -240,7 +222,7 @@ func (h *SessionHandler) Create(c *gin.Context) error {
 		Name:          req.Name,
 		AgentConfigID: req.AgentConfigID,
 	}
-	if err := h.sessions.Create(ctx, sess); err != nil {
+	if err := h.Sessions.Create(ctx, sess); err != nil {
 		return err
 	}
 	created(c, sess.ID, sess)
@@ -260,21 +242,17 @@ func (h *SessionHandler) Create(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/sessions/{id} [get]
 func (h *SessionHandler) Get(c *gin.Context) error {
-	sess, err := gatedSession(c, h.sessions)
+	sess, err := gatedSession(c, h.Sessions)
 	if err != nil {
 		return err
 	}
-	states, err := h.statuses.SessionStatuses(c.Request.Context(), store.EveryOwner, []string{sess.ID})
+	states, err := h.Statuses.SessionStatuses(c.Request.Context(), store.EveryOwner, []string{sess.ID})
 	if err != nil {
 		return err
 	}
 	st := states.Of(sess.ID)
-	pending := st.Pending
-	if pending == nil {
-		pending = []bridge.PendingCall{}
-	}
 	// planning is a column of the row: no extra read.
-	c.JSON(http.StatusOK, sessionDetail{sessionView: newSessionView(*sess, st), Pending: pending})
+	c.JSON(http.StatusOK, sessionDetail{sessionView: newSessionView(*sess, st), Pending: nonNilList(st.Pending)})
 	return nil
 }
 
@@ -317,11 +295,11 @@ func (h *SessionHandler) Patch(c *gin.Context) error {
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	if req.Name != nil || req.Pinned != nil {
-		if err := h.sessions.UpdateFields(ctx, id, req.Name, req.Pinned); err != nil {
+		if err := h.Sessions.UpdateFields(ctx, id, req.Name, req.Pinned); err != nil {
 			return err
 		}
 	}
-	sess, err := h.sessions.Get(ctx, id)
+	sess, err := h.Sessions.Get(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -346,45 +324,36 @@ func (h *SessionHandler) Patch(c *gin.Context) error {
 //	@Security	BearerAuth
 //	@Router		/sessions/{id}/owner [put]
 func (h *SessionHandler) SetOwner(c *gin.Context) error {
-	var req SetOwnerRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		return badRequest("user_id is required")
-	}
-	id := c.Param("id")
-	if _, err := h.users.ByID(c.Request.Context(), req.UserID); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return badRequest("no such user")
+	return setOwner(c, func(ctx context.Context, id, userID string) error {
+		if _, err := h.Users.ByID(ctx, userID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return store.ErrNoSuchUser
+			}
+			return err
 		}
-		return err
-	}
-	sess, err := h.sessions.Get(c.Request.Context(), id)
-	if err != nil {
-		return err
-	}
-	// A workspace-bound session transfers only to the workspace's owner — invariant 52.
-	if sess.WorkspaceID != "" {
-		ws, perr := h.workspaces.Get(c.Request.Context(), sess.WorkspaceID)
-		if perr != nil && !errors.Is(perr, store.ErrNotFound) {
-			return perr
+		sess, err := h.Sessions.Get(ctx, id)
+		if err != nil {
+			return err
 		}
-		if perr != nil || ws.OwnerID != req.UserID {
-			return conflict("the session is bound to a workspace the new owner does not own")
+		// A workspace-bound session transfers only to the workspace's owner — invariant 52.
+		if sess.WorkspaceID != "" {
+			ws, perr := h.Workspaces.Get(ctx, sess.WorkspaceID)
+			if perr != nil && !errors.Is(perr, store.ErrNotFound) {
+				return perr
+			}
+			if perr != nil || ws.OwnerID != userID {
+				return conflict("the session is bound to a workspace the new owner does not own")
+			}
 		}
-	}
-	// At rest and hub-fenced for the write — invariant 82.
-	err = h.stopper.WithSessionTreeFenced(c.Request.Context(), id, func() error {
-		return h.sessions.SetOwner(c.Request.Context(), id, req.UserID)
+		// At rest and hub-fenced for the write — invariant 82.
+		return fencedError(h.Stopper.WithSessionTreeFenced(ctx, id, func() error {
+			return h.Sessions.SetOwner(ctx, id, userID)
+		}))
 	})
-	if err != nil {
-		return fencedError(err)
-	}
-	server.SetAuditDetail(c, "owner="+req.UserID)
-	c.Status(http.StatusNoContent)
-	return nil
 }
 
-// fencedError maps a fenced write's failure: a live run or task is 409, a
-// badRequestError 400, the rest as storeError.
+// fencedError words the 409 of a fenced write refused by a live run or task;
+// any other failure passes through.
 func fencedError(err error) error {
 	if _, busy := errors.AsType[bridge.ErrSessionBusy](err); busy {
 		return conflict("a run or a background task is live on this session; stop it first")
@@ -412,7 +381,7 @@ func (h *SessionHandler) Delete(c *gin.Context) error {
 	id := c.Param("id")
 	// Read the binding before the cascade erases it; the release below needs it.
 	var boundWorkspace string
-	sess, err := h.sessions.Get(c.Request.Context(), id)
+	sess, err := h.Sessions.Get(c.Request.Context(), id)
 	if err != nil {
 		return err
 	}
@@ -423,17 +392,17 @@ func (h *SessionHandler) Delete(c *gin.Context) error {
 	boundWorkspace = sess.WorkspaceID
 	// Stop the live run and every task before the cascade, or one keeps
 	// writing into deleted rows.
-	h.stopper.StopSessionTree(id)
-	err = h.sessions.Delete(c.Request.Context(), id)
-	h.stopper.EndSessionDelete(id)
+	h.Stopper.StopSessionTree(id)
+	err = h.Sessions.Delete(c.Request.Context(), id)
+	h.Stopper.EndSessionDelete(id)
 	if err != nil {
 		return err
 	}
 	// After the cascade, so the reference count no longer includes this session.
 	if boundWorkspace != "" {
-		h.stopper.ReleaseSessionBinding(boundWorkspace)
+		h.Stopper.ReleaseSessionBinding(boundWorkspace)
 	}
-	h.stopper.ForgetSessionTrust(id)
+	h.Stopper.ForgetSessionTrust(id)
 	c.Status(http.StatusNoContent)
 	return nil
 }
@@ -457,7 +426,7 @@ func (h *SessionHandler) Fork(c *gin.Context) error {
 	srcID := c.Param("id")
 	ctx := c.Request.Context()
 
-	src, err := gatedSession(c, h.sessions)
+	src, err := gatedSession(c, h.Sessions)
 	if err != nil {
 		return err
 	}
@@ -490,17 +459,17 @@ func (h *SessionHandler) Fork(c *gin.Context) error {
 		Planning: src.Planning,
 	}
 	// One transaction creates the session and copies its entries.
-	srcRef, err := h.entries.RefFor(ctx, srcID)
+	srcEntries, err := h.Sessions.OpenEntries(ctx, srcID)
 	if err != nil {
 		return err
 	}
-	runIDs, err := h.entries.ForkSession(ctx, dst, srcRef, upTo, req.Exclusive)
+	runIDs, err := srcEntries.ForkSession(ctx, dst, upTo, req.Exclusive)
 	if err != nil {
 		// A source deleted meanwhile is a 404 (storeError).
 		return err
 	}
 	// Traces are a best-effort copy: a failure is logged, the fork stands.
-	if err := h.traces.ForkBySession(ctx, srcID, dst.ID, runIDs); err != nil {
+	if err := h.Traces.ForkBySession(ctx, srcID, dst.ID, runIDs); err != nil {
 		logging.Ctx(ctx).Warn("fork: copying traces to the new session failed; session forked without traces", "error", err, "src_session", srcID, "dst_session", dst.ID)
 	}
 	created(c, dst.ID, dst)
@@ -520,16 +489,16 @@ func (h *SessionHandler) Fork(c *gin.Context) error {
 //	@Router			/sessions/{id}/messages [get]
 func (h *SessionHandler) Messages(c *gin.Context) error {
 	ctx := c.Request.Context()
-	ref, err := h.entries.RefFor(ctx, c.Param("id"))
+	es, err := h.Sessions.OpenEntries(ctx, c.Param("id"))
 	if err != nil {
 		return err
 	}
-	entries, err := h.entries.GetEntries(ctx, ref)
+	entries, err := es.GetEntries(ctx)
 	if err != nil {
 		return err
 	}
 	// The URL is a deployment fact (the current public base), filled here.
-	if base := h.settings.S3Config(ctx).PublicBaseURL; base != "" {
+	if base := h.Settings.S3Config(ctx).PublicBaseURL; base != "" {
 		for i := range entries {
 			fillAttachmentURLs(base, entries[i].Attachments)
 		}
@@ -552,22 +521,22 @@ func (h *SessionHandler) Messages(c *gin.Context) error {
 //	@Router			/sessions/{id}/context [get]
 func (h *SessionHandler) Context(c *gin.Context) error {
 	ctx := c.Request.Context()
-	sess, err := gatedSession(c, h.sessions)
+	sess, err := gatedSession(c, h.Sessions)
 	if err != nil {
 		return err
 	}
-	ref, err := h.entries.RefFor(ctx, sess.ID)
+	es, err := h.Sessions.OpenEntries(ctx, sess.ID)
 	if err != nil {
 		return err
 	}
-	rep, err := h.entries.ContextReport(ctx, ref)
+	rep, err := es.ContextReport(ctx)
 	if err != nil {
 		return err
 	}
 	// The window and the compaction threshold are the agent's; a session with
 	// no agent bound still reports its usage, without a denominator.
 	if sess.AgentConfigID != "" {
-		if ac, err := h.agents.Get(ctx, sess.AgentConfigID); err == nil {
+		if ac, err := h.Agents.Get(ctx, sess.AgentConfigID); err == nil {
 			rep.Model = ac.Model
 			rep.ContextWindow = ac.ContextWindow
 			rep.CompactionEnabled = ac.Compaction.Enabled
@@ -584,7 +553,7 @@ func (h *SessionHandler) Context(c *gin.Context) error {
 	}
 	// What the last run put in front of the conversation; absent until a run
 	// has built the agent.
-	if prof, err := h.profiles.Get(ctx, sess.ID); err != nil {
+	if prof, err := h.Profiles.Get(ctx, sess.ID); err != nil {
 		logging.Ctx(ctx).Warn("context report: prompt profile unreadable", "error", err)
 	} else if prof != nil {
 		rep.Prompt = prof
@@ -616,15 +585,12 @@ type CompactResponse struct {
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/compact [post]
 func (h *SessionHandler) Compact(c *gin.Context) error {
-	compacted, before, after, err := h.compactor.CompactSession(c.Request.Context(), c.Param("id"))
+	compacted, before, after, err := h.Compactor.CompactSession(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
-			return conflict(busy.Error())
-		}
 		if errors.Is(err, bridge.ErrCompactionUnavailable) {
 			return badRequest(err.Error())
 		}
-		return err // not-found → 404, anything else → 500
+		return err // a live run → 409, not-found → 404, anything else → 500
 	}
 	c.JSON(http.StatusOK, CompactResponse{Compacted: compacted, BeforeItems: before, AfterItems: after})
 	return nil
@@ -656,23 +622,23 @@ func (h *SessionHandler) Branch(c *gin.Context) error {
 	}
 	id := c.Param("id")
 	ctx := c.Request.Context()
-	ref, err := h.entries.RefFor(ctx, id)
+	es, err := h.Sessions.OpenEntries(ctx, id)
 	if err != nil {
 		return err
 	}
 	// A live run keeps appending to the branch it started on, so the move
 	// happens with the session fenced — invariant 82.
 	var leaf, previousLeaf string
-	err = h.stopper.WithSessionTreeFenced(ctx, id, func() error {
+	err = h.Stopper.WithSessionTreeFenced(ctx, id, func() error {
 		// The leaf before the switch, so the client can roll back.
 		var err error
-		if previousLeaf, err = h.entries.Leaf(ctx, ref); err != nil {
+		if previousLeaf, err = es.Leaf(ctx); err != nil {
 			return err
 		}
-		if err := h.entries.Branch(ctx, ref, req.EntryID); err != nil {
+		if err := es.Branch(ctx, req.EntryID); err != nil {
 			return badRequest(err.Error())
 		}
-		leaf, err = h.entries.Leaf(ctx, ref)
+		leaf, err = es.Leaf(ctx)
 		return err
 	})
 	if err != nil {
@@ -680,7 +646,7 @@ func (h *SessionHandler) Branch(c *gin.Context) error {
 	}
 	// A pause the move left behind, or returned to, changes what the session
 	// waits on.
-	h.statuses.PublishSessionStatus(ctx, id)
+	h.Statuses.PublishSessionStatus(ctx, id)
 	c.JSON(http.StatusOK, gin.H{"leaf": leaf, "previous_leaf": previousLeaf})
 	return nil
 }

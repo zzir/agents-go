@@ -2,10 +2,13 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -42,11 +45,25 @@ func TestApprovalReaperEndsThePausedTaskAndAnnouncesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Both announcements leave through the broadcast hook: the task's update,
+	// and the status of the conversation the approval's session reports to.
 	var mu sync.Mutex
-	var announced, expired []string
-	go RunApprovalReaper(ctx, runner.Deps.Settings, runner.Deps.PendingApprovals, store.NewSharedEntryStore(runner.db), tasks,
-		func(_ context.Context, id string) { mu.Lock(); announced = append(announced, id); mu.Unlock() },
-		func(_ context.Context, id string) { mu.Lock(); expired = append(expired, id); mu.Unlock() })
+	var announced, statuses []string
+	runner.OnBroadcast = func(_ context.Context, env *protocol.Envelope, _, _ string) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch env.Type {
+		case protocol.EventTaskUpdated:
+			var u protocol.TaskUpdated
+			_ = json.Unmarshal(env.Payload, &u)
+			announced = append(announced, u.TaskID)
+		case protocol.EventSessionStatus:
+			var st protocol.SessionStatus
+			_ = json.Unmarshal(env.Payload, &st)
+			statuses = append(statuses, st.SessionID)
+		}
+	}
+	go runner.RunApprovalReaper(ctx)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -65,11 +82,10 @@ func TestApprovalReaperEndsThePausedTaskAndAnnouncesIt(t *testing.T) {
 	if _, err := runner.Deps.PendingApprovals.Get(ctx, row.RunID); err == nil {
 		t.Fatal("the expired approval must be gone")
 	}
-	// The session the approval was filed on is named once the row is gone, so
-	// its status can be announced: poll, the callback trails the task's end.
+	// The status trails the task's end: poll for it.
 	for {
 		mu.Lock()
-		got := len(expired)
+		got := len(statuses)
 		mu.Unlock()
 		if got > 0 || time.Now().After(deadline) {
 			break
@@ -81,8 +97,8 @@ func TestApprovalReaperEndsThePausedTaskAndAnnouncesIt(t *testing.T) {
 	if len(announced) != 1 || announced[0] != row.ID {
 		t.Fatalf("announced = %v, want the ended task once", announced)
 	}
-	if len(expired) != 1 || expired[0] != row.ChildSessionID {
-		t.Fatalf("expired = %v, want the approval's session once", expired)
+	if !slices.Contains(statuses, parent.ID) {
+		t.Fatalf("statuses = %v, want the parent conversation's", statuses)
 	}
 }
 
@@ -123,7 +139,7 @@ func TestApprovalReaperEndsThePausedHubRun(t *testing.T) {
 	runner.hub.finish(row.RunID, true)
 	seg.finalize()
 
-	go RunApprovalReaper(ctx, runner.Deps.Settings, runner.Deps.PendingApprovals, store.NewSharedEntryStore(runner.db), tasks, runner.AnnounceTask, runner.PublishSessionStatus)
+	go runner.RunApprovalReaper(ctx)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {

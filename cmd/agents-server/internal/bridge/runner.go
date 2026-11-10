@@ -30,8 +30,10 @@ type Runner struct {
 	Deps *AgentDeps
 	hub  *RunHub
 	// tasks owns the background-task lifecycle. It keeps no wake-up state: the
-	// debt lives in wakeups (see Waker).
+	// debt lives in wakeups (waker.go).
 	tasks *tasks.Manager
+	// taskRows is the task table as the manager's tasks.Store.
+	taskRows *store.TaskAdapter
 	// commands holds the background commands this process runs (invariant 96).
 	commands commandRuns
 
@@ -57,24 +59,26 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) (*Runner, e
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
+	taskRows := store.NewTaskAdapter(deps.Tasks)
 	r := &Runner{
-		db:   db,
-		Deps: deps,
-		hub:  NewRunHub(rootCtx),
+		db:       db,
+		Deps:     deps,
+		hub:      NewRunHub(rootCtx),
+		taskRows: taskRows,
 	}
-	// The per-parent task cap is a live setting, resolved at each check by both gates.
-	r.hub.maxTasks = func() int { return deps.Settings.Int(rootCtx, settings.KeyMaxTasksPerSession) }
 	r.tasks = tasks.New(tasks.Config{
-		Store: store.NewTaskAdapter(deps.Tasks),
+		Store: taskRows,
 		Sessions: store.NewSessionRepoAdapter(deps.Sessions, func(ref session.Ref) session.Storage {
 			return store.NewEntryStoreFor(db, ref)
 		}),
-		Resolver:               taskResolver{r}.Resolve,
-		Launcher:               taskLauncher{r}.Launch,
-		Stopper:                taskStopper{r}.Stop,
-		OnFinished:             r.taskFinished,
-		OnResultDelivered:      r.taskResultDelivered,
-		MaxConcurrentPerParent: r.hub.maxTasks,
+		Resolver:          r.resolveTask,
+		Launcher:          r.launchTask,
+		Stopper:           r.stopTaskRun,
+		OnFinished:        r.taskFinished,
+		OnResultDelivered: r.taskResultDelivered,
+		// The per-parent cap is a live setting and the manager its one gate —
+		// decisions §5.118.
+		MaxConcurrentPerParent: func() int { return deps.SettingReader.Int(rootCtx, settings.KeyMaxTasksPerSession) },
 		OnTaskUpdate:           r.onTaskUpdate,
 		NewID:                  store.NewID,
 		// A command cannot resume from where it stopped: one attempt.
@@ -85,15 +89,6 @@ func NewRunner(rootCtx context.Context, db *bun.DB, deps *AgentDeps) (*Runner, e
 		// …and this is how task_status says where one stands.
 		DescribeState: describeTaskState,
 	})
-	// Agent building reaches the task tools through the manager; the spawn and
-	// workflow tools are the server's own, built per run.
-	deps.TaskManager = r.tasks
-	deps.SpawnTool = r.spawnTool
-	deps.WorkflowTools = r.workflowTools
-	deps.HistoryTools = r.historyTools
-	deps.MemoryTools = r.memoryTools
-	deps.KeepChecklist = r.keepChecklist
-	deps.BackgroundCommand = r.backgroundCommand
 	return r, nil
 }
 
@@ -112,8 +107,8 @@ func (r *Runner) keepApprovedPlan(ctx context.Context, ref session.Ref, ownerID,
 	return r.keepSessionMemory(ctx, ref, ownerID, store.ApprovedPlanKey, plan, store.ApprovedPlanSource, store.MemoryWrittenByUser)
 }
 
-// keepChecklist is AgentDeps.KeepChecklist: the list's latest state, under
-// the session of the run that wrote it (invariant 91).
+// keepChecklist keeps a run's checklist, its latest state, under the session
+// of the run that wrote it (invariant 91).
 func (r *Runner) keepChecklist(ctx context.Context, sessionID, ownerID, markdown string) error {
 	ref, err := store.RefFor(ctx, r.db, sessionID)
 	if err != nil {
@@ -122,32 +117,25 @@ func (r *Runner) keepChecklist(ctx context.Context, sessionID, ownerID, markdown
 	return r.keepSessionMemory(ctx, ref, ownerID, store.ChecklistKey, markdown, store.ChecklistSource, store.MemoryWrittenByModel)
 }
 
-// Tasks exposes the task manager so handlers and the startup path can reach it.
-func (r *Runner) Tasks() *tasks.Manager { return r.tasks }
-
 // Hub exposes the run hub so handlers can subscribe to run events, query
 // status, and cancel runs.
 func (r *Runner) Hub() *RunHub { return r.hub }
 
-// RunOutcome is how one run SEGMENT ended: the final text or the failure,
-// plus the interruption an approval decision resumes from. finishResult
-// derives it from the SDK's agents.RunResult.
+// RunOutcome is how one run SEGMENT ended: the final text, the failure, or a
+// pause on an approval. finishResult derives it from the SDK's agents.RunResult.
 type RunOutcome struct {
-	FinalText     string
-	RunID         string
-	SessionID     string
-	AgentConfigID string
-	WorkspaceID   string
+	FinalText string
+	RunID     string
+	SessionID string
 	// ErrCode/ErrMessage mirror the run.error event.
 	ErrCode    string
 	ErrMessage string
 	// Cancelled mirrors the run.cancelled event (no final output, no error);
 	// CancelReason is the event's reason.
-	Cancelled     bool
-	CancelReason  string
-	Interrupted   bool
-	Interruptions []*agents.ToolApprovalItem
-	SDKState      *agents.RunState
+	Cancelled    bool
+	CancelReason string
+	// Interrupted is a pause on an approval, already recorded when it is set.
+	Interrupted bool
 }
 
 // StartRun registers a new run for the session and launches it in the
@@ -157,24 +145,19 @@ type RunOutcome struct {
 // first — invariant 19.
 func (r *Runner) StartRun(sessionID, agentConfigID, workspaceID string, input RunInput, plan *bool, onDone func(*RunOutcome)) (string, error) {
 	r.abandonPaused(r.hub.rootCtx, sessionID, protocol.RunCancelSuperseded)
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, workspaceID, input, "", plan, onDone)
+	return r.startRunReserved(store.NewID(), sessionID, agentConfigID, workspaceID, input, "", plan, onDone, nil)
 }
 
-// StartWakeRun is StartRun for a task notification delivery: same launch, plus
+// startWakeRun is StartRun for a task notification delivery: same launch, plus
 // the lineage (the run whose spawn started the chain) the trace records.
 // withholdTrust is set for a delivery of work a trigger started.
-func (r *Runner) StartWakeRun(sessionID, agentConfigID, workspaceID, input, parentRunID string, withholdTrust bool, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunWithID(store.NewID(), sessionID, agentConfigID, workspaceID, RunInput{Text: input, WithholdTrust: withholdTrust}, parentRunID, nil, onDone)
+func (r *Runner) startWakeRun(sessionID, agentConfigID, workspaceID, input, parentRunID string, withholdTrust bool) (string, error) {
+	return r.startRunReserved(store.NewID(), sessionID, agentConfigID, workspaceID, RunInput{Text: input, WithholdTrust: withholdTrust}, parentRunID, nil, nil, nil)
 }
 
-// startRunWithID is StartRun with a caller-chosen run id: a task's row carries
-// its run id before the run launches.
-func (r *Runner) startRunWithID(runID, sessionID, agentConfigID, workspaceID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome)) (string, error) {
-	return r.startRunReserved(runID, sessionID, agentConfigID, workspaceID, input, wakeParentRunID, planIntent, onDone, nil)
-}
-
-// startRunReserved is startRunWithID with a hook run once the session is
-// RESERVED and before the launch; an error from it withdraws the reservation.
+// startRunReserved launches a run under a caller-chosen id (a task's row
+// carries it before the launch); reserved, when non-nil, runs once the session
+// is RESERVED and before the launch, an error from it withdrawing the reservation.
 func (r *Runner) startRunReserved(runID, sessionID, agentConfigID, workspaceID string, input RunInput, wakeParentRunID string, planIntent *bool, onDone func(*RunOutcome), reserved func() error) (string, error) {
 	seg, ctx, plan, boundNow, err := r.reserveRun(runID, sessionID, agentConfigID, workspaceID)
 	if err != nil {
@@ -270,11 +253,7 @@ func (r *Runner) panicOutcome(runID, sessionID string, p any) *RunOutcome {
 	if env, err := protocol.NewEnvelope(protocol.EventRunError, protocol.RunError{RunID: runID, Code: protocol.CodeInternal, Message: msg}); err == nil {
 		r.hub.publish(runID, env)
 	}
-	out := &RunOutcome{RunID: runID, SessionID: sessionID, ErrCode: protocol.CodeInternal, ErrMessage: msg}
-	if info, ok := r.hub.Info(runID); ok {
-		out.AgentConfigID, out.WorkspaceID = info.AgentConfigID, info.WorkspaceID
-	}
-	return out
+	return &RunOutcome{RunID: runID, SessionID: sessionID, ErrCode: protocol.CodeInternal, ErrMessage: msg}
 }
 
 // segmentSpec is what differs between a fresh segment and a resume
@@ -348,7 +327,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	// earlier subscribers dedup it.
 	started := protocol.RunStarted{RunID: runID, SessionID: sessionID, Input: spec.input}
 	if attErr == nil && len(spec.attachmentIDs) > 0 {
-		base := r.Deps.Settings.S3Config(ctx).PublicBaseURL
+		base := r.Deps.SettingReader.S3Config(ctx).PublicBaseURL
 		for _, id := range spec.attachmentIDs {
 			a := attMeta[id]
 			started.Attachments = append(started.Attachments, protocol.AttachmentRef{
@@ -369,7 +348,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	sendEvent(protocol.EventRunStarted, started)
 
 	mkResult := func() *RunOutcome {
-		return &RunOutcome{RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, WorkspaceID: workspaceID}
+		return &RunOutcome{RunID: runID, SessionID: sessionID}
 	}
 	mkErrResult := func(code, msg string) *RunOutcome {
 		res := mkResult()
@@ -398,7 +377,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	}
 
 	// failLookup ends the segment on a failed session lookup: a cancel is a
-	// cancel; only ErrNotFound is session_not_found (as handler startError).
+	// cancel; only ErrNotFound is session_not_found (as the REST path's classify).
 	failLookup := func(err error, absentMsg string) *RunOutcome {
 		if isCancellation(ctx, err) {
 			return failCancelled(partialTurn{sessionID: sessionID, runID: runID, userInput: spec.input})
@@ -461,7 +440,7 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	built := spec.built
 	if built == nil {
 		var err error
-		built, err = buildFullAgent(ctx, r.Deps, agentConfigID, workspaceID, task != nil, ownerID)
+		built, err = r.buildFullAgent(ctx, agentConfigID, workspaceID, task != nil, ownerID)
 		if err != nil {
 			return failTurn("", protocol.CodeConfigError, err, "", "")
 		}
@@ -476,11 +455,11 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	provider := built.Provider
 
 	if len(spec.attachmentIDs) > 0 {
-		if !built.Behavior.Vision {
+		if !built.Config.Behavior.Vision {
 			return failTurn(agent.Model, protocol.CodeConfigError,
 				errors.New("this agent does not accept images — enable Vision in its Behavior settings"), "", "")
 		}
-		if !r.Deps.Settings.S3Config(ctx).Complete() {
+		if !r.Deps.SettingReader.S3Config(ctx).Complete() {
 			return failTurn(agent.Model, protocol.CodeConfigError,
 				errors.New("image attachments are not configured — an admin must fill the Attachment storage settings"), "", "")
 		}
@@ -518,12 +497,12 @@ func (r *Runner) execStreamed(ctx context.Context, runID, sessionID, agentConfig
 	if err := r.Deps.ContextProfiles.Save(ctx, sessionID, built.SentProfile()); err != nil {
 		log.Warn("failed to record the session's context profile", "error", err)
 	}
-	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, r.Deps.Settings.SpanDataCap(ctx), r.traceAttachmentRefs)
+	tracer := newTracer(ctx, sendEvent, r.Deps.Traces, sessionID, runID, spec.wakeParentRunID, r.Deps.SettingReader.SpanDataCap(ctx), r.traceAttachmentRefs)
 
 	runSession := wrapCompaction(sa, built, provider, sendEvent, runID, r.Deps.Memories, task != nil)
 
 	opts := runOptionsFor(built, runSession, provider, tracer, trustSessionID(sessionID, task), logging.Ctx(ctx),
-		contextBudget(ctx, built, sa, sessionRef))
+		contextBudget(ctx, built, sa))
 
 	// The title runs beside the run; task sessions are pre-named, a resume's
 	// original run already fired it.
@@ -627,16 +606,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 // DURABLE (the approval row) before it is announced; a failed write fails it.
 func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConfigID, workspaceID string, sendEvent func(string, any)) (*RunOutcome, error) {
 	if len(res.Interruptions) > 0 {
-		out := &RunOutcome{
-			RunID:         runID,
-			SessionID:     sessionID,
-			AgentConfigID: agentConfigID,
-			WorkspaceID:   workspaceID,
-			Interrupted:   true,
-			Interruptions: res.Interruptions,
-			SDKState:      res.State,
-		}
-		if err := r.persistInterruption(out); err != nil {
+		if err := r.persistInterruption(res, runID, sessionID, agentConfigID, workspaceID); err != nil {
 			return nil, fmt.Errorf("recording the pending approval: %w", err)
 		}
 		for _, item := range res.Interruptions {
@@ -650,14 +620,14 @@ func (r *Runner) finishResult(res *agents.RunResult, runID, sessionID, agentConf
 		}
 		// Terminal for this segment; the decision reopens this run id.
 		sendEvent(protocol.EventRunInterrupted, protocol.RunInterrupted{RunID: runID})
-		return out, nil
+		return &RunOutcome{RunID: runID, SessionID: sessionID, Interrupted: true}, nil
 	}
 
 	r.bindSessionAgent(sessionID, agentConfigID)
 
 	finalText := res.FinalOutputString()
 	sendEvent(protocol.EventRunOutput, protocol.RunOutput{RunID: runID, FinalOutput: finalText})
-	return &RunOutcome{FinalText: finalText, RunID: runID, SessionID: sessionID, AgentConfigID: agentConfigID, WorkspaceID: workspaceID}, nil
+	return &RunOutcome{FinalText: finalText, RunID: runID, SessionID: sessionID}, nil
 }
 
 // StopRunAfterTurn asks the in-flight run to stop after its current turn; a

@@ -37,7 +37,7 @@ func NewTraceHandler(traces *store.TraceStore, settings *settings.Reader) *Trace
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/traces [get]
 func (h *TraceHandler) ListBySession(c *gin.Context) error {
-	beforeID, limit, err := pageParams(c)
+	limit, err := queryInt(c, "limit")
 	if err != nil {
 		return err
 	}
@@ -45,7 +45,7 @@ func (h *TraceHandler) ListBySession(c *gin.Context) error {
 	if c.Query("summary") == "true" {
 		list = h.traces.ListSummaryBySession
 	}
-	events, err := list(c.Request.Context(), c.Param("id"), beforeID, limit)
+	events, err := list(c.Request.Context(), c.Param("id"), c.Query("before_id"), limit)
 	if err != nil {
 		return err
 	}

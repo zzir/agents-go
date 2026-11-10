@@ -177,7 +177,7 @@ func TestTriggersAreDeletedWithTheirWorkflowAndSession(t *testing.T) {
 	ofSession := mk(otherWf.ID, sess.ID)
 	kept := mk(otherWf.ID, otherSess.ID)
 
-	if err := workflows.Delete(ctx, wf.ID); err != nil {
+	if err := workflows.DeleteOwnedBy(ctx, wf.ID, wf.OwnerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := triggers.Get(ctx, ofWorkflow); !errors.Is(err, ErrNotFound) {
@@ -193,7 +193,7 @@ func TestTriggersAreDeletedWithTheirWorkflowAndSession(t *testing.T) {
 		t.Fatalf("an unrelated trigger was deleted: %v", err)
 	}
 	// Deleting a workflow that is not there is still a not-found.
-	if err := workflows.Delete(ctx, NewID()); !errors.Is(err, ErrNotFound) {
+	if err := workflows.DeleteOwnedBy(ctx, NewID(), LocalUserID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("delete of an unknown workflow = %v, want ErrNotFound", err)
 	}
 }

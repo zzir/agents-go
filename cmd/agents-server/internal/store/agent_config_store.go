@@ -20,7 +20,7 @@ type AgentConfigStore struct {
 // NewAgentConfigStore returns an AgentConfigStore backed by db. Names are
 // unique per scope (partial indexes, decisions §5.29); a duplicate is a UNIQUE error.
 func NewAgentConfigStore(db *bun.DB) *AgentConfigStore {
-	return &AgentConfigStore{CrudStore: NewCrudStore[AgentConfig](db, "agent config", "created_at DESC"), db: db}
+	return &AgentConfigStore{CrudStore: NewCrudStore[AgentConfig](db, "agent config"), db: db}
 }
 
 // Create writes the agent in the provider-guarded transaction: a provider
@@ -84,14 +84,7 @@ func (s *AgentConfigStore) TransferOwner(ctx context.Context, id, newOwner strin
 	err := s.rewriteScopeOrOwner(ctx, id, func(ac *AgentConfig) (string, string) {
 		return ac.Scope, newOwner
 	}, func(ctx context.Context, tx bun.Tx) error {
-		exists, err := tx.NewSelect().Model((*User)(nil)).Where("id = ?", newOwner).Exists(ctx)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			return ErrNoSuchUser
-		}
-		return nil
+		return requireUser(ctx, tx, newOwner)
 	})
 	if err != nil {
 		return fmt.Errorf("transferring agent config %s: %w", id, err)

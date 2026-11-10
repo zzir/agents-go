@@ -39,9 +39,9 @@ func TestBuildFullAgentAppendsSandboxPrompt(t *testing.T) {
 	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
 		return &sandbox.LocalSandbox{WorkDir: t.TempDir()}, nil
 	})
-	deps := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr }).Deps
+	runner := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr })
 
-	built, err := BuildFullAgent(ctx, deps, ac.ID, ws.ID, store.LocalUserID)
+	built, err := runner.BuildFullAgent(ctx, ac.ID, ws.ID, store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -89,9 +89,9 @@ func TestBuildFullAgentNoSandboxPromptWhenEmpty(t *testing.T) {
 	mgr.SetBuildOverride(func(sandboxes.Spec) (sandbox.Sandbox, error) {
 		return &sandbox.LocalSandbox{WorkDir: t.TempDir()}, nil
 	})
-	deps := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr }).Deps
+	runner := testRunner(ctx, t, db, func(d *AgentDeps) { d.SandboxManager = mgr })
 
-	built, err := BuildFullAgent(ctx, deps, ac.ID, ws.ID, store.LocalUserID)
+	built, err := runner.BuildFullAgent(ctx, ac.ID, ws.ID, store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

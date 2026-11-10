@@ -27,12 +27,12 @@ const MaxReplayBodyBytes = 64 << 20
 // PlaygroundHandler serves one-off model calls for replaying a generation with
 // edited inputs; no session history is read or written, no run recorded.
 type PlaygroundHandler struct {
-	deps *bridge.AgentDeps
+	runner *bridge.Runner
 }
 
-// NewPlaygroundHandler returns a handler backed by the given agent dependencies.
-func NewPlaygroundHandler(deps *bridge.AgentDeps) *PlaygroundHandler {
-	return &PlaygroundHandler{deps: deps}
+// NewPlaygroundHandler returns a handler that builds agents as runner's runs do.
+func NewPlaygroundHandler(runner *bridge.Runner) *PlaygroundHandler {
+	return &PlaygroundHandler{runner: runner}
 }
 
 type playgroundReq struct {
@@ -109,12 +109,12 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) error {
 	}
 
 	u, _ := server.CurrentUser(c)
-	if ac, err := h.deps.AgentConfigs.Get(c.Request.Context(), req.AgentConfigID); err == nil {
+	if ac, err := h.runner.Deps.AgentConfigs.Get(c.Request.Context(), req.AgentConfigID); err == nil {
 		if err := runnableRow(c, ac.Scope, ac.OwnerID); err != nil {
 			return err
 		}
 	}
-	built, err := bridge.BuildFullAgent(c.Request.Context(), h.deps, req.AgentConfigID, "", u.ID)
+	built, err := h.runner.BuildFullAgent(c.Request.Context(), req.AgentConfigID, "", u.ID)
 	if err != nil {
 		return badRequest("building agent: " + err.Error())
 	}
@@ -127,8 +127,11 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) error {
 	modelName := req.Model
 	modelName = cmp.Or(modelName, built.Agent.Model)
 	model, err := built.Provider.Model(modelName)
-	if err != nil || model == nil {
-		return badRequest("resolving model: " + errString(err))
+	if err != nil {
+		return badRequest("resolving model: " + err.Error())
+	}
+	if model == nil {
+		return badRequest("resolving model: model not found")
 	}
 
 	items := make([]agents.InputItem, 0, len(req.InputItems))
@@ -322,7 +325,7 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 func (h *PlaygroundHandler) AgentTools(c *gin.Context) error {
 	// Absence answers 404 like the rest of the /agents/:id subtree; only a
 	// real build fault is a 400.
-	ac, err := h.deps.AgentConfigs.Get(c.Request.Context(), c.Param("id"))
+	ac, err := h.runner.Deps.AgentConfigs.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		return err
 	}
@@ -335,7 +338,7 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) error {
 	// The surface as the caller's own runs would get it — a member's
 	// listing does not show the save_workflow their runs never carry.
 	u, _ := server.CurrentUser(c)
-	built, err := bridge.BuildFullAgent(c.Request.Context(), h.deps, c.Param("id"), "", u.ID)
+	built, err := h.runner.BuildFullAgent(c.Request.Context(), c.Param("id"), "", u.ID)
 	if err != nil {
 		return badRequest("building agent: " + err.Error())
 	}
@@ -405,11 +408,4 @@ func playgroundUsage(resp *responses.Response) *agents.Usage {
 		OutputTokens: u.OutputTokens,
 		TotalTokens:  u.TotalTokens,
 	}
-}
-
-func errString(err error) string {
-	if err == nil {
-		return "model not found"
-	}
-	return err.Error()
 }

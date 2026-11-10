@@ -95,7 +95,7 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	// scheduler itself, attributed to the session's owner; a person's fire
 	// is the request's line, not a second one.
 	var audited []protocol.AuditRecord
-	runner.Deps.Audit = func(_ context.Context, r protocol.AuditRecord) { audited = append(audited, r) }
+	runner.Deps.RecordAudit = func(_ context.Context, r protocol.AuditRecord) { audited = append(audited, r) }
 	info, err := sched.Fire(ctx, trg.ID, `{"pr": 42}`, FireWebhook)
 	if err != nil {
 		t.Fatalf("Fire: %v", err)
@@ -123,7 +123,7 @@ func TestTriggerFireStartsTheWorkflowAndRecordsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx, ref)
+	views, err := store.NewEntryStoreFor(runner.db, ref).GetEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestTriggerSchedulerFollowsTheTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	sched.Sync(ctx, tick.ID)
-	if err := runner.Deps.Workflows.Delete(ctx, wf.ID); err != nil {
+	if err := runner.Deps.Workflows.DeleteOwnedBy(ctx, wf.ID, wf.OwnerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := sched.Fire(ctx, tick.ID, "", FireManual); !errors.Is(err, store.ErrNotFound) {

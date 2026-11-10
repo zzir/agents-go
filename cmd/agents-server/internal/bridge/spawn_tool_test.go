@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zzir/agents-go/agents"
+	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
@@ -153,7 +154,7 @@ func TestModelStartsAWorkflow(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(list) > 0 && isTerminalTaskStatus(list[0].Status) {
+		if len(list) > 0 && tasks.Status(list[0].Status).Terminal() {
 			wr = &list[0]
 			break
 		}
@@ -255,7 +256,7 @@ func TestSpawnToolOffersTheHandoffTargets(t *testing.T) {
 	if err := agentConfigs.Create(ctx, chat); err != nil {
 		t.Fatal(err)
 	}
-	built, err := buildFullAgent(ctx, runner.Deps, chat.ID, "", false, store.LocalUserID)
+	built, err := runner.buildFullAgent(ctx, chat.ID, "", false, store.LocalUserID)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -317,7 +318,7 @@ func TestSubagentsOffDropsTaskTools(t *testing.T) {
 		}
 	}
 	toolsOf := func(id string) []string {
-		built, err := buildFullAgent(ctx, runner.Deps, id, "", false, "")
+		built, err := runner.buildFullAgent(ctx, id, "", false, "")
 		if err != nil {
 			t.Fatalf("build %s: %v", id, err)
 		}

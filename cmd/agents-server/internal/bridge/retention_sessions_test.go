@@ -37,7 +37,7 @@ func TestTaskSessionRetentionCollectsOrphansAndFinishedTranscripts(t *testing.T)
 		t.Fatal(err)
 	}
 
-	go RunTaskSessionRetention(ctx, runner.Deps.Settings, sessions)
+	go RunTaskSessionRetention(ctx, runner.Deps.SettingReader, sessions)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
