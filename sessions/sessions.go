@@ -62,10 +62,10 @@ type Session struct {
 	ref session.Ref
 }
 
-// New wraps an existing *bun.DB as a Session for the given session ID. The
-// caller owns the db's lifecycle (and dialect); on SQLite the pool is capped at
-// one connection (spec §2.5e2). Use NewSQLite or NewPostgres for the common
-// cases. Call CreateSchema once before first use.
+// New wraps a *bun.DB (OpenSQLite, OpenPostgres, or the caller's own) as a
+// Session for the given session ID. The caller owns the db's lifecycle; on
+// SQLite the pool is capped at one connection (spec §2.5e2). Call CreateSchema
+// once before first use.
 func New(db *bun.DB, sessionID string) *Session {
 	capSQLitePool(db)
 	return &Session{db: db, ref: session.Direct(sessionID)}
@@ -91,33 +91,32 @@ func (s *Session) scoped(q *bun.SelectQuery) *bun.SelectQuery {
 	return q.Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen)
 }
 
-// NewSQLite opens a SQLite database at dsn (e.g. "file:agents.db?cache=shared",
-// or "file::memory:?cache=shared") using the pure-Go modernc driver — no CGO —
-// and returns a Session plus the *bun.DB so the caller can Close it. It does not
-// create the schema; call CreateSchema.
-func NewSQLite(dsn, sessionID string) (*Session, *bun.DB, error) {
+// OpenSQLite opens a SQLite database at dsn (e.g. "file:agents.db?cache=shared",
+// or "file::memory:?cache=shared") on the pure-Go modernc driver — no CGO —
+// with its pool capped at one connection (spec §2.5e2). The caller closes it.
+// It does not create the schema; call CreateSchema.
+func OpenSQLite(dsn string) (*bun.DB, error) {
 	sqldb, err := sql.Open(sqliteshim.ShimName, dsn)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	db := bun.NewDB(sqldb, sqlitedialect.New())
-	s := New(db, sessionID)
-	// The pool is one connection by now (see New), so the per-connection
-	// pragma reaches the one every query uses; both are best-effort.
+	capSQLitePool(db)
+	// One connection, so the per-connection pragma reaches the one every query
+	// uses; both are best-effort.
 	for _, pragma := range []string{
 		"PRAGMA journal_mode = WAL",
 		"PRAGMA busy_timeout = 5000",
 	} {
 		_, _ = sqldb.Exec(pragma)
 	}
-	return s, db, nil
+	return db, nil
 }
 
-// NewPostgres wraps an existing PostgreSQL *sql.DB as a Session, returning the
-// *bun.DB for further use. The caller owns the underlying connection pool.
-func NewPostgres(sqldb *sql.DB, sessionID string) (*Session, *bun.DB) {
-	db := bun.NewDB(sqldb, pgdialect.New())
-	return New(db, sessionID), db
+// OpenPostgres wraps an existing PostgreSQL *sql.DB as a *bun.DB. The caller
+// owns the underlying connection pool.
+func OpenPostgres(sqldb *sql.DB) *bun.DB {
+	return bun.NewDB(sqldb, pgdialect.New())
 }
 
 // CreateSchema creates the tables and indexes if absent; safe to call repeatedly.

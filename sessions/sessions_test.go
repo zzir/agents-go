@@ -83,7 +83,7 @@ func runSessionContract(t *testing.T, s *sessions.Session) {
 
 func TestSQLite(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "agents.db")
-	s, db, err := sessions.NewSQLite(dsn, "sess-1")
+	db, err := sessions.OpenSQLite(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestSQLite(t *testing.T) {
 	if err := sessions.CreateSchema(context.Background(), db); err != nil {
 		t.Fatal(err)
 	}
-	runSessionContract(t, s)
+	runSessionContract(t, sessions.New(db, "sess-1"))
 }
 
 // Two writers on one session must not fork it: reading the append point and
@@ -102,7 +102,7 @@ func TestSQLite(t *testing.T) {
 func TestSQLite_ConcurrentAppendsDoNotFork(t *testing.T) {
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "agents.db")
-	s, db, err := sessions.NewSQLite(dsn, "contested")
+	db, err := sessions.OpenSQLite(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +110,7 @@ func TestSQLite_ConcurrentAppendsDoNotFork(t *testing.T) {
 	if err := sessions.CreateSchema(ctx, db); err != nil {
 		t.Fatal(err)
 	}
+	s := sessions.New(db, "contested")
 
 	const writers, perWriter = 4, 8
 	errc := make(chan error, writers)
@@ -158,7 +159,7 @@ func TestSQLite_ConcurrentAppendsDoNotFork(t *testing.T) {
 func TestSQLite_SessionIsolation(t *testing.T) {
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "agents.db")
-	a, db, err := sessions.NewSQLite(dsn, "a")
+	db, err := sessions.OpenSQLite(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +167,7 @@ func TestSQLite_SessionIsolation(t *testing.T) {
 	if err := sessions.CreateSchema(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	b := sessions.New(db, "b")
+	a, b := sessions.New(db, "a"), sessions.New(db, "b")
 
 	if err := session.NewSession(a).AppendItems(ctx, []agents.InputItem{item("only-a")}, agents.Source{}); err != nil {
 		t.Fatal(err)
@@ -222,10 +223,11 @@ func TestPostgres(t *testing.T) {
 	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
 	defer sqldb.Close()
 
-	s, bdb := sessions.NewPostgres(sqldb, "sess-pg")
+	bdb := sessions.OpenPostgres(sqldb)
 	if err := sessions.CreateSchema(ctx, bdb); err != nil {
 		t.Fatal(err)
 	}
+	s := sessions.New(bdb, "sess-pg")
 	if err := s.Clear(ctx); err != nil { // drop leftovers from a prior run
 		t.Fatal(err)
 	}

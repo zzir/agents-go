@@ -15,7 +15,7 @@ import (
 func TestSQLRepo(t *testing.T) {
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "repo.db")
-	_, db, err := sessions.NewSQLite(dsn, "unused")
+	db, err := sessions.OpenSQLite(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestSQLRepo(t *testing.T) {
 func TestSQLSession_EntryLookupIsIndexed(t *testing.T) {
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "lookup.db")
-	s, db, err := sessions.NewSQLite(dsn, "sess-1")
+	db, err := sessions.OpenSQLite(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestSQLSession_EntryLookupIsIndexed(t *testing.T) {
 	if err := sessions.CreateSchema(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	sess := session.NewSession(s)
+	sess := session.NewSession(sessions.New(db, "sess-1"))
 
 	for range 20 {
 		if err := sess.AppendItems(ctx, agents.InputItemsFromText("x"), agents.Source{}); err != nil {
@@ -119,7 +119,7 @@ func TestSQLSession_EntryLookupIsIndexed(t *testing.T) {
 func TestSQLRepo_ListingIsIndexed(t *testing.T) {
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "listing.db")
-	_, db, err := sessions.NewSQLite(dsn, "unused")
+	db, err := sessions.OpenSQLite(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}

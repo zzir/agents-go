@@ -5,7 +5,7 @@
 //
 //	cd sessions && OPENAI_API_KEY=... go run ./example
 //
-// For PostgreSQL, open your own *sql.DB and use sessions.NewPostgres instead.
+// For PostgreSQL, open your own *sql.DB and use sessions.OpenPostgres instead.
 package main
 
 import (
@@ -32,7 +32,7 @@ func run() error {
 
 	// A pure-Go (no CGO) SQLite file under the OS temp dir.
 	dbPath := filepath.Join(os.TempDir(), "agents-session-demo.db")
-	sess, db, err := sessions.NewSQLite("file:"+dbPath, "user-123")
+	db, err := sessions.OpenSQLite("file:" + dbPath)
 	if err != nil {
 		return err
 	}
@@ -40,6 +40,7 @@ func run() error {
 	if err := sessions.CreateSchema(ctx, db); err != nil {
 		return err
 	}
+	sess := sessions.New(db, "user-123")
 
 	agent := &agents.Agent{
 		Name:         "assistant",

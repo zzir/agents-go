@@ -15,7 +15,7 @@ func newTaskStore(t *testing.T) *sessions.TaskStore {
 	t.Helper()
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "tasks.db")
-	_, db, err := sessions.NewSQLite(dsn, "unused")
+	db, err := sessions.OpenSQLite(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}

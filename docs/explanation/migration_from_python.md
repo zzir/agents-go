@@ -33,7 +33,7 @@ For what this SDK deliberately does not provide (and why), read
 | `agent.as_tool(...)` | `agent.AsTool(agents.AgentToolConfig{...})` |
 | `@input_guardrail` / `@output_guardrail` | one `agents.Guardrail` type across all stages: `agents.NewInputGuardrail(name, fn)` / `agents.NewOutputGuardrail(name, fn)` |
 | `RunContextWrapper[T]` | `*agents.RunContext` with `Context any` (type-assert back) |
-| `SQLiteSession` | `sessions.NewSQLite` / `sessions.New` (the `sessions` module: SQLite or PostgreSQL) |
+| `SQLiteSession` | `sessions.OpenSQLite` + `sessions.New` (the `sessions` module: SQLite or PostgreSQL) |
 | `SandboxAgent` with a sandbox client (unix-local, Docker, hosted providers), a manifest and workspace snapshots | no agent subtype: a [`sandbox.Sandbox`](../howto/sandbox.md) — local, Docker (local or SSH-reached daemon), any E2B-compatible service — given to any agent as `exec_command`, the file tools and `apply_patch`. No manifest and no workspace snapshot or restore; `ExportTar` exports the tree |
 | the sandbox `Skills` capability | the [`skills`](../howto/skills.md) module: the open [Agent Skills](https://github.com/agentskills/agentskills) `SKILL.md` document alone, on `Instructions` plus a function tool, with no sandbox ([decisions §5.26](decisions.md#526-a-skill-is-one-skillmd-document)) |
 | `reset_tool_choice=True` (default) | `DisableToolChoiceReset` (zero value = Python's default behavior) |

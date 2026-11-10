@@ -20,7 +20,7 @@ func taskRepo(t *testing.T) (*sessions.Repo, *sessions.TaskStore, *bun.DB) {
 	t.Helper()
 	ctx := context.Background()
 	dsn := "file:" + filepath.Join(t.TempDir(), "tasks.db")
-	_, db, err := sessions.NewSQLite(dsn, "unused")
+	db, err := sessions.OpenSQLite(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,7 +18,7 @@ func TestSQLTaskStoreConformance(t *testing.T) {
 	conformancetest.Run(t, func(t *testing.T) tasks.Store {
 		t.Helper()
 		dsn := "file:" + filepath.Join(t.TempDir(), "tasks.db")
-		_, db, err := sessions.NewSQLite(dsn, "unused")
+		db, err := sessions.OpenSQLite(dsn)
 		if err != nil {
 			t.Fatal(err)
 		}

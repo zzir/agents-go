@@ -13,7 +13,7 @@ import (
 func TestSQLSessionConformance(t *testing.T) {
 	sessiontest.StorageConformance(t, func(t *testing.T) session.Storage {
 		t.Helper()
-		_, db, err := sessions.NewSQLite("file:"+filepath.Join(t.TempDir(), "c.db"), "unused")
+		db, err := sessions.OpenSQLite("file:" + filepath.Join(t.TempDir(), "c.db"))
 		if err != nil {
 			t.Fatal(err)
 		}

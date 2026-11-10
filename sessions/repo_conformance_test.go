@@ -13,7 +13,7 @@ import (
 func TestSQLRepoConformance(t *testing.T) {
 	sessiontest.RepoConformance(t, func(t *testing.T) sessiontest.RepoUnderTest {
 		t.Helper()
-		_, db, err := sessions.NewSQLite("file:"+filepath.Join(t.TempDir(), "r.db"), "unused")
+		db, err := sessions.OpenSQLite("file:" + filepath.Join(t.TempDir(), "r.db"))
 		if err != nil {
 			t.Fatal(err)
 		}

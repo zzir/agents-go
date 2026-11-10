@@ -2263,3 +2263,25 @@ that wants the number reads its own configuration (`Manager.MaxAttempts`, the
 `MaxConcurrentPerParent` it supplied).
 
 Rules: spec §2.13.
+
+### 5.106 Opening a database and binding a session are separate calls
+
+Decided 2026-11-10.
+
+**Decision.** The `sessions` module opens a database with `OpenSQLite(dsn)` or
+`OpenPostgres(sqldb)`, which return the `*bun.DB`, and binds a session to it
+with `New(db, id)`. No constructor does both.
+
+**Rejected.** `NewSQLite(dsn, id)` / `NewPostgres(sqldb, id)` returning a
+session and the database together — a repo, a task store or a second session
+needs the database and no session, so the caller invents an id to get it
+(seven of the module's own tests passed `"unused"`). Keeping both pairs — two
+ways to open one database, and the combined one is the shape that stops
+working at the second session.
+
+**Cost accepted.** The one-session quick start is a line longer.
+`OpenPostgres` is a single `bun.NewDB` call; it stays so a consumer names no
+bun dialect package.
+
+Rules: spec §2.5e2 (the SQLite pool cap, which `OpenSQLite` applies);
+[Sessions](../howto/sessions.md#sql-sessions-sqlite--postgresql).

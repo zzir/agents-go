@@ -159,16 +159,17 @@ The `github.com/zzir/agents-go/sessions` module backs a `Session` with a SQL dat
 import "github.com/zzir/agents-go/sessions"
 
 // SQLite — pure-Go (modernc) driver, no CGO:
-sess, db, err := sessions.NewSQLite("file:/var/data/agents.db", "user-123")
+db, err := sessions.OpenSQLite("file:/var/data/agents.db")
 defer db.Close()
-err = sessions.CreateSchema(ctx, db) // once
 
 // PostgreSQL — bring your own *sql.DB (pgx, lib/pq, or bun's pgdriver):
-sess, db := sessions.NewPostgres(sqldb, "user-123")
-err = sessions.CreateSchema(ctx, db)
+db := sessions.OpenPostgres(sqldb)
+
+err = sessions.CreateSchema(ctx, db) // once
+sess := sessions.New(db, "user-123")
 ```
 
-Both store one row per entry in an `agent_entries` table — the whole entry serialized as JSON, with the id, parent and kind lifted into columns. A single `*bun.DB` serves many session IDs (`sessions.New(db, id)`), and on SQLite `New` and `NewRepo` cap its pool at one connection ([spec §2.5e2](../reference/spec.md#25e2-the-entry-lifecycle-contract)); rows are isolated by `(session_id, gen)`, the generation a repo mints per created session, so a deleted-and-recreated id never reads its predecessor's rows.
+Both store one row per entry in an `agent_entries` table — the whole entry serialized as JSON, with the id, parent and kind lifted into columns. Opening the database and binding a session are separate calls: a single `*bun.DB` serves many session IDs (`sessions.New(db, id)`), a repo and a task store. On SQLite `OpenSQLite`, `New` and `NewRepo` cap its pool at one connection ([spec §2.5e2](../reference/spec.md#25e2-the-entry-lifecycle-contract)); rows are isolated by `(session_id, gen)`, the generation a repo mints per created session, so a deleted-and-recreated id never reads its predecessor's rows.
 
 ### OpenAI Conversations (server-side)
 
