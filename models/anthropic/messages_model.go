@@ -26,13 +26,6 @@ type MessagesModel struct {
 	thinkingBinding bool
 }
 
-// NewMessagesModel returns a MessagesModel for the given model name, using the
-// provided MessageService (typically client.Messages). Prompt caching and
-// thinking binding are enabled, matching NewProvider.
-func NewMessagesModel(model string, client ant.MessageService) *MessagesModel {
-	return &MessagesModel{model: model, client: client, promptCaching: true, thinkingBinding: true}
-}
-
 var _ agents.Model = (*MessagesModel)(nil)
 
 // buildParams assembles the Messages API request from a ModelRequest; the

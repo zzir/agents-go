@@ -122,12 +122,3 @@ func (s *Sandbox) requirePersistent() error {
 	}
 	return nil
 }
-
-// StartManaged starts the named container on the daemon opts describes,
-// refusing one this package did not create.
-func StartManaged(ctx context.Context, opts Options, name string) error {
-	return withManaged(ctx, opts, name, func(cli *client.Client, id string) error {
-		_, err := cli.ContainerStart(ctx, id, client.ContainerStartOptions{})
-		return err
-	})
-}
