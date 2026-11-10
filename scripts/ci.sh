@@ -83,6 +83,9 @@ step "Test models/anthropic module"
 step "Test agents-server module"
 (cd cmd/agents-server && go vet ./... && go test -race ./...)
 
+step "Release binary size"
+./scripts/binary-size.sh
+
 # CI runs the store, bridge and handler suites on PostgreSQL too (a service
 # container); a test whose fixture is SQLite-shaped skips itself there
 # (testdb.SkipOnPostgres). Locally it takes a server: set AGENTS_PG_TEST_DSN

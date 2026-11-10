@@ -584,3 +584,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      returns the error, and nothing writes an error envelope itself. `classify`
      (`handler/apierror.go`) maps the store's sentinels once; a handler that
      knows a better answer returns `badRequest`, `conflict`, … — decisions §5.101.
+101. **The server is built with its tags.** `nomsgpack` and
+     `validator_novalidatefn` (the Makefile's `TAGS`, `.goreleaser.yaml`) keep
+     the linker pruning unused methods; a new build definition carries both,
+     and `scripts/binary-size.sh` fails CI when the binary outgrows its budget
+     — decisions §5.102.

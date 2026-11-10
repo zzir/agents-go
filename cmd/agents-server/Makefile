@@ -11,6 +11,9 @@ LDFLAGS  := -s -w \
 	-X main.commit=$(COMMIT) \
 	-X main.date=$(DATE)
 
+# The tags the binary ships with — decisions §5.102.
+TAGS     := nomsgpack,validator_novalidatefn
+
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 
 .PHONY: all build frontend dev run clean test release openapi settings-doc
@@ -30,7 +33,7 @@ frontend:
 	cd $(FRONTEND) && npm install && npm run build
 
 build: frontend
-	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BINARY) .
+	CGO_ENABLED=0 go build -trimpath -tags '$(TAGS)' -ldflags '$(LDFLAGS)' -o $(BINARY) .
 
 run: build
 	./$(BINARY)
@@ -45,7 +48,7 @@ release: frontend
 		out=$(DIST)/$(BINARY)-$$os-$$arch$$ext; \
 		echo "  build $$out"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
-			go build -trimpath -ldflags '$(LDFLAGS)' -o $$out . || exit 1; \
+			go build -trimpath -tags '$(TAGS)' -ldflags '$(LDFLAGS)' -o $$out . || exit 1; \
 	done
 	@echo "done → $(DIST)/"
 
@@ -53,7 +56,7 @@ dev:
 	cd $(FRONTEND) && npm run dev
 
 test:
-	go test ./...
+	go test -tags '$(TAGS)' ./...
 
 clean:
 	rm -f $(BINARY)

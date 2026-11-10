@@ -22,6 +22,9 @@ builds:
       - GOWORK=off                # Ignore local go.work, consistent with CI (no go.work)
     flags:
       - -trimpath
+    tags:                         # The Makefile's TAGS — decisions §5.102
+      - nomsgpack
+      - validator_novalidatefn
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}

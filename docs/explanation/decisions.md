@@ -2174,3 +2174,27 @@ is now answered by the table: a 404 or 409 where a 500 was. The mappers for
 bridge and task errors stay beside their handlers.
 
 Rules: workbench invariant 100.
+
+### 5.102 The server ships with two build tags
+
+Decided 2026-11-10.
+
+**Decision.** `agents-server` is built with `nomsgpack` and
+`validator_novalidatefn` (the Makefile's `TAGS`, `.goreleaser.yaml`'s `tags`).
+The second removes the one method lookup by name in the binary, which made the
+linker keep every exported method of every reachable type; the first drops
+gin's MessagePack codec, which nothing uses.
+
+**Rejected.** Shipping untagged — 72.8 MB where the tagged binary is 36.3 MB
+(darwin/arm64, stripped), most of the difference provider-SDK methods no code
+calls. Replacing gin, cobra or the provider SDKs to shrink it — the tags remove
+the cause, and what those four still cost is a fraction of what is left, for a
+rewrite of the HTTP layer and of the SDK's canonical types.
+
+**Cost accepted.** A plain `go build` or `go install` is twice the size and
+otherwise the same program. validator's `validateFn` tag panics under the tag;
+the handlers bind with `required` alone. A new dependency that looks methods up
+by name would undo it without a word, so `scripts/binary-size.sh` holds the
+built binary to a budget in CI.
+
+Rules: workbench invariant 101.
