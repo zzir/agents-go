@@ -53,11 +53,6 @@ func (rc *RunContext) RequestContextReset() bool {
 	return true
 }
 
-// ContextResetRequested reports a reset asked for and not yet performed.
-func (rc *RunContext) ContextResetRequested() bool {
-	return rc != nil && rc.contextReset.Load()
-}
-
 // takeContextReset consumes the request.
 func (rc *RunContext) takeContextReset() bool {
 	return rc != nil && rc.contextReset.Swap(false)
