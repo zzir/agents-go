@@ -13,7 +13,7 @@ type RunInput struct {
 	Opts  *RunOptions
 	// Control is the caller's handle on this run; a resuming middleware passes
 	// it to ResumeRunWith — see spec §2.12.
-	Control RunControl
+	Control *RunControl
 }
 
 // RunFunc executes a run and returns its stream; a middleware receives it as next.

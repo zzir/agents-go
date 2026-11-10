@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zzir/agents-go/agents"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 )
 
@@ -454,7 +453,7 @@ func (a *asyncSink) gotSeqs() []int {
 	return append([]int(nil), a.seqs...)
 }
 
-// fakeControl is a stand-in RunControl for hub tests: it records what was asked
+// fakeControl is a stand-in runControl for hub tests: it records what was asked
 // of it without needing a real run behind it.
 type fakeControl struct {
 	stops     int
@@ -471,8 +470,6 @@ func (c *fakeControl) StopAfterTurn() {
 		c.onStop()
 	}
 }
-func (c *fakeControl) Pending() agents.PendingInput { return agents.PendingInput{} }
-
 func (c *fakeControl) Steer(in any) error { c.steer = append(c.steer, in); return c.queueErr() }
 func (c *fakeControl) NextTurn(in any) error {
 	c.nextTurn = append(c.nextTurn, in)

@@ -72,7 +72,7 @@ proved only by `scripts/consumer-smoke.sh`, after each release and weekly.
 
 Core type: `agents.Agent` (a plain struct); everything orbits the runner.
 
-- **Entry points** — `Run` returns `(RunStream, RunControl)`; `RunSync` returns
+- **Entry points** — `Run` returns `(RunStream, *RunControl)`; `RunSync` returns
   `(*RunResult, error)`. Both go through `withMiddleware` → `runStream`, which
   takes a `rawEvents bool` for the only difference between them (whether the
   model call is streamed). Run-semantics changes are written once, in the

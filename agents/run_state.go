@@ -117,7 +117,7 @@ func (s *RunState) Reject(item *ToolApprovalItem, always bool, message string) {
 // ResumeRun continues a paused run after approvals are recorded, with Run's
 // shape; items emitted before the pause are not re-emitted and opts.Middlewares
 // apply as in Run — see spec §2.12.
-func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (RunStream, RunControl) {
+func ResumeRun(ctx context.Context, state *RunState, opts RunOptions) (RunStream, *RunControl) {
 	ctrl := newResumedControl(state)
 	return resumeWithMiddleware(ctx, state, opts, ctrl, true), ctrl
 }
@@ -130,19 +130,17 @@ func ResumeRunSync(ctx context.Context, state *RunState, opts RunOptions) (*RunR
 }
 
 // ResumeRunWith is ResumeRun under the control of the run that paused, its
-// live queue carried as is — see spec §2.11b. ctrl must come from Run or
-// ResumeRun; anything else panics.
-func ResumeRunWith(ctx context.Context, state *RunState, opts RunOptions, ctrl RunControl) RunStream {
-	c, ok := ctrl.(*runControl)
-	if !ok {
-		panic(fmt.Sprintf("agents: ResumeRunWith: the RunControl must come from Run or ResumeRun, got %T", ctrl))
+// live queue carried as is — see spec §2.11b. A nil ctrl is ResumeRun's own.
+func ResumeRunWith(ctx context.Context, state *RunState, opts RunOptions, ctrl *RunControl) RunStream {
+	if ctrl == nil {
+		ctrl = newResumedControl(state)
 	}
-	return resumeWithMiddleware(ctx, state, opts, c, true)
+	return resumeWithMiddleware(ctx, state, opts, ctrl, true)
 }
 
 // newResumedControl mints a control seeded from the paused state's queue.
-func newResumedControl(state *RunState) *runControl {
-	ctrl := newRunControl()
+func newResumedControl(state *RunState) *RunControl {
+	ctrl := &RunControl{}
 	if state != nil {
 		ctrl.restore(state.PendingInput)
 	}
@@ -150,7 +148,7 @@ func newResumedControl(state *RunState) *runControl {
 }
 
 // resumeWithMiddleware is ResumeRun's counterpart of withMiddleware.
-func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool) RunStream {
+func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions, ctrl *RunControl, rawEvents bool) RunStream {
 	if state == nil {
 		// resumeStream reports the nil-state error on the stream.
 		return singleUse(func(yield func(StreamEvent, error) bool) {
@@ -165,7 +163,7 @@ func resumeWithMiddleware(ctx context.Context, state *RunState, opts RunOptions,
 	return runViaMiddleware(ctx, state.CurrentAgent, state.OriginalInput, opts, ctrl, base)
 }
 
-func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) {
+func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) {
 	r, res, err := resumeLoop(ctx, state, opts, ctrl, rawEvents, yield)
 	if r == nil {
 		yield(nil, err)
@@ -176,7 +174,7 @@ func resumeStream(ctx context.Context, state *RunState, opts RunOptions, ctrl *r
 
 // resumeLoop is the shared body of ResumeRun and ResumeRunSync; a nil runner
 // means the failure predates one existing.
-func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) (*runner, *RunResult, error) {
+func resumeLoop(ctx context.Context, state *RunState, opts RunOptions, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) (*runner, *RunResult, error) {
 	if state == nil {
 		return nil, nil, NewUserError("ResumeRun: state must not be nil")
 	}

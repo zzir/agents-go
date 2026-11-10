@@ -31,7 +31,7 @@ func noForbidden(blocking bool) agents.Guardrail {
 }
 
 // steeringTool queues input through the run's control while the first turn runs.
-func steeringTool(ctrl *agents.RunControl, queue func(agents.RunControl) error) *agents.Tool {
+func steeringTool(ctrl **agents.RunControl, queue func(*agents.RunControl) error) *agents.Tool {
 	return agents.NewTool("probe", "probes",
 		func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 			return "ok", queue(*ctrl)
@@ -58,10 +58,10 @@ func TestSteerTripsInputGuardrail(t *testing.T) {
 		NewTurn().
 		Text("never asked").
 		Build()
-	var ctrl agents.RunControl
+	var ctrl *agents.RunControl
 	agent := &agents.Agent{
 		Name: "a", ModelImpl: model,
-		Tools:      []*agents.Tool{steeringTool(&ctrl, func(c agents.RunControl) error { return c.Steer("a forbidden ask") })},
+		Tools:      []*agents.Tool{steeringTool(&ctrl, func(c *agents.RunControl) error { return c.Steer("a forbidden ask") })},
 		Guardrails: []agents.Guardrail{noForbidden(true)},
 	}
 	sess := session.NewInMemorySession()
@@ -101,10 +101,10 @@ func TestSteerReplacedByInputGuardrail(t *testing.T) {
 		NewTurn().
 		Text("done").
 		Build()
-	var ctrl agents.RunControl
+	var ctrl *agents.RunControl
 	agent := &agents.Agent{
 		Name: "a", ModelImpl: model,
-		Tools:      []*agents.Tool{steeringTool(&ctrl, func(c agents.RunControl) error { return c.Steer("a rude ask") })},
+		Tools:      []*agents.Tool{steeringTool(&ctrl, func(c *agents.RunControl) error { return c.Steer("a rude ask") })},
 		Guardrails: []agents.Guardrail{noForbidden(false)},
 	}
 	sess := session.NewInMemorySession()
@@ -137,10 +137,10 @@ func TestFollowUpScreened(t *testing.T) {
 		NewTurn().
 		Text("never asked").
 		Build()
-	var ctrl agents.RunControl
+	var ctrl *agents.RunControl
 	agent := &agents.Agent{
 		Name: "a", ModelImpl: model,
-		Tools:      []*agents.Tool{steeringTool(&ctrl, func(c agents.RunControl) error { return c.FollowUp("a forbidden follow-up") })},
+		Tools:      []*agents.Tool{steeringTool(&ctrl, func(c *agents.RunControl) error { return c.FollowUp("a forbidden follow-up") })},
 		Guardrails: []agents.Guardrail{noForbidden(false)},
 	}
 	sess := session.NewInMemorySession()
@@ -196,10 +196,10 @@ func TestNonBlockingGuardrailGatesInjection(t *testing.T) {
 		}
 		return agents.Allow(nil), nil
 	})
-	var ctrl agents.RunControl
+	var ctrl *agents.RunControl
 	agent := &agents.Agent{
 		Name: "a", ModelImpl: model,
-		Tools:      []*agents.Tool{steeringTool(&ctrl, func(c agents.RunControl) error { return c.Steer("and the date") })},
+		Tools:      []*agents.Tool{steeringTool(&ctrl, func(c *agents.RunControl) error { return c.Steer("and the date") })},
 		Guardrails: []agents.Guardrail{slow},
 	}
 	stream, c := agents.Run(context.Background(), agent, "go", agents.RunOptions{})

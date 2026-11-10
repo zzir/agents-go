@@ -301,7 +301,7 @@ type segmentSpec struct {
 	built *BuildResult
 	// start launches the SDK run — agents.Run for a fresh segment,
 	// agents.ResumeRun for a continuation.
-	start func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl)
+	start func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, *agents.RunControl)
 }
 
 // execStreamed executes one run segment — fresh or resumed — to completion,
@@ -562,7 +562,7 @@ func (r *Runner) runStreamed(ctx context.Context, runID, sessionID, agentConfigI
 		failCode:        protocol.CodeStreamError,
 		fresh:           true,
 		withholdTrust:   input.WithholdTrust,
-		start: func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
+		start: func(ctx context.Context, agent *agents.Agent, opts agents.RunOptions) (agents.RunStream, *agents.RunControl) {
 			// Empty input means "continue from the branch point" (regenerate):
 			// an empty ITEM LIST.
 			var runInput any = input.Text
@@ -619,7 +619,7 @@ func (r *Runner) resumeStreamed(ctx context.Context, runID string, state *agents
 		input:    session.UserText(state.UserInput),
 		failCode: protocol.CodeResumeError,
 		built:    built,
-		start: func(ctx context.Context, _ *agents.Agent, opts agents.RunOptions) (agents.RunStream, agents.RunControl) {
+		start: func(ctx context.Context, _ *agents.Agent, opts agents.RunOptions) (agents.RunStream, *agents.RunControl) {
 			return agents.ResumeRun(ctx, state, opts)
 		},
 	})

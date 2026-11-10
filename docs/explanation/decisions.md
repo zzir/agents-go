@@ -898,8 +898,8 @@ state without draining it, and a reseed would deliver every item twice.
 correct for a serialized state in a new process, wrong in-chain: every
 `StopAfterTurn` or `Steer` on the original handle after the first policy
 resume reached a run that had already ended, and the caller had no way to
-know. Accepting a host-built control — the interface exists so a host can
-hold one, not implement one.
+know. Accepting a host's own implementation of the control — `RunControl` is
+a struct with unexported fields, so a host holds one and cannot implement one.
 
 **Cost accepted.** `Loop` needs `RunResult.StoppedEarly` to tell "finished"
 from "stopped", so the stop is never cleared and is reported wherever the run
@@ -2198,3 +2198,27 @@ by name would undo it without a word, so `scripts/binary-size.sh` holds the
 built binary to a budget in CI.
 
 Rules: workbench invariant 101.
+
+### 5.103 `RunControl` is a struct, and a nil one resumes afresh
+
+Decided 2026-11-10.
+
+**Decision.** `RunControl` is an exported struct with unexported fields: `Run`
+and `ResumeRun` return a `*RunControl`, and `ResumeRunWith` takes one. Its
+zero value is an empty control, and a nil control to `ResumeRunWith` resumes
+as `ResumeRun` does, on a fresh control seeded from the state.
+
+**Rejected.** An interface over its one implementation — `ResumeRunWith` needs
+the queue itself, so it asserted the caller's value back to the concrete type
+and panicked on any other. Sealing that interface with an unexported method —
+the assertion goes, and what is left is a struct spelled as an interface.
+Refusing a nil control with a `*UserError`, or letting it dereference inside
+the loop — nil says there is no handle to keep, which `ResumeRun` already
+answers.
+
+**Cost accepted.** A host that fakes the control in a test declares the
+methods it calls as an interface of its own, as the workbench's run hub does.
+A host can build an empty `RunControl` and resume under it; like any control
+passed in, it is not seeded from the state's `PendingInput`.
+
+Rules: spec §2.11b.

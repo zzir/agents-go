@@ -106,7 +106,7 @@ renumbered — which is why the letters run out of alphabetical order in places.
 
 ### 2.0 Entry points
 
-`Run` returns `(RunStream, RunControl)`; `RunSync` returns `(*RunResult, error)`.
+`Run` returns `(RunStream, *RunControl)`; `RunSync` returns `(*RunResult, error)`.
 `ResumeRun` / `ResumeRunSync` are the same pair for a paused run.
 
 - **A run executes on the consumer's goroutine.** Ranging the stream advances
@@ -1518,7 +1518,7 @@ each subscriber with a buffer of its own.
 
 ### 2.11b Run control
 
-`Run` returns a `RunControl` alongside the stream, safe to use from another
+`Run` returns a `*RunControl` alongside the stream, safe to use from another
 goroutine, including before ranging begins. It is stop + injection + pending,
 nothing more: a host renders progress from the stream's own events. Beyond
 `StopAfterTurn`, three **injection methods** feed one arrival-ordered queue:
@@ -1543,8 +1543,10 @@ nothing more: a host renders progress from the stream's own events. Beyond
   opts, ctrl)` continues on the control `Run` returned and carries its live
   queue as is, never reseeded; `ResumeRun` mints a fresh control and seeds it
   ([§5.45](../explanation/decisions.md#545-a-middleware-resumes-under-the-callers-control)).
-- **`ResumeRunWith` panics on a control this package did not mint**; a host
-  holds a `RunControl`, never implements one.
+- **`RunControl` is a concrete type**: a host holds one, never implements
+  one. Its zero value is an empty control.
+- **A nil control to `ResumeRunWith` resumes as `ResumeRun` does**, on a fresh
+  control seeded from the state — see decisions §5.103.
 - **A follow-up continues the same run**: one trace, one usage total, one
   session.
 - **Injected input becomes a run item** with `Source{Type: SourceUser}` after

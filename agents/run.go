@@ -21,16 +21,15 @@ import (
 //	    if err != nil { return err }
 //	    ...
 //	}
-func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (RunStream, RunControl) {
-	ctrl := newRunControl()
+func Run(ctx context.Context, agent *Agent, input any, opts RunOptions) (RunStream, *RunControl) {
+	ctrl := &RunControl{}
 	return withMiddleware(ctx, agent, input, opts, ctrl, true), ctrl
 }
 
 // RunSync executes a run to completion and returns its result; the model is
 // called without streaming.
 func RunSync(ctx context.Context, agent *Agent, input any, opts RunOptions) (*RunResult, error) {
-	ctrl := newRunControl()
-	return withMiddleware(ctx, agent, input, opts, ctrl, false).Collect()
+	return withMiddleware(ctx, agent, input, opts, &RunControl{}, false).Collect()
 }
 
 // singleUse makes a second range of a RunStream yield an error instead of
@@ -47,7 +46,7 @@ func singleUse(stream RunStream) RunStream {
 }
 
 // withMiddleware builds the run's stream through the middleware chain.
-func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *runControl, rawEvents bool) RunStream {
+func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *RunControl, rawEvents bool) RunStream {
 	base := func(ctx context.Context, in RunInput) RunStream {
 		return func(yield func(StreamEvent, error) bool) {
 			runStream(ctx, in.Agent, in.Input, *in.Opts, ctrl, rawEvents, yield)
@@ -58,7 +57,7 @@ func withMiddleware(ctx context.Context, agent *Agent, input any, opts RunOption
 
 // runViaMiddleware is the pipeline fresh runs and resumes share: normalize
 // the input once, wrap base in the middleware chain, hand out a single-use stream.
-func runViaMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *runControl, base RunFunc) RunStream {
+func runViaMiddleware(ctx context.Context, agent *Agent, input any, opts RunOptions, ctrl *RunControl, base RunFunc) RunStream {
 	return singleUse(func(yield func(StreamEvent, error) bool) {
 		items, err := normalizeInput(input)
 		if err != nil {
@@ -76,7 +75,7 @@ func runViaMiddleware(ctx context.Context, agent *Agent, input any, opts RunOpti
 
 // runStream is the body shared by Run and RunSync: prepare, loop, report the
 // outcome as the stream's terminal event or error.
-func runStream(ctx context.Context, agent *Agent, input []InputItem, opts RunOptions, ctrl *runControl, rawEvents bool, yield func(StreamEvent, error) bool) {
+func runStream(ctx context.Context, agent *Agent, input []InputItem, opts RunOptions, ctrl *RunControl, rawEvents bool, yield func(StreamEvent, error) bool) {
 	r, modelInput, finishTrace, err := prepareRun(ctx, agent, input, opts)
 	if err != nil {
 		yield(nil, err)
@@ -160,7 +159,7 @@ type runner struct {
 	yield func(StreamEvent, error) bool
 
 	// ctrl is the caller's handle: the graceful-stop flag and the injection queue.
-	ctrl *runControl
+	ctrl *RunControl
 
 	// rawEvents streams the model call — the one difference between Run and RunSync.
 	rawEvents bool

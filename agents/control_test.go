@@ -201,7 +201,7 @@ func TestInjectedInput_ArrivesAsItsOwnItemKind(t *testing.T) {
 		name      string
 		tools     []*Tool
 		responses []*ModelResponse
-		inject    func(RunControl) error
+		inject    func(*RunControl) error
 		text      string
 	}{
 		{
@@ -212,7 +212,7 @@ func TestInjectedInput_ArrivesAsItsOwnItemKind(t *testing.T) {
 				modelResp(functionCallOutput(t, "probe", "c1", `{}`)),
 				modelResp(messageOutput(t, "done")),
 			},
-			inject: func(c RunControl) error { return c.NextTurn("mention the weather") },
+			inject: func(c *RunControl) error { return c.NextTurn("mention the weather") },
 			text:   "mention the weather",
 		},
 		{
@@ -222,7 +222,7 @@ func TestInjectedInput_ArrivesAsItsOwnItemKind(t *testing.T) {
 				modelResp(messageOutput(t, "first answer")),
 				modelResp(messageOutput(t, "second answer")),
 			},
-			inject: func(c RunControl) error { return c.FollowUp("and what about tomorrow?") },
+			inject: func(c *RunControl) error { return c.FollowUp("and what about tomorrow?") },
 			text:   "and what about tomorrow?",
 		},
 	}
@@ -327,7 +327,7 @@ func TestPendingInput_SurvivesAnInterruption(t *testing.T) {
 // two messages from the same caller that reordering could invert meaning
 // ("do X", then "actually, don't").
 func TestInjection_ArrivalOrderAcrossKinds(t *testing.T) {
-	ctrl := newRunControl()
+	ctrl := &RunControl{}
 	if err := ctrl.NextTurn("first"); err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestInjection_ArrivalOrderAcrossKinds(t *testing.T) {
 // front: an early follow-up already queued stays ahead of a later steer that
 // a failed attempt consumed.
 func TestInjection_RollbackMergesByArrival(t *testing.T) {
-	ctrl := newRunControl()
+	ctrl := &RunControl{}
 	if err := ctrl.FollowUp("early"); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestInjection_RollbackMergesByArrival(t *testing.T) {
 // Pending reports what is queued, not what an attempt holds in flight; a
 // rollback puts it back, a commit settles it for good.
 func TestInjection_PendingExcludesInFlight(t *testing.T) {
-	ctrl := newRunControl()
+	ctrl := &RunControl{}
 	if err := ctrl.Steer("x"); err != nil {
 		t.Fatal(err)
 	}

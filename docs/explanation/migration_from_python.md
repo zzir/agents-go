@@ -21,7 +21,7 @@ For what this SDK deliberately does not provide (and why), read
 | `Agent(name=..., instructions=...)` | `&agents.Agent{Name: ..., Instructions: agents.StaticInstructions(...)}` |
 | `instructions=` callable | `Agent.Instructions` is a func type: assign `func(ctx, rc, agent) (string, error)` directly |
 | `Runner.run` / `Runner.run_sync` | `agents.RunSync(ctx, agent, input, opts)` (Go has no sync/async split) |
-| `Runner.run_streamed` | `agents.Run(ctx, agent, input, opts)` → `(RunStream, RunControl)`. `agents.RunSync` is the non-streaming counterpart of `Runner.run` |
+| `Runner.run_streamed` | `agents.Run(ctx, agent, input, opts)` → `(RunStream, *RunControl)`. `agents.RunSync` is the non-streaming counterpart of `Runner.run` |
 | `RunItemStreamEvent.name` (`"tool_called"`, `"message_output_created"`, …) | `RunItemStreamEvent.Item.Kind` (`agents.ItemToolCall`, `agents.ItemMessage`, …): the event carries its item, not a name |
 | `run_config` / `Runner.run(...)` kwargs | `agents.RunOptions{...}` |
 | `@function_tool` decorator | `agents.NewTool[Args, Result](name, desc, fn)` |

@@ -44,7 +44,7 @@ func TestCallerStopLeavesSteerPending(t *testing.T) {
 		NewTurn().
 		Text("never asked").
 		Build()
-	var ctrl agents.RunControl
+	var ctrl *agents.RunControl
 	probe := agents.NewTool("probe", "probes",
 		func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 			err := ctrl.Steer("and the date")
@@ -95,7 +95,7 @@ func (m onCallModel) StreamResponse(ctx context.Context, req agents.ModelRequest
 // output; the steer that arrived with it stays queued.
 func TestCallerStopAtFinalOutputKeepsLateSteerPending(t *testing.T) {
 	model := agentstest.TextModel("done", "never asked")
-	var ctrl agents.RunControl
+	var ctrl *agents.RunControl
 	agent := &agents.Agent{Name: "a", ModelImpl: onCallModel{Model: model, onCall: func() {
 		if err := ctrl.Steer("too late"); err != nil {
 			t.Error(err)
@@ -130,7 +130,7 @@ func TestCallerStopAfterDrainPersistsSteer(t *testing.T) {
 		NewTurn().
 		Text("never asked").
 		Build()
-	var ctrl agents.RunControl
+	var ctrl *agents.RunControl
 	probe := agents.NewTool("probe", "probes",
 		func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 			return "ok", ctrl.Steer("and the date")

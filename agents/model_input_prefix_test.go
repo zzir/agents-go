@@ -77,7 +77,7 @@ func TestModelInputAppendOnly(t *testing.T) {
 			NewTurn().
 			Text("done").
 			Build()
-		var ctrl agents.RunControl
+		var ctrl *agents.RunControl
 		probe := agents.NewTool("probe", "probes",
 			func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 				return "ok", ctrl.Steer("and the date")

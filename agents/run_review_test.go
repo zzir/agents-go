@@ -242,7 +242,7 @@ func TestAbandonedStreamDoesNotWaitForRacingGuardrail(t *testing.T) {
 // a retry deliver input neither zero times nor twice. restore itself seeds
 // once per control.
 func TestRestore_TransactionalDeliveryAcrossRetries(t *testing.T) {
-	ctrl := newRunControl()
+	ctrl := &RunControl{}
 	pending := PendingInput{Steer: InputItemsFromText("USE STAGING")}
 
 	// Seeding is once per control: a retried attempt's second restore must

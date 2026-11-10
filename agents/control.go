@@ -5,28 +5,6 @@ import (
 	"sync/atomic"
 )
 
-// RunControl influences a run in flight: stop, injection, pending. Safe from
-// another goroutine, including before ranging begins — see spec §2.11b.
-type RunControl interface {
-	// StopAfterTurn ends the run cleanly once the in-flight turn, tools and
-	// session save included, finishes — see spec §2.3c.
-	StopAfterTurn()
-
-	// Steer injects input (a string or []InputItem) and forces another turn
-	// even if the agent was about to finish.
-	Steer(input any) error
-
-	// NextTurn injects input at the next turn boundary, if the run takes one;
-	// it never extends the run.
-	NextTurn(input any) error
-
-	// FollowUp queues input for after the final output, continuing the same run.
-	FollowUp(input any) error
-
-	// Pending reports queued input the run has not consumed.
-	Pending() PendingInput
-}
-
 // PendingInput is queued input a run has not consumed.
 type PendingInput struct {
 	Steer    []InputItem
@@ -56,9 +34,10 @@ type pendingEntry struct {
 	seq   uint64
 }
 
-// runControl is the concrete RunControl. The caller holds it from the moment
-// Run returns, so every field is written by the loop and read concurrently.
-type runControl struct {
+// RunControl influences a run in flight: stop, injection, pending. Safe from
+// another goroutine, including before ranging begins — see spec §2.11b. The
+// zero value is an empty control; it must not be copied after first use.
+type RunControl struct {
 	stopAfterTurn atomic.Bool
 
 	mu sync.Mutex
@@ -71,22 +50,24 @@ type runControl struct {
 	restored bool   // a paused run's PendingInput seeds the queue once per control
 }
 
-func newRunControl() *runControl { return &runControl{} }
+// StopAfterTurn ends the run cleanly once the in-flight turn, tools and
+// session save included, finishes — see spec §2.3c.
+func (c *RunControl) StopAfterTurn() { c.stopAfterTurn.Store(true) }
 
-func (c *runControl) StopAfterTurn() { c.stopAfterTurn.Store(true) }
+func (c *RunControl) stopRequested() bool { return c.stopAfterTurn.Load() }
 
-func (c *runControl) stopRequested() bool { return c.stopAfterTurn.Load() }
+// Steer injects input (a string or []InputItem) and forces another turn even
+// if the agent was about to finish.
+func (c *RunControl) Steer(input any) error { return c.enqueue(injectSteer, input) }
 
-// Steer implements RunControl.
-func (c *runControl) Steer(input any) error { return c.enqueue(injectSteer, input) }
+// NextTurn injects input at the next turn boundary, if the run takes one; it
+// never extends the run.
+func (c *RunControl) NextTurn(input any) error { return c.enqueue(injectNextTurn, input) }
 
-// NextTurn implements RunControl.
-func (c *runControl) NextTurn(input any) error { return c.enqueue(injectNextTurn, input) }
+// FollowUp queues input for after the final output, continuing the same run.
+func (c *RunControl) FollowUp(input any) error { return c.enqueue(injectFollowUp, input) }
 
-// FollowUp implements RunControl.
-func (c *runControl) FollowUp(input any) error { return c.enqueue(injectFollowUp, input) }
-
-func (c *runControl) enqueue(kind injectKind, input any) error {
+func (c *RunControl) enqueue(kind injectKind, input any) error {
 	items, err := normalizeInput(input)
 	if err != nil {
 		return err
@@ -101,8 +82,8 @@ func (c *runControl) enqueue(kind injectKind, input any) error {
 	return nil
 }
 
-// Pending implements RunControl.
-func (c *runControl) Pending() PendingInput {
+// Pending reports queued input the run has not consumed.
+func (c *RunControl) Pending() PendingInput {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var p PendingInput
@@ -121,19 +102,19 @@ func (c *runControl) Pending() PendingInput {
 
 // takeTurnInput drains what the save point delivers — steer and next-turn
 // input, in arrival order — into the in-flight set.
-func (c *runControl) takeTurnInput() []InputItem {
+func (c *RunControl) takeTurnInput() []InputItem {
 	return c.take(func(k injectKind) bool { return k == injectSteer || k == injectNextTurn })
 }
 
 // takeContinuation drains what may extend a run at its final output: a late
 // steer and any follow-up. NextTurn is absent by design (spec §2.11b).
-func (c *runControl) takeContinuation() []InputItem {
+func (c *RunControl) takeContinuation() []InputItem {
 	return c.take(func(k injectKind) bool { return k == injectSteer || k == injectFollowUp })
 }
 
 // take moves the accepted pending entries to the in-flight set and returns
 // their items in arrival order; commit/rollback settle delivery.
-func (c *runControl) take(want func(injectKind) bool) []InputItem {
+func (c *RunControl) take(want func(injectKind) bool) []InputItem {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []InputItem
@@ -151,7 +132,7 @@ func (c *runControl) take(want func(injectKind) bool) []InputItem {
 }
 
 // inFlightMark is where the in-flight set stands, for discardInFlightSince.
-func (c *runControl) inFlightMark() int {
+func (c *RunControl) inFlightMark() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.inFlight)
@@ -159,7 +140,7 @@ func (c *runControl) inFlightMark() int {
 
 // discardInFlightSince drops the entries taken after mark: input a guardrail
 // refused is consumed, never redelivered (spec §2.11b).
-func (c *runControl) discardInFlightSince(mark int) {
+func (c *RunControl) discardInFlightSince(mark int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if mark < len(c.inFlight) {
@@ -169,7 +150,7 @@ func (c *runControl) discardInFlightSince(mark int) {
 
 // commitInjected marks every in-flight injection delivered: the items have a
 // durable home (spec §2.11b), and no retry re-delivers them.
-func (c *runControl) commitInjected() {
+func (c *RunControl) commitInjected() {
 	c.mu.Lock()
 	c.inFlight = nil
 	c.mu.Unlock()
@@ -177,7 +158,7 @@ func (c *runControl) commitInjected() {
 
 // rollbackInjected returns in-flight injections to the queue in arrival order,
 // so the next attempt delivers what the failed one never made durable.
-func (c *runControl) rollbackInjected() {
+func (c *RunControl) rollbackInjected() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.inFlight) == 0 {
@@ -201,7 +182,7 @@ func (c *runControl) rollbackInjected() {
 
 // restore seeds the queue from a paused run's state, once per control; the
 // transaction, not reseeding, makes input survive a retry (spec §2.11b).
-func (c *runControl) restore(p PendingInput) {
+func (c *RunControl) restore(p PendingInput) {
 	if p.Empty() {
 		return
 	}

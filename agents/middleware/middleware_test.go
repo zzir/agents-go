@@ -268,7 +268,7 @@ func TestLoop_WithASessionCarriesOnlyTheFeedback(t *testing.T) {
 // A policy resume continues under the caller's own control: a StopAfterTurn
 // asked for after the resume still lands (spec §2.12).
 func TestApproval_ResumeKeepsTheCallersControl(t *testing.T) {
-	var ctrl agents.RunControl
+	var ctrl *agents.RunControl
 	gated := agents.NewTool("gated", "", func(context.Context, *agents.ToolContext, struct{}) (string, error) {
 		return "done", nil
 	})

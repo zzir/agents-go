@@ -160,6 +160,14 @@ func (s *runSegment) finalize() {
 	})
 }
 
+// runControl is what the hub asks of a live run's *agents.RunControl.
+type runControl interface {
+	StopAfterTurn()
+	Steer(input any) error
+	NextTurn(input any) error
+	FollowUp(input any) error
+}
+
 // runRecord is the hub's per-run state: its cancel hook, the replay buffer,
 // and the live subscribers fanned out to.
 type runRecord struct {
@@ -170,9 +178,9 @@ type runRecord struct {
 	// done mirrors the CURRENT segment's gate (a resume swaps it), so the
 	// session-delete path waits on the live segment.
 	done chan struct{}
-	// ctrl is the live run's RunControl (graceful stop, injected input); distinct
+	// ctrl is the live run's control (graceful stop, injected input); distinct
 	// from cancel, the hard abort. Under mu, like info.
-	ctrl agents.RunControl
+	ctrl runControl
 
 	// fanout owns delivery: seq assignment, the replay ring, per-subscriber
 	// buffers; a slow subscriber gets a *agents.GapError, never silent loss.
@@ -718,7 +726,7 @@ func (h *RunHub) Cancel(runID string) bool {
 
 // setControl records a live run's control handle (the run goroutine calls this
 // once its run exists).
-func (h *RunHub) setControl(runID string, ctrl agents.RunControl) {
+func (h *RunHub) setControl(runID string, ctrl runControl) {
 	h.mu.Lock()
 	rec := h.runs[runID]
 	h.mu.Unlock()
@@ -731,7 +739,7 @@ func (h *RunHub) setControl(runID string, ctrl agents.RunControl) {
 }
 
 // control returns a live run's control handle, or nil.
-func (h *RunHub) control(runID string) agents.RunControl {
+func (h *RunHub) control(runID string) runControl {
 	h.mu.Lock()
 	rec := h.runs[runID]
 	h.mu.Unlock()
@@ -781,7 +789,7 @@ func (h *RunHub) nextInjection(runID string) int {
 // finishes, the run ends before the next. false when no live run has a stop hook yet.
 func (h *RunHub) StopAfterTurn(runID string) bool {
 	h.mu.Lock()
-	var ctrl agents.RunControl
+	var ctrl runControl
 	if rec := h.runs[runID]; rec != nil {
 		rec.mu.Lock()
 		if rec.ctrl != nil {
