@@ -30,7 +30,7 @@ func (idx *Index) grouped() []session.Entry {
 // index that resumed on a matching id alone would hand one conversation's
 // history to another.
 func TestCompactorReusedAcrossSessionsKeepsThemApart(t *testing.T) {
-	c := New(keepEverything{}, nil)
+	c := New(keepEverything{})
 	ctx := context.Background()
 
 	withID := func(id, text string) session.Entry { return userWithID(t, id, text) }
@@ -59,7 +59,7 @@ func TestCompactorReusedAcrossSessionsKeepsThemApart(t *testing.T) {
 // The same guard must not cost the incremental path: a genuine continuation of
 // the same session still resumes rather than regrouping from scratch.
 func TestCompactorResumesOnATrueContinuation(t *testing.T) {
-	idx := NewIndex([]session.Entry{user(t, "one"), user(t, "two")}, nil)
+	idx := NewIndex([]session.Entry{user(t, "one"), user(t, "two")})
 	before := len(idx.Groups)
 
 	idx.Update([]session.Entry{user(t, "one"), user(t, "two"), user(t, "three")})
@@ -84,7 +84,7 @@ func TestGroupingKeepsEveryEntryInOrder(t *testing.T) {
 		assistant(t, "sunny"),
 		user(t, "and tomorrow?"),
 	})
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 
 	got := idx.grouped()
 	if len(got) != len(entries) {
@@ -106,7 +106,7 @@ func TestUpdateRebuildsWhenOnlyUsageDiffers(t *testing.T) {
 		return e
 	}
 	first := []session.Entry{withUsage(userWithID(t, "e1", "hello"), 100)}
-	idx := NewIndex(first, nil)
+	idx := NewIndex(first)
 	if got := idx.ContextTokens(); got != 100 {
 		t.Fatalf("first session context = %d, want 100", got)
 	}

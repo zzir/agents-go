@@ -200,7 +200,7 @@ strategy := &compaction.PipelineStrategy{Strategies: []compaction.Strategy{
 	&compaction.ToolResultStrategy{Trigger: compaction.TokensExceed(60_000)},  // lossless first
 	&compaction.TruncationStrategy{Trigger: compaction.TokensExceed(100_000)}, // then whole exchanges
 }}
-opts.Compaction = agents.CompactionOptions{Compactor: compaction.New(strategy, nil)}
+opts.Compaction = agents.CompactionOptions{Compactor: compaction.New(strategy)}
 ```
 
 `compaction.ContextWindowStrategy` derives both thresholds from the model's own
@@ -313,7 +313,7 @@ message, carrying `ResetSummary` (the session memory, say) into the fresh
 context:
 
 ```go
-compactor := compaction.New(strategy, nil)
+compactor := compaction.New(strategy)
 compactor.ResetSummary = func(ctx context.Context) (string, error) {
 	return memory.Snapshot(ctx, store, sessionScope, 20_000)
 }
@@ -321,7 +321,7 @@ agent.Tools = append(agent.Tools, agents.NewContextTool())
 opts.Compaction = agents.CompactionOptions{Compactor: compactor}
 ```
 
-A compactor with no strategy (`compaction.New(nil, nil)`) folds nothing on
+A compactor with no strategy (`compaction.New(nil)`) folds nothing on
 its own and still records a reset the model asked for; what a session that
 cannot reset does, how a reset crosses an approval pause, and when a second
 reset is refused are

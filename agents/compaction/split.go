@@ -16,7 +16,7 @@ func SafeSplit(entries []session.Entry, split int) int {
 		return len(entries)
 	}
 
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 	at := 0
 	for _, g := range idx.Groups {
 		next := at + len(g.Entries)

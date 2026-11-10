@@ -49,7 +49,7 @@ func TestPrepareAppendNumbersWithinABatchAndAcrossOne(t *testing.T) {
 	if first[0].Seq != 1000 || first[1].Seq != 1001 {
 		t.Fatalf("batch seqs = %d,%d, want 1000,1001", first[0].Seq, first[1].Seq)
 	}
-	second := PrepareAppend([]Entry{{}}, AppendPointOf(first))
+	second := PrepareAppend([]Entry{{}}, AppendPoint{Leaf: first[1].ID, LastSeq: first[1].Seq})
 	if second[0].Seq != 1002 {
 		t.Fatalf("next batch in the same nanosecond = %d, want 1002", second[0].Seq)
 	}
@@ -92,15 +92,5 @@ func TestPrepareAppendLinksToTheAppendPoint(t *testing.T) {
 	}
 	if got[1].ParentID != got[0].ID {
 		t.Fatalf("second parent = %q, want %q", got[1].ParentID, got[0].ID)
-	}
-}
-
-// AppendPointOf reads the high-water mark, not the last entry's number: they
-// differ when entries arrive out of order, and taking the last one would hand
-// out a number the session has used.
-func TestAppendPointOfTakesTheHighestSeq(t *testing.T) {
-	at := AppendPointOf([]Entry{{ID: "a", Seq: 9}, {ID: "b", Seq: 4}})
-	if at.LastSeq != 9 {
-		t.Fatalf("LastSeq = %d, want the highest", at.LastSeq)
 	}
 }

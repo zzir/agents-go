@@ -45,7 +45,7 @@ func conversation(t *testing.T) []session.Entry {
 // actually said stays. In a coding conversation that is where nearly all the
 // context lives.
 func TestToolResultStrategy_FoldsOutputNotConversation(t *testing.T) {
-	idx := NewIndex(conversation(t), nil)
+	idx := NewIndex(conversation(t))
 	before := idx.ContextTokens()
 
 	s := &ToolResultStrategy{Trigger: Always(), MinimumPreservedGroups: 2}
@@ -79,7 +79,7 @@ func TestToolResultStrategy_FoldsOutputNotConversation(t *testing.T) {
 
 // The most recent tool results are the ones the model is still working with.
 func TestToolResultStrategy_PreservesTheRecentGroups(t *testing.T) {
-	idx := NewIndex(conversation(t), nil)
+	idx := NewIndex(conversation(t))
 	s := &ToolResultStrategy{Trigger: Always(), MinimumPreservedGroups: 4}
 	if _, err := s.Compact(context.Background(), idx); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestToolResultStrategy_PreservesTheRecentGroups(t *testing.T) {
 // re-run against, or fork from.
 func TestStrategies_ExcludeWithoutDeleting(t *testing.T) {
 	entries := conversation(t)
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 	s := &TruncationStrategy{Trigger: Always(), MinimumPreservedGroups: 1}
 	if _, err := s.Compact(context.Background(), idx); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestStrategies_ExcludeWithoutDeleting(t *testing.T) {
 // Instructions apply to the whole conversation, not to the turn that carried
 // them, so age is the wrong reason to drop them.
 func TestTruncationStrategy_KeepsSystemContent(t *testing.T) {
-	idx := NewIndex(conversation(t), nil)
+	idx := NewIndex(conversation(t))
 	s := &TruncationStrategy{Trigger: Always(), MinimumPreservedGroups: 1}
 	if _, err := s.Compact(context.Background(), idx); err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestTruncationStrategy_KeepsSystemContent(t *testing.T) {
 // The opt-out: a caller whose instructions are re-sent every run (the agent's
 // own Instructions are, for one) does not need the stored copy kept alive.
 func TestTruncationStrategy_DropSystemOptsOut(t *testing.T) {
-	idx := NewIndex(conversation(t), nil)
+	idx := NewIndex(conversation(t))
 	s := &TruncationStrategy{Trigger: Always(), MinimumPreservedGroups: 1, DropSystem: true}
 	if _, err := s.Compact(context.Background(), idx); err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestTruncationStrategy_DropSystemOptsOut(t *testing.T) {
 // Order is the design: fold tool output before dropping content, because the
 // first is free and the second is not.
 func TestPipeline_TriesTheCheapThingFirst(t *testing.T) {
-	idx := NewIndex(conversation(t), nil)
+	idx := NewIndex(conversation(t))
 	tokens := idx.ContextTokens()
 
 	// A budget that the tool folding alone can satisfy.
@@ -175,7 +175,7 @@ func TestPipeline_TriesTheCheapThingFirst(t *testing.T) {
 // Thresholds come from the model's own limits rather than numbers a caller has
 // to guess.
 func TestContextWindowStrategy_DerivesThresholds(t *testing.T) {
-	idx := NewIndex(conversation(t), nil)
+	idx := NewIndex(conversation(t))
 	tokens := idx.ContextTokens()
 
 	s := &ContextWindowStrategy{
@@ -195,14 +195,14 @@ func TestContextWindowStrategy_DerivesThresholds(t *testing.T) {
 	// A window that leaves no room at all is a configuration error, not a
 	// silent no-op.
 	bad := &ContextWindowStrategy{MaxContextWindowTokens: 100, MaxOutputTokens: 100}
-	if _, err := bad.Compact(context.Background(), NewIndex(conversation(t), nil)); err == nil {
+	if _, err := bad.Compact(context.Background(), NewIndex(conversation(t))); err == nil {
 		t.Error("a context window with no input budget should be an error")
 	}
 }
 
 // A trigger that never fires does nothing, and a nil one is not "always".
 func TestTriggers(t *testing.T) {
-	idx := NewIndex(conversation(t), nil)
+	idx := NewIndex(conversation(t))
 	cases := map[string]struct {
 		trigger Trigger
 		want    bool
@@ -232,7 +232,7 @@ func TestStrategies_RespectTheirTrigger(t *testing.T) {
 		"truncation":  &TruncationStrategy{Trigger: Never()},
 	} {
 		t.Run(name, func(t *testing.T) {
-			idx := NewIndex(conversation(t), nil)
+			idx := NewIndex(conversation(t))
 			before := idx.ContextTokens()
 			changed, err := s.Compact(context.Background(), idx)
 			if err != nil {

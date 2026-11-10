@@ -74,7 +74,7 @@ func TestGrouping_CallAndOutputAreOneGroup(t *testing.T) {
 		output(t, "c1", "sunny"),
 		assistant(t, "it is sunny"),
 	})
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 
 	got := kinds(idx)
 	want := []GroupKind{GroupUser, GroupToolCall, GroupAssistantText}
@@ -99,7 +99,7 @@ func TestGrouping_ReasoningJoinsTheCallItPrecedes(t *testing.T) {
 		call(t, "c1", "f"),
 		output(t, "c1", "done"),
 	})
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 
 	if len(idx.Groups) != 2 || idx.Groups[1].Kind != GroupToolCall {
 		t.Fatalf("groups = %v, want [user tool_call]", kinds(idx))
@@ -117,7 +117,7 @@ func TestGrouping_StandaloneReasoningStaysAssistant(t *testing.T) {
 		reasoning(t),
 		assistant(t, "answer"),
 	})
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 	for _, g := range idx.Groups {
 		if g.Kind == GroupToolCall {
 			t.Fatalf("standalone reasoning became a tool-call group: %v", kinds(idx))
@@ -136,7 +136,7 @@ func TestGrouping_ParallelCallsStayTogether(t *testing.T) {
 		output(t, "c2", "2"),
 		assistant(t, "done"),
 	})
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 
 	if len(idx.Groups) != 3 {
 		t.Fatalf("groups = %v, want [user tool_call assistant]", kinds(idx))
@@ -157,7 +157,7 @@ func TestGrouping_NoSplitCanStrandACall(t *testing.T) {
 		call(t, "c2", "g"),
 		output(t, "c2", "2"),
 	})
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 
 	// Exclude every possible prefix of groups; the survivors must always pair.
 	for cut := 0; cut <= len(idx.Groups); cut++ {
@@ -200,7 +200,7 @@ func TestGrouping_TurnsCountUserMessages(t *testing.T) {
 		user(t, "two"),
 		assistant(t, "a2"),
 	})
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 
 	if idx.Groups[0].Kind != GroupSystem || idx.Groups[0].TurnIndex != nil {
 		t.Error("system content should belong to no turn")
@@ -214,7 +214,7 @@ func TestGrouping_TurnsCountUserMessages(t *testing.T) {
 // knew is no longer a prefix — a branch switch or a compaction.
 func TestIndex_UpdateIsIncrementalButRebuildsOnRewrite(t *testing.T) {
 	first := withIDs([]session.Entry{user(t, "one"), assistant(t, "a")})
-	idx := NewIndex(first, nil)
+	idx := NewIndex(first)
 	if len(idx.Groups) != 2 {
 		t.Fatalf("groups = %v", kinds(idx))
 	}
@@ -246,7 +246,7 @@ func TestContextTokens_UsesProviderUsageThenEstimates(t *testing.T) {
 	})
 	entries[1].Usage = &agents.RequestUsage{InputTokens: 500, OutputTokens: 20, TotalTokens: 520}
 
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 	got := idx.ContextTokens()
 
 	// 520 measured, plus only the entry after it.
@@ -259,7 +259,7 @@ func TestContextTokens_UsesProviderUsageThenEstimates(t *testing.T) {
 	for i := range entries {
 		entries[i].Usage = nil
 	}
-	bare := NewIndex(entries, nil).ContextTokens()
+	bare := NewIndex(entries).ContextTokens()
 	if bare == 0 {
 		t.Error("a session with no usage should still be estimated, not counted as empty")
 	}

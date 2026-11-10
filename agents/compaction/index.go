@@ -9,18 +9,14 @@ import (
 // Index is a session's entries organized into groups, plus the accounting a
 // strategy needs; Update groups only what arrived since the last pass.
 type Index struct {
-	Groups    []*Group
-	Estimator TokenEstimator
+	Groups []*Group
 
 	turn int
 }
 
-// NewIndex groups entries. A nil estimator uses CharEstimator.
-func NewIndex(entries []session.Entry, est TokenEstimator) *Index {
-	if est == nil {
-		est = CharEstimator{}
-	}
-	idx := &Index{Estimator: est}
+// NewIndex groups entries; token counts are CharEstimator's.
+func NewIndex(entries []session.Entry) *Index {
+	idx := &Index{}
 	idx.Update(entries)
 	return idx
 }
@@ -154,7 +150,7 @@ func (idx *Index) add(kind GroupKind, entries []session.Entry) {
 		g.TurnIndex = &turn
 	}
 	for _, e := range entries {
-		g.Tokens += idx.Estimator.Estimate(e)
+		g.Tokens += CharEstimator{}.Estimate(e)
 	}
 	idx.Groups = append(idx.Groups, g)
 }
@@ -234,7 +230,7 @@ func (idx *Index) ContextTokens() int {
 	if usageGroup < 0 {
 		total := 0
 		for _, e := range idx.IncludedEntries() {
-			total += idx.Estimator.Estimate(e)
+			total += CharEstimator{}.Estimate(e)
 		}
 		return total
 	}
@@ -246,7 +242,7 @@ func (idx *Index) ContextTokens() int {
 		if g.Excluded && !g.settled {
 			total -= g.Tokens
 			for _, re := range g.Replacement {
-				total += idx.Estimator.Estimate(re)
+				total += CharEstimator{}.Estimate(re)
 			}
 		}
 	}
@@ -255,17 +251,17 @@ func (idx *Index) ContextTokens() int {
 	}
 	// Everything after the measured entry is estimated on top of it.
 	for _, e := range idx.Groups[usageGroup].Entries[usageEntry+1:] {
-		total += idx.Estimator.Estimate(e)
+		total += CharEstimator{}.Estimate(e)
 	}
 	for _, g := range idx.Groups[usageGroup+1:] {
 		if g.Excluded {
 			for _, re := range g.Replacement {
-				total += idx.Estimator.Estimate(re)
+				total += CharEstimator{}.Estimate(re)
 			}
 			continue
 		}
 		for _, e := range g.Entries {
-			total += idx.Estimator.Estimate(e)
+			total += CharEstimator{}.Estimate(e)
 		}
 	}
 	return total

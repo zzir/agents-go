@@ -131,7 +131,7 @@ func TestNewContextResetsThroughTheCompactor(t *testing.T) {
 	ctx := context.Background()
 	sess := session.NewInMemorySession()
 	seedParser(t, sess)
-	compactor := compaction.New(&compaction.TruncationStrategy{Trigger: compaction.Never()}, nil)
+	compactor := compaction.New(&compaction.TruncationStrategy{Trigger: compaction.Never()})
 	compactor.ResetSummary = func(context.Context) (string, error) { return "notes: parser by Ada", nil }
 	model := resetScript()
 	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{agents.NewContextTool()}}
@@ -250,7 +250,7 @@ func TestNewContextResetsUnderAHistoryLimit(t *testing.T) {
 		seedParser(t, sess) // six entries, well past the limit below
 		_ = i
 	}
-	compactor := compaction.New(&compaction.TruncationStrategy{Trigger: compaction.Never()}, nil)
+	compactor := compaction.New(&compaction.TruncationStrategy{Trigger: compaction.Never()})
 	compactor.ResetSummary = func(context.Context) (string, error) { return "notes: parser by Ada", nil }
 	model := resetScript()
 	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{agents.NewContextTool()}}
@@ -301,7 +301,7 @@ func TestNewContextPersistsWithoutAStrategy(t *testing.T) {
 	ctx := context.Background()
 	sess := session.NewInMemorySession()
 	seedParser(t, sess)
-	compactor := compaction.New(nil, nil)
+	compactor := compaction.New(nil)
 	compactor.ResetSummary = func(context.Context) (string, error) { return "notes: parser by Ada", nil }
 	model := resetScript()
 	agent := &agents.Agent{Name: "a", ModelImpl: model, Tools: []*agents.Tool{agents.NewContextTool()}}

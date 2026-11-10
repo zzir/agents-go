@@ -28,7 +28,7 @@ func (dropOldest) Compact(_ context.Context, idx *Index) (bool, error) {
 // (spec §2.5f).
 func TestCheckpointRefusesAnotherSessionsPass(t *testing.T) {
 	ctx := context.Background()
-	c := New(dropOldest{}, nil)
+	c := New(dropOldest{})
 
 	sessionA := []session.Entry{
 		userWithID(t, "e1", "a-one"), userWithID(t, "e2", "a-two"), userWithID(t, "e3", "a-three"),
@@ -71,7 +71,7 @@ func TestContextTokensFallWithExclusions(t *testing.T) {
 	}
 	entries[2].Usage = &agents.RequestUsage{InputTokens: 10_000, OutputTokens: 50, TotalTokens: 10_050}
 
-	idx := NewIndex(entries, nil)
+	idx := NewIndex(entries)
 	before := idx.ContextTokens()
 	if before != 10_050 {
 		t.Fatalf("baseline = %d, want the measured 10050", before)

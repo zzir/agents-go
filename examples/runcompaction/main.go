@@ -56,7 +56,7 @@ func main() {
 
 	storage := session.NewInMemoryStorage("demo")
 	sess := session.NewSession(storage)
-	compactor := compaction.New(strategy, nil) // nil = CharEstimator
+	compactor := compaction.New(strategy)
 
 	opts := agents.RunOptions{
 		Model:        agents.ModelOptions{Provider: provider},

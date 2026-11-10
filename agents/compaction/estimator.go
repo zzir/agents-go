@@ -6,11 +6,6 @@ import (
 	"github.com/zzir/agents-go/agents/session"
 )
 
-// TokenEstimator sizes an entry when no provider number is available.
-type TokenEstimator interface {
-	Estimate(session.Entry) int
-}
-
 // Character-count constants, measured in the pi project; estimates, not a bill.
 const (
 	// charsPerToken is the usual English text ratio.
@@ -19,11 +14,12 @@ const (
 	imageChars = 4800
 )
 
-// CharEstimator sizes entries by their content length; deliberately crude, as a
-// real tokenizer over the whole history every turn costs more than compaction saves.
+// CharEstimator sizes entries by their content length when no provider number
+// is available; deliberately crude, as a real tokenizer over the whole history
+// every turn costs more than compaction saves.
 type CharEstimator struct{}
 
-// Estimate implements TokenEstimator.
+// Estimate returns e's size in tokens; zero for a kind the model is not sent.
 func (CharEstimator) Estimate(e session.Entry) int {
 	switch e.Kind {
 	case session.EntryKindItem:

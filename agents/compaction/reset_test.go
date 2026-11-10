@@ -21,7 +21,7 @@ func TestResetClearsEarlierStandIns(t *testing.T) {
 	for i := range entries {
 		entries[i].ID += "-id"
 	}
-	c := New(&TruncationStrategy{Trigger: Never()}, nil)
+	c := New(&TruncationStrategy{Trigger: Never()})
 	summaries := []string{"snapshot one", "snapshot two"}
 	c.ResetSummary = func(context.Context) (string, error) { s := summaries[0]; summaries = summaries[1:]; return s, nil }
 
@@ -77,7 +77,7 @@ func entry(id, role, text string) session.Entry {
 func TestResetWithNothingToFoldLeavesNoMark(t *testing.T) {
 	ctx := context.Background()
 	only := []session.Entry{entry("u1-id", "user", "the only question")}
-	c := New(&TruncationStrategy{Trigger: Always(), MinimumPreservedGroups: 1}, nil)
+	c := New(&TruncationStrategy{Trigger: Always(), MinimumPreservedGroups: 1})
 	c.ResetSummary = func(context.Context) (string, error) { return "notes", nil }
 	if _, err := c.Reset(ctx, only); err != nil {
 		t.Fatal(err)

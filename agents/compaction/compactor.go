@@ -11,8 +11,7 @@ import (
 // Compactor adapts a Strategy to agents.Compactor, keeping its Index between
 // passes so the history is not regrouped every turn.
 type Compactor struct {
-	strategy  Strategy
-	estimator TokenEstimator
+	strategy Strategy
 
 	// ResetSummary, when set, is what a Reset carries into the fresh context
 	// (memory.Snapshot, say); nil resets bare.
@@ -24,12 +23,9 @@ type Compactor struct {
 	reset bool
 }
 
-// New returns a Compactor driving strategy. A nil estimator uses CharEstimator.
-func New(strategy Strategy, estimator TokenEstimator) *Compactor {
-	if estimator == nil {
-		estimator = CharEstimator{}
-	}
-	return &Compactor{strategy: strategy, estimator: estimator}
+// New returns a Compactor driving strategy; nil folds nothing on its own.
+func New(strategy Strategy) *Compactor {
+	return &Compactor{strategy: strategy}
 }
 
 // Compact implements agents.Compactor. Without a strategy nothing folds, but an
@@ -46,7 +42,7 @@ func (c *Compactor) Compact(ctx context.Context, entries []session.Entry) ([]ses
 		return entries, nil
 	}
 	if c.idx == nil {
-		c.idx = NewIndex(entries, c.estimator)
+		c.idx = NewIndex(entries)
 	} else {
 		c.idx.Update(entries)
 	}
@@ -65,7 +61,7 @@ func (c *Compactor) Reset(ctx context.Context, entries []session.Entry) ([]sessi
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.idx == nil {
-		c.idx = NewIndex(entries, c.estimator)
+		c.idx = NewIndex(entries)
 	} else {
 		c.idx.Update(entries)
 	}

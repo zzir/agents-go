@@ -43,7 +43,7 @@ func main() {
 	}
 
 	// Never folds on its own; a model-requested reset carries the session memory over.
-	compactor := compaction.New(&compaction.TruncationStrategy{Trigger: compaction.Never()}, nil)
+	compactor := compaction.New(&compaction.TruncationStrategy{Trigger: compaction.Never()})
 	compactor.ResetSummary = func(ctx context.Context) (string, error) {
 		return memory.Snapshot(ctx, notes, scopes[0].Scope, 20_000)
 	}

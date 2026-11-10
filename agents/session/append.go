@@ -85,13 +85,3 @@ func PrepareAppend(entries []Entry, at AppendPoint) []Entry {
 	}
 	return out
 }
-
-// AppendPointOf reads the append point off entries a backend has in hand
-// anyway; LastSeq is a MAX, not a count. Prefer a query to reading everything.
-func AppendPointOf(entries []Entry) AppendPoint {
-	at := AppendPoint{Leaf: LeafOf(entries)}
-	for i := range entries {
-		at.LastSeq = max(at.LastSeq, entries[i].Seq)
-	}
-	return at
-}
