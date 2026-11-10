@@ -25,6 +25,7 @@ var storageChecks = []struct {
 	{"SeqDoesNotMoveOnRead", checkSeqStableOnRead},
 	{"EntryIDsAreUniqueAndNotReused", checkEntryIDsUnique},
 	{"CursorReturnsWhatItHasNotShown", checkCursorCompleteness},
+	{"ClearDoesNotRestartSeq", checkSeqSurvivesClear},
 }
 
 func storageWrite(t *testing.T, st session.Storage, texts ...string) {
@@ -139,4 +140,40 @@ func checkCursorCompleteness(t *testing.T, st session.Storage) {
 				cursor, e.Seq)
 		}
 	}
+}
+
+// checkSeqSurvivesClear: a cursor taken before Clear still finds what is
+// appended after it, twice over (the second Clear has no row to read from).
+func checkSeqSurvivesClear(t *testing.T, st session.Storage) {
+	t.Helper()
+	ctx := context.Background()
+	storageWrite(t, st, "a", "b")
+	before := storageEntries(t, st)
+	last := before[len(before)-1].Seq
+
+	for round := range 2 {
+		if err := st.Clear(ctx); err != nil {
+			t.Fatalf("clear %d: %v", round, err)
+		}
+		if got := storageEntries(t, st); len(got) != 0 {
+			t.Fatalf("clear %d left %d entries", round, len(got))
+		}
+	}
+
+	storageWrite(t, st, "c")
+	after, err := st.Entries(ctx, session.Cursor{AfterSeq: last})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 || after[0].Seq <= last {
+		t.Fatalf("after Clear, a cursor at seq %d sees %d entries (%+v); the sequence restarted", last, len(after), seqs(after))
+	}
+}
+
+func seqs(entries []session.Entry) []int64 {
+	out := make([]int64, len(entries))
+	for i, e := range entries {
+		out[i] = e.Seq
+	}
+	return out
 }
