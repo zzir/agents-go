@@ -63,37 +63,34 @@ type runWorkflowReq struct {
 //	@Failure		409		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/workflows/{id}/runs [post]
-func (h *WorkflowHandler) Run(c *gin.Context) {
+func (h *WorkflowHandler) Run(c *gin.Context) error {
 	var req runWorkflowReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	// Into a session the caller owns; a foreign one reads as absent — and a
 	// workflow the caller may not see reads the same way.
-	if _, ok := requireOwnedSession(c, h.sessions, req.SessionID); !ok {
-		return
+	if _, err := requireOwnedSession(c, h.sessions, req.SessionID); err != nil {
+		return err
 	}
 	wf, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
-	if !visibleRow(c, wf.Scope, wf.OwnerID) {
-		return
+	if err := visibleRow(c, wf.Scope, wf.OwnerID); err != nil {
+		return err
 	}
 	if req.WorkspaceID != "" {
 		if _, err := h.starter.BindSessionWorkspace(c.Request.Context(), req.SessionID, req.WorkspaceID); err != nil {
 			_, invalidBinding := errors.AsType[bridge.ErrInvalidBinding](err)
 			switch {
 			case invalidBinding:
-				badRequest(c, err.Error())
+				return badRequest(err.Error())
 			case errors.Is(err, bridge.ErrBindingContention): // transient: the config is being edited, retry
-				conflict(c, err.Error())
+				return conflict(err.Error())
 			default:
-				storeError(c, err)
+				return err
 			}
-			return
 		}
 	}
 	info, err := h.starter.RunWorkflow(c.Request.Context(), c.Param("id"), req.SessionID, strings.TrimSpace(req.Input), store.WorkflowOrigin{Kind: store.OriginPerson})
@@ -101,54 +98,48 @@ func (h *WorkflowHandler) Run(c *gin.Context) {
 		_, taskLimit := errors.AsType[tasks.ErrTaskLimit](err)
 		switch {
 		case errors.Is(err, bridge.ErrWorkflowUnavailable):
-			badRequest(c, err.Error())
+			return badRequest(err.Error())
 		case taskLimit:
-			conflict(c, err.Error())
+			return conflict(err.Error())
 		default:
-			storeError(c, err) // not-found (workflow or session) -> 404, anything else -> 500
+			return err // not-found (workflow or session) -> 404, anything else -> 500
 		}
-		return
 	}
 	c.JSON(http.StatusCreated, info)
+	return nil
 }
 
 // bind decodes and validates an incoming definition, every step's agent
 // included, reporting the failure itself.
-func (h *WorkflowHandler) bind(c *gin.Context, wf *store.Workflow) bool {
+func (h *WorkflowHandler) bind(c *gin.Context, wf *store.Workflow) error {
 	if err := c.ShouldBindJSON(wf); err != nil {
-		badRequest(c, err.Error())
-		return false
+		return badRequest(err.Error())
 	}
 	if err := store.NormalizeWorkflow(wf); err != nil {
-		badRequest(c, err.Error())
-		return false
+		return badRequest(err.Error())
 	}
-	return true
+	return nil
 }
 
 // validateStepAgents checks each step's agent exists AND is one this
 // workflow's scope may reference (decisions §5.29); runs after the scope is stamped.
-func (h *WorkflowHandler) validateStepAgents(c *gin.Context, wf *store.Workflow) bool {
+func (h *WorkflowHandler) validateStepAgents(c *gin.Context, wf *store.Workflow) error {
 	for i := range wf.Steps {
 		ac, err := h.agents.Get(c.Request.Context(), wf.Steps[i].AgentConfigID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				badRequest(c, "step "+wf.Steps[i].ID+": agent_config_id names no agent")
-			} else {
-				internalError(c, err)
+				return badRequest("step " + wf.Steps[i].ID + ": agent_config_id names no agent")
 			}
-			return false
+			return err
 		}
 		if !store.RefVisible(ac.Scope, ac.OwnerID, wf.Scope, wf.OwnerID) {
 			if !callerSees(c, ac.Scope, ac.OwnerID) {
-				badRequest(c, "step "+wf.Steps[i].ID+": agent_config_id names no agent")
-			} else {
-				badRequest(c, "step "+wf.Steps[i].ID+": "+refScopeError("agent", ac.Name, wf.Scope))
+				return badRequest("step " + wf.Steps[i].ID + ": agent_config_id names no agent")
 			}
-			return false
+			return badRequest("step " + wf.Steps[i].ID + ": " + refScopeError("agent", ac.Name, wf.Scope))
 		}
 	}
-	return true
+	return nil
 }
 
 // List responds with every workflow definition.
@@ -160,10 +151,13 @@ func (h *WorkflowHandler) validateStepAgents(c *gin.Context, wf *store.Workflow)
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/workflows [get]
-func (h *WorkflowHandler) List(c *gin.Context) {
-	if list, ok := listVisible(c, h.store.CrudStore); ok {
-		c.JSON(http.StatusOK, list)
+func (h *WorkflowHandler) List(c *gin.Context) error {
+	list, err := listVisible(c, h.store.CrudStore)
+	if err != nil {
+		return err
 	}
+	c.JSON(http.StatusOK, list)
+	return nil
 }
 
 // Get responds with one workflow definition.
@@ -176,10 +170,13 @@ func (h *WorkflowHandler) List(c *gin.Context) {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/workflows/{id} [get]
-func (h *WorkflowHandler) Get(c *gin.Context) {
-	if wf, ok := gatedRow(c, h.store.CrudStore, workflowScope, visibleRow); ok {
-		c.JSON(http.StatusOK, wf)
+func (h *WorkflowHandler) Get(c *gin.Context) error {
+	wf, err := gatedRow(c, h.store.CrudStore, workflowScope, visibleRow)
+	if err != nil {
+		return err
 	}
+	c.JSON(http.StatusOK, wf)
+	return nil
 }
 
 // workflowScope reads a workflow's (scope, owner) pair for the scoped-CRUD gates.
@@ -198,23 +195,23 @@ func workflowScope(w *store.Workflow) (string, string) { return w.Scope, w.Owner
 //	@Failure		409			{object}	ErrorResponse	"duplicate name"
 //	@Security		BearerAuth
 //	@Router			/workflows [post]
-func (h *WorkflowHandler) Create(c *gin.Context) {
+func (h *WorkflowHandler) Create(c *gin.Context) error {
 	var wf store.Workflow
-	if !h.bind(c, &wf) {
-		return
+	if err := h.bind(c, &wf); err != nil {
+		return err
 	}
 	wf.ID, wf.CreatedAt = "", time.Time{} // server-owned
-	if !stampCreateScope(c, &wf.Scope, &wf.OwnerID) {
-		return
+	if err := stampCreateScope(c, &wf.Scope, &wf.OwnerID); err != nil {
+		return err
 	}
-	if !h.validateStepAgents(c, &wf) {
-		return
+	if err := h.validateStepAgents(c, &wf); err != nil {
+		return err
 	}
 	if err := h.store.Create(c.Request.Context(), &wf); err != nil {
-		saveError(c, err) // duplicate name -> 409
-		return
+		return err // duplicate name -> 409
 	}
 	created(c, wf.ID, wf)
+	return nil
 }
 
 // Update overwrites a workflow definition.
@@ -232,37 +229,36 @@ func (h *WorkflowHandler) Create(c *gin.Context) {
 //	@Failure		409			{object}	ErrorResponse	"duplicate name"
 //	@Security		BearerAuth
 //	@Router			/workflows/{id} [put]
-func (h *WorkflowHandler) Update(c *gin.Context) {
+func (h *WorkflowHandler) Update(c *gin.Context) error {
 	var wf store.Workflow
-	if !h.bind(c, &wf) {
-		return
+	if err := h.bind(c, &wf); err != nil {
+		return err
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
-	cur, ok := gatedRow(c, h.store.CrudStore, workflowScope, editableRow)
-	if !ok {
-		return
+	cur, err := gatedRow(c, h.store.CrudStore, workflowScope, editableRow)
+	if err != nil {
+		return err
 	}
 	wf.Scope, wf.OwnerID = cur.Scope, cur.OwnerID
-	if !h.validateStepAgents(c, &wf) {
-		return
+	if err := h.validateStepAgents(c, &wf); err != nil {
+		return err
 	}
 	// Scope and owner come from the row inside the transaction;
 	// ownershipGuard turns a transfer that landed since into 409.
-	err := h.store.Update(ctx, id, &wf, ownershipGuard(cur.Scope, cur.OwnerID, workflowScope,
+	err = h.store.Update(ctx, id, &wf, ownershipGuard(cur.Scope, cur.OwnerID, workflowScope,
 		func(prev *store.Workflow) error {
 			wf.Scope, wf.OwnerID = prev.Scope, prev.OwnerID
 			return nil
 		}))
 	if err != nil {
-		saveError(c, err)
-		return
+		return err
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, updated)
+	return nil
 }
 
 // Delete removes a workflow definition.
@@ -275,17 +271,17 @@ func (h *WorkflowHandler) Update(c *gin.Context) {
 //	@Failure		404	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/workflows/{id} [delete]
-func (h *WorkflowHandler) Delete(c *gin.Context) {
-	cur, ok := gatedRow(c, h.store.CrudStore, workflowScope, deletableRow)
-	if !ok {
-		return
+func (h *WorkflowHandler) Delete(c *gin.Context) error {
+	cur, err := gatedRow(c, h.store.CrudStore, workflowScope, deletableRow)
+	if err != nil {
+		return err
 	}
 	// The workflow store's own delete: its triggers go with it.
 	if err := h.store.DeleteOwnedBy(c.Request.Context(), c.Param("id"), cur.OwnerID); err != nil {
-		saveError(c, err) // moved since the check -> 409
-		return
+		return err // moved since the check -> 409
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // SetScope promotes a workflow to global — after checking every step's agent
@@ -301,33 +297,32 @@ func (h *WorkflowHandler) Delete(c *gin.Context) {
 //	@Failure	409	{object}	ErrorResponse	"name collision in the target scope"
 //	@Security	BearerAuth
 //	@Router		/workflows/{id}/scope [post]
-func (h *WorkflowHandler) SetScope(c *gin.Context) {
-	scope, ok := bindScope(c)
-	if !ok {
-		return
+func (h *WorkflowHandler) SetScope(c *gin.Context) error {
+	scope, err := bindScope(c)
+	if err != nil {
+		return err
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
 	wf, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
-	if !scopeChangeAllowed(c, scope, wf.Scope, wf.OwnerID) {
-		return
+	if err := scopeChangeAllowed(c, scope, wf.Scope, wf.OwnerID); err != nil {
+		return err
 	}
-	if sameScope(c, "workflow", wf.Scope, scope) {
-		return
+	if err := sameScope("workflow", wf.Scope, scope); err != nil {
+		return err
 	}
 	wf.Scope = scope
-	if !h.validateStepAgents(c, wf) {
-		return
+	if err := h.validateStepAgents(c, wf); err != nil {
+		return err
 	}
 	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, wf.OwnerID); err != nil {
-		saveError(c, err)
-		return
+		return err
 	}
 	server.SetAuditDetail(c, "scope="+scope)
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // SetOwner transfers the workflow to another account (admin).
@@ -342,31 +337,28 @@ func (h *WorkflowHandler) SetScope(c *gin.Context) {
 //	@Failure	409	{object}	ErrorResponse	"name collision in the target owner's namespace"
 //	@Security	BearerAuth
 //	@Router		/workflows/{id}/owner [put]
-func (h *WorkflowHandler) SetOwner(c *gin.Context) {
+func (h *WorkflowHandler) SetOwner(c *gin.Context) error {
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		badRequest(c, "user_id is required")
-		return
+		return badRequest("user_id is required")
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
 	wf, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// Step agents are re-validated AS THE NEW OWNER — decisions §5.29.
 	wf.OwnerID = req.UserID
-	if !h.validateStepAgents(c, wf) {
-		return
+	if err := h.validateStepAgents(c, wf); err != nil {
+		return err
 	}
 	if err := store.SetOwnerOf(ctx, h.store.CrudStore, id, req.UserID); err != nil {
 		if errors.Is(err, store.ErrNoSuchUser) {
-			badRequest(c, "no such user")
-			return
+			return badRequest("no such user")
 		}
-		saveError(c, err)
-		return
+		return err
 	}
 	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
+	return nil
 }

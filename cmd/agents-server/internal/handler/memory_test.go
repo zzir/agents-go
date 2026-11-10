@@ -29,13 +29,13 @@ func engineAs(id string, role string, h *MemoryHandler) *gin.Engine {
 		server.SetCurrentUser(c, protocol.UserInfo{ID: id, Email: id + "@example.com", Role: role})
 		c.Next()
 	})
-	e.GET("/memories", h.List)
-	e.POST("/memories", h.Create)
-	e.GET("/memories/:id", h.Get)
-	e.PUT("/memories/:id", h.Update)
-	e.DELETE("/memories/:id", h.Delete)
-	e.GET("/sessions/:id/memory", h.ListSession)
-	e.GET("/sessions/:id/memory/*key", h.ReadSession)
+	e.GET("/memories", wrap(h.List))
+	e.POST("/memories", wrap(h.Create))
+	e.GET("/memories/:id", wrap(h.Get))
+	e.PUT("/memories/:id", wrap(h.Update))
+	e.DELETE("/memories/:id", wrap(h.Delete))
+	e.GET("/sessions/:id/memory", wrap(h.ListSession))
+	e.GET("/sessions/:id/memory/*key", wrap(h.ReadSession))
 	return e
 }
 
@@ -191,7 +191,7 @@ func TestAgentDeleteCascadesItsMemoryOverHTTP(t *testing.T) {
 	aliceID := store.NewID()
 	mount := func(id, role string) *gin.Engine {
 		e := engineAs(id, role, mh)
-		e.DELETE("/agents/:id", ah.Delete)
+		e.DELETE("/agents/:id", wrap(ah.Delete))
 		return e
 	}
 	admin, alice := mount(store.LocalUserID, store.RoleAdmin), mount(aliceID, store.RoleMember)

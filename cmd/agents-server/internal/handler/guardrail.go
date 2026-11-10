@@ -31,8 +31,9 @@ func NewGuardrailHandler(s *store.GuardrailStore, r *guardrails.Resolver) *Guard
 //	@Success	200	{array}	guardrails.Def
 //	@Security	BearerAuth
 //	@Router		/guardrails [get]
-func (h *GuardrailHandler) List(c *gin.Context) {
+func (h *GuardrailHandler) List(c *gin.Context) error {
 	c.JSON(http.StatusOK, nonNilList(h.resolver.List(c.Request.Context())))
+	return nil
 }
 
 func validateGuardrail(g *store.Guardrail) string {
@@ -59,22 +60,20 @@ func validateGuardrail(g *store.Guardrail) string {
 //	@Failure		500			{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/guardrails [post]
-func (h *GuardrailHandler) Create(c *gin.Context) {
+func (h *GuardrailHandler) Create(c *gin.Context) error {
 	var g store.Guardrail
 	if err := c.ShouldBindJSON(&g); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	if msg := validateGuardrail(&g); msg != "" {
-		badRequest(c, msg)
-		return
+		return badRequest(msg)
 	}
 	g.ID, g.CreatedAt = "", time.Time{} // server-owned
 	if err := h.store.Create(c.Request.Context(), &g); err != nil {
-		saveError(c, err) // duplicate (type, name) -> 409
-		return
+		return err // duplicate (type, name) -> 409
 	}
 	created(c, g.ID, g)
+	return nil
 }
 
 // Get responds with a single guardrail by ID.
@@ -88,13 +87,13 @@ func (h *GuardrailHandler) Create(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/guardrails/{id} [get]
-func (h *GuardrailHandler) Get(c *gin.Context) {
+func (h *GuardrailHandler) Get(c *gin.Context) error {
 	g, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, g)
+	return nil
 }
 
 // Update overwrites a guardrail definition and responds with it.
@@ -111,28 +110,25 @@ func (h *GuardrailHandler) Get(c *gin.Context) {
 //	@Failure	500			{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/guardrails/{id} [put]
-func (h *GuardrailHandler) Update(c *gin.Context) {
+func (h *GuardrailHandler) Update(c *gin.Context) error {
 	var g store.Guardrail
 	if err := c.ShouldBindJSON(&g); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	if msg := validateGuardrail(&g); msg != "" {
-		badRequest(c, msg)
-		return
+		return badRequest(msg)
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	if err := h.store.Update(ctx, id, &g); err != nil {
-		saveError(c, err) // duplicate (type, name) -> 409, not-found -> 404
-		return
+		return err // duplicate (type, name) -> 409, not-found -> 404
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, updated)
+	return nil
 }
 
 // Delete removes a guardrail by ID.
@@ -145,10 +141,10 @@ func (h *GuardrailHandler) Update(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/guardrails/{id} [delete]
-func (h *GuardrailHandler) Delete(c *gin.Context) {
+func (h *GuardrailHandler) Delete(c *gin.Context) error {
 	if err := h.store.Delete(c.Request.Context(), c.Param("id")); err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }

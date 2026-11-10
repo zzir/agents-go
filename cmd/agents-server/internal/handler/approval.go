@@ -44,12 +44,11 @@ type SessionApproval struct {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/approvals [get]
-func (h *ApprovalHandler) ListBySession(c *gin.Context) {
+func (h *ApprovalHandler) ListBySession(c *gin.Context) error {
 	ctx := c.Request.Context()
 	items, err := h.store.ListBySession(ctx, c.Param("id"))
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	out := make([]SessionApproval, 0, len(items))
 	for _, it := range items {
@@ -59,13 +58,13 @@ func (h *ApprovalHandler) ListBySession(c *gin.Context) {
 	// tagged with their task.
 	taskItems, err := h.store.ListByParentTasks(ctx, c.Param("id"))
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	for _, it := range taskItems {
 		out = append(out, SessionApproval{PendingApproval: it.PendingApproval, TaskID: it.TaskID, TaskLabel: it.TaskLabel})
 	}
 	c.JSON(http.StatusOK, out)
+	return nil
 }
 
 // List responds with every decision the caller's conversations wait on.
@@ -78,14 +77,14 @@ func (h *ApprovalHandler) ListBySession(c *gin.Context) {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/approvals [get]
-func (h *ApprovalHandler) List(c *gin.Context) {
+func (h *ApprovalHandler) List(c *gin.Context) error {
 	u, _ := server.CurrentUser(c)
 	states, err := h.runner.SessionStatuses(c.Request.Context(), u.ID, nil)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, states.Pending())
+	return nil
 }
 
 type rejectReq struct {
@@ -113,12 +112,12 @@ type approvalResultResp struct {
 //	@Failure		500				{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/approvals/{tool_call_id}/approve [post]
-func (h *ApprovalHandler) Approve(c *gin.Context) {
+func (h *ApprovalHandler) Approve(c *gin.Context) error {
 	var req approveReq
-	if !bindOptional(c, &req) { // absent → once
-		return
+	if err := bindOptional(c, &req); err != nil { // absent → once
+		return err
 	}
-	h.resolve(c, true, req.toScope(), "")
+	return h.resolve(c, true, req.toScope(), "")
 }
 
 // Reject rejects the pending tool call identified by the tool_call_id path parameter.
@@ -137,12 +136,12 @@ func (h *ApprovalHandler) Approve(c *gin.Context) {
 //	@Failure		500				{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/approvals/{tool_call_id}/reject [post]
-func (h *ApprovalHandler) Reject(c *gin.Context) {
+func (h *ApprovalHandler) Reject(c *gin.Context) error {
 	var req rejectReq
-	if !bindOptional(c, &req) {
-		return
+	if err := bindOptional(c, &req); err != nil {
+		return err
 	}
-	h.resolve(c, false, bridge.ApprovalOnce, req.Reason)
+	return h.resolve(c, false, bridge.ApprovalOnce, req.Reason)
 }
 
 // approveAllResp names the resumed run and how many calls were approved.
@@ -167,18 +166,17 @@ type approveAllResp struct {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/approvals/approve-all [post]
-func (h *ApprovalHandler) ApproveAll(c *gin.Context) {
+func (h *ApprovalHandler) ApproveAll(c *gin.Context) error {
 	server.SetAuditDetail(c, "approve-all")
 	runID, n, err := h.runner.ApproveAll(c.Request.Context(), c.Param("id"), nil)
 	if err != nil {
 		if errors.Is(err, bridge.ErrNothingToApproveAll) {
-			badRequest(c, err.Error())
-			return
+			return badRequest(err.Error())
 		}
-		h.resolveError(c, err)
-		return
+		return h.resolveError(err)
 	}
 	c.JSON(http.StatusAccepted, approveAllResp{RunID: runID, Approved: n})
+	return nil
 }
 
 // approveReq is the optional body of an approve request. Scope extends an
@@ -191,13 +189,12 @@ func (r approveReq) toScope() bridge.ApprovalScope {
 	return bridge.ParseApprovalScope(r.Scope)
 }
 
-func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.ApprovalScope, reason string) {
+func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.ApprovalScope, reason string) error {
 	toolCallID := c.Param("tool_call_id")
 	server.SetAuditDetail(c, auditDecision(approve, scope, pendingCall(c)))
 	runID, _, err := h.runner.ResolveApproval(c.Request.Context(), toolCallID, approve, scope, reason, nil)
 	if err != nil {
-		h.resolveError(c, err)
-		return
+		return h.resolveError(err)
 	}
 	// A decision that resumed or started a run names it; a rejected workflow
 	// step starts nothing — the execution is cancelled and no run exists.
@@ -206,53 +203,42 @@ func (h *ApprovalHandler) resolve(c *gin.Context, approve bool, scope bridge.App
 		status = string(bridge.RunCancelled)
 	}
 	c.JSON(http.StatusAccepted, approvalResultResp{RunID: runID, Status: status})
+	return nil
 }
 
-func (h *ApprovalHandler) resolveError(c *gin.Context, err error) {
+func (h *ApprovalHandler) resolveError(err error) error {
 	// Draining: retryable, not an internal failure.
 	if down, ok := errors.AsType[bridge.ErrShuttingDown](err); ok {
-		unavailable(c, down.Error())
-		return
+		return unavailable(down.Error())
 	}
 	if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
-		conflict(c, "session already has an active run: "+busy.RunID)
-		return
+		return conflict("session already has an active run: " + busy.RunID)
 	}
 	// Unresumable by version: 409 with the reason; the stale record is already
 	// discarded.
 	if stale, ok := errors.AsType[*bridge.StaleApprovalStateError](err); ok {
-		conflict(c, stale.Error())
-		return
+		return conflict(stale.Error())
 	}
 	// The paused run reached a terminal state (a concurrent stop won): 409.
 	if notResumable, ok := errors.AsType[bridge.ErrRunNotResumable](err); ok {
-		conflict(c, notResumable.Error())
-		return
+		return conflict(notResumable.Error())
 	}
 	// The task was stopped/reaped before the decision landed — 409, not 500.
 	if void, ok := errors.AsType[*bridge.ApprovalVoidError](err); ok {
-		conflict(c, void.Error())
-		return
+		return conflict(void.Error())
 	}
 	// The task was retried past the paused run and the approval discarded: 409.
 	if staleAttempt, ok := errors.AsType[*bridge.StaleApprovalAttemptError](err); ok {
-		conflict(c, staleAttempt.Error())
-		return
+		return conflict(staleAttempt.Error())
 	}
 	// The paused run had not finished settling; the row is kept for a retry: 409.
 	if notReady, ok := errors.AsType[*bridge.ApprovalNotReadyError](err); ok {
-		conflict(c, notReady.Error())
-		return
+		return conflict(notReady.Error())
 	}
 	if deleting, ok := errors.AsType[bridge.ErrSessionDeleting](err); ok {
-		conflict(c, deleting.Error())
-		return
+		return conflict(deleting.Error())
 	}
-	if errors.Is(err, store.ErrNotFound) {
-		notFound(c)
-		return
-	}
-	internalError(c, err)
+	return err
 }
 
 // auditDecision is the audit detail of an approval decision: the verdict,

@@ -39,8 +39,8 @@ func TestMalformedReferenceNamesNothing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := testdb.New(t)
 	engine := newTestEngine()
-	engine.POST("/agents", testAgentConfigHandler(db).Create)
-	engine.POST("/workflows", NewWorkflowHandler(store.NewWorkflowStore(db), store.NewAgentConfigStore(db), store.NewSessionStore(db), nil).Create)
+	engine.POST("/agents", wrap(testAgentConfigHandler(db).Create))
+	engine.POST("/workflows", wrap(NewWorkflowHandler(store.NewWorkflowStore(db), store.NewAgentConfigStore(db), store.NewSessionStore(db), nil).Create))
 
 	for path, body := range map[string]string{
 		"/agents":    `{"name":"a","model":"m","provider_id":"nope"}`,

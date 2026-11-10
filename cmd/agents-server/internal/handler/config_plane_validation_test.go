@@ -60,7 +60,7 @@ func TestSandboxValidation(t *testing.T) {
 	db := testdb.New(t)
 	h := testSandboxHandler(db, sandboxes.NewManager())
 	engine := newTestEngine()
-	engine.POST("/sandboxes", h.Create)
+	engine.POST("/sandboxes", wrap(h.Create))
 
 	cases := []struct {
 		name string
@@ -98,7 +98,7 @@ func TestMcpServerNameUnique(t *testing.T) {
 	db := testdb.New(t)
 	h := NewMcpServerHandler(store.NewMcpServerStore(db), mcpservers.NewManager(t.Context()), nil, "")
 	engine := newTestEngine()
-	engine.POST("/mcp-servers", h.Create)
+	engine.POST("/mcp-servers", wrap(h.Create))
 
 	body := `{"name":"fs","config":{"endpoint":"http://x"}}`
 	if w := doJSON(t, engine, http.MethodPost, "/mcp-servers", body); w.Code != http.StatusCreated {
@@ -118,7 +118,7 @@ func TestMcpServerToolsNotFoundVsNotConnected(t *testing.T) {
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewMcpServerHandler(mcpStore, mcpservers.NewManager(t.Context()), nil, "")
 	engine := newTestEngine()
-	engine.GET("/mcp-servers/:id/tools", h.Tools)
+	engine.GET("/mcp-servers/:id/tools", wrap(h.Tools))
 
 	// Missing server -> 404.
 	if w := doJSON(t, engine, http.MethodGet, "/mcp-servers/ghost/tools", ""); w.Code != http.StatusNotFound {

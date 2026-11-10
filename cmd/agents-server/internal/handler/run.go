@@ -65,26 +65,24 @@ type createRunResp struct {
 //	@Failure		409		{object}	ErrorResponse	"session already has an active run, or the sandbox config kept changing under the bind"
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/runs [post]
-func (h *RunHandler) Create(c *gin.Context) {
+func (h *RunHandler) Create(c *gin.Context) error {
 	sessionID := c.Param("id")
 	var req createRunReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 
 	if wait, ok := preferWait(c.Request); ok {
 		c.Header("Preference-Applied", "wait="+strconv.Itoa(int(wait/time.Second)))
-		h.createAndWait(c, sessionID, req, wait)
-		return
+		return h.createAndWait(c, sessionID, req, wait)
 	}
 
 	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.WorkspaceID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, nil)
 	if err != nil {
-		h.startError(c, err)
-		return
+		return h.startError(err)
 	}
 	c.JSON(http.StatusCreated, createRunResp{RunID: runID, SessionID: sessionID, Status: string(bridge.RunRunning)})
+	return nil
 }
 
 // MaxPreferWait caps how long `Prefer: wait=N` may hold a connection: a run
@@ -115,15 +113,14 @@ func preferWait(r *http.Request) (time.Duration, bool) {
 
 // createAndWait starts a run and holds the request up to wait for its
 // outcome; when the wait passes first the answer is 202 and the run keeps executing.
-func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createRunReq, wait time.Duration) {
+func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createRunReq, wait time.Duration) error {
 	// Buffered so onDone never blocks if the client hangs up first.
 	done := make(chan *bridge.RunOutcome, 1)
 	runID, err := h.runner.StartRun(sessionID, req.AgentConfigID, req.WorkspaceID, bridge.RunInput{Text: req.Input, AttachmentIDs: req.AttachmentIDs}, req.Plan, func(res *bridge.RunOutcome) {
 		done <- res
 	})
 	if err != nil {
-		h.startError(c, err)
-		return
+		return h.startError(err)
 	}
 
 	timer := time.NewTimer(wait)
@@ -131,7 +128,7 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 	select {
 	case <-c.Request.Context().Done():
 		// Client hung up; the run keeps executing in the hub.
-		return
+		return nil
 	case <-timer.C:
 		c.JSON(http.StatusAccepted, createRunResp{RunID: runID, SessionID: sessionID, Status: string(bridge.RunRunning)})
 	case res := <-done:
@@ -141,47 +138,42 @@ func (h *RunHandler) createAndWait(c *gin.Context, sessionID string, req createR
 			// the same run id.
 			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunInterrupted)})
 		case res.Cancelled:
-			abortError(c, http.StatusBadGateway, protocol.CodeUpstream, "run cancelled")
+			return upstream("run cancelled")
 		case res.ErrCode != "":
-			abortError(c, http.StatusBadGateway, protocol.CodeUpstream, res.ErrMessage)
+			return upstream(res.ErrMessage)
 		default:
 			c.JSON(http.StatusOK, gin.H{"run_id": runID, "session_id": sessionID, "status": string(bridge.RunCompleted), "final_output": res.FinalText})
 		}
 	}
+	return nil
 }
 
-func (h *RunHandler) startError(c *gin.Context, err error) {
+func (h *RunHandler) startError(err error) error {
 	if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
-		conflict(c, "session already has an active run: "+busy.RunID)
-		return
+		return conflict("session already has an active run: " + busy.RunID)
 	}
 	// A sandbox binding that can never work (unknown id, unhonorable workdir): 400.
 	if invalid, ok := errors.AsType[bridge.ErrInvalidBinding](err); ok {
-		badRequest(c, invalid.Error())
-		return
+		return badRequest(invalid.Error())
 	}
 	// The bind kept losing its race against config edits: transient, retry.
 	if errors.Is(err, bridge.ErrBindingContention) {
-		conflict(c, err.Error())
-		return
+		return conflict(err.Error())
 	}
 	// The session is at its live-task cap: 409.
 	if limit, ok := errors.AsType[bridge.ErrTaskLimit](err); ok {
-		conflict(c, limit.Error())
-		return
+		return conflict(limit.Error())
 	}
 	// The session's delete cascade is in progress: 409.
 	if deleting, ok := errors.AsType[bridge.ErrSessionDeleting](err); ok {
-		conflict(c, deleting.Error())
-		return
+		return conflict(deleting.Error())
 	}
 	// The server is draining: 503, retry against the next process.
 	if down, ok := errors.AsType[bridge.ErrShuttingDown](err); ok {
-		unavailable(c, down.Error())
-		return
+		return unavailable(down.Error())
 	}
 	// StartRun's session lookup: unknown session 404, other DB errors 500.
-	storeError(c, err)
+	return err
 }
 
 // Get reports the current status of the run identified by the id path parameter.
@@ -194,13 +186,13 @@ func (h *RunHandler) startError(c *gin.Context, err error) {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/runs/{id} [get]
-func (h *RunHandler) Get(c *gin.Context) {
+func (h *RunHandler) Get(c *gin.Context) error {
 	info, ok := h.runner.Hub().Info(c.Param("id"))
 	if !ok {
-		notFound(c)
-		return
+		return errNotFound
 	}
 	c.JSON(http.StatusOK, info)
+	return nil
 }
 
 // Cancel cancels the run identified by the id path parameter.
@@ -214,10 +206,9 @@ func (h *RunHandler) Get(c *gin.Context) {
 //	@Failure		404		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/runs/{id}/cancel [post]
-func (h *RunHandler) Cancel(c *gin.Context) {
+func (h *RunHandler) Cancel(c *gin.Context) error {
 	if _, ok := h.runner.Hub().Info(c.Param("id")); !ok {
-		notFound(c)
-		return
+		return errNotFound
 	}
 	if c.Query("mode") == "graceful" {
 		h.runner.StopRunAfterTurn(c.Param("id"))
@@ -225,6 +216,7 @@ func (h *RunHandler) Cancel(c *gin.Context) {
 		h.runner.CancelRun(c.Param("id"))
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // injectReq is the body of an inject request.
@@ -265,42 +257,37 @@ func injectRefusal(status bridge.RunStatus) string {
 //	@Failure		409		{object}	ErrorResponse	"the run is paused for approval, still starting, or has ended"
 //	@Security		BearerAuth
 //	@Router			/runs/{id}/inject [post]
-func (h *RunHandler) Inject(c *gin.Context) {
+func (h *RunHandler) Inject(c *gin.Context) error {
 	var req injectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	switch req.Queue {
 	case protocol.InjectQueueSteer, protocol.InjectQueueNextTurn, protocol.InjectQueueFollowUp:
 	default:
-		badRequest(c, "queue must be steer, next_turn or follow_up")
-		return
+		return badRequest("queue must be steer, next_turn or follow_up")
 	}
 	if strings.TrimSpace(req.Input) == "" {
-		badRequest(c, "input is required")
-		return
+		return badRequest("input is required")
 	}
 	runID := c.Param("id")
 	info, ok := h.runner.Hub().Info(runID)
 	if !ok {
-		notFound(c)
-		return
+		return errNotFound
 	}
 	delivered, err := h.runner.Hub().Inject(runID, req.Queue, req.Input)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	if !delivered {
 		// Read again: the run may have moved between the two looks.
 		if cur, ok := h.runner.Hub().Info(runID); ok {
 			info = cur
 		}
-		conflict(c, injectRefusal(info.Status))
-		return
+		return conflict(injectRefusal(info.Status))
 	}
 	c.JSON(http.StatusAccepted, injectResp{RunID: runID, Queue: req.Queue})
+	return nil
 }
 
 // Events streams the run's events as Server-Sent Events, resumable by
@@ -317,17 +304,17 @@ func (h *RunHandler) Inject(c *gin.Context) {
 //	@Failure		404			{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/runs/{id}/events [get]
-func (h *RunHandler) Events(c *gin.Context) {
+func (h *RunHandler) Events(c *gin.Context) error {
 	runID := c.Param("id")
 	var fromSeq int
-	var ok bool
+	var err error
 	if lastID := c.GetHeader("Last-Event-ID"); lastID != "" {
-		fromSeq, ok = nonNegativeInt(c, "Last-Event-ID", lastID)
+		fromSeq, err = nonNegativeInt("Last-Event-ID", lastID)
 	} else {
-		fromSeq, ok = queryInt(c, "from_seq")
+		fromSeq, err = queryInt(c, "from_seq")
 	}
-	if !ok {
-		return
+	if err != nil {
+		return err
 	}
 
 	ctx := c.Request.Context()
@@ -353,8 +340,7 @@ func (h *RunHandler) Events(c *gin.Context) {
 
 	cancel, done, ok := h.runner.Hub().SubscribeSeq(runID, fromSeq, sink)
 	if !ok {
-		notFound(c)
-		return
+		return errNotFound
 	}
 	defer cancel()
 
@@ -416,4 +402,5 @@ func (h *RunHandler) Events(c *gin.Context) {
 			return false
 		}
 	})
+	return nil
 }

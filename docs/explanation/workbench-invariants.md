@@ -578,3 +578,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     that line belongs in the docs, not under the field. Text a server or a
     person supplies (an MCP tool's, a skill's) is clipped to one line, whole on
     hover. `TestDescriptionsFitOneLine` holds the settings registry to it.
+100. **A handler returns its failure; one table answers it.** A REST handler is
+     `func(*gin.Context) error` mounted through `wrap`, a helper that can refuse
+     returns the error, and nothing writes an error envelope itself. `classify`
+     (`handler/apierror.go`) maps the store's sentinels once; a handler that
+     knows a better answer returns `badRequest`, `conflict`, … — decisions §5.101.

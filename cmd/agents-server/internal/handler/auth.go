@@ -45,20 +45,20 @@ func NewAuthHandler(svc *authn.Service, tokens *store.AuthTokenStore, users *sto
 //	@Failure	403		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/audit [get]
-func (h *AuthHandler) ListAudit(c *gin.Context) {
-	limit, ok := queryInt(c, "limit")
-	if !ok {
-		return
+func (h *AuthHandler) ListAudit(c *gin.Context) error {
+	limit, err := queryInt(c, "limit")
+	if err != nil {
+		return err
 	}
 	list, err := h.audit.ListRecent(c.Request.Context(), limit, c.Query("before"))
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	if list == nil {
 		list = []store.AuditEvent{}
 	}
 	c.JSON(http.StatusOK, list)
+	return nil
 }
 
 // ListUsers lists every account — the admin's user management view.
@@ -70,16 +70,16 @@ func (h *AuthHandler) ListAudit(c *gin.Context) {
 //	@Failure	403	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/users [get]
-func (h *AuthHandler) ListUsers(c *gin.Context) {
+func (h *AuthHandler) ListUsers(c *gin.Context) error {
 	list, err := h.users.List(c.Request.Context())
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	if list == nil {
 		list = []store.User{}
 	}
 	c.JSON(http.StatusOK, list)
+	return nil
 }
 
 // UserLabel is one entry of the id→person directory every member may read.
@@ -98,17 +98,17 @@ type UserLabel struct {
 //	@Failure	403	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/user-labels [get]
-func (h *AuthHandler) ListUserLabels(c *gin.Context) {
+func (h *AuthHandler) ListUserLabels(c *gin.Context) error {
 	list, err := h.users.List(c.Request.Context())
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	labels := make([]UserLabel, 0, len(list))
 	for _, u := range list {
 		labels = append(labels, UserLabel{ID: u.ID, Name: u.Name, Email: u.Email})
 	}
 	c.JSON(http.StatusOK, labels)
+	return nil
 }
 
 // PatchUser changes an account's role or switches it off; refused when it
@@ -126,24 +126,20 @@ func (h *AuthHandler) ListUserLabels(c *gin.Context) {
 //	@Failure	409		{object}	ErrorResponse	"that would leave no admin"
 //	@Security	BearerAuth
 //	@Router		/auth/users/{id} [patch]
-func (h *AuthHandler) PatchUser(c *gin.Context) {
+func (h *AuthHandler) PatchUser(c *gin.Context) error {
 	var req UserPatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil || (req.Role == nil && req.Disabled == nil) {
-		badRequest(c, "role and/or disabled are required")
-		return
+		return badRequest("role and/or disabled are required")
 	}
 	if req.Role != nil && *req.Role != store.RoleAdmin && *req.Role != store.RoleMember {
-		badRequest(c, "role must be admin or member")
-		return
+		return badRequest("role must be admin or member")
 	}
 	id := c.Param("id")
 	if id == store.LocalUserID {
-		badRequest(c, "the local account is not managed")
-		return
+		return badRequest("the local account is not managed")
 	}
 	if me, _ := server.CurrentUser(c); me.ID == id {
-		badRequest(c, "you cannot change your own account")
-		return
+		return badRequest("you cannot change your own account")
 	}
 	var detail []string
 	if req.Role != nil {
@@ -155,23 +151,21 @@ func (h *AuthHandler) PatchUser(c *gin.Context) {
 	server.SetAuditDetail(c, strings.Join(detail, " "))
 	err := h.users.Patch(c.Request.Context(), id, store.UserPatch{Role: req.Role, Disabled: req.Disabled})
 	if errors.Is(err, store.ErrLastAdmin) {
-		conflict(c, err.Error())
-		return
+		return conflict(err.Error())
 	}
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// Close what the old role opened; a still-enabled client reconnects as what
 	// it is now.
 	h.Conns.CloseForUser(id, "account changed")
 	if req.Disabled != nil && *req.Disabled {
 		if _, err := h.tokens.RevokeAllForUser(c.Request.Context(), id); err != nil {
-			internalError(c, err)
-			return
+			return err
 		}
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // UserPatchRequest is the body of PATCH /auth/users/:id.
@@ -191,36 +185,32 @@ type UserPatchRequest struct {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/users/{id}/tokens [delete]
-func (h *AuthHandler) RevokeUserTokens(c *gin.Context) {
+func (h *AuthHandler) RevokeUserTokens(c *gin.Context) error {
 	id := c.Param("id")
 	if _, err := h.users.ByID(c.Request.Context(), id); err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	n, err := h.tokens.RevokeAllForUser(c.Request.Context(), id)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	server.SetAuditDetail(c, "tokens="+strconv.FormatInt(n, 10))
 	h.Conns.CloseForUser(id, "signed out by an admin")
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // requirePATMode gates the PAT endpoints: in token mode a PAT could be minted
 // but never authenticate (docs/howto/workbench-auth.md).
-func (h *AuthHandler) requirePATMode(c *gin.Context) (protocol.UserInfo, bool) {
+func (h *AuthHandler) requirePATMode(c *gin.Context) (protocol.UserInfo, error) {
 	if h.svc.Mode() != authn.ModeOAuth {
-		c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation,
-			"personal access tokens require --auth oauth; token mode authenticates with the static token"))
-		return protocol.UserInfo{}, false
+		return protocol.UserInfo{}, badRequest("personal access tokens require --auth oauth; token mode authenticates with the static token")
 	}
 	u, ok := server.CurrentUser(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
-		return protocol.UserInfo{}, false
+		return protocol.UserInfo{}, unauthorized("unauthorized")
 	}
-	return u, true
+	return u, nil
 }
 
 func patView(t *store.AuthToken) protocol.PatView {
@@ -244,21 +234,21 @@ func patView(t *store.AuthToken) protocol.PatView {
 //	@Failure	400	{object}	ErrorResponse	"token mode"
 //	@Security	BearerAuth
 //	@Router		/auth/tokens [get]
-func (h *AuthHandler) ListTokens(c *gin.Context) {
-	u, ok := h.requirePATMode(c)
-	if !ok {
-		return
+func (h *AuthHandler) ListTokens(c *gin.Context) error {
+	u, err := h.requirePATMode(c)
+	if err != nil {
+		return err
 	}
 	list, err := h.tokens.ListByUser(c.Request.Context(), u.ID, store.TokenKindPAT)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	out := make([]protocol.PatView, 0, len(list))
 	for i := range list {
 		out = append(out, patView(&list[i]))
 	}
 	c.JSON(http.StatusOK, out)
+	return nil
 }
 
 // CreateToken mints a personal access token. The response carries the
@@ -272,19 +262,17 @@ func (h *AuthHandler) ListTokens(c *gin.Context) {
 //	@Failure	400	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/tokens [post]
-func (h *AuthHandler) CreateToken(c *gin.Context) {
-	u, ok := h.requirePATMode(c)
-	if !ok {
-		return
+func (h *AuthHandler) CreateToken(c *gin.Context) error {
+	u, err := h.requirePATMode(c)
+	if err != nil {
+		return err
 	}
 	var req struct {
 		Name          string `json:"name"`
 		ExpiresInDays int    `json:"expires_in_days"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" || req.ExpiresInDays < 0 {
-		c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation,
-			"a token needs a name; expires_in_days is optional (0 = never)"))
-		return
+		return badRequest("a token needs a name; expires_in_days is optional (0 = never)")
 	}
 	var expires time.Time
 	if req.ExpiresInDays > 0 {
@@ -292,11 +280,11 @@ func (h *AuthHandler) CreateToken(c *gin.Context) {
 	}
 	secret, minted, err := h.tokens.Mint(c.Request.Context(), u.ID, store.TokenKindPAT, strings.TrimSpace(req.Name), expires)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	server.SetAuditResource(c, minted.ID)
 	c.JSON(http.StatusCreated, protocol.PatCreated{Token: secret, Pat: patView(minted)})
+	return nil
 }
 
 // DeleteToken revokes one of the caller's personal access tokens.
@@ -308,18 +296,18 @@ func (h *AuthHandler) CreateToken(c *gin.Context) {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/tokens/{id} [delete]
-func (h *AuthHandler) DeleteToken(c *gin.Context) {
-	u, ok := h.requirePATMode(c)
-	if !ok {
-		return
+func (h *AuthHandler) DeleteToken(c *gin.Context) error {
+	u, err := h.requirePATMode(c)
+	if err != nil {
+		return err
 	}
 	if err := h.tokens.Revoke(c.Request.Context(), c.Param("id"), u.ID); err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// Close the user's connections; those on other credentials reconnect and carry on.
 	h.Conns.CloseForUser(u.ID, "token revoked")
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // Config reports how to authenticate, for the login page.
@@ -329,8 +317,9 @@ func (h *AuthHandler) DeleteToken(c *gin.Context) {
 //	@Produce	json
 //	@Success	200	{object}	protocol.AuthConfig
 //	@Router		/auth/config [get]
-func (h *AuthHandler) Config(c *gin.Context) {
+func (h *AuthHandler) Config(c *gin.Context) error {
 	c.JSON(http.StatusOK, h.svc.ConfigView())
+	return nil
 }
 
 // Login validates the static token (token mode). In OAuth mode token login is
@@ -344,26 +333,24 @@ func (h *AuthHandler) Config(c *gin.Context) {
 //	@Failure	400	{object}	ErrorResponse	"malformed body, or token login disabled (OAuth mode)"
 //	@Failure	401	{object}	ErrorResponse
 //	@Router		/auth/login [post]
-func (h *AuthHandler) Login(c *gin.Context) {
+func (h *AuthHandler) Login(c *gin.Context) error {
 	if h.svc.Mode() != authn.ModeToken {
-		c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation, "token login is disabled; sign in through OAuth"))
-		return
+		return badRequest("token login is disabled; sign in through OAuth")
 	}
 	var req struct {
 		Token string `json:"token"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation, "invalid request"))
-		return
+		return badRequest("invalid request")
 	}
 	if !h.svc.StaticOK(req.Token) {
-		c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "invalid token"))
-		return
+		return unauthorized("invalid token")
 	}
 	if u, err := h.svc.Authenticate(c.Request.Context(), req.Token); err == nil {
 		server.SetAuditActor(c, u) // a login is the one line worth having on this route
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+	return nil
 }
 
 // Check is the SPA's stored-credential probe: an authenticated route (the
@@ -376,8 +363,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 //	@Failure	401	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/check [get]
-func (h *AuthHandler) Check(c *gin.Context) {
+func (h *AuthHandler) Check(c *gin.Context) error {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+	return nil
 }
 
 // Me reports the authenticated caller.
@@ -389,13 +377,13 @@ func (h *AuthHandler) Check(c *gin.Context) {
 //	@Failure	401	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/me [get]
-func (h *AuthHandler) Me(c *gin.Context) {
+func (h *AuthHandler) Me(c *gin.Context) error {
 	u, ok := server.CurrentUser(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "unauthorized"))
-		return
+		return unauthorized("unauthorized")
 	}
 	c.JSON(http.StatusOK, u)
+	return nil
 }
 
 // OAuthStart redirects the browser into the named provider's authorize flow.
@@ -406,11 +394,10 @@ func (h *AuthHandler) Me(c *gin.Context) {
 //	@Success	302			"redirect to the provider's authorize URL"
 //	@Failure	404			{object}	ErrorResponse	"unknown provider (or token mode)"
 //	@Router		/auth/oauth/{provider}/start [get]
-func (h *AuthHandler) OAuthStart(c *gin.Context) {
+func (h *AuthHandler) OAuthStart(c *gin.Context) error {
 	authURL, nonce, err := h.svc.Begin(c.Param("provider"))
 	if err != nil {
-		notFound(c)
-		return
+		return errNotFound
 	}
 	// HttpOnly, Lax, and as short-lived as the pending login —
 	// docs/howto/workbench-auth.md.
@@ -420,6 +407,7 @@ func (h *AuthHandler) OAuthStart(c *gin.Context) {
 		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
 	})
 	c.Redirect(http.StatusFound, authURL)
+	return nil
 }
 
 // OAuthCallback finishes a login and always redirects into the SPA: success
@@ -433,12 +421,13 @@ func (h *AuthHandler) OAuthStart(c *gin.Context) {
 //	@Param		error		query	string	false	"The provider's error (a cancelled consent)"
 //	@Success	302			"redirect into the SPA"
 //	@Router		/auth/oauth/{provider}/callback [get]
-func (h *AuthHandler) OAuthCallback(c *gin.Context) {
+func (h *AuthHandler) OAuthCallback(c *gin.Context) error {
 	name, secure := h.svc.LoginCookie()
 	nonce, _ := c.Cookie(name)
 	http.SetCookie(c.Writer, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
 	redirect := h.svc.Complete(c.Request.Context(), c.Param("provider"), c.Query("state"), c.Query("code"), nonce, c.Query("error"))
 	c.Redirect(http.StatusFound, redirect)
+	return nil
 }
 
 // Exchange trades the callback's one-time code for the session token — the
@@ -452,21 +441,20 @@ func (h *AuthHandler) OAuthCallback(c *gin.Context) {
 //	@Failure	400	{object}	ErrorResponse
 //	@Failure	401	{object}	ErrorResponse	"unknown, used, or expired code"
 //	@Router		/auth/exchange [post]
-func (h *AuthHandler) Exchange(c *gin.Context) {
+func (h *AuthHandler) Exchange(c *gin.Context) error {
 	var req struct {
 		Code string `json:"code"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Code == "" {
-		c.JSON(http.StatusBadRequest, protocol.NewErrorResponse(protocol.CodeValidation, "invalid request"))
-		return
+		return badRequest("invalid request")
 	}
 	token, user, ok := h.svc.Exchange(req.Code)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, protocol.NewErrorResponse(protocol.CodeUnauthorized, "unknown or expired code"))
-		return
+		return unauthorized("unknown or expired code")
 	}
 	server.SetAuditActor(c, user) // the exchange IS the completed login
 	c.JSON(http.StatusOK, protocol.AuthSession{Token: token, User: user})
+	return nil
 }
 
 // Logout revokes the presented session token (OAuth mode); a no-op success in
@@ -478,13 +466,13 @@ func (h *AuthHandler) Exchange(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/auth/logout [post]
-func (h *AuthHandler) Logout(c *gin.Context) {
+func (h *AuthHandler) Logout(c *gin.Context) error {
 	if err := h.svc.Logout(c.Request.Context(), server.BearerToken(c)); err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	if u, ok := server.CurrentUser(c); ok {
 		h.Conns.CloseForUser(u.ID, "signed out")
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }

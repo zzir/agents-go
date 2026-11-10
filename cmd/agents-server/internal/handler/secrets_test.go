@@ -92,8 +92,8 @@ func TestProviderUpdateRejectsMaskedKeyAcrossDestinationChange(t *testing.T) {
 	db := testdb.New(t)
 	h := NewProviderHandler(store.NewProviderStore(db))
 	engine := newTestEngine()
-	engine.POST("/providers", h.Create)
-	engine.PUT("/providers/:id", h.Update)
+	engine.POST("/providers", wrap(h.Create))
+	engine.PUT("/providers/:id", wrap(h.Update))
 
 	w := doJSON(t, engine, http.MethodPost, "/providers",
 		`{"name":"glm","type":"openai","api_key":"sk-glm-real","base_url":"https://x"}`)

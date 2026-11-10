@@ -621,7 +621,7 @@ func TestSessionReassignRefusesALiveTaskInTheTree(t *testing.T) {
 	}
 	h := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions, d.Stopper = sessions, runner }))
 	engine := newTestEngine()
-	engine.PUT("/sessions/:id/owner", h.SetOwner)
+	engine.PUT("/sessions/:id/owner", wrap(h.SetOwner))
 
 	toOther := `{"user_id":"` + otherUser.ID + `"}`
 	if w := doJSON(t, engine, http.MethodPut, "/sessions/"+parent.ID+"/owner", toOther); w.Code != http.StatusConflict {

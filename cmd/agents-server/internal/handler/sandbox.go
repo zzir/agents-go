@@ -75,16 +75,16 @@ func (r *Retirer) bump(ctx context.Context, sandboxID string) error {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sandboxes [get]
-func (h *SandboxHandler) List(c *gin.Context) {
+func (h *SandboxHandler) List(c *gin.Context) error {
 	rows, err := h.store.List(c.Request.Context())
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	for i := range rows {
 		rows[i] = sanitizeSandboxConfig(rows[i])
 	}
 	c.JSON(http.StatusOK, nonNilList(rows))
+	return nil
 }
 
 type sandboxReq struct {
@@ -105,20 +105,17 @@ func (r sandboxReq) toSandbox() *store.Sandbox {
 
 // validate enforces the POLICY layer of a sandbox write: a name, and a type
 // this build carries. Field-level validation is store.NormalizeSandboxConfig's.
-func (h *SandboxHandler) validate(c *gin.Context, req *sandboxReq) bool {
+func (h *SandboxHandler) validate(req *sandboxReq) error {
 	if req.Name == "" {
-		badRequest(c, "name is required")
-		return false
+		return badRequest("name is required")
 	}
 	if req.Type == "" {
-		badRequest(c, "type is required")
-		return false
+		return badRequest("type is required")
 	}
 	if !slices.Contains(store.SandboxTypes, req.Type) {
-		badRequest(c, "type must be one of "+strings.Join(store.SandboxTypes, ", ")+", got "+req.Type)
-		return false
+		return badRequest("type must be one of " + strings.Join(store.SandboxTypes, ", ") + ", got " + req.Type)
 	}
-	return true
+	return nil
 }
 
 // Create persists a new sandbox from the request body.
@@ -134,35 +131,32 @@ func (h *SandboxHandler) validate(c *gin.Context, req *sandboxReq) bool {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sandboxes [post]
-func (h *SandboxHandler) Create(c *gin.Context) {
+func (h *SandboxHandler) Create(c *gin.Context) error {
 	var req sandboxReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
-	if !h.validate(c, &req) {
-		return
+	if err := h.validate(&req); err != nil {
+		return err
 	}
 	sb := req.toSandbox()
 	// No stored config yet: mask sentinels resolve to empty.
 	restored, err := restoreSandboxConfig(sb.Config, nil)
 	if err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	sb.Config = restored
 	canonical, err := store.NormalizeSandboxConfig(sb.Type, sb.Config)
 	if err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	sb.Config = canonical
 	if err := h.store.Create(c.Request.Context(), sb); err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	view := sanitizeSandboxConfig(*sb)
 	created(c, view.ID, view)
+	return nil
 }
 
 // Get responds with one sandbox, secrets masked.
@@ -175,13 +169,13 @@ func (h *SandboxHandler) Create(c *gin.Context) {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sandboxes/{id} [get]
-func (h *SandboxHandler) Get(c *gin.Context) {
+func (h *SandboxHandler) Get(c *gin.Context) error {
 	sb, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, sanitizeSandboxConfig(*sb))
+	return nil
 }
 
 // Update overwrites the sandbox; a masked credential keeps the stored value,
@@ -201,14 +195,13 @@ func (h *SandboxHandler) Get(c *gin.Context) {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sandboxes/{id} [put]
-func (h *SandboxHandler) Update(c *gin.Context) {
+func (h *SandboxHandler) Update(c *gin.Context) error {
 	var req sandboxReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
-	if !h.validate(c, &req) {
-		return
+	if err := h.validate(&req); err != nil {
+		return err
 	}
 	id := c.Param("id")
 	ctx := c.Request.Context()
@@ -216,28 +209,24 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	// credential.
 	prev, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	sb := req.toSandbox()
 	// A mask must not ride to a new destination (invariant 9); only refuse
 	// when a credential is actually stored — a mask over nothing resolves to "".
 	if strings.Contains(string(sb.Config), SecretMask) && storedSandboxSecret(prev.Config) &&
 		store.SandboxDestinationChanged(prev.Type, prev.Config, sb.Config) {
-		badRequest(c, "the destination changed: the stored credential belongs to the previous one — replace it or clear it")
-		return
+		return badRequest("the destination changed: the stored credential belongs to the previous one — replace it or clear it")
 	}
 	restored, err := restoreSandboxConfig(sb.Config, prev.Config)
 	if err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	sb.Config = restored
 	// Normalize after the mask restore: the canonical form carries the real secret.
 	canonical, err := store.NormalizeSandboxConfig(sb.Type, sb.Config)
 	if err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	sb.Config = canonical
 	// Revision CAS, anchored on the client's revision when given: a race is 409.
@@ -249,33 +238,29 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 	if store.SandboxIdentityChanged(prev, sb) {
 		workspaces, uerr := h.store.UpdateIdentityIfUnreferenced(ctx, id, sb, expected)
 		if uerr != nil {
-			storeError(c, uerr)
-			return
+			return uerr
 		}
 		if workspaces > 0 {
-			conflict(c, fmt.Sprintf("%d workspace(s) live on this sandbox; %s, or create a new sandbox for the new location",
+			return conflict(fmt.Sprintf("%d workspace(s) live on this sandbox; %s, or create a new sandbox for the new location",
 				workspaces, store.SandboxFrozenFields(prev.Type)))
-			return
 		}
 	} else if err := h.store.Update(ctx, id, sb, expected); err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// Invalidate from what the CAS guarantees, not a re-read; only a content
 	// change retires.
 	if contentChanged {
 		// WithoutCancel: a disconnect must not skip the generation bump.
 		if err := h.retire.bump(context.WithoutCancel(ctx), id); err != nil {
-			internalError(c, err)
-			return
+			return err
 		}
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, sanitizeSandboxConfig(*updated))
+	return nil
 }
 
 // Delete removes the sandbox; one still carrying workspaces is 409, decided by
@@ -290,17 +275,16 @@ func (h *SandboxHandler) Update(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sandboxes/{id} [delete]
-func (h *SandboxHandler) Delete(c *gin.Context) {
+func (h *SandboxHandler) Delete(c *gin.Context) error {
 	workspaces, err := h.store.DeleteIfUnreferenced(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if workspaces > 0 {
-		conflict(c, fmt.Sprintf("%d workspace(s) live on this sandbox; delete them first", workspaces))
-		return
+		return conflict(fmt.Sprintf("%d workspace(s) live on this sandbox; delete them first", workspaces))
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // Test runs a fixed health-check command to verify the sandbox works.
@@ -315,24 +299,23 @@ func (h *SandboxHandler) Delete(c *gin.Context) {
 //	@Failure		502	{object}	ErrorResponse	"sandbox unreachable"
 //	@Security		BearerAuth
 //	@Router			/sandboxes/{id}/test [post]
-func (h *SandboxHandler) Test(c *gin.Context) {
+func (h *SandboxHandler) Test(c *gin.Context) error {
 	ctx := c.Request.Context()
 	sb, err := h.store.Get(ctx, c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// 200 with ok=false means the service answered and the command did not;
 	// an unreachable daemon or bad credential is 502.
 	if err := h.manager.Check(ctx, sb); err != nil {
 		if errors.Is(err, sandboxes.ErrHealthCommandFailed) {
 			c.JSON(http.StatusOK, sandboxTestResp{OK: false, Detail: err.Error()})
-			return
+			return nil
 		}
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	c.JSON(http.StatusOK, sandboxTestResp{OK: true})
+	return nil
 }
 
 // Containers lists this package's containers on the sandbox's daemon —
@@ -347,53 +330,50 @@ func (h *SandboxHandler) Test(c *gin.Context) {
 //	@Failure	502	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sandboxes/{id}/containers [get]
-func (h *SandboxHandler) Containers(c *gin.Context) {
-	opts, ok := h.daemon(c)
-	if !ok {
-		return
+func (h *SandboxHandler) Containers(c *gin.Context) error {
+	opts, err := h.daemon(c)
+	if err != nil {
+		return err
 	}
 	out, err := dockersb.ListManaged(c.Request.Context(), opts)
 	if err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	if out == nil {
 		out = []dockersb.ManagedContainer{}
 	}
 	c.JSON(http.StatusOK, out)
+	return nil
 }
 
 // daemon resolves the sandbox named by the id path parameter into its DOCKER
 // connection options; a sandbox of another type is refused by name.
-func (h *SandboxHandler) daemon(c *gin.Context) (dockersb.Options, bool) {
+func (h *SandboxHandler) daemon(c *gin.Context) (dockersb.Options, error) {
 	sb, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return dockersb.Options{}, false
+		return dockersb.Options{}, err
 	}
 	opts, err := sandboxes.DaemonOptions(sb)
 	if err != nil {
-		badRequest(c, err.Error())
-		return dockersb.Options{}, false
+		return dockersb.Options{}, badRequest(err.Error())
 	}
-	return opts, true
+	return opts, nil
 }
 
 // containerAct resolves the daemon and the (prefix-checked) container name for
 // the stop/remove endpoints.
-func (h *SandboxHandler) containerAct(c *gin.Context) (dockersb.Options, string, bool) {
-	opts, ok := h.daemon(c)
-	if !ok {
-		return dockersb.Options{}, "", false
+func (h *SandboxHandler) containerAct(c *gin.Context) (dockersb.Options, string, error) {
+	opts, err := h.daemon(c)
+	if err != nil {
+		return dockersb.Options{}, "", err
 	}
 	name := c.Param("name")
 	// The SDK re-verifies ownership by label; the prefix check just refuses
 	// obviously-foreign names before a daemon round-trip.
 	if !strings.HasPrefix(name, dockersb.ManagedNamePrefix) {
-		badRequest(c, "not a managed container name")
-		return dockersb.Options{}, "", false
+		return dockersb.Options{}, "", badRequest("not a managed container name")
 	}
-	return opts, name, true
+	return opts, name, nil
 }
 
 // StopContainer stops one managed container; the next run starts it again.
@@ -407,16 +387,16 @@ func (h *SandboxHandler) containerAct(c *gin.Context) (dockersb.Options, string,
 //	@Failure	502		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sandboxes/{id}/containers/{name}/stop [post]
-func (h *SandboxHandler) StopContainer(c *gin.Context) {
-	opts, name, ok := h.containerAct(c)
-	if !ok {
-		return
+func (h *SandboxHandler) StopContainer(c *gin.Context) error {
+	opts, name, err := h.containerAct(c)
+	if err != nil {
+		return err
 	}
 	if err := dockersb.StopManaged(c.Request.Context(), opts, name); err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // RemoveContainer force-removes one managed container; the volume survives
@@ -431,16 +411,16 @@ func (h *SandboxHandler) StopContainer(c *gin.Context) {
 //	@Failure	502		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sandboxes/{id}/containers/{name} [delete]
-func (h *SandboxHandler) RemoveContainer(c *gin.Context) {
-	opts, name, ok := h.containerAct(c)
-	if !ok {
-		return
+func (h *SandboxHandler) RemoveContainer(c *gin.Context) error {
+	opts, name, err := h.containerAct(c)
+	if err != nil {
+		return err
 	}
 	if err := dockersb.RemoveManaged(c.Request.Context(), opts, name); err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // sandboxTestResp is the Test response: whether the health-check command

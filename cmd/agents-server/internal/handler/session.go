@@ -153,24 +153,23 @@ func newSessionView(sess store.Session, st bridge.SessionState) sessionView {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions [get]
-func (h *SessionHandler) List(c *gin.Context) {
+func (h *SessionHandler) List(c *gin.Context) error {
 	u, _ := server.CurrentUser(c)
 	owner := u.ID
 	if c.Query("all") == "true" {
-		if !requireAdmin(c) {
-			return
+		if err := requireAdmin(c); err != nil {
+			return err
 		}
 		owner = store.EveryOwner
 	}
-	limit, ok := queryInt(c, "limit")
-	if !ok {
-		return
+	limit, err := queryInt(c, "limit")
+	if err != nil {
+		return err
 	}
 	ctx := c.Request.Context()
 	sessions, err := h.sessions.ListPage(ctx, owner, store.SessionPage{Limit: limit, Before: c.Query("before"), Query: strings.TrimSpace(c.Query("q"))})
 	if err != nil {
-		storeError(c, err) // an unknown cursor → 404
-		return
+		return err // an unknown cursor → 404
 	}
 	ids := make([]string, 0, len(sessions))
 	for i := range sessions {
@@ -178,14 +177,14 @@ func (h *SessionHandler) List(c *gin.Context) {
 	}
 	states, err := h.statuses.SessionStatuses(ctx, owner, ids)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	views := make([]sessionView, 0, len(sessions)) // an empty list, never JSON null
 	for _, sess := range sessions {
 		views = append(views, newSessionView(sess, states.Of(sess.ID)))
 	}
 	c.JSON(http.StatusOK, views)
+	return nil
 }
 
 // sessionCreateReq is the request body for Create.
@@ -208,14 +207,14 @@ type sessionCreateReq struct {
 //	@Failure	500		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sessions [post]
-func (h *SessionHandler) Create(c *gin.Context) {
+func (h *SessionHandler) Create(c *gin.Context) error {
 	var req sessionCreateReq
-	if !bindOptional(c, &req) {
-		return
+	if err := bindOptional(c, &req); err != nil {
+		return err
 	}
 	req.Name = cmp.Or(req.Name, store.DefaultSessionName)
-	if !nameFits(c, req.Name) {
-		return
+	if err := nameFits(req.Name); err != nil {
+		return err
 	}
 	ctx := c.Request.Context()
 	u, _ := server.CurrentUser(c)
@@ -224,15 +223,15 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		// — decisions §5.29.
 		ac, err := h.agents.Get(ctx, req.AgentConfigID)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			storeError(c, err)
-			return
+			return err
 		}
-		if err == nil && !runnableRow(c, ac.Scope, ac.OwnerID) {
-			return
+		if err == nil {
+			if rerr := runnableRow(c, ac.Scope, ac.OwnerID); rerr != nil {
+				return rerr
+			}
 		}
 		if err != nil || !store.Visible(ac.Scope, ac.OwnerID, u.ID, false) {
-			badRequest(c, "agent_config_id does not reference an existing agent")
-			return
+			return badRequest("agent_config_id does not reference an existing agent")
 		}
 	}
 	sess := &store.Session{
@@ -242,10 +241,10 @@ func (h *SessionHandler) Create(c *gin.Context) {
 		AgentConfigID: req.AgentConfigID,
 	}
 	if err := h.sessions.Create(ctx, sess); err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	created(c, sess.ID, sess)
+	return nil
 }
 
 // Get responds with the session identified by the id path parameter, its
@@ -260,16 +259,14 @@ func (h *SessionHandler) Create(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sessions/{id} [get]
-func (h *SessionHandler) Get(c *gin.Context) {
+func (h *SessionHandler) Get(c *gin.Context) error {
 	sess, err := gatedSession(c, h.sessions)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	states, err := h.statuses.SessionStatuses(c.Request.Context(), store.EveryOwner, []string{sess.ID})
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	st := states.Of(sess.ID)
 	pending := st.Pending
@@ -278,6 +275,7 @@ func (h *SessionHandler) Get(c *gin.Context) {
 	}
 	// planning is a column of the row: no extra read.
 	c.JSON(http.StatusOK, sessionDetail{sessionView: newSessionView(*sess, st), Pending: pending})
+	return nil
 }
 
 // sessionPatchReq is the request body for Patch; absent fields are unchanged.
@@ -303,33 +301,32 @@ type sessionPatchReq struct {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id} [patch]
-func (h *SessionHandler) Patch(c *gin.Context) {
+func (h *SessionHandler) Patch(c *gin.Context) error {
 	var req sessionPatchReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	if req.Name != nil && *req.Name == "" {
-		badRequest(c, "name cannot be empty")
-		return
+		return badRequest("name cannot be empty")
 	}
-	if req.Name != nil && !nameFits(c, *req.Name) {
-		return
+	if req.Name != nil {
+		if err := nameFits(*req.Name); err != nil {
+			return err
+		}
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
 	if req.Name != nil || req.Pinned != nil {
 		if err := h.sessions.UpdateFields(ctx, id, req.Name, req.Pinned); err != nil {
-			storeError(c, err)
-			return
+			return err
 		}
 	}
 	sess, err := h.sessions.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, sess)
+	return nil
 }
 
 // SetOwner reassigns the session tree to another account (admin); refused while
@@ -348,36 +345,30 @@ func (h *SessionHandler) Patch(c *gin.Context) {
 //	@Failure	409		{object}	ErrorResponse	"a run or a background task is live on the session, or it is bound to a workspace the new owner does not own"
 //	@Security	BearerAuth
 //	@Router		/sessions/{id}/owner [put]
-func (h *SessionHandler) SetOwner(c *gin.Context) {
+func (h *SessionHandler) SetOwner(c *gin.Context) error {
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		badRequest(c, "user_id is required")
-		return
+		return badRequest("user_id is required")
 	}
 	id := c.Param("id")
 	if _, err := h.users.ByID(c.Request.Context(), req.UserID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			badRequest(c, "no such user")
-			return
+			return badRequest("no such user")
 		}
-		storeError(c, err)
-		return
+		return err
 	}
 	sess, err := h.sessions.Get(c.Request.Context(), id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// A workspace-bound session transfers only to the workspace's owner — invariant 52.
 	if sess.WorkspaceID != "" {
 		ws, perr := h.workspaces.Get(c.Request.Context(), sess.WorkspaceID)
 		if perr != nil && !errors.Is(perr, store.ErrNotFound) {
-			storeError(c, perr)
-			return
+			return perr
 		}
 		if perr != nil || ws.OwnerID != req.UserID {
-			conflict(c, "the session is bound to a workspace the new owner does not own")
-			return
+			return conflict("the session is bound to a workspace the new owner does not own")
 		}
 	}
 	// At rest and hub-fenced for the write — invariant 82.
@@ -385,25 +376,20 @@ func (h *SessionHandler) SetOwner(c *gin.Context) {
 		return h.sessions.SetOwner(c.Request.Context(), id, req.UserID)
 	})
 	if err != nil {
-		fencedError(c, err)
-		return
+		return fencedError(err)
 	}
 	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // fencedError maps a fenced write's failure: a live run or task is 409, a
 // badRequestError 400, the rest as storeError.
-func fencedError(c *gin.Context, err error) {
+func fencedError(err error) error {
 	if _, busy := errors.AsType[bridge.ErrSessionBusy](err); busy {
-		conflict(c, "a run or a background task is live on this session; stop it first")
-		return
+		return conflict("a run or a background task is live on this session; stop it first")
 	}
-	if bad, ok := errors.AsType[badRequestError](err); ok {
-		badRequest(c, bad.Error())
-		return
-	}
-	storeError(c, err)
+	return err
 }
 
 // SetOwnerRequest is the body of PUT /sessions/:id/owner.
@@ -422,19 +408,17 @@ type SetOwnerRequest struct {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sessions/{id} [delete]
-func (h *SessionHandler) Delete(c *gin.Context) {
+func (h *SessionHandler) Delete(c *gin.Context) error {
 	id := c.Param("id")
 	// Read the binding before the cascade erases it; the release below needs it.
 	var boundWorkspace string
 	sess, err := h.sessions.Get(c.Request.Context(), id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// Management, not reading: the owner or an admin.
 	if u, _ := server.CurrentUser(c); !ownsSession(c, sess) && u.Role != store.RoleAdmin {
-		notFound(c)
-		return
+		return errNotFound
 	}
 	boundWorkspace = sess.WorkspaceID
 	// Stop the live run and every task before the cascade, or one keeps
@@ -443,8 +427,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	err = h.sessions.Delete(c.Request.Context(), id)
 	h.stopper.EndSessionDelete(id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// After the cascade, so the reference count no longer includes this session.
 	if boundWorkspace != "" {
@@ -452,6 +435,7 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 	}
 	h.stopper.ForgetSessionTrust(id)
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // Fork creates a new session by copying the source's entries up to message_id.
@@ -469,14 +453,13 @@ func (h *SessionHandler) Delete(c *gin.Context) {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/fork [post]
-func (h *SessionHandler) Fork(c *gin.Context) {
+func (h *SessionHandler) Fork(c *gin.Context) error {
 	srcID := c.Param("id")
 	ctx := c.Request.Context()
 
 	src, err := gatedSession(c, h.sessions)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 
 	var req struct {
@@ -485,8 +468,8 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 		Label     string  `json:"label"`
 	}
 	// An empty body means "fork everything".
-	if !bindOptional(c, &req) {
-		return
+	if err := bindOptional(c, &req); err != nil {
+		return err
 	}
 
 	label := req.Label
@@ -509,20 +492,19 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 	// One transaction creates the session and copies its entries.
 	srcRef, err := h.entries.RefFor(ctx, srcID)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	runIDs, err := h.entries.ForkSession(ctx, dst, srcRef, upTo, req.Exclusive)
 	if err != nil {
 		// A source deleted meanwhile is a 404 (storeError).
-		storeError(c, err)
-		return
+		return err
 	}
 	// Traces are a best-effort copy: a failure is logged, the fork stands.
 	if err := h.traces.ForkBySession(ctx, srcID, dst.ID, runIDs); err != nil {
 		logging.Ctx(ctx).Warn("fork: copying traces to the new session failed; session forked without traces", "error", err, "src_session", srcID, "dst_session", dst.ID)
 	}
 	created(c, dst.ID, dst)
+	return nil
 }
 
 // Messages responds with the session entries for the id path parameter.
@@ -536,17 +518,15 @@ func (h *SessionHandler) Fork(c *gin.Context) {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/messages [get]
-func (h *SessionHandler) Messages(c *gin.Context) {
+func (h *SessionHandler) Messages(c *gin.Context) error {
 	ctx := c.Request.Context()
 	ref, err := h.entries.RefFor(ctx, c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	entries, err := h.entries.GetEntries(ctx, ref)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	// The URL is a deployment fact (the current public base), filled here.
 	if base := h.settings.S3Config(ctx).PublicBaseURL; base != "" {
@@ -555,6 +535,7 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, entries)
+	return nil
 }
 
 // Context responds with the session's context-window report.
@@ -569,22 +550,19 @@ func (h *SessionHandler) Messages(c *gin.Context) {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/context [get]
-func (h *SessionHandler) Context(c *gin.Context) {
+func (h *SessionHandler) Context(c *gin.Context) error {
 	ctx := c.Request.Context()
 	sess, err := gatedSession(c, h.sessions)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	ref, err := h.entries.RefFor(ctx, sess.ID)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	rep, err := h.entries.ContextReport(ctx, ref)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	// The window and the compaction threshold are the agent's; a session with
 	// no agent bound still reports its usage, without a denominator.
@@ -612,6 +590,7 @@ func (h *SessionHandler) Context(c *gin.Context) {
 		rep.Prompt = prof
 	}
 	c.JSON(http.StatusOK, rep)
+	return nil
 }
 
 // CompactResponse reports what a manual compaction pass did. Compacted false
@@ -636,21 +615,19 @@ type CompactResponse struct {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/compact [post]
-func (h *SessionHandler) Compact(c *gin.Context) {
+func (h *SessionHandler) Compact(c *gin.Context) error {
 	compacted, before, after, err := h.compactor.CompactSession(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		if busy, ok := errors.AsType[bridge.ErrSessionBusy](err); ok {
-			conflict(c, busy.Error())
-			return
+			return conflict(busy.Error())
 		}
 		if errors.Is(err, bridge.ErrCompactionUnavailable) {
-			badRequest(c, err.Error())
-			return
+			return badRequest(err.Error())
 		}
-		storeError(c, err) // not-found → 404, anything else → 500
-		return
+		return err // not-found → 404, anything else → 500
 	}
 	c.JSON(http.StatusOK, CompactResponse{Compacted: compacted, BeforeItems: before, AfterItems: after})
+	return nil
 }
 
 type branchReq struct {
@@ -672,18 +649,16 @@ type branchReq struct {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/branch [post]
-func (h *SessionHandler) Branch(c *gin.Context) {
+func (h *SessionHandler) Branch(c *gin.Context) error {
 	var req branchReq
 	if err := c.ShouldBindJSON(&req); err != nil || req.EntryID == "" {
-		badRequest(c, "entry_id is required")
-		return
+		return badRequest("entry_id is required")
 	}
 	id := c.Param("id")
 	ctx := c.Request.Context()
 	ref, err := h.entries.RefFor(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// A live run keeps appending to the branch it started on, so the move
 	// happens with the session fenced — invariant 82.
@@ -695,19 +670,19 @@ func (h *SessionHandler) Branch(c *gin.Context) {
 			return err
 		}
 		if err := h.entries.Branch(ctx, ref, req.EntryID); err != nil {
-			return badRequestError(err.Error())
+			return badRequest(err.Error())
 		}
 		leaf, err = h.entries.Leaf(ctx, ref)
 		return err
 	})
 	if err != nil {
-		fencedError(c, err)
-		return
+		return fencedError(err)
 	}
 	// A pause the move left behind, or returned to, changes what the session
 	// waits on.
 	h.statuses.PublishSessionStatus(ctx, id)
 	c.JSON(http.StatusOK, gin.H{"leaf": leaf, "previous_leaf": previousLeaf})
+	return nil
 }
 
 var branchSuffixRe = regexp.MustCompile(`\s*\((fork|regen)(?:\s+(\d+))?\)$`)

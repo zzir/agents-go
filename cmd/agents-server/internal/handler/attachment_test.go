@@ -104,11 +104,11 @@ func attachmentRig(t *testing.T) (*gin.Engine, *store.SettingStore, *store.Attac
 	atts := store.NewAttachmentStore(db)
 	h := NewAttachmentHandler(atts, settings.NewReader(settingStore), settingStore)
 	e := newTestEngine()
-	e.GET("/attachments/config", h.Config)
-	e.POST("/attachments", h.Upload)
-	e.PUT("/attachments/storage", h.SaveStorage)
-	e.POST("/attachments/storage/test", h.TestStorage)
-	e.DELETE("/attachments/:id", h.Delete)
+	e.GET("/attachments/config", wrap(h.Config))
+	e.POST("/attachments", wrap(h.Upload))
+	e.PUT("/attachments/storage", wrap(h.SaveStorage))
+	e.POST("/attachments/storage/test", wrap(h.TestStorage))
+	e.DELETE("/attachments/:id", wrap(h.Delete))
 	return e, settingStore, atts, newFakeS3(t)
 }
 
@@ -330,8 +330,8 @@ func TestStorageKeysRefusePerKeyWrites(t *testing.T) {
 	settingStore := store.NewSettingStore(db)
 	h := NewSettingHandler(settingStore)
 	e := newTestEngine()
-	e.PUT("/settings/:key", h.Set)
-	e.DELETE("/settings/:key", h.Delete)
+	e.PUT("/settings/:key", wrap(h.Set))
+	e.DELETE("/settings/:key", wrap(h.Delete))
 
 	b, _ := json.Marshal(map[string]string{"value": "x"})
 	req := httptest.NewRequest(http.MethodPut, "/settings/"+settings.KeyS3Bucket, bytes.NewReader(b))

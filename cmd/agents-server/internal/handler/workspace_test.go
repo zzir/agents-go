@@ -48,9 +48,9 @@ func TestWorkspaceAdminSurface(t *testing.T) {
 	}
 
 	mount := func(e *gin.Engine) *gin.Engine {
-		e.GET("/workspaces", h.List)
-		e.GET("/workspaces/:id/host", h.SandboxHost)
-		e.DELETE("/workspaces/:id", h.Delete)
+		e.GET("/workspaces", wrap(h.List))
+		e.GET("/workspaces/:id/host", wrap(h.SandboxHost))
+		e.DELETE("/workspaces/:id", wrap(h.Delete))
 		return e
 	}
 	member := mount(memberEngine(memberID))

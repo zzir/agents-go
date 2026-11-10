@@ -31,7 +31,7 @@ func TestSessionDeleteForgetsCommandTrust(t *testing.T) {
 	stopper := &trustForgettingStopper{}
 	h := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Stopper = stopper }))
 	engine := newTestEngine()
-	engine.DELETE("/sessions/:id", h.Delete)
+	engine.DELETE("/sessions/:id", wrap(h.Delete))
 
 	if w := doJSON(t, engine, http.MethodDelete, "/sessions/"+sess.ID, ""); w.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d %s", w.Code, w.Body.String())

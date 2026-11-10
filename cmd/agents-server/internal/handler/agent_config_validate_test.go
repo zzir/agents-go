@@ -31,9 +31,9 @@ func newAgentEngineDB(t *testing.T) (*gin.Engine, *store.McpServerStore, *bun.DB
 	h := NewAgentConfigHandler(store.NewAgentConfigStore(db), mcpStore, store.NewProviderStore(db), store.NewSkillStore(db), guardrails.NewResolver(store.NewGuardrailStore(db)))
 
 	engine := newTestEngine()
-	engine.POST("/agents", h.Create)
-	engine.GET("/agents/:id", h.Get)
-	engine.PUT("/agents/:id", h.Update)
+	engine.POST("/agents", wrap(h.Create))
+	engine.GET("/agents/:id", wrap(h.Get))
+	engine.PUT("/agents/:id", wrap(h.Update))
 	return engine, mcpStore, db
 }
 

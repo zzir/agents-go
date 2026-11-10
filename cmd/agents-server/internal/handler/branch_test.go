@@ -66,7 +66,7 @@ func TestBranchRefusesLiveRun(t *testing.T) {
 	// Busy: 409, no move.
 	busy := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Stopper = busyStopper{} }))
 	engine := newTestEngine()
-	engine.POST("/sessions/:id/branch", busy.Branch)
+	engine.POST("/sessions/:id/branch", wrap(busy.Branch))
 	w := doJSON(t, engine, http.MethodPost, "/sessions/"+sess.ID+"/branch", `{"entry_id":"`+firstLeaf+`"}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("branch while busy: got %d, want 409 (%s)", w.Code, w.Body.String())
@@ -75,7 +75,7 @@ func TestBranchRefusesLiveRun(t *testing.T) {
 	// Idle: 200 with both the new leaf and the leaf it left.
 	idle := NewSessionHandler(testSessionDeps(db))
 	engine = newTestEngine()
-	engine.POST("/sessions/:id/branch", idle.Branch)
+	engine.POST("/sessions/:id/branch", wrap(idle.Branch))
 	w = doJSON(t, engine, http.MethodPost, "/sessions/"+sess.ID+"/branch", `{"entry_id":"`+firstLeaf+`"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("branch while idle: got %d, want 200 (%s)", w.Code, w.Body.String())
@@ -136,7 +136,7 @@ func TestBranchFencesTheSessionAgainstRuns(t *testing.T) {
 	probe := &fenceProbe{Runner: runner}
 	h := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions, d.Stopper = sessions, probe }))
 	engine := newTestEngine()
-	engine.POST("/sessions/:id/branch", h.Branch)
+	engine.POST("/sessions/:id/branch", wrap(h.Branch))
 
 	if w := doJSON(t, engine, http.MethodPost, "/sessions/"+sess.ID+"/branch", `{"entry_id":"`+leaf+`"}`); w.Code != http.StatusOK {
 		t.Fatalf("branch = %d, want 200 (%s)", w.Code, w.Body.String())

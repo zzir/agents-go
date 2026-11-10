@@ -32,8 +32,8 @@ func TestNumericQueryParamsRefuseGarbage(t *testing.T) {
 		Runs:   NewRunHandler(runner),
 	}.Register)
 	direct := newTestEngine()
-	direct.GET("/sessions/:id/traces", NewTraceHandler(store.NewTraceStore(db), settings.NewReader(store.NewSettingStore(db))).ListBySession)
-	direct.GET("/runs/:id/events", NewRunHandler(runner).Events)
+	direct.GET("/sessions/:id/traces", wrap(NewTraceHandler(store.NewTraceStore(db), settings.NewReader(store.NewSettingStore(db))).ListBySession))
+	direct.GET("/runs/:id/events", wrap(NewRunHandler(runner).Events))
 
 	for _, bad := range []string{"-5", "abc"} {
 		for _, path := range []string{"/api/v1/auth/audit?limit=", "/api/v1/tasks?limit=", "/api/v1/tasks?offset="} {

@@ -46,30 +46,29 @@ type taskStopReq struct {
 //	@Failure		409		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/tasks/{id}/stop [post]
-func (h *TaskHandler) Stop(c *gin.Context) {
+func (h *TaskHandler) Stop(c *gin.Context) error {
 	var req taskStopReq
-	if !bindOptional(c, &req) {
-		return
+	if err := bindOptional(c, &req); err != nil {
+		return err
 	}
 	info, err := h.runner.StopTask(c.Param("id"), req.Graceful)
 	if err != nil {
-		h.stopError(c, err)
-		return
+		return h.stopError(err)
 	}
 	c.JSON(http.StatusOK, info)
+	return nil
 }
 
 // stopError maps a stop failure. The not-found sentinel is the SDK's, not
 // store.ErrNotFound: every lookup goes through the task adapter.
-func (h *TaskHandler) stopError(c *gin.Context, err error) {
+func (h *TaskHandler) stopError(err error) error {
 	switch final, isFinal := errors.AsType[*bridge.TaskFinalError](err); {
 	case isFinal:
-		conflict(c, final.Error())
-	case errors.Is(err, tasks.ErrNotFound), errors.Is(err, store.ErrNotFound):
-		notFound(c)
+		return conflict(final.Error())
+	case errors.Is(err, tasks.ErrNotFound):
+		return errNotFound
 	default:
-		// A store failure is a 500; the detail goes to the log.
-		internalError(c, err)
+		return err
 	}
 }
 
@@ -85,32 +84,32 @@ func (h *TaskHandler) stopError(c *gin.Context, err error) {
 //	@Failure		409	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/tasks/{id}/retry [post]
-func (h *TaskHandler) Retry(c *gin.Context) {
+func (h *TaskHandler) Retry(c *gin.Context) error {
 	info, err := h.runner.RetryTask(c.Param("id"))
 	if err != nil {
-		h.retryError(c, err)
-		return
+		return h.retryError(err)
 	}
 	c.JSON(http.StatusOK, info)
+	return nil
 }
 
 // retryError maps a retry failure. A refusal by the task's own state (not
 // failed, out of attempts, at a ceiling) is a 409 whose reason goes on the wire.
-func (h *TaskHandler) retryError(c *gin.Context, err error) {
+func (h *TaskHandler) retryError(err error) error {
 	_, notRetryable := errors.AsType[tasks.ErrNotRetryable](err)
 	_, retryLimit := errors.AsType[tasks.ErrRetryLimit](err)
 	_, taskLimit := errors.AsType[tasks.ErrTaskLimit](err)
 	switch {
-	case errors.Is(err, tasks.ErrNotFound), errors.Is(err, store.ErrNotFound):
-		notFound(c)
+	case errors.Is(err, tasks.ErrNotFound):
+		return errNotFound
 	case notRetryable, retryLimit, taskLimit,
 		errors.Is(err, tasks.ErrRetryConflict),
 		errors.Is(err, store.ErrBudgetExhausted),
 		errors.Is(err, store.ErrStepCeiling),
 		errors.Is(err, store.ErrLoopBound):
-		conflict(c, err.Error())
+		return conflict(err.Error())
 	default:
-		internalError(c, err)
+		return err
 	}
 }
 
@@ -126,21 +125,18 @@ func (h *TaskHandler) retryError(c *gin.Context, err error) {
 //	@Failure		409	{object}	ErrorResponse	"still running"
 //	@Security		BearerAuth
 //	@Router			/tasks/{id}/dismiss [post]
-func (h *TaskHandler) Dismiss(c *gin.Context) {
+func (h *TaskHandler) Dismiss(c *gin.Context) error {
 	ctx, id := c.Request.Context(), c.Param("id")
 	won, err := h.tasks.Dismiss(ctx, id)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	t, err := h.tasks.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if !won && !bridge.IsTerminalTaskStatus(t.Status) {
-		conflict(c, "a running task cannot be dismissed — stop it first")
-		return
+		return conflict("a running task cannot be dismissed — stop it first")
 	}
 	// Every window of the conversation hides it, not only the one that asked.
 	if won {
@@ -148,6 +144,7 @@ func (h *TaskHandler) Dismiss(c *gin.Context) {
 	}
 	t.MaxAttempts = h.runner.MaxTaskAttempts(t.Kind)
 	c.JSON(http.StatusOK, t)
+	return nil
 }
 
 // ListBySession responds with the session's background tasks, newest first.
@@ -161,16 +158,16 @@ func (h *TaskHandler) Dismiss(c *gin.Context) {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/tasks [get]
-func (h *TaskHandler) ListBySession(c *gin.Context) {
+func (h *TaskHandler) ListBySession(c *gin.Context) error {
 	tasks, err := h.tasks.ListByParent(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	for i := range tasks {
 		h.overlay(&tasks[i])
 	}
 	c.JSON(http.StatusOK, nonNilList(tasks))
+	return nil
 }
 
 // TaskPage is one page of the cross-session task list.
@@ -196,20 +193,19 @@ type TaskPage struct {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/tasks [get]
-func (h *TaskHandler) List(c *gin.Context) {
-	limit, ok := queryInt(c, "limit")
-	if !ok {
-		return
+func (h *TaskHandler) List(c *gin.Context) error {
+	limit, err := queryInt(c, "limit")
+	if err != nil {
+		return err
 	}
-	offset, ok := queryInt(c, "offset")
-	if !ok {
-		return
+	offset, err := queryInt(c, "offset")
+	if err != nil {
+		return err
 	}
 	u, _ := server.CurrentUser(c)
 	rows, total, err := h.tasks.ListRecent(c.Request.Context(), u.ID, c.Query("kind"), c.Query("live") == "true", limit, offset)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	for i := range rows {
 		h.overlay(&rows[i].Task)
@@ -218,6 +214,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 		rows = []store.TaskWithSession{}
 	}
 	c.JSON(http.StatusOK, TaskPage{Items: rows, Total: total})
+	return nil
 }
 
 // overlay stamps a row with the hub's live status (keyed by run id) and the

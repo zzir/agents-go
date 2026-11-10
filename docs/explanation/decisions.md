@@ -2152,3 +2152,25 @@ already running still have progress to drain. `Emit` returns when the loop
 takes the event, not when the consumer is done with it.
 
 Rules: spec §2.0, §2.7g.
+
+### 5.101 A handler returns its failure, and one table answers it
+
+Decided 2026-11-10.
+
+**Decision.** Every REST handler in `cmd/agents-server` is
+`func(*gin.Context) error` behind `wrap`, and a helper that can refuse returns
+the error. `classify` maps the store's sentinels to a status once; a handler
+that knows a better answer returns it as an `apiError`.
+
+**Rejected.** Helpers that write the response and return `false`, with an
+error mapper per handler file — the mappings had drifted: one malformed id was
+404, 400 or 500 by route, and an owner that moved was 409 on one delete and
+500 on another. Replacing gin with `net/http` in the same change — dependency
+hygiene, not the cause of the drift, and a framework swap would have hidden a
+status change inside it.
+
+**Cost accepted.** A store sentinel reaching a handler that used to force 500
+is now answered by the table: a 404 or 409 where a 500 was. The mappers for
+bridge and task errors stay beside their handlers.
+
+Rules: workbench invariant 100.

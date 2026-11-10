@@ -30,8 +30,8 @@ func TestTraceListingSummaryAndSpan(t *testing.T) {
 	}
 	h := NewTraceHandler(traces, settings.NewReader(store.NewSettingStore(db)))
 	engine := newTestEngine()
-	engine.GET("/sessions/:id/traces", h.ListBySession)
-	engine.GET("/sessions/:id/traces/:span_id", h.GetBySpan)
+	engine.GET("/sessions/:id/traces", wrap(h.ListBySession))
+	engine.GET("/sessions/:id/traces/:span_id", wrap(h.GetBySpan))
 
 	var rows []store.TraceEvent
 	w := doJSON(t, engine, http.MethodGet, "/sessions/s1/traces?summary=true", "")
@@ -89,7 +89,7 @@ func TestTraceSpanAttachmentURLs(t *testing.T) {
 	}
 	h := NewTraceHandler(traces, settings.NewReader(settingStore))
 	engine := newTestEngine()
-	engine.GET("/sessions/:id/traces/:span_id", h.GetBySpan)
+	engine.GET("/sessions/:id/traces/:span_id", wrap(h.GetBySpan))
 
 	var one struct {
 		Attachments []struct{ ID, URL string } `json:"attachments"`

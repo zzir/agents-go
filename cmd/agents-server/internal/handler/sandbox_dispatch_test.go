@@ -28,8 +28,8 @@ func TestSandboxRowsCarrySupports(t *testing.T) {
 	}
 	h := testSandboxHandler(db, sandboxes.NewManager())
 	e := newTestEngine()
-	e.GET("/sandboxes", h.List)
-	e.GET("/sandboxes/:id", h.Get)
+	e.GET("/sandboxes", wrap(h.List))
+	e.GET("/sandboxes/:id", wrap(h.Get))
 
 	want := map[string]store.SandboxSupports{
 		docker.ID: {Rebuild: true},
@@ -71,8 +71,8 @@ func TestDockerOnlySurfaceRefusesByName(t *testing.T) {
 	}
 	h := testSandboxHandler(db, sandboxes.NewManager())
 	e := newTestEngine()
-	e.GET("/sandboxes/:id/containers", h.Containers)
-	e.POST("/sandboxes/:id/containers/:name/stop", h.StopContainer)
+	e.GET("/sandboxes/:id/containers", wrap(h.Containers))
+	e.POST("/sandboxes/:id/containers/:name/stop", wrap(h.StopContainer))
 
 	for _, path := range []string{
 		"/sandboxes/" + cloud.ID + "/containers",

@@ -18,7 +18,6 @@ import (
 
 	"github.com/zzir/agents-go/agents/tasks"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -147,59 +146,50 @@ func (r *triggerReq) toModel() *store.Trigger {
 
 // bind decodes and validates an incoming trigger: shape, schedule, and the
 // session it names. The target is checked by the store, in the writing transaction.
-func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, bool) {
+func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, error) {
 	var req triggerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return nil, false
+		return nil, badRequest(err.Error())
 	}
 	t := req.toModel()
 	if err := store.NormalizeTrigger(t); err != nil {
-		badRequest(c, err.Error())
-		return nil, false
+		return nil, badRequest(err.Error())
 	}
 	if t.Kind == store.TriggerKindCron {
 		if err := bridge.ValidateCronSchedule(t.Schedule); err != nil {
-			badRequest(c, err.Error())
-			return nil, false
+			return nil, badRequest(err.Error())
 		}
 	}
 	ctx := c.Request.Context()
 	sess, err := h.sessions.Get(ctx, t.SessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			badRequest(c, "session_id names no session")
-		} else {
-			internalError(c, err)
+			return nil, badRequest("session_id names no session")
 		}
-		return nil, false
+		return nil, err
 	}
 	if !ownsSession(c, sess) {
-		badRequest(c, "session_id names no session")
-		return nil, false
+		return nil, badRequest("session_id names no session")
 	}
 	if sess.Hidden {
-		badRequest(c, "session_id names a task's own session; a trigger reports to a session of its own")
-		return nil, false
+		return nil, badRequest("session_id names a task's own session; a trigger reports to a session of its own")
 	}
 	// A workflow target must be one the session's owner may see (decisions
 	// §5.29): the execution runs under their identity.
 	if t.WorkflowID != "" && h.workflows != nil {
 		wf, err := h.workflows.Get(ctx, t.WorkflowID)
 		if err != nil || !store.Visible(wf.Scope, wf.OwnerID, sess.OwnerID, false) {
-			badRequest(c, "workflow_id names no workflow")
-			return nil, false
+			return nil, badRequest("workflow_id names no workflow")
 		}
 	}
 	// An agent target follows the same rule.
 	if t.AgentConfigID != "" && h.agents != nil {
 		ac, err := h.agents.Get(ctx, t.AgentConfigID)
 		if err != nil || !store.Visible(ac.Scope, ac.OwnerID, sess.OwnerID, false) {
-			badRequest(c, "agent_config_id names no agent")
-			return nil, false
+			return nil, badRequest("agent_config_id names no agent")
 		}
 	}
-	return t, true
+	return t, nil
 }
 
 // List responds with the caller's triggers, or a workflow's with ?workflow_id=.
@@ -212,18 +202,18 @@ func (h *TriggerHandler) bind(c *gin.Context) (*store.Trigger, bool) {
 //	@Failure	500			{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/triggers [get]
-func (h *TriggerHandler) List(c *gin.Context) {
+func (h *TriggerHandler) List(c *gin.Context) error {
 	u, _ := server.CurrentUser(c)
 	rows, err := h.store.ListByOwner(c.Request.Context(), u.ID, c.Query("workflow_id"))
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	views := make([]TriggerView, 0, len(rows))
 	for i := range rows {
 		views = append(views, viewOf(&rows[i], ""))
 	}
 	c.JSON(http.StatusOK, views)
+	return nil
 }
 
 // Get responds with one trigger.
@@ -236,13 +226,13 @@ func (h *TriggerHandler) List(c *gin.Context) {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/triggers/{id} [get]
-func (h *TriggerHandler) Get(c *gin.Context) {
+func (h *TriggerHandler) Get(c *gin.Context) error {
 	t, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, viewOf(t, ""))
+	return nil
 }
 
 // Create stores a trigger and puts it on the clock. A webhook trigger's
@@ -258,20 +248,18 @@ func (h *TriggerHandler) Get(c *gin.Context) {
 //	@Failure		400		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/triggers [post]
-func (h *TriggerHandler) Create(c *gin.Context) {
-	t, ok := h.bind(c)
-	if !ok {
-		return
+func (h *TriggerHandler) Create(c *gin.Context) error {
+	t, err := h.bind(c)
+	if err != nil {
+		return err
 	}
 	u, _ := server.CurrentUser(c)
 	existing, err := h.store.ListByOwner(c.Request.Context(), u.ID, "")
 	if err != nil {
-		internalError(c, err) // a cap that cannot be checked refuses (spec §2.13)
-		return
+		return err // a cap that cannot be checked refuses (spec §2.13)
 	}
 	if len(existing) >= maxTriggersPerOwner {
-		conflict(c, fmt.Sprintf("trigger limit reached (%d per user); delete one first", maxTriggersPerOwner))
-		return
+		return conflict(fmt.Sprintf("trigger limit reached (%d per user); delete one first", maxTriggersPerOwner))
 	}
 	minted := ""
 	if t.Kind == store.TriggerKindWebhook {
@@ -279,21 +267,20 @@ func (h *TriggerHandler) Create(c *gin.Context) {
 		t.Secret = minted
 	}
 	if err := h.store.Create(c.Request.Context(), t); err != nil {
-		h.saveError(c, err)
-		return
+		return h.saveError(err)
 	}
 	h.firer.Sync(c.Request.Context(), t.ID)
 	created(c, t.ID, viewOf(t, minted))
+	return nil
 }
 
 // saveError maps a trigger write's failure: a reference that vanished between
 // the handler's check and the store's is the caller's 400, like the check's.
-func (h *TriggerHandler) saveError(c *gin.Context, err error) {
+func (h *TriggerHandler) saveError(err error) error {
 	if errors.Is(err, store.ErrTriggerRef) {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
-	saveError(c, err)
+	return err
 }
 
 // Update overwrites a trigger's settings; the secret and the fire record stay.
@@ -309,34 +296,31 @@ func (h *TriggerHandler) saveError(c *gin.Context, err error) {
 //	@Failure	404		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/triggers/{id} [put]
-func (h *TriggerHandler) Update(c *gin.Context) {
+func (h *TriggerHandler) Update(c *gin.Context) error {
 	ctx, id := c.Request.Context(), c.Param("id")
 	cur, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
-	t, ok := h.bind(c)
-	if !ok {
-		return
+	t, err := h.bind(c)
+	if err != nil {
+		return err
 	}
 	// The kind is fixed at creation; UpdateSettings touches the settable
 	// columns only, so a racing rotation or fire is not undone.
 	if t.Kind != cur.Kind {
-		badRequest(c, "kind cannot change; create another trigger")
-		return
+		return badRequest("kind cannot change; create another trigger")
 	}
 	if err := h.store.UpdateSettings(ctx, id, t); err != nil {
-		h.saveError(c, err)
-		return
+		return h.saveError(err)
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	h.firer.Sync(ctx, id)
 	c.JSON(http.StatusOK, viewOf(updated, ""))
+	return nil
 }
 
 // Delete removes a trigger and takes it off the clock.
@@ -348,14 +332,14 @@ func (h *TriggerHandler) Update(c *gin.Context) {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/triggers/{id} [delete]
-func (h *TriggerHandler) Delete(c *gin.Context) {
+func (h *TriggerHandler) Delete(c *gin.Context) error {
 	ctx, id := c.Request.Context(), c.Param("id")
 	if err := h.store.Delete(ctx, id); err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	h.firer.Sync(ctx, id)
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // fireReq is the body of a manual fire: an optional payload, as a webhook
@@ -379,20 +363,19 @@ type fireReq struct {
 //	@Failure		409		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/triggers/{id}/fire [post]
-func (h *TriggerHandler) Fire(c *gin.Context) {
+func (h *TriggerHandler) Fire(c *gin.Context) error {
 	var req fireReq
 	if c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			badRequest(c, err.Error())
-			return
+			return badRequest(err.Error())
 		}
 	}
-	h.fire(c, c.Param("id"), req.Payload, bridge.FireManual)
+	return h.fire(c, c.Param("id"), req.Payload, bridge.FireManual)
 }
 
-// fire is the shared tail of a manual fire and a webhook call; it reports
-// whether something was started.
-func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) bool {
+// fire is the shared tail of a manual fire and a webhook call; nil means
+// something was started.
+func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) error {
 	fired, err := h.firer.Fire(c.Request.Context(), id, payload, source)
 	if err != nil {
 		_, taskLimit := errors.AsType[tasks.ErrTaskLimit](err)
@@ -402,18 +385,17 @@ func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) bool {
 		_, draining := errors.AsType[bridge.ErrShuttingDown](err)
 		switch {
 		case errors.Is(err, bridge.ErrWorkflowUnavailable), errors.Is(err, bridge.ErrTriggerTarget):
-			badRequest(c, err.Error())
+			return badRequest(err.Error())
 		case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrSessionAwaitingApproval), taskLimit, bridgeLimit, busy, deleting:
-			conflict(c, err.Error())
+			return conflict(err.Error())
 		case draining:
-			unavailable(c, err.Error())
+			return unavailable(err.Error())
 		default:
-			storeError(c, err)
+			return err
 		}
-		return false
 	}
 	c.JSON(http.StatusCreated, fired)
-	return true
+	return nil
 }
 
 // RotateSecret mints a webhook trigger a new secret, returned once.
@@ -428,59 +410,54 @@ func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) bool {
 //	@Failure		404	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/triggers/{id}/rotate-secret [post]
-func (h *TriggerHandler) RotateSecret(c *gin.Context) {
+func (h *TriggerHandler) RotateSecret(c *gin.Context) error {
 	ctx, id := c.Request.Context(), c.Param("id")
 	t, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if t.Kind != store.TriggerKindWebhook {
-		badRequest(c, "only a webhook trigger has a secret")
-		return
+		return badRequest("only a webhook trigger has a secret")
 	}
 	t.Secret = store.NewTriggerSecret()
 	if err := h.store.SetSecret(ctx, id, t.Secret); err != nil {
-		saveError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, viewOf(t, t.Secret))
+	return nil
 }
 
 // Hook is the webhook endpoint (POST /hooks/{id}), outside the token-guarded
 // API; its contract is protocol.md, Workflows.
-func (h *TriggerHandler) Hook(c *gin.Context) {
+func (h *TriggerHandler) Hook(c *gin.Context) error {
 	ctx, id := c.Request.Context(), c.Param("id")
 	t, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, HookBodyLimit+1))
 	if err != nil {
-		badRequest(c, "reading the body: "+err.Error())
-		return
+		return badRequest("reading the body: " + err.Error())
 	}
 	if len(body) > HookBodyLimit {
-		badRequest(c, "payload larger than 64 KB")
-		return
+		return badRequest("payload larger than 64 KB")
 	}
 	now := time.Now()
 	sig := c.GetHeader(HookSignatureHeader)
 	if t.Kind != store.TriggerKindWebhook || !verifyHookSignature(t.Secret, c.GetHeader(HookTimestampHeader), sig, body, now) {
-		abortError(c, http.StatusUnauthorized, protocol.CodeUnauthorized, "bad or stale signature")
-		return
+		return unauthorized("bad or stale signature")
 	}
 	// A valid delivery fires once: claimed before the fire (two copies must
 	// not both start something), released when the fire fails so a resend gets through.
 	key := id + ":" + strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sig), "sha256="))
 	if !h.replays.admit(key, now) {
-		conflict(c, "replayed delivery: this timestamp and body were already accepted or are being delivered")
-		return
+		return conflict("replayed delivery: this timestamp and body were already accepted or are being delivered")
 	}
-	if !h.fire(c, id, string(body), bridge.FireWebhook) {
+	if err := h.fire(c, id, string(body), bridge.FireWebhook); err != nil {
 		h.replays.forget(key)
+		return err
 	}
+	return nil
 }
 
 // SignHook computes the signature a caller sends: hex(HMAC-SHA256(secret,

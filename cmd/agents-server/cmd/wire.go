@@ -353,7 +353,7 @@ func newServer(ctx context.Context, log *slog.Logger, authSvc *authn.Service, au
 	hs.API.Auth = authHandler
 	srv.RegisterAPI(hs.API.Register)
 	srv.RegisterWS(hs.WS.Handle, hs.Terminal.Handle)
-	srv.RegisterHook(hs.API.Triggers.Hook)
+	srv.RegisterHook(hs.API.Hook())
 	srv.ServeHealth(buildVersion)
 	srv.ServeOpenAPI(docs.SpecYAML)
 	staticFS, err := fs.Sub(web.StaticFS, "frontend/dist")

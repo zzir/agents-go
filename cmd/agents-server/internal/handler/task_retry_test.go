@@ -47,7 +47,7 @@ func TestRetryErrorMapping(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-			h.retryError(c, fmt.Errorf("retrying task: %w", tc.err))
+			writeError(c, h.retryError(fmt.Errorf("retrying task: %w", tc.err)))
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d (body %s)", w.Code, tc.want, w.Body.String())
 			}
@@ -80,7 +80,7 @@ func TestStopErrorMapping(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-			h.stopError(c, fmt.Errorf("stopping task: %w", tc.err))
+			writeError(c, h.stopError(fmt.Errorf("stopping task: %w", tc.err)))
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d (body %s)", w.Code, tc.want, w.Body.String())
 			}

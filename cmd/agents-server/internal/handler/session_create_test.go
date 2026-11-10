@@ -18,8 +18,8 @@ func TestSessionCreateFaultsAndNameCap(t *testing.T) {
 	db := testdb.New(t)
 	sh := NewSessionHandler(testSessionDeps(db))
 	engine := newTestEngine()
-	engine.POST("/sessions", sh.Create)
-	engine.PATCH("/sessions/:id", sh.Patch)
+	engine.POST("/sessions", wrap(sh.Create))
+	engine.PATCH("/sessions/:id", wrap(sh.Patch))
 
 	long := strings.Repeat("n", maxNameLen+1)
 	if w := doJSON(t, engine, http.MethodPost, "/sessions", `{"name":"`+long+`"}`); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "longer than") {

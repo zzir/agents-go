@@ -25,15 +25,15 @@ func TestListsNeverNull(t *testing.T) {
 
 	// listVisible-backed lists and the hand-written ones both flow through
 	// nonNilList; a session id with no traces exercises the trace path.
-	engine.GET("/agents", testAgentConfigHandler(db).List)
-	engine.GET("/providers", NewProviderHandler(store.NewProviderStore(db)).List)
-	engine.GET("/workflows", NewWorkflowHandler(store.NewWorkflowStore(db), store.NewAgentConfigStore(db), store.NewSessionStore(db), nil).List)
-	engine.GET("/mcp-servers", NewMcpServerHandler(store.NewMcpServerStore(db), nil, nil, "").List)
-	engine.GET("/memories", NewMemoryHandler(store.NewMemoryStore(db), store.NewSessionStore(db), store.NewAgentConfigStore(db), store.NewSharedEntryStore(db)).List)
-	engine.GET("/skills", NewSkillHandler(store.NewSkillStore(db)).List)
-	engine.GET("/sessions/:id/traces", NewTraceHandler(store.NewTraceStore(db), settings.NewReader(store.NewSettingStore(db))).ListBySession)
+	engine.GET("/agents", wrap(testAgentConfigHandler(db).List))
+	engine.GET("/providers", wrap(NewProviderHandler(store.NewProviderStore(db)).List))
+	engine.GET("/workflows", wrap(NewWorkflowHandler(store.NewWorkflowStore(db), store.NewAgentConfigStore(db), store.NewSessionStore(db), nil).List))
+	engine.GET("/mcp-servers", wrap(NewMcpServerHandler(store.NewMcpServerStore(db), nil, nil, "").List))
+	engine.GET("/memories", wrap(NewMemoryHandler(store.NewMemoryStore(db), store.NewSessionStore(db), store.NewAgentConfigStore(db), store.NewSharedEntryStore(db)).List))
+	engine.GET("/skills", wrap(NewSkillHandler(store.NewSkillStore(db)).List))
+	engine.GET("/sessions/:id/traces", wrap(NewTraceHandler(store.NewTraceStore(db), settings.NewReader(store.NewSettingStore(db))).ListBySession))
 	runner := bridge.NewRunner(t.Context(), db, &bridge.AgentDeps{AgentConfigs: store.NewAgentConfigStore(db), Sessions: store.NewSessionStore(db), Traces: store.NewTraceStore(db)})
-	engine.GET("/sessions/:id/tasks", NewTaskHandler(store.NewTaskStore(db), runner).ListBySession)
+	engine.GET("/sessions/:id/tasks", wrap(NewTaskHandler(store.NewTaskStore(db), runner).ListBySession))
 
 	// Guardrails is omitted: its resolver always returns the built-in defs, so
 	// the collection is never empty to begin with.
@@ -70,9 +70,9 @@ func TestUpdateIsFullReplace(t *testing.T) {
 
 	ah := testAgentConfigHandler(db)
 	engine := newTestEngine()
-	engine.POST("/agents", ah.Create)
-	engine.PUT("/agents/:id", ah.Update)
-	engine.GET("/agents/:id", ah.Get)
+	engine.POST("/agents", wrap(ah.Create))
+	engine.PUT("/agents/:id", wrap(ah.Update))
+	engine.GET("/agents/:id", wrap(ah.Get))
 
 	w := doJSON(t, engine, http.MethodPost, "/agents", `{"name":"a","model":"m","provider_id":"`+prov.ID+`"}`)
 	if w.Code != http.StatusCreated {

@@ -25,11 +25,10 @@ func NewChatGPTOAuthHandler(oauth *providers.ChatGPTOAuth, providerStore *store.
 
 // editable loads the provider and gates a login/logout on it: signing a
 // private provider into ChatGPT is its owner's act, a global one an admin's.
-func (h *ChatGPTOAuthHandler) editable(c *gin.Context) bool {
+func (h *ChatGPTOAuthHandler) editable(c *gin.Context) error {
 	pv, err := h.providers.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return false
+		return err
 	}
 	return editableRow(c, pv.Scope, pv.OwnerID)
 }
@@ -48,25 +47,20 @@ func (h *ChatGPTOAuthHandler) editable(c *gin.Context) bool {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/providers/{id}/chatgpt/login [post]
-func (h *ChatGPTOAuthHandler) Login(c *gin.Context) {
-	if !h.editable(c) {
-		return
+func (h *ChatGPTOAuthHandler) Login(c *gin.Context) error {
+	if err := h.editable(c); err != nil {
+		return err
 	}
 	result, err := h.oauth.StartLogin(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			notFound(c)
-			return
-		}
 		// A backend without chatgpt_login is the caller's configuration problem: 400.
 		if errors.Is(err, providers.ErrChatGPTLoginUnavailable) {
-			badRequest(c, err.Error())
-			return
+			return badRequest(err.Error())
 		}
-		internalError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, result)
+	return nil
 }
 
 // chatgptCompleteReq carries the callback URL the user pastes after authorizing.
@@ -88,28 +82,26 @@ type chatgptCompleteReq struct {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/providers/{id}/chatgpt/complete [post]
-func (h *ChatGPTOAuthHandler) Complete(c *gin.Context) {
-	if !h.editable(c) {
-		return
+func (h *ChatGPTOAuthHandler) Complete(c *gin.Context) error {
+	if err := h.editable(c); err != nil {
+		return err
 	}
 	var req chatgptCompleteReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "redirect_url is required")
-		return
+		return badRequest("redirect_url is required")
 	}
 	err := h.oauth.CompleteLogin(c.Request.Context(), c.Param("id"), req.RedirectURL)
 	switch {
 	case err == nil:
 		c.Status(http.StatusNoContent)
-	case errors.Is(err, store.ErrNotFound):
-		notFound(c)
 	case errors.Is(err, providers.ErrChatGPTLoginUnavailable),
 		errors.Is(err, providers.ErrChatGPTLoginExpired),
 		errors.Is(err, providers.ErrChatGPTCallbackInvalid):
-		badRequest(c, err.Error())
+		return badRequest(err.Error())
 	default:
-		internalError(c, err)
+		return err
 	}
+	return nil
 }
 
 // Logout clears the ChatGPT token for the provider identified by the id path
@@ -122,13 +114,13 @@ func (h *ChatGPTOAuthHandler) Complete(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/providers/{id}/chatgpt/logout [post]
-func (h *ChatGPTOAuthHandler) Logout(c *gin.Context) {
-	if !h.editable(c) {
-		return
+func (h *ChatGPTOAuthHandler) Logout(c *gin.Context) error {
+	if err := h.editable(c); err != nil {
+		return err
 	}
 	if err := h.oauth.Logout(c.Request.Context(), c.Param("id")); err != nil {
-		storeError(c, err) // ErrNotFound -> 404, else 500
-		return
+		return err // ErrNotFound -> 404, else 500
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }

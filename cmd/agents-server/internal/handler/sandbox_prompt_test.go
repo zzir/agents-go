@@ -20,9 +20,9 @@ func TestSandboxPromptRoundTripsUnmasked(t *testing.T) {
 	db := testdb.New(t)
 	h := testSandboxHandler(db, sandboxes.NewManager())
 	e := newTestEngine()
-	e.POST("/sandboxes", h.Create)
-	e.GET("/sandboxes/:id", h.Get)
-	e.GET("/sandboxes", h.List)
+	e.POST("/sandboxes", wrap(h.Create))
+	e.GET("/sandboxes/:id", wrap(h.Get))
+	e.GET("/sandboxes", wrap(h.List))
 
 	const prompt = "This machine has Python 3.12 and no network. Use uv, not pip."
 	rec := doJSON(t, e, http.MethodPost, "/sandboxes", jsonBody(t, map[string]any{
@@ -69,8 +69,8 @@ func TestSandboxPromptEditIsNotAContentChange(t *testing.T) {
 	workspaces := store.NewWorkspaceStore(db)
 	h := testSandboxHandler(db, sandboxes.NewManager())
 	e := newTestEngine()
-	e.POST("/sandboxes", h.Create)
-	e.PUT("/sandboxes/:id", h.Update)
+	e.POST("/sandboxes", wrap(h.Create))
+	e.PUT("/sandboxes/:id", wrap(h.Update))
 
 	rec := doJSON(t, e, http.MethodPost, "/sandboxes", jsonBody(t, map[string]any{
 		"name": "box", "type": "docker", "config": map[string]any{"image": "img"},

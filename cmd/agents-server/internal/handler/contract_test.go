@@ -24,12 +24,12 @@ func TestRestContract(t *testing.T) {
 	ah := testAgentConfigHandler(db)
 
 	engine := newTestEngine()
-	engine.POST("/sessions", sh.Create)
-	engine.PATCH("/sessions/:id", sh.Patch)
-	engine.DELETE("/sessions/:id", sh.Delete)
-	engine.POST("/agents", ah.Create)
-	engine.PUT("/agents/:id", ah.Update)
-	engine.DELETE("/agents/:id", ah.Delete)
+	engine.POST("/sessions", wrap(sh.Create))
+	engine.PATCH("/sessions/:id", wrap(sh.Patch))
+	engine.DELETE("/sessions/:id", wrap(sh.Delete))
+	engine.POST("/agents", wrap(ah.Create))
+	engine.PUT("/agents/:id", wrap(ah.Update))
+	engine.DELETE("/agents/:id", wrap(ah.Delete))
 
 	// Writes against a missing resource are 404 with the error envelope.
 	w := doJSON(t, engine, http.MethodPut, "/agents/nope", `{"name":"x","model":"gpt-4o"}`)
@@ -112,8 +112,8 @@ func TestForkCopiesSandboxBinding(t *testing.T) {
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
 	engine := newTestEngine()
-	engine.POST("/sessions", sh.Create)
-	engine.POST("/sessions/:id/fork", sh.Fork)
+	engine.POST("/sessions", wrap(sh.Create))
+	engine.POST("/sessions/:id/fork", wrap(sh.Fork))
 
 	w := doJSON(t, engine, http.MethodPost, "/sessions", `{"name":"src"}`)
 	if w.Code != http.StatusCreated {
@@ -155,8 +155,8 @@ func TestPatchCannotMoveBinding(t *testing.T) {
 	sh := NewSessionHandler(testSessionDeps(db, func(d *SessionDeps) { d.Sessions = sessions }))
 
 	engine := newTestEngine()
-	engine.POST("/sessions", sh.Create)
-	engine.PATCH("/sessions/:id", sh.Patch)
+	engine.POST("/sessions", wrap(sh.Create))
+	engine.PATCH("/sessions/:id", wrap(sh.Patch))
 
 	w := doJSON(t, engine, http.MethodPost, "/sessions", `{"name":"s"}`)
 	var sess struct {

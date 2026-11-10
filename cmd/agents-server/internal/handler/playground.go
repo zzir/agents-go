@@ -99,47 +99,43 @@ type playgroundResp struct {
 //	@Failure		502		{object}	ErrorResponse	"model call failed"
 //	@Security		BearerAuth
 //	@Router			/playground/generate [post]
-func (h *PlaygroundHandler) Generate(c *gin.Context) {
+func (h *PlaygroundHandler) Generate(c *gin.Context) error {
 	var req playgroundReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	if req.AgentConfigID == "" {
-		badRequest(c, "agent_config_id is required")
-		return
+		return badRequest("agent_config_id is required")
 	}
 
 	u, _ := server.CurrentUser(c)
-	if ac, err := h.deps.AgentConfigs.Get(c.Request.Context(), req.AgentConfigID); err == nil && !runnableRow(c, ac.Scope, ac.OwnerID) {
-		return
+	if ac, err := h.deps.AgentConfigs.Get(c.Request.Context(), req.AgentConfigID); err == nil {
+		if err := runnableRow(c, ac.Scope, ac.OwnerID); err != nil {
+			return err
+		}
 	}
 	built, err := bridge.BuildFullAgent(c.Request.Context(), h.deps, req.AgentConfigID, "", u.ID)
 	if err != nil {
-		badRequest(c, "building agent: "+err.Error())
-		return
+		return badRequest("building agent: " + err.Error())
 	}
 	// A no-op with no sandbox attached; kept so a sandbox-carrying build cannot
 	// leak its hold.
 	defer built.Release()
 	if built.Provider == nil {
-		badRequest(c, "no API key configured for this agent")
-		return
+		return badRequest("no API key configured for this agent")
 	}
 	modelName := req.Model
 	modelName = cmp.Or(modelName, built.Agent.Model)
 	model, err := built.Provider.Model(modelName)
 	if err != nil || model == nil {
-		badRequest(c, "resolving model: "+errString(err))
-		return
+		return badRequest("resolving model: " + errString(err))
 	}
 
 	items := make([]agents.InputItem, 0, len(req.InputItems))
 	for i, raw := range req.InputItems {
 		item, err := session.UnmarshalInputItem(store.NormalizeItemJSON(raw))
 		if err != nil {
-			badRequest(c, "input item "+strconv.Itoa(i)+": "+err.Error())
-			return
+			return badRequest("input item " + strconv.Itoa(i) + ": " + err.Error())
 		}
 		items = append(items, item)
 	}
@@ -167,15 +163,13 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 	if req.OutputSchema != nil && req.OutputSchema.Schema != nil {
 		if req.OutputSchema.Strict {
 			if err := bridge.CheckStrictOutputSchema(req.OutputSchema.Schema); err != nil {
-				badRequest(c, err.Error())
-				return
+				return badRequest(err.Error())
 			}
 		}
 		outputSchema, err = agents.NewDynamicOutputSchema(
 			cmp.Or(req.OutputSchema.Name, "final_output"), req.OutputSchema.Schema, req.OutputSchema.Strict)
 		if err != nil {
-			badRequest(c, err.Error())
-			return
+			return badRequest(err.Error())
 		}
 	}
 
@@ -188,21 +182,18 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 	}
 
 	if req.Stream {
-		h.generateStream(c, model, mreq)
-		return
+		return h.generateStream(c, model, mreq)
 	}
 
 	start := time.Now()
 	resp, err := model.Respond(c.Request.Context(), mreq)
 	if err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 
 	out, err := json.Marshal(resp.Output)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, playgroundResp{
 		Output:     out,
@@ -210,11 +201,12 @@ func (h *PlaygroundHandler) Generate(c *gin.Context) {
 		DurationMS: time.Since(start).Milliseconds(),
 		TTFTMS:     -1,
 	})
+	return nil
 }
 
 // generateStream is the SSE variant: text/reasoning deltas, then one `done`
 // event (output, usage, duration_ms, ttft_ms) or `error`. Aborting the request cancels.
-func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, mreq agents.ModelRequest) {
+func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, mreq agents.ModelRequest) error {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("X-Accel-Buffering", "no")
@@ -251,7 +243,7 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 	for event, err := range model.StreamResponse(c.Request.Context(), mreq) {
 		if err != nil {
 			writeEvent("error", gin.H{"message": err.Error()})
-			return
+			return nil
 		}
 		if event == nil {
 			continue
@@ -260,19 +252,19 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 		case "response.output_text.delta":
 			stampTTFT()
 			if !writeEvent("delta", gin.H{"text": event.AsResponseOutputTextDelta().Delta}) {
-				return
+				return nil
 			}
 		case "response.reasoning_summary_text.delta":
 			stampTTFT()
 			if !writeEvent("reasoning", gin.H{"text": event.AsResponseReasoningSummaryTextDelta().Delta}) {
-				return
+				return nil
 			}
 		case "response.reasoning_text.delta":
 			// Raw reasoning deltas — the Anthropic adapter's thinking stream;
 			// OpenAI sends summaries through the case above.
 			stampTTFT()
 			if !writeEvent("reasoning", gin.H{"text": event.AsResponseReasoningTextDelta().Delta}) {
-				return
+				return nil
 			}
 		case "response.output_item.done":
 			acc = append(acc, event.AsResponseOutputItemDone().Item)
@@ -294,7 +286,7 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 	// array — never a stream that broke off before its terminal event.
 	if !terminal {
 		writeEvent("error", gin.H{"message": "model stream ended without a completed response"})
-		return
+		return nil
 	}
 	if len(final) == 0 {
 		final = acc
@@ -302,7 +294,7 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 	out, err := json.Marshal(final)
 	if err != nil {
 		writeEvent("error", gin.H{"message": err.Error()})
-		return
+		return nil
 	}
 	writeEvent("done", playgroundResp{
 		Output:     out,
@@ -310,6 +302,7 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 		DurationMS: time.Since(start).Milliseconds(),
 		TTFTMS:     ttft,
 	})
+	return nil
 }
 
 // AgentTools returns the agent's current tool surface as schema-only
@@ -326,24 +319,25 @@ func (h *PlaygroundHandler) generateStream(c *gin.Context, model agents.Model, m
 //	@Failure		404	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/agents/{id}/tools [get]
-func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
+func (h *PlaygroundHandler) AgentTools(c *gin.Context) error {
 	// Absence answers 404 like the rest of the /agents/:id subtree; only a
 	// real build fault is a 400.
 	ac, err := h.deps.AgentConfigs.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
-	if !visibleRow(c, ac.Scope, ac.OwnerID) || !runnableRow(c, ac.Scope, ac.OwnerID) {
-		return
+	if err := visibleRow(c, ac.Scope, ac.OwnerID); err != nil {
+		return err
+	}
+	if err := runnableRow(c, ac.Scope, ac.OwnerID); err != nil {
+		return err
 	}
 	// The surface as the caller's own runs would get it — a member's
 	// listing does not show the save_workflow their runs never carry.
 	u, _ := server.CurrentUser(c)
 	built, err := bridge.BuildFullAgent(c.Request.Context(), h.deps, c.Param("id"), "", u.ID)
 	if err != nil {
-		badRequest(c, "building agent: "+err.Error())
-		return
+		return badRequest("building agent: " + err.Error())
 	}
 	defer built.Release()
 	// The FULL surface: unlock the planning phase (it filters MCP listings,
@@ -379,6 +373,7 @@ func (h *PlaygroundHandler) AgentTools(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, out)
+	return nil
 }
 
 // toolSources names each of n positional tools after the bucket that added

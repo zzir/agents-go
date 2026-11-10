@@ -18,6 +18,7 @@ import (
 //	@Success		200	{array}	providers.TypeInfo
 //	@Security		BearerAuth
 //	@Router			/provider-types [get]
-func ProviderTypeList(c *gin.Context) {
+func ProviderTypeList(c *gin.Context) error {
 	c.JSON(http.StatusOK, providers.Types())
+	return nil
 }

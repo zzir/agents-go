@@ -23,9 +23,9 @@ func TestGuardrailConfigObjectRoundTrip(t *testing.T) {
 	grStore := store.NewGuardrailStore(db)
 	h := NewGuardrailHandler(grStore, guardrails.NewResolver(grStore))
 	engine := newTestEngine()
-	engine.POST("/guardrails", h.Create)
-	engine.GET("/guardrails", h.List)
-	engine.PUT("/guardrails/:id", h.Update)
+	engine.POST("/guardrails", wrap(h.Create))
+	engine.GET("/guardrails", wrap(h.List))
+	engine.PUT("/guardrails/:id", wrap(h.Update))
 
 	// Stringified config (the old frontend shape) must be rejected, not stored.
 	bad := `{"name":"g","stages":["input"],"mode":"regex","config":"{\"pattern\":\"x\"}"}`

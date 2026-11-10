@@ -19,9 +19,9 @@ func TestMcpServerReadOnlyToolsRoundTrip(t *testing.T) {
 	db := testdb.New(t)
 	h := NewMcpServerHandler(store.NewMcpServerStore(db), mcpservers.NewManager(t.Context()), nil, "")
 	engine := newTestEngine()
-	engine.POST("/mcp-servers", h.Create)
-	engine.GET("/mcp-servers/:id", h.Get)
-	engine.PUT("/mcp-servers/:id", h.Update)
+	engine.POST("/mcp-servers", wrap(h.Create))
+	engine.GET("/mcp-servers/:id", wrap(h.Get))
+	engine.PUT("/mcp-servers/:id", wrap(h.Update))
 
 	w := doJSON(t, engine, http.MethodPost, "/mcp-servers", `{"name":"docs","config":{"endpoint":"http://x","headers":{"X-Key":"s3cret"},"read_only_tools":["search","fetch"]}}`)
 	if w.Code != http.StatusCreated {

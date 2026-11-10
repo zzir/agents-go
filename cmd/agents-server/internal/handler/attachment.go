@@ -15,7 +15,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/attachments"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/settings"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
@@ -66,13 +65,14 @@ type attachmentConfigResp struct {
 //	@Success		200	{object}	attachmentConfigResp
 //	@Security		BearerAuth
 //	@Router			/attachments/config [get]
-func (h *AttachmentHandler) Config(c *gin.Context) {
+func (h *AttachmentHandler) Config(c *gin.Context) error {
 	c.JSON(http.StatusOK, attachmentConfigResp{
 		Enabled:     h.settings.S3Config(c.Request.Context()).Complete(),
 		MaxBytes:    attachments.MaxBytes,
 		MaxCount:    attachments.MaxPerMessage,
 		DownscalePx: attachments.DownscalePx,
 	})
+	return nil
 }
 
 // attachmentResp is one stored attachment as the API returns it.
@@ -112,52 +112,43 @@ func (h *AttachmentHandler) resp(ctx context.Context, a *store.Attachment) attac
 //	@Failure		503		{object}	ErrorResponse	"attachment storage not configured"
 //	@Security		BearerAuth
 //	@Router			/attachments [post]
-func (h *AttachmentHandler) Upload(c *gin.Context) {
+func (h *AttachmentHandler) Upload(c *gin.Context) error {
 	u, ok := server.CurrentUser(c)
 	if !ok {
-		abortError(c, http.StatusUnauthorized, protocol.CodeUnauthorized, "no user")
-		return
+		return unauthorized("no user")
 	}
 	ctx := c.Request.Context()
 	client := h.client(ctx)
 	if client == nil {
-		abortError(c, http.StatusServiceUnavailable, protocol.CodeUnavailable,
-			"image attachments are not configured — an admin must fill the Attachment storage settings")
-		return
+		return unavailable("image attachments are not configured — an admin must fill the Attachment storage settings")
 	}
 	// The request body is capped by the route's limit (SetBodyLimit in the
 	// composition root: MaxAttachmentBytes plus multipart slack).
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
-		badRequest(c, "multipart field \"file\" is required (max 10 MiB)")
-		return
+		return badRequest("multipart field \"file\" is required (max 10 MiB)")
 	}
 	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, attachments.MaxBytes+1))
 	if err != nil {
-		badRequest(c, "reading upload: "+err.Error())
-		return
+		return badRequest("reading upload: " + err.Error())
 	}
 	if int64(len(data)) > attachments.MaxBytes {
-		badRequest(c, "image exceeds the 10 MiB limit")
-		return
+		return badRequest("image exceeds the 10 MiB limit")
 	}
 
 	// The decode is the validation: sniffed MIME fast-rejects, DecodeConfig
 	// proves the bytes are the image they claim and yields the dimensions.
 	mime := http.DetectContentType(data)
 	if mime != "image/png" && mime != "image/jpeg" {
-		badRequest(c, "only png and jpeg images are accepted, got "+mime)
-		return
+		return badRequest("only png and jpeg images are accepted, got " + mime)
 	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || (format != "png" && format != "jpeg") {
-		badRequest(c, "file does not decode as a png or jpeg image")
-		return
+		return badRequest("file does not decode as a png or jpeg image")
 	}
 	if cfg.Width > attachments.MaxSidePx || cfg.Height > attachments.MaxSidePx {
-		badRequest(c, "image dimensions exceed 8000px — downscale before uploading")
-		return
+		return badRequest("image dimensions exceed 8000px — downscale before uploading")
 	}
 
 	// Key layout: attachments/{owner}/{uuid}.{ext} — the extension derives
@@ -173,18 +164,17 @@ func (h *AttachmentHandler) Upload(c *gin.Context) {
 		Size:    int64(len(data)),
 	}
 	if err := client.Put(ctx, a.Key, mime, data); err != nil {
-		abortError(c, http.StatusBadGateway, protocol.CodeUpstream, err.Error())
-		return
+		return upstream(err.Error())
 	}
 	if err := h.store.Create(ctx, a); err != nil {
 		// Remove the orphaned object best-effort.
 		delCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		_ = client.Delete(delCtx, a.Key)
-		internalError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusCreated, h.resp(ctx, a))
+	return nil
 }
 
 // Delete revokes an attachment that was never sent; owner-only, and a bound
@@ -199,38 +189,33 @@ func (h *AttachmentHandler) Upload(c *gin.Context) {
 //	@Failure		409	{object}	ErrorResponse	"already sent with a message"
 //	@Security		BearerAuth
 //	@Router			/attachments/{id} [delete]
-func (h *AttachmentHandler) Delete(c *gin.Context) {
+func (h *AttachmentHandler) Delete(c *gin.Context) error {
 	u, ok := server.CurrentUser(c)
 	if !ok {
-		abortError(c, http.StatusUnauthorized, protocol.CodeUnauthorized, "no user")
-		return
+		return unauthorized("no user")
 	}
 	ctx := c.Request.Context()
 	a, err := h.store.Get(ctx, c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if a.OwnerID != u.ID {
-		notFound(c) // ownership is not an oracle for existence
-		return
+		return errNotFound // ownership is not an oracle for existence
 	}
 	if a.Bound {
-		abortError(c, http.StatusConflict, protocol.CodeConflict, "attachment was sent with a message and is part of session history")
-		return
+		return conflict("attachment was sent with a message and is part of session history")
 	}
 	// Object first, row second, as the reaper does: a failed object delete is retried.
 	if client := h.client(ctx); client != nil {
 		if err := client.Delete(ctx, a.Key); err != nil {
-			abortError(c, http.StatusBadGateway, protocol.CodeUpstream, err.Error())
-			return
+			return upstream(err.Error())
 		}
 	}
 	if err := h.store.Delete(ctx, a.ID); err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // storageReq is the attachment-storage section as ONE value: its keys are
@@ -307,11 +292,10 @@ func (req storageReq) isStorageClear() bool {
 //	@Failure		400		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/attachments/storage [put]
-func (h *AttachmentHandler) SaveStorage(c *gin.Context) {
+func (h *AttachmentHandler) SaveStorage(c *gin.Context) error {
 	var req storageReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	ctx := c.Request.Context()
 	kv := map[string]string{
@@ -322,8 +306,7 @@ func (h *AttachmentHandler) SaveStorage(c *gin.Context) {
 	if !req.isStorageClear() {
 		cfg := h.resolve(ctx, req)
 		if msg := h.checkStorage(ctx, cfg); msg != "" {
-			badRequest(c, msg)
-			return
+			return badRequest(msg)
 		}
 		kv[settings.KeyS3Endpoint] = cfg.Endpoint
 		kv[settings.KeyS3Region] = cfg.Region
@@ -334,13 +317,12 @@ func (h *AttachmentHandler) SaveStorage(c *gin.Context) {
 		kv[settings.KeyS3PathStyle] = strconv.FormatBool(cfg.PathStyle)
 	}
 	if err := h.settingStore.SetMany(ctx, kv); err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	if h.OnStorageChange != nil {
 		h.OnStorageChange()
 	}
-	h.Config(c)
+	return h.Config(c)
 }
 
 // TestStorage probes the submitted storage section without storing it — the
@@ -354,16 +336,15 @@ func (h *AttachmentHandler) SaveStorage(c *gin.Context) {
 //	@Failure		400	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/attachments/storage/test [post]
-func (h *AttachmentHandler) TestStorage(c *gin.Context) {
+func (h *AttachmentHandler) TestStorage(c *gin.Context) error {
 	var req storageReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	ctx := c.Request.Context()
 	if msg := h.checkStorage(ctx, h.resolve(ctx, req)); msg != "" {
-		badRequest(c, msg)
-		return
+		return badRequest(msg)
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }

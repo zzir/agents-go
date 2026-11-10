@@ -50,7 +50,7 @@ func TestMcpServerConnectRejectsDisabled(t *testing.T) {
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewMcpServerHandler(mcpStore, mcpservers.NewManager(t.Context()), nil, "")
 	engine := newTestEngine()
-	engine.POST("/mcp-servers/:id/connect", h.Connect)
+	engine.POST("/mcp-servers/:id/connect", wrap(h.Connect))
 
 	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", OwnerID: store.LocalUserID, Config: json.RawMessage(`{"endpoint":"http://x"}`), Enabled: false}
 	if err := mcpStore.Create(t.Context(), cfg); err != nil {
@@ -70,7 +70,7 @@ func TestMcpServerUpdateDisableReportsDisabled(t *testing.T) {
 	mcpStore := store.NewMcpServerStore(db)
 	h := NewMcpServerHandler(mcpStore, mcpservers.NewManager(t.Context()), nil, "")
 	engine := newTestEngine()
-	engine.PUT("/mcp-servers/:id", h.Update)
+	engine.PUT("/mcp-servers/:id", wrap(h.Update))
 
 	cfg := &store.McpServerConfig{ID: store.NewID(), Name: "fs", OwnerID: store.LocalUserID, Config: json.RawMessage(`{"endpoint":"http://x"}`), Enabled: true}
 	if err := mcpStore.Create(t.Context(), cfg); err != nil {

@@ -44,7 +44,7 @@ func TestResolveErrorMapping(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-			h.resolveError(c, fmt.Errorf("resolving approval: %w", tc.err))
+			writeError(c, h.resolveError(fmt.Errorf("resolving approval: %w", tc.err)))
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d (body %s)", w.Code, tc.want, w.Body.String())
 			}

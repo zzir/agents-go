@@ -32,9 +32,9 @@ func workspaceEnvFixture(t *testing.T) (*gin.Engine, *store.WorkspaceStore, *sto
 	}
 	e := newTestEngine()
 	g := e.Group("/api/v1/workspaces")
-	g.GET("", h.List)
-	g.GET("/:id", h.Get)
-	g.PUT("/:id", h.Update)
+	g.GET("", wrap(h.List))
+	g.GET("/:id", wrap(h.Get))
+	g.PUT("/:id", wrap(h.Update))
 	return e, workspaces, p
 }
 
@@ -193,7 +193,7 @@ func TestWorkspaceEnvForeignReadsAsAbsent(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := newTestEngine() // the test caller is the local admin
-	e.GET("/api/v1/workspaces/:id", h.Get)
+	e.GET("/api/v1/workspaces/:id", wrap(h.Get))
 
 	rec := doJSON(t, e, http.MethodGet, "/api/v1/workspaces/"+foreign.ID, "")
 	if rec.Code != http.StatusNotFound {

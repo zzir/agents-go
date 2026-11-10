@@ -32,12 +32,12 @@ func skillTestEnv(t *testing.T) (*gin.Engine, *SkillHandler, *store.SkillStore) 
 	st := store.NewSkillStore(db)
 	h := NewSkillHandler(st)
 	engine := newTestEngine()
-	engine.GET("/skills", h.List)
-	engine.GET("/skills/:id", h.Get)
-	engine.POST("/skills", h.Create)
-	engine.PUT("/skills/:id", h.Update)
-	engine.DELETE("/skills/:id", h.Delete)
-	engine.POST("/skill-imports", h.Import)
+	engine.GET("/skills", wrap(h.List))
+	engine.GET("/skills/:id", wrap(h.Get))
+	engine.POST("/skills", wrap(h.Create))
+	engine.PUT("/skills/:id", wrap(h.Update))
+	engine.DELETE("/skills/:id", wrap(h.Delete))
+	engine.POST("/skill-imports", wrap(h.Import))
 	return engine, h, st
 }
 
@@ -304,8 +304,8 @@ func TestSkillImportEmptyRepo(t *testing.T) {
 // files join the group rather than splitting it (decisions §5.29).
 func TestSkillRepoScopeGroup(t *testing.T) {
 	engine, h, st := skillTestEnv(t)
-	engine.POST("/skills/:id/scope", h.SetScope)
-	engine.POST("/skill-repos/scope", h.SetRepoScope)
+	engine.POST("/skills/:id/scope", wrap(h.SetScope))
+	engine.POST("/skill-repos/scope", wrap(h.SetRepoScope))
 	files := map[string]string{
 		"pdf/SKILL.md":  pdfSkillDoc,
 		"docx/SKILL.md": "---\nname: docx\ndescription: Word documents.\n---\nBody.\n",
@@ -378,7 +378,7 @@ func TestSkillRepoScopeGroup(t *testing.T) {
 func TestSkillSyncTargetsTheNamedGroup(t *testing.T) {
 	testdb.SkipOnPostgres(t)
 	engine, h, st := skillTestEnv(t)
-	engine.POST("/skill-repos/scope", h.SetRepoScope)
+	engine.POST("/skill-repos/scope", wrap(h.SetRepoScope))
 	files := map[string]string{"pdf/SKILL.md": pdfSkillDoc}
 	gh := fakeGitHub(t, "sha1", files)
 	h.githubAPI, h.githubRaw = gh.URL, gh.URL

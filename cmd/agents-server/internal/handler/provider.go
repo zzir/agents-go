@@ -123,21 +123,20 @@ func providerFailure(err error) error {
 //	@Failure		502	{object}	ErrorResponse	"the provider refused or is unreachable"
 //	@Security		BearerAuth
 //	@Router			/providers/{id}/models [get]
-func (h *ProviderHandler) Models(c *gin.Context) {
-	pv, ok := gatedRow(c, h.store.CrudStore, providerScope, visibleRow)
-	if !ok {
-		return
+func (h *ProviderHandler) Models(c *gin.Context) error {
+	pv, err := gatedRow(c, h.store.CrudStore, providerScope, visibleRow)
+	if err != nil {
+		return err
 	}
 	models, err := h.listModels(c.Request.Context(), pv)
 	if err != nil {
 		if errors.Is(err, errModelListNeedsKey) {
-			conflict(c, err.Error())
-			return
+			return conflict(err.Error())
 		}
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	c.JSON(http.StatusOK, models)
+	return nil
 }
 
 // providerTestReq is Test's optional body.
@@ -171,30 +170,28 @@ type providerTestResp struct {
 //	@Failure		502		{object}	ErrorResponse	"the key was refused or the endpoint is unreachable"
 //	@Security		BearerAuth
 //	@Router			/providers/{id}/test [post]
-func (h *ProviderHandler) Test(c *gin.Context) {
-	pv, ok := gatedRow(c, h.store.CrudStore, providerScope, visibleRow)
-	if !ok {
-		return
+func (h *ProviderHandler) Test(c *gin.Context) error {
+	pv, err := gatedRow(c, h.store.CrudStore, providerScope, visibleRow)
+	if err != nil {
+		return err
 	}
 	var req providerTestReq
 	if c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			badRequest(c, err.Error())
-			return
+			return badRequest(err.Error())
 		}
 	}
 	if pv.AuthMode == providers.AuthModeChatGPTLogin {
 		if pv.ChatGPTToken == "" {
 			c.JSON(http.StatusOK, providerTestResp{OK: false, Detail: "chatgpt_not_logged_in"})
-			return
+			return nil
 		}
 		c.JSON(http.StatusOK, providerTestResp{OK: true, Detail: "chatgpt_logged_in"})
-		return
+		return nil
 	}
 	models, err := h.listModels(c.Request.Context(), pv)
 	if err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	resp := providerTestResp{OK: true, Detail: fmt.Sprintf("listed %d models", len(models)), ModelCount: len(models)}
 	if req.Model != "" {
@@ -211,6 +208,7 @@ func (h *ProviderHandler) Test(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, resp)
+	return nil
 }
 
 // providerReq is the request body for Create and Update; the id, the
@@ -233,22 +231,19 @@ func (r *providerReq) toModel() *store.Provider {
 
 // bind decodes and validates an incoming provider body, reporting the failure
 // itself. Type and auth mode are the provider registry's answer.
-func (h *ProviderHandler) bind(c *gin.Context) (*store.Provider, bool) {
+func (h *ProviderHandler) bind(c *gin.Context) (*store.Provider, error) {
 	var req providerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return nil, false
+		return nil, badRequest(err.Error())
 	}
 	pv := req.toModel()
 	if err := store.NormalizeProvider(pv); err != nil {
-		badRequest(c, err.Error())
-		return nil, false
+		return nil, badRequest(err.Error())
 	}
 	if err := providers.Validate(pv); err != nil {
-		badRequest(c, err.Error())
-		return nil, false
+		return nil, badRequest(err.Error())
 	}
-	return pv, true
+	return pv, nil
 }
 
 // List responds with every provider, keys masked.
@@ -260,15 +255,16 @@ func (h *ProviderHandler) bind(c *gin.Context) (*store.Provider, bool) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/providers [get]
-func (h *ProviderHandler) List(c *gin.Context) {
-	list, ok := listVisible(c, h.store.CrudStore)
-	if !ok {
-		return
+func (h *ProviderHandler) List(c *gin.Context) error {
+	list, err := listVisible(c, h.store.CrudStore)
+	if err != nil {
+		return err
 	}
 	for i := range list {
 		sanitizeProvider(&list[i])
 	}
 	c.JSON(http.StatusOK, list)
+	return nil
 }
 
 // Get responds with one provider, key masked.
@@ -281,13 +277,14 @@ func (h *ProviderHandler) List(c *gin.Context) {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/providers/{id} [get]
-func (h *ProviderHandler) Get(c *gin.Context) {
-	pv, ok := gatedRow(c, h.store.CrudStore, providerScope, visibleRow)
-	if !ok {
-		return
+func (h *ProviderHandler) Get(c *gin.Context) error {
+	pv, err := gatedRow(c, h.store.CrudStore, providerScope, visibleRow)
+	if err != nil {
+		return err
 	}
 	sanitizeProvider(pv)
 	c.JSON(http.StatusOK, pv)
+	return nil
 }
 
 // providerScope reads a provider's (scope, owner) pair for the scoped-CRUD gates.
@@ -300,23 +297,21 @@ type scopeReq struct {
 }
 
 // bindScope decodes and validates a scope-change body.
-func bindScope(c *gin.Context) (string, bool) {
+func bindScope(c *gin.Context) (string, error) {
 	var req scopeReq
 	if err := c.ShouldBindJSON(&req); err != nil || (req.Scope != store.ScopeGlobal && req.Scope != store.ScopePrivate) {
-		badRequest(c, `scope must be "global" or "private"`)
-		return "", false
+		return "", badRequest(`scope must be "global" or "private"`)
 	}
-	return req.Scope, true
+	return req.Scope, nil
 }
 
 // sameScope refuses a /scope request naming the scope the row already holds
-// (decisions §5.29). Writes the 409 and returns true when refused.
-func sameScope(c *gin.Context, kind, current, requested string) bool {
+// (decisions §5.29): 409.
+func sameScope(kind, current, requested string) error {
 	if current == requested {
-		conflict(c, kind+" is already "+requested)
-		return true
+		return conflict(kind + " is already " + requested)
 	}
-	return false
+	return nil
 }
 
 // SetScope promotes a provider to global or demotes it back to its author's
@@ -332,43 +327,40 @@ func sameScope(c *gin.Context, kind, current, requested string) bool {
 //	@Failure	409	{object}	ErrorResponse	"name collision in the target scope, or referencing agents block the demote"
 //	@Security	BearerAuth
 //	@Router		/providers/{id}/scope [post]
-func (h *ProviderHandler) SetScope(c *gin.Context) {
-	scope, ok := bindScope(c)
-	if !ok {
-		return
+func (h *ProviderHandler) SetScope(c *gin.Context) error {
+	scope, err := bindScope(c)
+	if err != nil {
+		return err
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
 	pv, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
-	if !scopeChangeAllowed(c, scope, pv.Scope, pv.OwnerID) {
-		return
+	if err := scopeChangeAllowed(c, scope, pv.Scope, pv.OwnerID); err != nil {
+		return err
 	}
-	if sameScope(c, "provider", pv.Scope, scope) {
-		return
+	if err := sameScope("provider", pv.Scope, scope); err != nil {
+		return err
 	}
 	if scope == store.ScopePrivate {
 		refs, err := h.store.DemoteToPrivate(ctx, id)
 		if err != nil {
-			saveError(c, err) // name collision in the target scope -> 409
-			return
+			return err // name collision in the target scope -> 409
 		}
 		if refs > 0 {
-			conflict(c, fmt.Sprintf("%d agent(s) outside the owner's private set still reference this provider; repoint them first", refs))
-			return
+			return conflict(fmt.Sprintf("%d agent(s) outside the owner's private set still reference this provider; repoint them first", refs))
 		}
 		server.SetAuditDetail(c, "scope="+scope)
 		c.Status(http.StatusNoContent)
-		return
+		return nil
 	}
 	if err := store.SetScopeOf(ctx, h.store.CrudStore, id, scope, pv.OwnerID); err != nil {
-		saveError(c, err) // name collision in the target scope -> 409
-		return
+		return err // name collision in the target scope -> 409
 	}
 	server.SetAuditDetail(c, "scope="+scope)
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // SetOwner transfers the provider, credential included, to another account
@@ -384,27 +376,24 @@ func (h *ProviderHandler) SetScope(c *gin.Context) {
 //	@Failure	409	{object}	ErrorResponse	"name collision, or referencing agents block the transfer"
 //	@Security	BearerAuth
 //	@Router		/providers/{id}/owner [put]
-func (h *ProviderHandler) SetOwner(c *gin.Context) {
+func (h *ProviderHandler) SetOwner(c *gin.Context) error {
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		badRequest(c, "user_id is required")
-		return
+		return badRequest("user_id is required")
 	}
 	refs, err := h.store.TransferOwner(c.Request.Context(), c.Param("id"), req.UserID)
 	if err != nil {
 		if errors.Is(err, store.ErrNoSuchUser) {
-			badRequest(c, "no such user")
-			return
+			return badRequest("no such user")
 		}
-		saveError(c, err)
-		return
+		return err
 	}
 	if refs > 0 {
-		conflict(c, fmt.Sprintf("%d agent(s) outside the new owner's private set reference this provider; repoint them first", refs))
-		return
+		return conflict(fmt.Sprintf("%d agent(s) outside the new owner's private set reference this provider; repoint them first", refs))
 	}
 	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // Create stores a new provider.
@@ -419,22 +408,22 @@ func (h *ProviderHandler) SetOwner(c *gin.Context) {
 //	@Failure	409			{object}	ErrorResponse	"duplicate name"
 //	@Security	BearerAuth
 //	@Router		/providers [post]
-func (h *ProviderHandler) Create(c *gin.Context) {
-	pv, ok := h.bind(c)
-	if !ok {
-		return
+func (h *ProviderHandler) Create(c *gin.Context) error {
+	pv, err := h.bind(c)
+	if err != nil {
+		return err
 	}
-	if !stampCreateScope(c, &pv.Scope, &pv.OwnerID) {
-		return
+	if err := stampCreateScope(c, &pv.Scope, &pv.OwnerID); err != nil {
+		return err
 	}
 	// There is no stored value yet, so a mask sentinel resolves to empty.
 	pv.APIKey = resolveSecret(pv.APIKey, "")
 	if err := h.store.Create(c.Request.Context(), pv); err != nil {
-		saveError(c, err) // duplicate name -> 409
-		return
+		return err // duplicate name -> 409
 	}
 	sanitizeProvider(pv)
 	created(c, pv.ID, pv)
+	return nil
 }
 
 // Update overwrites a provider.
@@ -452,39 +441,38 @@ func (h *ProviderHandler) Create(c *gin.Context) {
 //	@Failure		409			{object}	ErrorResponse	"duplicate name"
 //	@Security		BearerAuth
 //	@Router			/providers/{id} [put]
-func (h *ProviderHandler) Update(c *gin.Context) {
-	pv, ok := h.bind(c)
-	if !ok {
-		return
+func (h *ProviderHandler) Update(c *gin.Context) error {
+	pv, err := h.bind(c)
+	if err != nil {
+		return err
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
-	cur, ok := gatedRow(c, h.store.CrudStore, providerScope, editableRow)
-	if !ok {
-		return
+	cur, err := gatedRow(c, h.store.CrudStore, providerScope, editableRow)
+	if err != nil {
+		return err
 	}
 	// The mask resolves against the stored row inside the transaction, only
 	// for the destination the key was stored for — invariant 9.
-	err := h.store.Update(ctx, id, pv, ownershipGuard(cur.Scope, cur.OwnerID, providerScope,
+	err = h.store.Update(ctx, id, pv, ownershipGuard(cur.Scope, cur.OwnerID, providerScope,
 		func(prev *store.Provider) error {
 			pv.Scope, pv.OwnerID = prev.Scope, prev.OwnerID
 			if pv.APIKey == SecretMask && prev.APIKey != "" &&
 				credentialTargetChanged(prev.Type, prev.BaseURL, pv.Type, pv.BaseURL) {
-				return badRequestError("type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
+				return badRequest("type or base_url changed: the stored api_key belongs to the previous destination — replace it or clear it")
 			}
 			pv.APIKey = resolveSecret(pv.APIKey, prev.APIKey)
 			return nil
 		}))
 	if err != nil {
-		saveError(c, err) // duplicate name -> 409, not-found -> 404
-		return
+		return err // duplicate name -> 409, not-found -> 404
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	sanitizeProvider(updated)
 	c.JSON(http.StatusOK, updated)
+	return nil
 }
 
 // Delete removes a provider nothing references.
@@ -498,19 +486,18 @@ func (h *ProviderHandler) Update(c *gin.Context) {
 //	@Failure		409	{object}	ErrorResponse	"still referenced"
 //	@Security		BearerAuth
 //	@Router			/providers/{id} [delete]
-func (h *ProviderHandler) Delete(c *gin.Context) {
-	cur, ok := gatedRow(c, h.store.CrudStore, providerScope, deletableRow)
-	if !ok {
-		return
+func (h *ProviderHandler) Delete(c *gin.Context) error {
+	cur, err := gatedRow(c, h.store.CrudStore, providerScope, deletableRow)
+	if err != nil {
+		return err
 	}
 	refs, err := h.store.DeleteIfUnreferenced(c.Request.Context(), c.Param("id"), cur.OwnerID)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if refs > 0 {
-		conflict(c, fmt.Sprintf("%d agent(s) still use this provider; repoint them first", refs))
-		return
+		return conflict(fmt.Sprintf("%d agent(s) still use this provider; repoint them first", refs))
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }

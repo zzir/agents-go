@@ -11,7 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/agents/memory"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -80,19 +79,18 @@ func (r *memoryReq) validate() string {
 //	@Failure		500			{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/memories [get]
-func (h *MemoryHandler) List(c *gin.Context) {
+func (h *MemoryHandler) List(c *gin.Context) error {
 	kind := c.Query("scope_kind")
 	if kind == store.MemoryScopeSession {
-		badRequest(c, "session memory is read under /sessions/{id}/memory")
-		return
+		return badRequest("session memory is read under /sessions/{id}/memory")
 	}
 	u, _ := server.CurrentUser(c)
 	memories, err := h.store.ListConfig(c.Request.Context(), u.ID, u.Role == store.RoleAdmin, kind, c.Query("scope_id"))
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, nonNilList(memories))
+	return nil
 }
 
 // Create writes a memory under its scope and key, replacing one that exists.
@@ -110,25 +108,23 @@ func (h *MemoryHandler) List(c *gin.Context) {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/memories [post]
-func (h *MemoryHandler) Create(c *gin.Context) {
+func (h *MemoryHandler) Create(c *gin.Context) error {
 	var req memoryReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	if msg := req.validate(); msg != "" {
-		badRequest(c, msg)
-		return
+		return badRequest(msg)
 	}
-	m, ok := h.writable(c, req)
-	if !ok {
-		return
+	m, err := h.writable(c, req)
+	if err != nil {
+		return err
 	}
 	if err := h.store.Upsert(c.Request.Context(), m, nil); err != nil {
-		memoryStoreError(c, err)
-		return
+		return memoryStoreError(err)
 	}
 	created(c, m.ID, m)
+	return nil
 }
 
 // Get responds with one memory.
@@ -142,16 +138,16 @@ func (h *MemoryHandler) Create(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/memories/{id} [get]
-func (h *MemoryHandler) Get(c *gin.Context) {
+func (h *MemoryHandler) Get(c *gin.Context) error {
 	m, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
-	if !h.readable(c, m) {
-		return
+	if err := h.readable(c, m); err != nil {
+		return err
 	}
 	c.JSON(http.StatusOK, m)
+	return nil
 }
 
 // Update replaces a memory's content and metadata.
@@ -170,35 +166,31 @@ func (h *MemoryHandler) Get(c *gin.Context) {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/memories/{id} [put]
-func (h *MemoryHandler) Update(c *gin.Context) {
+func (h *MemoryHandler) Update(c *gin.Context) error {
 	ctx := c.Request.Context()
 	prev, err := h.store.Get(ctx, c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	var req memoryReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	if msg := req.validate(); msg != "" {
-		badRequest(c, msg)
-		return
+		return badRequest(msg)
 	}
 	if req.ScopeKind != prev.ScopeKind || req.ScopeID != prev.ScopeID || req.Key != prev.Key {
-		badRequest(c, "scope_kind, scope_id and key identify the memory and cannot change; create another instead")
-		return
+		return badRequest("scope_kind, scope_id and key identify the memory and cannot change; create another instead")
 	}
-	m, ok := h.writable(c, req)
-	if !ok {
-		return
+	m, err := h.writable(c, req)
+	if err != nil {
+		return err
 	}
 	if err := h.store.Upsert(ctx, m, nil); err != nil {
-		memoryStoreError(c, err)
-		return
+		return memoryStoreError(err)
 	}
 	c.JSON(http.StatusOK, m)
+	return nil
 }
 
 // Delete removes a memory.
@@ -213,26 +205,24 @@ func (h *MemoryHandler) Update(c *gin.Context) {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/memories/{id} [delete]
-func (h *MemoryHandler) Delete(c *gin.Context) {
+func (h *MemoryHandler) Delete(c *gin.Context) error {
 	ctx := c.Request.Context()
 	m, err := h.store.Get(ctx, c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if h.orphaned(ctx, m) {
 		if u, _ := server.CurrentUser(c); u.Role != store.RoleAdmin {
-			notFound(c)
-			return
+			return errNotFound
 		}
-	} else if _, ok := h.writable(c, memoryReq{ScopeKind: m.ScopeKind, ScopeID: m.ScopeID, Key: m.Key, Content: m.Content}); !ok {
-		return
+	} else if _, err := h.writable(c, memoryReq{ScopeKind: m.ScopeKind, ScopeID: m.ScopeID, Key: m.Key, Content: m.Content}); err != nil {
+		return err
 	}
 	if err := h.store.Delete(ctx, m.ID); err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // SessionMemoryInfo is one session memory without its content.
@@ -255,28 +245,26 @@ type SessionMemoryInfo struct {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sessions/{id}/memory [get]
-func (h *MemoryHandler) ListSession(c *gin.Context) {
+func (h *MemoryHandler) ListSession(c *gin.Context) error {
 	ctx := c.Request.Context()
 	sess, err := gatedSession(c, h.sessions)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	ref, err := h.entries.RefFor(ctx, sess.ID)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	rows, err := h.store.ListScope(ctx, store.SessionMemoryScope(ref))
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	out := make([]SessionMemoryInfo, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, SessionMemoryInfo{ID: r.ID, Key: r.Key, Bytes: len(r.Content), WrittenBy: r.WrittenBy, UpdatedAt: r.UpdatedAt})
 	}
 	c.JSON(http.StatusOK, out)
+	return nil
 }
 
 // ReadSession responds with one session memory in full.
@@ -291,34 +279,31 @@ func (h *MemoryHandler) ListSession(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/sessions/{id}/memory/{key} [get]
-func (h *MemoryHandler) ReadSession(c *gin.Context) {
+func (h *MemoryHandler) ReadSession(c *gin.Context) error {
 	ctx := c.Request.Context()
 	sess, err := gatedSession(c, h.sessions)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	ref, err := h.entries.RefFor(ctx, sess.ID)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	m, err := h.store.GetByKey(ctx, store.SessionMemoryScope(ref), strings.TrimPrefix(c.Param("key"), "/"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, m)
+	return nil
 }
 
 // writable checks the caller may write req's scope and builds the row (a session
-// memory under the session's current generation); on refusal the response is written.
-func (h *MemoryHandler) writable(c *gin.Context, req memoryReq) (*store.Memory, bool) {
+// memory under the session's current generation).
+func (h *MemoryHandler) writable(c *gin.Context, req memoryReq) (*store.Memory, error) {
 	ctx := c.Request.Context()
 	u, ok := server.CurrentUser(c)
 	if !ok {
-		notFound(c)
-		return nil, false
+		return nil, errNotFound
 	}
 	policy, _ := store.MemoryPolicyFor(req.ScopeKind)
 	m := &store.Memory{
@@ -329,32 +314,28 @@ func (h *MemoryHandler) writable(c *gin.Context, req memoryReq) (*store.Memory, 
 	switch policy.Write {
 	case store.MemoryWriteAdmin:
 		if u.Role != store.RoleAdmin {
-			abortError(c, http.StatusForbidden, protocol.CodeForbidden, "only an admin writes global memory")
-			return nil, false
+			return nil, forbidden("only an admin writes global memory")
 		}
 	case store.MemoryWriteAgentEditor:
 		ac, err := h.agents.Get(ctx, req.ScopeID)
 		if err != nil {
-			storeError(c, err)
-			return nil, false
+			return nil, err
 		}
-		if !editableRow(c, ac.Scope, ac.OwnerID) {
-			return nil, false
+		if err := editableRow(c, ac.Scope, ac.OwnerID); err != nil {
+			return nil, err
 		}
 	case store.MemoryWriteSessionOwner:
 		sess, err := h.sessions.Get(ctx, req.ScopeID)
 		if err != nil || sess.OwnerID != u.ID {
-			notFound(c)
-			return nil, false
+			return nil, errNotFound
 		}
 		ref, err := h.entries.RefFor(ctx, sess.ID)
 		if err != nil {
-			storeError(c, err)
-			return nil, false
+			return nil, err
 		}
 		m.Gen = ref.Gen
 	}
-	return m, true
+	return m, nil
 }
 
 // orphaned reports an agent memory whose agent is gone: an admin's to
@@ -369,39 +350,36 @@ func (h *MemoryHandler) orphaned(ctx context.Context, m *store.Memory) bool {
 
 // readable checks the caller may read m; a refusal is a 404, as for any
 // row the caller cannot see.
-func (h *MemoryHandler) readable(c *gin.Context, m *store.Memory) bool {
+func (h *MemoryHandler) readable(c *gin.Context, m *store.Memory) error {
 	ctx := c.Request.Context()
 	u, ok := server.CurrentUser(c)
 	if !ok {
-		notFound(c)
-		return false
+		return errNotFound
 	}
 	switch m.ScopeKind {
 	case store.MemoryScopeAgent:
 		ac, err := h.agents.Get(ctx, m.ScopeID)
 		if err != nil {
-			storeError(c, err)
-			return false
+			return err
 		}
 		return visibleRow(c, ac.Scope, ac.OwnerID)
 	case store.MemoryScopeSession:
 		sess, err := h.sessions.Get(ctx, m.ScopeID)
 		if err != nil || sess.OwnerID != u.ID {
-			notFound(c)
-			return false
+			return errNotFound
 		}
 	}
-	return true
+	return nil
 }
 
 // memoryStoreError maps a policy refusal to 400 and an edit-rule refusal to 403.
-func memoryStoreError(c *gin.Context, err error) {
+func memoryStoreError(err error) error {
 	switch {
 	case errors.Is(err, store.ErrMemoryTooLarge), errors.Is(err, store.ErrMemoryLimit), errors.Is(err, store.ErrMemoryScope):
-		badRequest(c, err.Error())
+		return badRequest(err.Error())
 	case errors.Is(err, store.ErrMemoryForbidden):
-		abortError(c, http.StatusForbidden, protocol.CodeForbidden, err.Error())
+		return forbidden(err.Error())
 	default:
-		storeError(c, err)
+		return err
 	}
 }

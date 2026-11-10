@@ -44,8 +44,8 @@ func providerEngine(h *ProviderHandler, user protocol.UserInfo) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
 	e.Use(func(c *gin.Context) { server.SetCurrentUser(c, user); c.Next() })
-	e.GET("/providers/:id/models", h.Models)
-	e.POST("/providers/:id/test", h.Test)
+	e.GET("/providers/:id/models", wrap(h.Models))
+	e.POST("/providers/:id/test", wrap(h.Test))
 	return e
 }
 

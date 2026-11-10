@@ -36,10 +36,10 @@ func NewTraceHandler(traces *store.TraceStore, settings *settings.Reader) *Trace
 //	@Failure		500			{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/traces [get]
-func (h *TraceHandler) ListBySession(c *gin.Context) {
-	beforeID, limit, ok := pageParams(c)
-	if !ok {
-		return
+func (h *TraceHandler) ListBySession(c *gin.Context) error {
+	beforeID, limit, err := pageParams(c)
+	if err != nil {
+		return err
 	}
 	list := h.traces.ListBySession
 	if c.Query("summary") == "true" {
@@ -47,8 +47,7 @@ func (h *TraceHandler) ListBySession(c *gin.Context) {
 	}
 	events, err := list(c.Request.Context(), c.Param("id"), beforeID, limit)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	if base := h.settings.S3Config(c.Request.Context()).PublicBaseURL; base != "" {
 		for i := range events {
@@ -56,6 +55,7 @@ func (h *TraceHandler) ListBySession(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, nonNilList(events))
+	return nil
 }
 
 // GetBySpan responds with one span of the session, payload included.
@@ -71,14 +71,14 @@ func (h *TraceHandler) ListBySession(c *gin.Context) {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/sessions/{id}/traces/{span_id} [get]
-func (h *TraceHandler) GetBySpan(c *gin.Context) {
+func (h *TraceHandler) GetBySpan(c *gin.Context) error {
 	ev, err := h.traces.GetBySpan(c.Request.Context(), c.Param("id"), c.Param("span_id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if base := h.settings.S3Config(c.Request.Context()).PublicBaseURL; base != "" {
 		fillAttachmentURLs(base, ev.Attachments)
 	}
 	c.JSON(http.StatusOK, ev)
+	return nil
 }

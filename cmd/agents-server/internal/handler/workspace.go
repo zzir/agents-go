@@ -103,40 +103,36 @@ type workspaceDeleteResp struct {
 
 // own resolves the caller's workspace by id; an admin's reach does not extend
 // here, and a foreign workspace reads as absent.
-func (h *WorkspaceHandler) own(c *gin.Context) (*store.Workspace, bool) {
-	ownerID, _, ok := callerScope(c)
-	if !ok {
-		return nil, false
+func (h *WorkspaceHandler) own(c *gin.Context) (*store.Workspace, error) {
+	ownerID, _, err := callerScope(c)
+	if err != nil {
+		return nil, err
 	}
 	p, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return nil, false
+		return nil, err
 	}
 	if p.OwnerID != ownerID {
-		notFound(c)
-		return nil, false
+		return nil, errNotFound
 	}
-	return p, true
+	return p, nil
 }
 
 // manage resolves the workspace for an operation on its COMPUTE (status, start,
 // stop, rebuild); an admin passes on any. Export, which discloses files, uses own.
-func (h *WorkspaceHandler) manage(c *gin.Context) (*store.Workspace, bool) {
-	ownerID, admin, ok := callerScope(c)
-	if !ok {
-		return nil, false
+func (h *WorkspaceHandler) manage(c *gin.Context) (*store.Workspace, error) {
+	ownerID, admin, err := callerScope(c)
+	if err != nil {
+		return nil, err
 	}
 	p, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return nil, false
+		return nil, err
 	}
 	if !admin && p.OwnerID != ownerID {
-		notFound(c)
-		return nil, false
+		return nil, errNotFound
 	}
-	return p, true
+	return p, nil
 }
 
 // List responds with the caller's workspaces; `?all=true` is the admin's
@@ -151,22 +147,21 @@ func (h *WorkspaceHandler) manage(c *gin.Context) (*store.Workspace, bool) {
 //	@Failure		403	{object}	ErrorResponse	"all=true by a member"
 //	@Security		BearerAuth
 //	@Router			/workspaces [get]
-func (h *WorkspaceHandler) List(c *gin.Context) {
-	ownerID, admin, ok := callerScope(c)
-	if !ok {
-		return
+func (h *WorkspaceHandler) List(c *gin.Context) error {
+	ownerID, admin, err := callerScope(c)
+	if err != nil {
+		return err
 	}
 	owner := ownerID
 	if c.Query("all") == "true" {
-		if !requireAdmin(c) {
-			return
+		if err := requireAdmin(c); err != nil {
+			return err
 		}
 		owner = store.EveryOwner
 	}
 	out, err := h.store.List(c.Request.Context(), owner)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if out == nil {
 		out = []store.Workspace{}
@@ -178,6 +173,7 @@ func (h *WorkspaceHandler) List(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, out)
+	return nil
 }
 
 // storageHint names where p's files live (decisions §5.33); admin-only, as a
@@ -232,36 +228,33 @@ type workspaceUpdateReq struct {
 //	@Failure	409			{object}	ErrorResponse	"name already in use on this sandbox"
 //	@Security	BearerAuth
 //	@Router		/workspaces [post]
-func (h *WorkspaceHandler) Create(c *gin.Context) {
-	ownerID, admin, ok := callerScope(c)
-	if !ok {
-		return
+func (h *WorkspaceHandler) Create(c *gin.Context) error {
+	ownerID, admin, err := callerScope(c)
+	if err != nil {
+		return err
 	}
 	var req workspaceReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "name and sandbox_id are required")
-		return
+		return badRequest("name and sandbox_id are required")
 	}
 	env, err := store.NormalizeWorkspaceEnv(req.Env)
 	if err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	// A missing sandbox 404s from the insert itself: the store locks the row.
 	p := &store.Workspace{OwnerID: ownerID, SandboxID: req.SandboxID, Name: req.Name, Env: env}
 	if err := h.store.Create(c.Request.Context(), p); err != nil {
-		saveError(c, err)
-		return
+		return err
 	}
 	if admin {
 		p.StorageHint = h.storageHint(c, map[string]string{}, p)
 	}
 	out, err := h.detail(p)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	created(c, p.ID, out)
+	return nil
 }
 
 // Get responds with one of the caller's workspaces, environment masked.
@@ -275,17 +268,17 @@ func (h *WorkspaceHandler) Create(c *gin.Context) {
 //	@Failure		404	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id} [get]
-func (h *WorkspaceHandler) Get(c *gin.Context) {
-	p, ok := h.own(c)
-	if !ok {
-		return
+func (h *WorkspaceHandler) Get(c *gin.Context) error {
+	p, err := h.own(c)
+	if err != nil {
+		return err
 	}
 	out, err := h.detail(p)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, out)
+	return nil
 }
 
 // Update renames the caller's workspace and replaces its environment.
@@ -303,31 +296,27 @@ func (h *WorkspaceHandler) Get(c *gin.Context) {
 //	@Failure		409			{object}	ErrorResponse	"name already in use, or the workspace changed concurrently — re-read and retry"
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id} [put]
-func (h *WorkspaceHandler) Update(c *gin.Context) {
+func (h *WorkspaceHandler) Update(c *gin.Context) error {
 	var req workspaceUpdateReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "name and sandbox_id are required")
-		return
+		return badRequest("name and sandbox_id are required")
 	}
-	prev, ok := h.own(c)
-	if !ok {
-		return
+	prev, err := h.own(c)
+	if err != nil {
+		return err
 	}
 	stored, err := store.DecodeWorkspaceEnv(prev.Env)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	// Masks resolve before normalization: the canonical payload carries real values.
 	restored, err := restoreWorkspaceEnv(req.Env, stored)
 	if err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	env, err := store.NormalizeWorkspaceEnv(restored)
 	if err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	// Revision CAS, anchored on the client's revision when given: a race is 409.
 	expected := prev.Revision
@@ -340,8 +329,7 @@ func (h *WorkspaceHandler) Update(c *gin.Context) {
 	next.Name, next.SandboxID, next.Env = req.Name, req.SandboxID, env
 	newGen, err := h.store.Update(c.Request.Context(), prev.ID, &next, expected, contentChanged)
 	if err != nil {
-		saveError(c, err)
-		return
+		return err
 	}
 	// Invalidate from the generation the store wrote, not prev+1 or a re-read.
 	if contentChanged {
@@ -351,15 +339,14 @@ func (h *WorkspaceHandler) Update(c *gin.Context) {
 	// Re-read for the response, so the client holds the current revision.
 	updated, err := h.store.Get(c.Request.Context(), prev.ID)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	out, err := h.detail(updated)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, out)
+	return nil
 }
 
 // RebuildNoteDeps is what a rebuild needs to leave its note on a session.
@@ -389,31 +376,29 @@ type rebuildReq struct {
 //	@Failure		502		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id}/sandbox/rebuild [post]
-func (h *WorkspaceHandler) RebuildContainer(c *gin.Context) {
+func (h *WorkspaceHandler) RebuildContainer(c *gin.Context) error {
 	var req rebuildReq
 	if c.Request.ContentLength != 0 {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			badRequest(c, err.Error())
-			return
+			return badRequest(err.Error())
 		}
 	}
-	p, ok := h.manage(c)
-	if !ok {
-		return
+	p, err := h.manage(c)
+	if err != nil {
+		return err
 	}
 	spec, err := resolveSpec(c.Request.Context(), h.sandboxes, p)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if err := h.manager.RebuildContainer(c.Request.Context(), spec); err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	if req.SessionID != "" {
 		h.noteRebuild(c, p, req.SessionID)
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // noteRebuild leaves the rebuilt note on the session when it is the caller's,
@@ -422,8 +407,8 @@ func (h *WorkspaceHandler) noteRebuild(c *gin.Context, p *store.Workspace, sessi
 	if h.Notes == nil {
 		return
 	}
-	ownerID, _, ok := callerScope(c)
-	if !ok {
+	ownerID, _, cerr := callerScope(c)
+	if cerr != nil {
 		return
 	}
 	ctx := c.Request.Context()
@@ -468,17 +453,17 @@ type sandboxStopResp struct {
 //	@Failure	502	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/workspaces/{id}/sandbox [get]
-func (h *WorkspaceHandler) SandboxStatus(c *gin.Context) {
-	spec, ok := h.spec(c)
-	if !ok {
-		return
+func (h *WorkspaceHandler) SandboxStatus(c *gin.Context) error {
+	spec, err := h.spec(c)
+	if err != nil {
+		return err
 	}
 	state, err := h.manager.Status(c.Request.Context(), spec)
 	if err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	c.JSON(http.StatusOK, sandboxStateResp{State: state.String()})
+	return nil
 }
 
 // workspaceHostResp is where a port inside the workspace's sandbox is public: https://<port>-<sandbox_id>.<domain>.
@@ -500,23 +485,20 @@ type workspaceHostResp struct {
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id}/host [get]
-func (h *WorkspaceHandler) SandboxHost(c *gin.Context) {
-	spec, ok := h.ownSpec(c)
-	if !ok {
-		return
+func (h *WorkspaceHandler) SandboxHost(c *gin.Context) error {
+	spec, err := h.ownSpec(c)
+	if err != nil {
+		return err
 	}
 	if !store.SandboxSupportsFor(spec.Sandbox.Type).PublicHost {
-		conflict(c, "this sandbox's ports are not public")
-		return
+		return conflict("this sandbox's ports are not public")
 	}
 	id, domain, err := h.manager.Address(c.Request.Context(), spec)
 	switch {
 	case errors.Is(err, e2bsb.ErrNoSandbox):
-		conflict(c, "no sandbox to address — one is created at the first run, or by Start")
-		return
+		return conflict("no sandbox to address — one is created at the first run, or by Start")
 	case err != nil:
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	if h.Audit != nil {
 		user, _ := server.CurrentUser(c)
@@ -526,6 +508,7 @@ func (h *WorkspaceHandler) SandboxHost(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, workspaceHostResp{SandboxID: id, Domain: domain})
+	return nil
 }
 
 // SandboxStart provisions the workspace's sandbox and makes it ready, image
@@ -540,8 +523,8 @@ func (h *WorkspaceHandler) SandboxHost(c *gin.Context) {
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id}/sandbox/start [post]
-func (h *WorkspaceHandler) SandboxStart(c *gin.Context) {
-	h.containerAct(c, h.manager.EnsureRunning)
+func (h *WorkspaceHandler) SandboxStart(c *gin.Context) error {
+	return h.containerAct(c, h.manager.EnsureRunning)
 }
 
 // SandboxStop releases the compute, keeping the working tree.
@@ -556,10 +539,10 @@ func (h *WorkspaceHandler) SandboxStart(c *gin.Context) {
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id}/sandbox/stop [post]
-func (h *WorkspaceHandler) SandboxStop(c *gin.Context) {
-	spec, ok := h.spec(c)
-	if !ok {
-		return
+func (h *WorkspaceHandler) SandboxStop(c *gin.Context) error {
+	spec, err := h.spec(c)
+	if err != nil {
+		return err
 	}
 	// A command still running would hold the compute: it is ended first.
 	if h.StopCommands != nil {
@@ -567,10 +550,10 @@ func (h *WorkspaceHandler) SandboxStop(c *gin.Context) {
 	}
 	stopped, err := h.manager.Stop(c.Request.Context(), spec)
 	if err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	c.JSON(http.StatusOK, sandboxStopResp{Stopped: stopped})
+	return nil
 }
 
 // Export streams the workspace's working tree as a tar archive — decisions §5.33.
@@ -585,16 +568,15 @@ func (h *WorkspaceHandler) SandboxStop(c *gin.Context) {
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id}/export [get]
-func (h *WorkspaceHandler) Export(c *gin.Context) {
+func (h *WorkspaceHandler) Export(c *gin.Context) error {
 	// Owner only, unlike the lifecycle routes.
-	spec, ok := h.ownSpec(c)
-	if !ok {
-		return
+	spec, err := h.ownSpec(c)
+	if err != nil {
+		return err
 	}
 	rc, err := h.manager.ExportWorkspace(c.Request.Context(), spec)
 	if err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	defer func() { _ = rc.Close() }()
 	if h.Audit != nil {
@@ -612,6 +594,7 @@ func (h *WorkspaceHandler) Export(c *gin.Context) {
 	if _, err := io.Copy(c.Writer, rc); err != nil {
 		logging.Ctx(c.Request.Context()).Warn("workspace export stream ended early", "error", err, "workspace_id", spec.Workspace.ID)
 	}
+	return nil
 }
 
 // tarFilename turns a workspace name into a safe download name.
@@ -633,40 +616,39 @@ func tarFilename(name string) string {
 
 // spec resolves the caller's workspace into a build spec, answering the error
 // when it cannot; owner or admin (see manage).
-func (h *WorkspaceHandler) spec(c *gin.Context) (sandboxes.Spec, bool) {
+func (h *WorkspaceHandler) spec(c *gin.Context) (sandboxes.Spec, error) {
 	return h.specFrom(c, h.manage)
 }
 
 // ownSpec is spec for the routes that reach into the sandbox: owner only.
-func (h *WorkspaceHandler) ownSpec(c *gin.Context) (sandboxes.Spec, bool) {
+func (h *WorkspaceHandler) ownSpec(c *gin.Context) (sandboxes.Spec, error) {
 	return h.specFrom(c, h.own)
 }
 
-func (h *WorkspaceHandler) specFrom(c *gin.Context, resolve func(*gin.Context) (*store.Workspace, bool)) (sandboxes.Spec, bool) {
-	p, ok := resolve(c)
-	if !ok {
-		return sandboxes.Spec{}, false
+func (h *WorkspaceHandler) specFrom(c *gin.Context, resolve func(*gin.Context) (*store.Workspace, error)) (sandboxes.Spec, error) {
+	p, err := resolve(c)
+	if err != nil {
+		return sandboxes.Spec{}, err
 	}
 	spec, err := resolveSpec(c.Request.Context(), h.sandboxes, p)
 	if err != nil {
-		storeError(c, err)
-		return sandboxes.Spec{}, false
+		return sandboxes.Spec{}, err
 	}
-	return spec, true
+	return spec, nil
 }
 
 // containerAct resolves the workspace into a build spec, then runs one of the
 // manager's sandbox calls against it. Owner or admin (see manage).
-func (h *WorkspaceHandler) containerAct(c *gin.Context, act func(context.Context, sandboxes.Spec) error) {
-	spec, ok := h.spec(c)
-	if !ok {
-		return
+func (h *WorkspaceHandler) containerAct(c *gin.Context, act func(context.Context, sandboxes.Spec) error) error {
+	spec, err := h.spec(c)
+	if err != nil {
+		return err
 	}
 	if err := act(c.Request.Context(), spec); err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // Delete removes the workspace and destroys its storage — decisions §5.33.
@@ -680,28 +662,24 @@ func (h *WorkspaceHandler) containerAct(c *gin.Context, act func(context.Context
 //	@Failure		409	{object}	ErrorResponse	"sessions still bound"
 //	@Security		BearerAuth
 //	@Router			/workspaces/{id} [delete]
-func (h *WorkspaceHandler) Delete(c *gin.Context) {
-	ownerID, admin, ok := callerScope(c)
-	if !ok {
-		return
+func (h *WorkspaceHandler) Delete(c *gin.Context) error {
+	ownerID, admin, err := callerScope(c)
+	if err != nil {
+		return err
 	}
 	p, err := h.store.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if p.OwnerID != ownerID && !admin {
-		notFound(c) // a foreign workspace reads as absent
-		return
+		return errNotFound // a foreign workspace reads as absent
 	}
 	refs, err := h.store.DeleteIfUnreferenced(c.Request.Context(), p.ID)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if refs > 0 {
-		conflict(c, "sessions are still bound to this workspace; delete them first")
-		return
+		return conflict("sessions are still bound to this workspace; delete them first")
 	}
 	// The workspace's shells die with it.
 	h.terminals.CloseWorkspaceTerminals(p.ID, maxTerminalGen)
@@ -718,8 +696,9 @@ func (h *WorkspaceHandler) Delete(c *gin.Context) {
 		if serr != nil {
 			logging.Ctx(c.Request.Context()).Warn("reclaiming a deleted workspace's storage", "workspace", p.ID, "error", serr)
 			c.JSON(http.StatusOK, workspaceDeleteResp{Deleted: true, StorageError: serr.Error()})
-			return
+			return nil
 		}
 	}
 	c.JSON(http.StatusOK, workspaceDeleteResp{Deleted: true})
+	return nil
 }

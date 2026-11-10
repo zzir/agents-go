@@ -28,11 +28,11 @@ func newSettingEngineAs(t *testing.T, user protocol.UserInfo) (*gin.Engine, *sto
 	h := NewSettingHandler(st)
 	e := gin.New()
 	e.Use(func(c *gin.Context) { server.SetCurrentUser(c, user); c.Next() })
-	e.GET("/settings", h.List)
-	e.GET("/settings/:key", h.Get)
-	e.PUT("/settings/:key", h.Set)
-	e.DELETE("/settings/:key", h.Delete)
-	e.GET("/setting-defs", SettingDefList)
+	e.GET("/settings", wrap(h.List))
+	e.GET("/settings/:key", wrap(h.Get))
+	e.PUT("/settings/:key", wrap(h.Set))
+	e.DELETE("/settings/:key", wrap(h.Delete))
+	e.GET("/setting-defs", wrap(SettingDefList))
 	return e, st
 }
 

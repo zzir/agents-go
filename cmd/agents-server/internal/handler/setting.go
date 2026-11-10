@@ -64,11 +64,10 @@ func storageReadable(c *gin.Context, key string) bool {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/settings [get]
-func (h *SettingHandler) List(c *gin.Context) {
+func (h *SettingHandler) List(c *gin.Context) error {
 	stored, err := h.store.List(c.Request.Context())
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	out := make([]SettingView, 0, len(stored))
 	for _, st := range stored {
@@ -77,6 +76,7 @@ func (h *SettingHandler) List(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, out)
+	return nil
 }
 
 // Get responds with the setting identified by the key path parameter, secrets
@@ -93,17 +93,16 @@ func (h *SettingHandler) List(c *gin.Context) {
 //	@Failure		500	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/settings/{key} [get]
-func (h *SettingHandler) Get(c *gin.Context) {
+func (h *SettingHandler) Get(c *gin.Context) error {
 	if !storageReadable(c, c.Param("key")) {
-		requireAdmin(c)
-		return
+		return requireAdmin(c)
 	}
 	st, err := h.store.Get(c.Request.Context(), c.Param("key"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, settingViewOf(*st))
+	return nil
 }
 
 type setSettingReq struct {
@@ -125,18 +124,16 @@ type setSettingReq struct {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/settings/{key} [put]
-func (h *SettingHandler) Set(c *gin.Context) {
+func (h *SettingHandler) Set(c *gin.Context) error {
 	var req setSettingReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	ctx := c.Request.Context()
 	key := c.Param("key")
 	// The attachment-storage section saves as ONE group — workbench invariant 58.
 	if settings.IsS3Key(key) {
-		badRequest(c, "attachment-storage keys are saved together — use the Attachment storage form (PUT /attachments/storage)")
-		return
+		return badRequest("attachment-storage keys are saved together — use the Attachment storage form (PUT /attachments/storage)")
 	}
 	// A client echoing the mask keeps the stored secret, resolved inside the
 	// transaction; validated AFTER the mask resolves.
@@ -148,15 +145,15 @@ func (h *SettingHandler) Set(c *gin.Context) {
 			}
 		}
 		if err := settings.Validate(key, req.Value); err != nil {
-			return "", badRequestError(err.Error())
+			return "", badRequest(err.Error())
 		}
 		return req.Value, nil
 	})
 	if err != nil {
-		saveError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, settingViewOf(store.Setting{Key: key, Value: req.Value}))
+	return nil
 }
 
 // Delete removes the setting identified by the key path parameter; unvalidated,
@@ -170,17 +167,16 @@ func (h *SettingHandler) Set(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/settings/{key} [delete]
-func (h *SettingHandler) Delete(c *gin.Context) {
+func (h *SettingHandler) Delete(c *gin.Context) error {
 	key := c.Param("key")
 	if settings.IsS3Key(key) {
-		badRequest(c, "attachment-storage keys are cleared together — use the Attachment storage form's Clear")
-		return
+		return badRequest("attachment-storage keys are cleared together — use the Attachment storage form's Clear")
 	}
 	if err := h.store.Delete(c.Request.Context(), key); err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // SettingDefList responds with the setting registry: every key, its kind,
@@ -192,6 +188,7 @@ func (h *SettingHandler) Delete(c *gin.Context) {
 //	@Success	200	{array}	settings.Def
 //	@Security	BearerAuth
 //	@Router		/setting-defs [get]
-func SettingDefList(c *gin.Context) {
+func SettingDefList(c *gin.Context) error {
 	c.JSON(http.StatusOK, settings.Defs())
+	return nil
 }

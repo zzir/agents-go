@@ -21,9 +21,9 @@ func TestCreateIgnoresClientIDAndCreatedAt(t *testing.T) {
 	agents := store.NewAgentConfigStore(db)
 	grStore := store.NewGuardrailStore(db)
 	engine := newTestEngine()
-	engine.POST("/agents", testAgentConfigHandler(db).Create)
-	engine.POST("/guardrails", NewGuardrailHandler(grStore, guardrails.NewResolver(grStore)).Create)
-	engine.POST("/workflows", NewWorkflowHandler(store.NewWorkflowStore(db), agents, store.NewSessionStore(db), nil).Create)
+	engine.POST("/agents", wrap(testAgentConfigHandler(db).Create))
+	engine.POST("/guardrails", wrap(NewGuardrailHandler(grStore, guardrails.NewResolver(grStore)).Create))
+	engine.POST("/workflows", wrap(NewWorkflowHandler(store.NewWorkflowStore(db), agents, store.NewSessionStore(db), nil).Create))
 
 	stepAgent := &store.AgentConfig{Name: "step", Model: "m", OwnerID: store.LocalUserID}
 	if err := agents.Create(t.Context(), stepAgent); err != nil {

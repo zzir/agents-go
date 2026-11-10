@@ -13,9 +13,9 @@ import (
 func TestOptionalBodyRefusesBadJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := newTestEngine()
-	engine.POST("/tasks/:id/stop", (&TaskHandler{}).Stop)
-	engine.POST("/approvals/:tool_call_id/approve", (&ApprovalHandler{}).Approve)
-	engine.POST("/approvals/:tool_call_id/reject", (&ApprovalHandler{}).Reject)
+	engine.POST("/tasks/:id/stop", wrap((&TaskHandler{}).Stop))
+	engine.POST("/approvals/:tool_call_id/approve", wrap((&ApprovalHandler{}).Approve))
+	engine.POST("/approvals/:tool_call_id/reject", wrap((&ApprovalHandler{}).Reject))
 
 	for _, path := range []string{"/tasks/t/stop", "/approvals/c/approve", "/approvals/c/reject"} {
 		w := doJSON(t, engine, http.MethodPost, path, `{"graceful": tru`)
@@ -29,13 +29,14 @@ func TestOptionalBodyRefusesBadJSON(t *testing.T) {
 func TestBindOptional(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := newTestEngine()
-	engine.POST("/x", func(c *gin.Context) {
+	engine.POST("/x", wrap(func(c *gin.Context) error {
 		var req taskStopReq
-		if !bindOptional(c, &req) {
-			return
+		if err := bindOptional(c, &req); err != nil {
+			return err
 		}
 		c.JSON(http.StatusOK, req)
-	})
+		return nil
+	}))
 	for body, want := range map[string]string{
 		"":                  `{"graceful":false}`,
 		`{"graceful":true}`: `{"graceful":true}`,

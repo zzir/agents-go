@@ -13,7 +13,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 	"github.com/zzir/agents-go/skills"
@@ -59,39 +58,35 @@ type importGroup struct {
 }
 
 // resolveImportTarget decides WHOSE group this import refreshes: the caller's
-// own, or another owner's PUBLISHED group (decisions §5.29). False: response written.
-func (h *SkillHandler) resolveImportTarget(c *gin.Context, repo, wantOwner string) bool {
-	ownerID, admin, ok := callerScope(c)
-	if !ok {
-		return false
+// own, or another owner's PUBLISHED group (decisions §5.29).
+func (h *SkillHandler) resolveImportTarget(c *gin.Context, repo, wantOwner string) error {
+	ownerID, admin, err := callerScope(c)
+	if err != nil {
+		return err
 	}
 	ctx := c.Request.Context()
 	if wantOwner == "" || wantOwner == ownerID {
 		scope, existed, err := h.store.RepoGroup(ctx, repo, ownerID)
 		if err != nil {
-			internalError(c, err)
-			return false
+			return err
 		}
 		c.Set(importTargetKey, importGroup{owner: ownerID, scope: scope, existed: existed})
-		return true
+		return nil
 	}
 	if !admin {
-		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "admin role required to sync another member's repository")
-		return false
+		return forbidden("admin role required to sync another member's repository")
 	}
 	// The group is looked up by the URL AS GIVEN — the same string the rows
 	// carry — so a raw-URL group is reachable too.
 	scope, found, err := h.store.RepoGroup(ctx, repo, wantOwner)
 	if err != nil {
-		internalError(c, err)
-		return false
+		return err
 	}
 	if !found || scope != store.ScopeGlobal {
-		notFound(c) // a member's private group is not an admin's to write
-		return false
+		return errNotFound // a member's private group is not an admin's to write
 	}
 	c.Set(importTargetKey, importGroup{owner: wantOwner, scope: scope, existed: true})
-	return true
+	return nil
 }
 
 // importTarget is the group resolveImportTarget settled on.
@@ -115,20 +110,18 @@ func importTarget(c *gin.Context) importGroup {
 //	@Failure		502		{object}	ErrorResponse	"fetch failed"
 //	@Security		BearerAuth
 //	@Router			/skill-imports [post]
-func (h *SkillHandler) Import(c *gin.Context) {
+func (h *SkillHandler) Import(c *gin.Context) error {
 	var req skillImportReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "url is required")
-		return
+		return badRequest("url is required")
 	}
 	rawURL := strings.TrimSpace(req.URL)
 	lower := strings.ToLower(rawURL)
 	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
-		badRequest(c, "only http(s) URLs are supported")
-		return
+		return badRequest("only http(s) URLs are supported")
 	}
-	if !h.resolveImportTarget(c, rawURL, req.OwnerID) {
-		return
+	if err := h.resolveImportTarget(c, rawURL, req.OwnerID); err != nil {
+		return err
 	}
 	// One deadline over the whole import: a GitHub walk is up to ~202 serial
 	// fetches — see protocol.md, Skills.
@@ -136,23 +129,28 @@ func (h *SkillHandler) Import(c *gin.Context) {
 	defer cancel()
 	c.Request = c.Request.WithContext(ctx)
 	var resp *skillImportResp
+	var docs []store.ImportDoc
 	var err error
 	if owner, repo, ok := parseGitHubRepoURL(rawURL); ok {
-		resp, err = h.importGitHubRepo(c, owner, repo)
+		resp, docs, err = h.importGitHubRepo(c, owner, repo)
 	} else {
-		resp, err = h.importRawURL(c, rawURL)
+		resp, docs, err = h.importRawURL(c, rawURL)
+	}
+	// A 4xx the fetch chose stands; any other failure is the upstream's.
+	if _, decided := errors.AsType[*apiError](err); err != nil && !decided {
+		return upstream(err.Error())
 	}
 	if err != nil {
-		abortError(c, http.StatusBadGateway, protocol.CodeUpstream, err.Error())
-		return
+		return err
 	}
-	if resp == nil {
-		return // the importer already answered (a 4xx)
+	if err := h.apply(c, resp.Repo, docs, resp); err != nil {
+		return err
 	}
 	server.SetAuditResource(c, resp.Repo)
 	server.SetAuditDetail(c, fmt.Sprintf("created=%d updated=%d unchanged=%d skipped=%d",
 		len(resp.Created), len(resp.Updated), len(resp.Unchanged), len(resp.Skipped)))
 	c.JSON(http.StatusOK, resp)
+	return nil
 }
 
 // parseGitHubRepoURL recognizes https://github.com/{owner}/{repo} (optional
@@ -211,20 +209,19 @@ func readBody(resp *http.Response) ([]byte, error) {
 
 // importGitHubRepo walks a repository pinned at its HEAD commit (sha, tree,
 // then a raw fetch per SKILL.md), so a push mid-import cannot mix versions.
-func (h *SkillHandler) importGitHubRepo(c *gin.Context, owner, repo string) (*skillImportResp, error) {
+func (h *SkillHandler) importGitHubRepo(c *gin.Context, owner, repo string) (*skillImportResp, []store.ImportDoc, error) {
 	api := h.githubAPI + "/repos/" + owner + "/" + repo
 	head, err := h.githubGet(c, api+"/commits/HEAD")
 	if err != nil {
-		return nil, fmt.Errorf("github: %w", err)
+		return nil, nil, fmt.Errorf("github: %w", err)
 	}
 	if head.StatusCode == http.StatusNotFound {
 		_ = head.Body.Close()
-		notFound(c)
-		return nil, nil
+		return nil, nil, errNotFound
 	}
 	if head.StatusCode != http.StatusOK {
 		_ = head.Body.Close()
-		return nil, fmt.Errorf("github: HEAD lookup answered %s", head.Status)
+		return nil, nil, fmt.Errorf("github: HEAD lookup answered %s", head.Status)
 	}
 	var commit struct {
 		SHA string `json:"sha"`
@@ -234,19 +231,19 @@ func (h *SkillHandler) importGitHubRepo(c *gin.Context, owner, repo string) (*sk
 		err = json.Unmarshal(data, &commit)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("github: reading HEAD commit: %w", err)
+		return nil, nil, fmt.Errorf("github: reading HEAD commit: %w", err)
 	}
 	if commit.SHA == "" {
-		return nil, fmt.Errorf("github: HEAD commit response carries no sha")
+		return nil, nil, fmt.Errorf("github: HEAD commit response carries no sha")
 	}
 
 	tree, err := h.githubGet(c, api+"/git/trees/"+commit.SHA+"?recursive=1")
 	if err != nil {
-		return nil, fmt.Errorf("github: %w", err)
+		return nil, nil, fmt.Errorf("github: %w", err)
 	}
 	if tree.StatusCode != http.StatusOK {
 		_ = tree.Body.Close()
-		return nil, fmt.Errorf("github: tree listing answered %s", tree.Status)
+		return nil, nil, fmt.Errorf("github: tree listing answered %s", tree.Status)
 	}
 	var listing struct {
 		Tree []struct {
@@ -257,7 +254,7 @@ func (h *SkillHandler) importGitHubRepo(c *gin.Context, owner, repo string) (*sk
 	}
 	defer func() { _ = tree.Body.Close() }()
 	if err := json.NewDecoder(tree.Body).Decode(&listing); err != nil {
-		return nil, fmt.Errorf("github: reading tree: %w", err)
+		return nil, nil, fmt.Errorf("github: reading tree: %w", err)
 	}
 
 	repoURL := "https://github.com/" + owner + "/" + repo
@@ -297,43 +294,35 @@ func (h *SkillHandler) importGitHubRepo(c *gin.Context, owner, repo string) (*sk
 		collect(&docs, resp, e.Path, commit.SHA, content)
 	}
 	if seen == 0 {
-		badRequest(c, "repository contains no SKILL.md")
-		return nil, nil
+		return nil, nil, badRequest("repository contains no SKILL.md")
 	}
-	if !h.apply(c, repoURL, docs, resp) {
-		return nil, nil // the apply already answered
-	}
-	return resp, nil
+	return resp, docs, nil
 }
 
 // importRawURL fetches one SKILL.md from any http(s) URL — the escape hatch
 // for skills hosted outside GitHub. No stored token rides along.
-func (h *SkillHandler) importRawURL(c *gin.Context, rawURL string) (*skillImportResp, error) {
+func (h *SkillHandler) importRawURL(c *gin.Context, rawURL string) (*skillImportResp, []store.ImportDoc, error) {
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, rawURL, nil)
 	if err != nil {
-		badRequest(c, "invalid url: "+err.Error())
-		return nil, nil //nolint:nilerr // the 400 above is the answer; nil,nil = "already responded"
+		return nil, nil, badRequest("invalid url: " + err.Error())
 	}
 	req.Header.Set("User-Agent", "agents-server")
 	raw, err := skillFetchClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if raw.StatusCode != http.StatusOK {
 		_ = raw.Body.Close()
-		return nil, fmt.Errorf("fetch answered %s", raw.Status)
+		return nil, nil, fmt.Errorf("fetch answered %s", raw.Status)
 	}
 	content, err := readBody(raw)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	resp := &skillImportResp{Repo: rawURL}
 	var docs []store.ImportDoc
 	collect(&docs, resp, "", "", content)
-	if !h.apply(c, rawURL, docs, resp) {
-		return nil, nil // the apply already answered
-	}
-	return resp, nil
+	return resp, docs, nil
 }
 
 // collect parses one fetched document into the batch apply lands; an invalid
@@ -356,16 +345,14 @@ func collect(docs *[]store.ImportDoc, resp *skillImportResp, path, sha string, c
 
 // apply lands the fetched batch in ONE transaction against the group resolved
 // before the fetch; a transfer or flip that landed meanwhile is 409 — decisions §5.31.
-func (h *SkillHandler) apply(c *gin.Context, repo string, docs []store.ImportDoc, resp *skillImportResp) bool {
+func (h *SkillHandler) apply(c *gin.Context, repo string, docs []store.ImportDoc, resp *skillImportResp) error {
 	g := importTarget(c)
 	outcomes, err := h.store.ApplyImport(c.Request.Context(), repo, g.owner, g.scope, g.existed, docs)
 	if err != nil {
 		if errors.Is(err, store.ErrOwnershipChanged) {
-			conflict(c, "the repository's skills moved or changed scope during the import; nothing was written — reload and sync again")
-			return false
+			return conflict("the repository's skills moved or changed scope during the import; nothing was written — reload and sync again")
 		}
-		internalError(c, err)
-		return false
+		return err
 	}
 	for _, o := range outcomes {
 		switch o.Action {
@@ -379,5 +366,5 @@ func (h *SkillHandler) apply(c *gin.Context, repo string, docs []store.ImportDoc
 			resp.Skipped = append(resp.Skipped, o.Label+": "+o.Reason)
 		}
 	}
-	return true
+	return nil
 }

@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zzir/agents-go/cmd/agents-server/internal/bridge"
-	"github.com/zzir/agents-go/cmd/agents-server/internal/protocol"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/server"
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
@@ -16,27 +15,14 @@ import (
 // Authorization gates: session content is owner-only, scoped configuration
 // gates per row, host configuration is read-everyone/write-admin — decisions §5.29.
 
-// requireAdmin answers 403 unless the caller is an admin; false means the
-// response is written and the handler must return.
-func requireAdmin(c *gin.Context) bool {
+// requireAdmin is a 403 unless the caller is an admin. Wrapped, it is the gate
+// on the write routes of shared configuration.
+func requireAdmin(c *gin.Context) error {
 	u, ok := server.CurrentUser(c)
 	if !ok || u.Role != store.RoleAdmin {
-		c.JSON(http.StatusForbidden, protocol.NewErrorResponse(protocol.CodeForbidden, "admin role required"))
-		return false
+		return forbidden("admin role required")
 	}
-	return true
-}
-
-// adminOnly is requireAdmin as middleware, for the write routes of shared
-// configuration.
-func adminOnly() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if !requireAdmin(c) {
-			c.Abort()
-			return
-		}
-		c.Next()
-	}
+	return nil
 }
 
 // ownsSession reports whether the caller owns sess. In token mode the one
@@ -47,18 +33,16 @@ func ownsSession(c *gin.Context, sess *store.Session) bool {
 }
 
 // requireOwnedSession loads the session and checks the caller owns it; a
-// foreign session answers 404, the same as an absent one.
-func requireOwnedSession(c *gin.Context, sessions *store.SessionStore, id string) (*store.Session, bool) {
+// foreign session is 404, the same as an absent one.
+func requireOwnedSession(c *gin.Context, sessions *store.SessionStore, id string) (*store.Session, error) {
 	sess, err := sessions.Get(c.Request.Context(), id)
 	if err != nil {
-		storeError(c, err)
-		return nil, false
+		return nil, err
 	}
 	if !ownsSession(c, sess) {
-		notFound(c)
-		return nil, false
+		return nil, errNotFound
 	}
-	return sess, true
+	return sess, nil
 }
 
 // sessionKey is where sessionGate parks the row it loaded, so the handler
@@ -77,14 +61,13 @@ func gatedSession(c *gin.Context, sessions *store.SessionStore) (*store.Session,
 }
 
 // requireRunOwner checks the caller owns the session a live run belongs to
-// (hub record), answering 404 for a foreign or unknown run.
-func requireRunOwner(c *gin.Context, info bridge.RunInfo, ok bool) bool {
+// (hub record); a foreign or unknown run is 404.
+func requireRunOwner(c *gin.Context, info bridge.RunInfo, ok bool) error {
 	u, authed := server.CurrentUser(c)
 	if !ok || !authed || u.ID != info.OwnerID {
-		notFound(c)
-		return false
+		return errNotFound
 	}
-	return true
+	return nil
 }
 
 // ownsApproval returns the pending tool call toolCallID when userID owns the
@@ -126,96 +109,77 @@ type AuthzDeps struct {
 
 // sessionGate gates /sessions/:id/* on owning the session.
 func (d AuthzDeps) sessionGate() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		sess, ok := requireOwnedSession(c, d.Sessions, c.Param("id"))
-		if !ok {
-			c.Abort()
-			return
+	return wrap(func(c *gin.Context) error {
+		sess, err := requireOwnedSession(c, d.Sessions, c.Param("id"))
+		if err != nil {
+			return err
 		}
 		c.Set(sessionKey, sess)
-		c.Next()
-	}
+		return nil
+	})
 }
 
 // runGate gates /runs/:id/* on owning the live run's session.
 func (d AuthzDeps) runGate() gin.HandlerFunc {
-	return func(c *gin.Context) {
+	return wrap(func(c *gin.Context) error {
 		info, ok := d.Hub.Info(c.Param("id"))
-		if !requireRunOwner(c, info, ok) {
-			c.Abort()
-			return
-		}
-		c.Next()
-	}
+		return requireRunOwner(c, info, ok)
+	})
 }
 
 // taskGate gates /tasks/:id/* on owning the task's parent session.
 func (d AuthzDeps) taskGate() gin.HandlerFunc {
-	return func(c *gin.Context) {
+	return wrap(func(c *gin.Context) error {
 		t, err := d.Tasks.Get(c.Request.Context(), c.Param("id"))
 		if err != nil {
-			storeError(c, err)
-			c.Abort()
-			return
+			return err
 		}
-		if _, ok := requireOwnedSession(c, d.Sessions, t.ParentSessionID); !ok {
-			c.Abort()
-			return
-		}
-		c.Next()
-	}
+		_, err = requireOwnedSession(c, d.Sessions, t.ParentSessionID)
+		return err
+	})
 }
 
 // approvalGate gates /approvals/:tool_call_id/* on owning the session the
 // approval is filed on.
 func (d AuthzDeps) approvalGate() gin.HandlerFunc {
-	return func(c *gin.Context) {
+	return wrap(func(c *gin.Context) error {
 		u, _ := server.CurrentUser(c)
 		pending, err := ownsApproval(c.Request.Context(), d.Approvals, d.Sessions, u.ID, c.Param("tool_call_id"))
 		if err != nil {
-			storeError(c, err)
-			c.Abort()
-			return
+			return err
 		}
 		c.Set(approvalKey, pending)
-		c.Next()
-	}
+		return nil
+	})
 }
 
 // triggerGate gates /triggers/:id/* on owning the session the trigger fires
 // into.
 func (d AuthzDeps) triggerGate() gin.HandlerFunc {
-	return func(c *gin.Context) {
+	return wrap(func(c *gin.Context) error {
 		t, err := d.Triggers.Get(c.Request.Context(), c.Param("id"))
 		if err != nil {
-			storeError(c, err)
-			c.Abort()
-			return
+			return err
 		}
-		if _, ok := requireOwnedSession(c, d.Sessions, t.SessionID); !ok {
-			c.Abort()
-			return
-		}
-		c.Next()
-	}
+		_, err = requireOwnedSession(c, d.Sessions, t.SessionID)
+		return err
+	})
 }
 
 // The scoped-configuration gates (decisions §5.29). scopeOf reads a row's
 // (scope, owner) pair; rowGate is one of visibleRow, editableRow and deletableRow.
 
-// listVisible answers the rows the caller may see; false means the response
-// is written.
-func listVisible[T any](c *gin.Context, s *store.CrudStore[T]) ([]T, bool) {
-	ownerID, admin, ok := callerScope(c)
-	if !ok {
-		return nil, false
+// listVisible returns the rows the caller may see.
+func listVisible[T any](c *gin.Context, s *store.CrudStore[T]) ([]T, error) {
+	ownerID, admin, err := callerScope(c)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := store.ListVisibleOf(c.Request.Context(), s, ownerID, admin)
 	if err != nil {
-		internalError(c, err)
-		return nil, false
+		return nil, err
 	}
-	return nonNilList(rows), true
+	return nonNilList(rows), nil
 }
 
 // nonNilList turns a nil slice into an empty one so a list endpoint answers
@@ -228,22 +192,22 @@ func nonNilList[T any](rows []T) []T {
 }
 
 // gatedRow loads the row the id path parameter names and runs gate on its
-// scope pair; false means the response is written.
-func gatedRow[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string), gate func(*gin.Context, string, string) bool) (*T, bool) {
+// scope pair.
+func gatedRow[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string), gate func(*gin.Context, string, string) error) (*T, error) {
 	row, err := s.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return nil, false
+		return nil, err
 	}
-	if scope, owner := scopeOf(row); !gate(c, scope, owner) {
-		return nil, false
+	scope, owner := scopeOf(row)
+	if err := gate(c, scope, owner); err != nil {
+		return nil, err
 	}
-	return row, true
+	return row, nil
 }
 
 // deleteOwned deletes the row the id path parameter names, with the owner
-// deletableRow saw as the predicate (409 when it moved). False: response written.
-func deleteOwned[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string)) bool {
+// deletableRow saw as the predicate (409 when it moved).
+func deleteOwned[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string)) error {
 	return deleteOwnedWith(c, s, scopeOf, func(ctx context.Context, id, owner string) error {
 		return store.DeleteOwnedBy(ctx, s, id, owner)
 	})
@@ -251,105 +215,95 @@ func deleteOwned[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) 
 
 // deleteOwnedWith is deleteOwned with the store's own delete in place of the
 // row delete: the one that cascades.
-func deleteOwnedWith[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string), del func(ctx context.Context, id, owner string) error) bool {
-	row, ok := gatedRow(c, s, scopeOf, deletableRow)
-	if !ok {
-		return false
+func deleteOwnedWith[T any](c *gin.Context, s *store.CrudStore[T], scopeOf func(*T) (string, string), del func(ctx context.Context, id, owner string) error) error {
+	row, err := gatedRow(c, s, scopeOf, deletableRow)
+	if err != nil {
+		return err
 	}
 	_, owner := scopeOf(row)
 	if err := del(c.Request.Context(), c.Param("id"), owner); err != nil {
-		saveError(c, err) // moved since the check -> 409
-		return false
+		return err // moved since the check -> 409
 	}
-	return true
+	return nil
 }
 
 // stampCreateScope applies the caller to a new scoped row: a global claim needs
-// the admin role, anything else lands private. False means the response is
-// written.
-func stampCreateScope(c *gin.Context, scope, ownerID *string) bool {
+// the admin role, anything else lands private.
+func stampCreateScope(c *gin.Context, scope, ownerID *string) error {
 	u, ok := server.CurrentUser(c)
 	if !ok {
-		notFound(c)
-		return false
+		return errNotFound
 	}
 	if *scope != "" && *scope != store.ScopeGlobal && *scope != store.ScopePrivate {
-		badRequest(c, `scope must be "global" or "private"`)
-		return false
+		return badRequest(`scope must be "global" or "private"`)
 	}
 	if *scope == store.ScopeGlobal && u.Role != store.RoleAdmin {
-		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "admin role required to create global configuration")
-		return false
+		return forbidden("admin role required to create global configuration")
 	}
 	*scope, *ownerID = store.NormalizeScope(*scope), u.ID
-	return true
+	return nil
 }
 
 // scopeChangeAllowed authorizes a scope flip on a row the caller can see (404
 // otherwise): promote is the admin's, demote the admin's or the author's.
-func scopeChangeAllowed(c *gin.Context, target, rowScope, rowOwner string) bool {
-	if !visibleRow(c, rowScope, rowOwner) {
-		return false
+func scopeChangeAllowed(c *gin.Context, target, rowScope, rowOwner string) error {
+	if err := visibleRow(c, rowScope, rowOwner); err != nil {
+		return err
 	}
 	u, _ := server.CurrentUser(c)
 	admin := u.Role == store.RoleAdmin
 	if target == store.ScopeGlobal && !admin {
-		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "admin role required to publish configuration")
-		return false
+		return forbidden("admin role required to publish configuration")
 	}
 	if target == store.ScopePrivate && !admin && rowOwner != u.ID {
-		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "only an admin or the owner may unpublish this configuration")
-		return false
+		return forbidden("only an admin or the owner may unpublish this configuration")
 	}
-	return true
+	return nil
 }
 
 // setScopePlain is the /scope POST body for entities with no extra validation
 // (MCP servers): bind, authorize, refuse the same scope, flip.
-func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, scopeOf func(*T) (scope, owner string)) {
-	scope, ok := bindScope(c)
-	if !ok {
-		return
+func setScopePlain[T any](c *gin.Context, s *store.CrudStore[T], kind string, scopeOf func(*T) (scope, owner string)) error {
+	scope, err := bindScope(c)
+	if err != nil {
+		return err
 	}
 	ctx, id := c.Request.Context(), c.Param("id")
 	row, err := s.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	cur, owner := scopeOf(row)
-	if !scopeChangeAllowed(c, scope, cur, owner) {
-		return
+	if err := scopeChangeAllowed(c, scope, cur, owner); err != nil {
+		return err
 	}
-	if sameScope(c, kind, cur, scope) {
-		return
+	if err := sameScope(kind, cur, scope); err != nil {
+		return err
 	}
 	if err := store.SetScopeOf(ctx, s, id, scope, owner); err != nil {
-		saveError(c, err) // name collision in the target scope -> 409
-		return
+		return err // name collision in the target scope -> 409
 	}
 	server.SetAuditDetail(c, "scope="+scope)
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // setOwnerPlain is the /owner PUT body shared by the scoped entities (the
 // route carries the admin gate): the row moves, scope stays; a taken name is 409.
-func setOwnerPlain[T any](c *gin.Context, s *store.CrudStore[T]) {
+func setOwnerPlain[T any](c *gin.Context, s *store.CrudStore[T]) error {
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		badRequest(c, "user_id is required")
-		return
+		return badRequest("user_id is required")
 	}
 	if err := store.SetOwnerOf(c.Request.Context(), s, c.Param("id"), req.UserID); err != nil {
 		if errors.Is(err, store.ErrNoSuchUser) {
-			badRequest(c, "no such user")
-			return
+			return badRequest("no such user")
 		}
-		saveError(c, err) // name collision in the target owner's namespace -> 409
-		return
+		return err // name collision in the target owner's namespace -> 409
 	}
 	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // ownershipGuard re-checks (scope, owner) against the LOCKED row inside the
@@ -375,67 +329,62 @@ func callerSees(c *gin.Context, scope, rowOwner string) bool {
 
 // runnableRow gates the RUN surface of an agent (a bound session, its tool
 // listing, a playground call): an admin does not run a member's private row (403).
-func runnableRow(c *gin.Context, scope, rowOwner string) bool {
+func runnableRow(c *gin.Context, scope, rowOwner string) error {
 	u, ok := server.CurrentUser(c)
 	if ok && u.Role == store.RoleAdmin && !store.Visible(scope, rowOwner, u.ID, false) {
-		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "an admin does not run a member's private agent")
-		return false
+		return forbidden("an admin does not run a member's private agent")
 	}
-	return true
+	return nil
 }
 
 // visibleRow 404s a row the caller may not see — a foreign private row reads
 // as absent, never as forbidden (ownership is not an oracle for existence).
-func visibleRow(c *gin.Context, scope, rowOwner string) bool {
+func visibleRow(c *gin.Context, scope, rowOwner string) error {
 	u, ok := server.CurrentUser(c)
 	if !ok || !store.Visible(scope, rowOwner, u.ID, u.Role == store.RoleAdmin) {
-		notFound(c)
-		return false
+		return errNotFound
 	}
-	return true
+	return nil
 }
 
 // editableRow gates an UPDATE: the owner, or an admin on a global row — never
 // an admin on a member's private row (decisions §5.29). 404 if invisible, else 403.
-func editableRow(c *gin.Context, scope, rowOwner string) bool {
-	if !visibleRow(c, scope, rowOwner) {
-		return false
+func editableRow(c *gin.Context, scope, rowOwner string) error {
+	if err := visibleRow(c, scope, rowOwner); err != nil {
+		return err
 	}
 	u, _ := server.CurrentUser(c)
 	if rowOwner == u.ID {
-		return true
+		return nil
 	}
 	if scope == store.ScopeGlobal {
 		if u.Role == store.RoleAdmin {
-			return true
+			return nil
 		}
-		abortError(c, http.StatusForbidden, protocol.CodeForbidden, "only an admin or the owner may modify global configuration")
-		return false
+		return forbidden("only an admin or the owner may modify global configuration")
 	}
-	abortError(c, http.StatusForbidden, protocol.CodeForbidden, "this configuration belongs to another user")
-	return false
+	return forbidden("this configuration belongs to another user")
 }
 
 // deletableRow gates a DELETE: everything editableRow allows, plus an admin
 // removing any row (management).
-func deletableRow(c *gin.Context, scope, rowOwner string) bool {
-	if !visibleRow(c, scope, rowOwner) {
-		return false
+func deletableRow(c *gin.Context, scope, rowOwner string) error {
+	if err := visibleRow(c, scope, rowOwner); err != nil {
+		return err
 	}
 	u, _ := server.CurrentUser(c)
 	if u.Role == store.RoleAdmin {
-		return true
+		return nil
 	}
 	return editableRow(c, scope, rowOwner)
 }
 
 // callerScope answers the caller's (id, admin) pair for visibility-filtered
 // listings.
-func callerScope(c *gin.Context) (string, bool, bool) {
+func callerScope(c *gin.Context) (string, bool, error) {
 	u, ok := server.CurrentUser(c)
 	if !ok {
-		notFound(c)
-		return "", false, false
+		return "", false, errNotFound
 	}
-	return u.ID, u.Role == store.RoleAdmin, true
+	return u.ID, u.Role == store.RoleAdmin, nil
 }

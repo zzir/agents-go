@@ -100,16 +100,17 @@ func (h *McpServerHandler) status(cfg *store.McpServerConfig) string {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/mcp-servers [get]
-func (h *McpServerHandler) List(c *gin.Context) {
-	configs, ok := listVisible(c, h.store.CrudStore)
-	if !ok {
-		return
+func (h *McpServerHandler) List(c *gin.Context) error {
+	configs, err := listVisible(c, h.store.CrudStore)
+	if err != nil {
+		return err
 	}
 	items := make([]mcpServerListItem, len(configs))
 	for i := range configs {
 		items[i] = h.listItem(&configs[i])
 	}
 	c.JSON(http.StatusOK, items)
+	return nil
 }
 
 // mcpServerReq is the request body for both Create and Update.
@@ -178,34 +179,31 @@ func (r *mcpServerReq) validate() string {
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/mcp-servers [post]
-func (h *McpServerHandler) Create(c *gin.Context) {
+func (h *McpServerHandler) Create(c *gin.Context) error {
 	var req mcpServerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	if msg := req.validate(); msg != "" {
-		badRequest(c, msg)
-		return
+		return badRequest(msg)
 	}
 	cfg := req.toModel()
-	if !stampCreateScope(c, &cfg.Scope, &cfg.OwnerID) {
-		return
+	if err := stampCreateScope(c, &cfg.Scope, &cfg.OwnerID); err != nil {
+		return err
 	}
 	// No stored config yet: mask sentinels resolve to empty.
 	restored, err := restoreMcpConfig(cfg.Config, nil)
 	if err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	cfg.Config = restored
 	if err := h.store.Create(c.Request.Context(), cfg); err != nil {
-		saveError(c, err) // duplicate name -> 409
-		return
+		return err // duplicate name -> 409
 	}
 	// A new enabled server connects in the background, as an update does (invariant 6).
 	h.manager.Reconcile(cfg, h.oauth)
 	created(c, cfg.ID, h.listItem(cfg))
+	return nil
 }
 
 // Get responds with the MCP server configuration identified by the id path parameter.
@@ -219,12 +217,13 @@ func (h *McpServerHandler) Create(c *gin.Context) {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id} [get]
-func (h *McpServerHandler) Get(c *gin.Context) {
-	cfg, ok := gatedRow(c, h.store.CrudStore, mcpScope, visibleRow)
-	if !ok {
-		return
+func (h *McpServerHandler) Get(c *gin.Context) error {
+	cfg, err := gatedRow(c, h.store.CrudStore, mcpScope, visibleRow)
+	if err != nil {
+		return err
 	}
 	c.JSON(http.StatusOK, h.listItem(cfg))
+	return nil
 }
 
 // mcpScope reads a server's (scope, owner) pair for the scoped-CRUD gates.
@@ -246,34 +245,32 @@ func mcpScope(m *store.McpServerConfig) (string, string) { return m.Scope, m.Own
 //	@Failure		500		{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/mcp-servers/{id} [put]
-func (h *McpServerHandler) Update(c *gin.Context) {
+func (h *McpServerHandler) Update(c *gin.Context) error {
 	var req mcpServerReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
-		return
+		return badRequest(err.Error())
 	}
 	if msg := req.validate(); msg != "" {
-		badRequest(c, msg)
-		return
+		return badRequest(msg)
 	}
 	ctx := c.Request.Context()
 	id := c.Param("id")
-	cur, ok := gatedRow(c, h.store.CrudStore, mcpScope, editableRow)
-	if !ok {
-		return
+	cur, err := gatedRow(c, h.store.CrudStore, mcpScope, editableRow)
+	if err != nil {
+		return err
 	}
 	cfg := req.toModel()
 	// Masked header values / oauth_client_secret resolve against the stored
 	// row inside the transaction; scope and owner never move on an update.
-	err := h.store.Update(ctx, id, cfg, ownershipGuard(cur.Scope, cur.OwnerID, mcpScope,
+	err = h.store.Update(ctx, id, cfg, ownershipGuard(cur.Scope, cur.OwnerID, mcpScope,
 		func(prev *store.McpServerConfig) error {
 			cfg.Scope, cfg.OwnerID = prev.Scope, prev.OwnerID
 			if maskAcrossDestination(cfg.Config, prev.Config, "endpoint") {
-				return badRequestError("endpoint changed: the stored secrets belong to the previous endpoint — replace them or clear them")
+				return badRequest("endpoint changed: the stored secrets belong to the previous endpoint — replace them or clear them")
 			}
 			restored, rerr := restoreMcpConfig(cfg.Config, prev.Config)
 			if rerr != nil {
-				return badRequestError(rerr.Error())
+				return badRequest(rerr.Error())
 			}
 			cfg.Config = restored
 			// A grant is bound to endpoint + auth mode + client id; when any
@@ -284,18 +281,17 @@ func (h *McpServerHandler) Update(c *gin.Context) {
 			return nil
 		}))
 	if err != nil {
-		saveError(c, err) // duplicate name -> 409, not-found -> 404
-		return
+		return err // duplicate name -> 409, not-found -> 404
 	}
 	updated, err := h.store.Get(ctx, id)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	// Reconcile the live connection with the persisted config; the response
 	// usually reads "connecting".
 	h.manager.Reconcile(updated, h.oauth)
 	c.JSON(http.StatusOK, h.listItem(updated))
+	return nil
 }
 
 // oauthIdentityChanged reports whether an update moved a field the persisted
@@ -318,14 +314,15 @@ func oauthIdentityChanged(next, prev json.RawMessage) bool {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id} [delete]
-func (h *McpServerHandler) Delete(c *gin.Context) {
+func (h *McpServerHandler) Delete(c *gin.Context) error {
 	// Row first, then disconnect: a failed delete must not strand a persisted
 	// server offline.
-	if !deleteOwned(c, h.store.CrudStore, mcpScope) {
-		return
+	if err := deleteOwned(c, h.store.CrudStore, mcpScope); err != nil {
+		return err
 	}
 	_ = h.manager.Disconnect(c.Param("id"))
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // SetScope promotes an MCP server to global or demotes it back to its author's
@@ -341,8 +338,8 @@ func (h *McpServerHandler) Delete(c *gin.Context) {
 //	@Failure	409	{object}	ErrorResponse	"name collision in the target scope"
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/scope [post]
-func (h *McpServerHandler) SetScope(c *gin.Context) {
-	setScopePlain(c, h.store.CrudStore, "MCP server", mcpScope)
+func (h *McpServerHandler) SetScope(c *gin.Context) error {
+	return setScopePlain(c, h.store.CrudStore, "MCP server", mcpScope)
 }
 
 // SetOwner transfers the MCP server to another account (admin).
@@ -357,8 +354,8 @@ func (h *McpServerHandler) SetScope(c *gin.Context) {
 //	@Failure	409	{object}	ErrorResponse	"name collision in the target owner's namespace"
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/owner [put]
-func (h *McpServerHandler) SetOwner(c *gin.Context) {
-	setOwnerPlain(c, h.store.CrudStore)
+func (h *McpServerHandler) SetOwner(c *gin.Context) error {
+	return setOwnerPlain(c, h.store.CrudStore)
 }
 
 // mcpConnectResp is the Connect response: status "connected", or
@@ -381,15 +378,14 @@ type mcpConnectResp struct {
 //	@Failure		502	{object}	ErrorResponse
 //	@Security		BearerAuth
 //	@Router			/mcp-servers/{id}/connect [post]
-func (h *McpServerHandler) Connect(c *gin.Context) {
-	cfg, ok := gatedRow(c, h.store.CrudStore, mcpScope, editableRow)
-	if !ok {
-		return
+func (h *McpServerHandler) Connect(c *gin.Context) error {
+	cfg, err := gatedRow(c, h.store.CrudStore, mcpScope, editableRow)
+	if err != nil {
+		return err
 	}
 	// A disabled server never gains a live connection — invariant 5.
 	if !cfg.Enabled {
-		conflict(c, "server is disabled; enable it before connecting")
-		return
+		return conflict("server is disabled; enable it before connecting")
 	}
 
 	var hc store.HTTPMcpConfig
@@ -397,8 +393,7 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 		redirectURI := h.externalOrigin(c.Request) + server.APIPrefix + mcpOAuthCallbackPath
 		result, err := h.oauth.ConnectWithOAuth(c.Request.Context(), h.manager, cfg, &hc, redirectURI)
 		if err != nil {
-			upstreamError(c, err)
-			return
+			return upstream(err.Error())
 		}
 		if result.Connected {
 			c.JSON(http.StatusOK, mcpConnectResp{Status: "connected"})
@@ -408,14 +403,14 @@ func (h *McpServerHandler) Connect(c *gin.Context) {
 				AuthorizeURL: result.AuthorizeURL,
 			})
 		}
-		return
+		return nil
 	}
 
 	if err := h.manager.Connect(c.Request.Context(), cfg); err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	c.JSON(http.StatusOK, mcpConnectResp{Status: "connected"})
+	return nil
 }
 
 // externalOrigin is the browser-facing origin for the OAuth redirect_uri: --base-url,
@@ -442,20 +437,19 @@ func (h *McpServerHandler) externalOrigin(r *http.Request) string {
 //	@Failure	500	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/oauth-token [delete]
-func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
+func (h *McpServerHandler) ClearOAuth(c *gin.Context) error {
 	id := c.Param("id")
-	if _, ok := gatedRow(c, h.store.CrudStore, mcpScope, editableRow); !ok {
-		return
+	if _, err := gatedRow(c, h.store.CrudStore, mcpScope, editableRow); err != nil {
+		return err
 	}
 	if err := h.manager.Disconnect(id); err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	if err := h.store.ClearOAuthToken(c.Request.Context(), id); err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // OAuthCallback delivers the authorization code to the pending connection and
@@ -472,29 +466,30 @@ func (h *McpServerHandler) ClearOAuth(c *gin.Context) {
 //	@Success		200		{string}	string	"HTML result page"
 //	@Failure		400		{string}	string	"missing state or code parameter"
 //	@Router			/mcp-servers/oauth/callback [get]
-func (h *McpServerHandler) OAuthCallback(c *gin.Context) {
+func (h *McpServerHandler) OAuthCallback(c *gin.Context) error {
 	// The request logger redacts the query, so the outcome is logged here.
 	log := logging.Ctx(c.Request.Context())
 	// A denial redirect carries no code: check error before requiring one.
 	if errMsg := c.Query("error"); errMsg != "" {
 		log.Warn("mcp oauth callback: authorization server returned an error", "error", errMsg)
 		writeOAuthCallbackPage(c, "error", errMsg)
-		return
+		return nil
 	}
 	state := c.Query("state")
 	code := c.Query("code")
 	if state == "" || code == "" {
 		log.Warn("mcp oauth callback: missing state or code parameter")
 		c.String(http.StatusBadRequest, "missing state or code parameter")
-		return
+		return nil
 	}
 	if err := h.oauth.HandleCallback(state, code, c.Query("iss")); err != nil {
 		log.Warn("mcp oauth callback: could not deliver authorization code", "error", err)
 		writeOAuthCallbackPage(c, "error", err.Error())
-		return
+		return nil
 	}
 	log.Info("mcp oauth callback: authorization code delivered to the pending connection")
 	writeOAuthCallbackPage(c, "success", "")
+	return nil
 }
 
 // oauthCallbackScript is the static popup script (read status, notify the
@@ -549,24 +544,22 @@ type mcpToolInfo struct {
 //	@Failure	502	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/mcp-servers/{id}/tools [get]
-func (h *McpServerHandler) Tools(c *gin.Context) {
+func (h *McpServerHandler) Tools(c *gin.Context) error {
 	id := c.Param("id")
 	// Distinguish "no such server" (404) from "exists but not connected" (409):
 	// querying the manager alone can't tell them apart.
-	if _, ok := gatedRow(c, h.store.CrudStore, mcpScope, visibleRow); !ok {
-		return
+	if _, err := gatedRow(c, h.store.CrudStore, mcpScope, visibleRow); err != nil {
+		return err
 	}
 	srv := h.manager.Get(id)
 	if srv == nil {
-		conflict(c, "server not connected")
-		return
+		return conflict("server not connected")
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), mcpListTimeout)
 	defer cancel()
 	tools, err := srv.ListTools(ctx, nil, nil)
 	if err != nil {
-		upstreamError(c, err)
-		return
+		return upstream(err.Error())
 	}
 	items := make([]mcpToolInfo, len(tools))
 	prefix := mcpservers.ToolPrefix(srv.Name())
@@ -574,6 +567,7 @@ func (h *McpServerHandler) Tools(c *gin.Context) {
 		items[i] = mcpToolInfo{Name: t.Name, Description: t.Description, OriginalName: strings.TrimPrefix(t.Name, prefix), ReadOnlyHint: t.ReadOnly}
 	}
 	c.JSON(http.StatusOK, items)
+	return nil
 }
 
 // mcpListTimeout bounds one tools/list made on a request's behalf: this

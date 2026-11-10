@@ -39,7 +39,7 @@ func TestStartErrorMapping(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-		h.startError(c, tc.err)
+		writeError(c, h.startError(tc.err))
 		if w.Code != tc.want {
 			t.Errorf("%s: startError -> %d, want %d", tc.name, w.Code, tc.want)
 		}
@@ -136,7 +136,7 @@ func TestCreateRunHonorsPreferWait(t *testing.T) {
 	})
 	h := NewRunHandler(runner)
 	engine := newTestEngine()
-	engine.POST("/sessions/:id/runs", h.Create)
+	engine.POST("/sessions/:id/runs", wrap(h.Create))
 	body := `{"input":"hello","agent_config_id":"` + ac.ID + `"}`
 
 	// The wait runs out first: 202, still running.

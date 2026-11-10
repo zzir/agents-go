@@ -51,17 +51,17 @@ type skillReq struct {
 //	@Success	200	{array}	store.Skill
 //	@Security	BearerAuth
 //	@Router		/skills [get]
-func (h *SkillHandler) List(c *gin.Context) {
-	ownerID, admin, ok := callerScope(c)
-	if !ok {
-		return
+func (h *SkillHandler) List(c *gin.Context) error {
+	ownerID, admin, err := callerScope(c)
+	if err != nil {
+		return err
 	}
 	out, err := h.store.ListMeta(c.Request.Context(), ownerID, admin)
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	c.JSON(http.StatusOK, nonNilList(out))
+	return nil
 }
 
 // Get responds with one skill, content included.
@@ -74,28 +74,29 @@ func (h *SkillHandler) List(c *gin.Context) {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/skills/{id} [get]
-func (h *SkillHandler) Get(c *gin.Context) {
-	if sk, ok := gatedRow(c, h.store.CrudStore, skillScope, visibleRow); ok {
-		c.JSON(http.StatusOK, sk)
+func (h *SkillHandler) Get(c *gin.Context) error {
+	sk, err := gatedRow(c, h.store.CrudStore, skillScope, visibleRow)
+	if err != nil {
+		return err
 	}
+	c.JSON(http.StatusOK, sk)
+	return nil
 }
 
 // skillScope reads a skill's (scope, owner) pair for the scoped-CRUD gates.
 func skillScope(s *store.Skill) (string, string) { return s.Scope, s.OwnerID }
 
 // parseSkillContent validates a document for storage: size cap plus the
-// SKILL.md frontmatter rules. Reports to c and returns ok=false on failure.
-func parseSkillContent(c *gin.Context, content string) (skills.Skill, bool) {
+// SKILL.md frontmatter rules.
+func parseSkillContent(content string) (skills.Skill, error) {
 	if len(content) > maxSkillBytes {
-		badRequest(c, fmt.Sprintf("content exceeds %d KiB", maxSkillBytes>>10))
-		return skills.Skill{}, false
+		return skills.Skill{}, badRequest(fmt.Sprintf("content exceeds %d KiB", maxSkillBytes>>10))
 	}
 	meta, err := skills.Parse([]byte(content))
 	if err != nil {
-		badRequest(c, "invalid SKILL.md: "+err.Error())
-		return skills.Skill{}, false
+		return skills.Skill{}, badRequest("invalid SKILL.md: " + err.Error())
 	}
-	return meta, true
+	return meta, nil
 }
 
 // Create stores a new skill authored in the workbench.
@@ -111,25 +112,24 @@ func parseSkillContent(c *gin.Context, content string) (skills.Skill, bool) {
 //	@Failure		409		{object}	ErrorResponse	"name already in use"
 //	@Security		BearerAuth
 //	@Router			/skills [post]
-func (h *SkillHandler) Create(c *gin.Context) {
+func (h *SkillHandler) Create(c *gin.Context) error {
 	var req skillReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "content is required")
-		return
+		return badRequest("content is required")
 	}
-	meta, ok := parseSkillContent(c, req.Content)
-	if !ok {
-		return
+	meta, err := parseSkillContent(req.Content)
+	if err != nil {
+		return err
 	}
 	sk := &store.Skill{Name: meta.Name, Description: meta.Description, Content: req.Content, Scope: req.Scope}
-	if !stampCreateScope(c, &sk.Scope, &sk.OwnerID) {
-		return
+	if err := stampCreateScope(c, &sk.Scope, &sk.OwnerID); err != nil {
+		return err
 	}
 	if err := h.store.Create(c.Request.Context(), sk); err != nil {
-		saveError(c, err)
-		return
+		return err
 	}
 	created(c, sk.ID, sk)
+	return nil
 }
 
 // Update overwrites a skill's content; name and description follow the new
@@ -147,24 +147,23 @@ func (h *SkillHandler) Create(c *gin.Context) {
 //	@Failure	409		{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/skills/{id} [put]
-func (h *SkillHandler) Update(c *gin.Context) {
+func (h *SkillHandler) Update(c *gin.Context) error {
 	var req skillReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, "content is required")
-		return
+		return badRequest("content is required")
 	}
-	meta, ok := parseSkillContent(c, req.Content)
-	if !ok {
-		return
+	meta, err := parseSkillContent(req.Content)
+	if err != nil {
+		return err
 	}
 	ctx := c.Request.Context()
-	prev, ok := gatedRow(c, h.store.CrudStore, skillScope, editableRow)
-	if !ok {
-		return
+	prev, err := gatedRow(c, h.store.CrudStore, skillScope, editableRow)
+	if err != nil {
+		return err
 	}
 	sk := &store.Skill{Name: meta.Name, Description: meta.Description, Content: req.Content}
 	// Scope, owner and source lineage come from the row inside the transaction.
-	err := h.store.Update(ctx, prev.ID, sk, ownershipGuard(prev.Scope, prev.OwnerID, skillScope,
+	err = h.store.Update(ctx, prev.ID, sk, ownershipGuard(prev.Scope, prev.OwnerID, skillScope,
 		func(p *store.Skill) error {
 			sk.Scope, sk.OwnerID = p.Scope, p.OwnerID
 			sk.SourceRepo, sk.SourcePath, sk.SourceSHA = p.SourceRepo, p.SourcePath, p.SourceSHA
@@ -172,11 +171,11 @@ func (h *SkillHandler) Update(c *gin.Context) {
 			return nil
 		}))
 	if err != nil {
-		saveError(c, err)
-		return
+		return err
 	}
 	sk.ID, sk.CreatedAt = prev.ID, prev.CreatedAt
 	c.JSON(http.StatusOK, sk)
+	return nil
 }
 
 // Delete removes a skill; an agent whose selection still names it stops
@@ -189,10 +188,12 @@ func (h *SkillHandler) Update(c *gin.Context) {
 //	@Failure	404	{object}	ErrorResponse
 //	@Security	BearerAuth
 //	@Router		/skills/{id} [delete]
-func (h *SkillHandler) Delete(c *gin.Context) {
-	if deleteOwned(c, h.store.CrudStore, skillScope) {
-		c.Status(http.StatusNoContent)
+func (h *SkillHandler) Delete(c *gin.Context) error {
+	if err := deleteOwned(c, h.store.CrudStore, skillScope); err != nil {
+		return err
 	}
+	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // SetScope flips a workbench-authored skill between private and global; an
@@ -208,18 +209,17 @@ func (h *SkillHandler) Delete(c *gin.Context) {
 //	@Failure	409	{object}	ErrorResponse	"name collision in the target scope"
 //	@Security	BearerAuth
 //	@Router		/skills/{id}/scope [post]
-func (h *SkillHandler) SetScope(c *gin.Context) {
+func (h *SkillHandler) SetScope(c *gin.Context) error {
 	// Visibility decides first, so the refusal below is never an existence
 	// oracle (decisions §5.29).
-	sk, ok := gatedRow(c, h.store.CrudStore, skillScope, visibleRow)
-	if !ok {
-		return
+	sk, err := gatedRow(c, h.store.CrudStore, skillScope, visibleRow)
+	if err != nil {
+		return err
 	}
 	if sk.SourceRepo != "" {
-		badRequest(c, "an imported skill changes scope with its repository — use the repository scope action")
-		return
+		return badRequest("an imported skill changes scope with its repository — use the repository scope action")
 	}
-	setScopePlain(c, h.store.CrudStore, "skill", skillScope)
+	return setScopePlain(c, h.store.CrudStore, "skill", skillScope)
 }
 
 // repoScopeReq is the body of POST /skill-repos/scope: the repo group to
@@ -243,16 +243,15 @@ type repoScopeReq struct {
 //	@Failure	409	{object}	ErrorResponse	"already in that scope, or a name collision in the target scope"
 //	@Security	BearerAuth
 //	@Router		/skill-repos/scope [post]
-func (h *SkillHandler) SetRepoScope(c *gin.Context) {
+func (h *SkillHandler) SetRepoScope(c *gin.Context) error {
 	var req repoScopeReq
 	if err := c.ShouldBindJSON(&req); err != nil || (req.Scope != store.ScopeGlobal && req.Scope != store.ScopePrivate) {
-		badRequest(c, `repo is required and scope must be "global" or "private"`)
-		return
+		return badRequest(`repo is required and scope must be "global" or "private"`)
 	}
 	ctx := c.Request.Context()
-	ownerID, _, ok := callerScope(c)
-	if !ok {
-		return
+	ownerID, _, err := callerScope(c)
+	if err != nil {
+		return err
 	}
 	// The group is (repo, owner), defaulting to the caller's own — decisions §5.31.
 	groupOwner := req.OwnerID
@@ -261,28 +260,25 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 	}
 	cur, found, err := h.store.RepoGroup(ctx, req.Repo, groupOwner)
 	if err != nil {
-		internalError(c, err)
-		return
+		return err
 	}
 	if !found {
-		notFound(c)
-		return
+		return errNotFound
 	}
-	if !scopeChangeAllowed(c, req.Scope, cur, groupOwner) {
-		return
+	if err := scopeChangeAllowed(c, req.Scope, cur, groupOwner); err != nil {
+		return err
 	}
 	n, err := h.store.SetRepoScope(ctx, req.Repo, groupOwner, req.Scope)
 	if err != nil {
-		saveError(c, err) // name collision in the target scope -> 409
-		return
+		return err // name collision in the target scope -> 409
 	}
 	if n == 0 {
-		conflict(c, "the repository's skills are already "+req.Scope)
-		return
+		return conflict("the repository's skills are already " + req.Scope)
 	}
 	server.SetAuditResource(c, req.Repo)
 	server.SetAuditDetail(c, "owner="+groupOwner+" scope="+req.Scope)
 	c.Status(http.StatusNoContent)
+	return nil
 }
 
 // SetOwner transfers a skill to another account (admin) — decisions §5.31.
@@ -297,30 +293,26 @@ func (h *SkillHandler) SetRepoScope(c *gin.Context) {
 //	@Failure	409	{object}	ErrorResponse	"name collision in the target owner's namespace"
 //	@Security	BearerAuth
 //	@Router		/skills/{id}/owner [put]
-func (h *SkillHandler) SetOwner(c *gin.Context) {
+func (h *SkillHandler) SetOwner(c *gin.Context) error {
 	ctx := c.Request.Context()
 	sk, err := h.store.Get(ctx, c.Param("id"))
 	if err != nil {
-		storeError(c, err)
-		return
+		return err
 	}
 	if sk.SourceRepo == "" {
-		setOwnerPlain(c, h.store.CrudStore)
-		return
+		return setOwnerPlain(c, h.store.CrudStore)
 	}
 	var req SetOwnerRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		badRequest(c, "user_id is required")
-		return
+		return badRequest("user_id is required")
 	}
 	if err := h.store.SetRepoOwner(ctx, sk.SourceRepo, sk.OwnerID, req.UserID); err != nil {
 		if errors.Is(err, store.ErrNoSuchUser) {
-			badRequest(c, "no such user")
-			return
+			return badRequest("no such user")
 		}
-		saveError(c, err) // name collision in the target owner's namespace -> 409
-		return
+		return err // name collision in the target owner's namespace -> 409
 	}
 	server.SetAuditDetail(c, "owner="+req.UserID)
 	c.Status(http.StatusNoContent)
+	return nil
 }
