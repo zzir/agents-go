@@ -2571,3 +2571,28 @@ rewrites the ids its checkpoints name; one made before this names its source's
 ids and reads unfolded until its next pass.
 
 Rules: workbench invariant 108; spec §2.5f.
+
+### 5.120 The workbench stores sessions itself
+
+Decided 2026-11-11.
+
+**Decision.** `cmd/agents-server` does not require the `sessions` module. Its
+`store.EntryStore` is a `session.Storage` over the workbench's own tables,
+written on the functions of `agents/session` the module is written on
+(`PrepareAppend`, `LeafOf`), and both run `sessiontest`'s storage and repo
+suites.
+
+**Rejected.** The workbench on the `sessions` module — its entry rows carry
+what the module's do not (`run_id`, `source_model`, `usage`, `est_tokens`,
+`compacted`), its session row an owner, an agent and a workspace, and a fork
+copies a session's entries in the transaction that creates the copy. Reaching
+those through the module means column and table hooks whose one caller is the
+workbench, in a library that knows nothing of it (scope §1.2). The workbench's
+store moved into the module — the same hooks, from the other side.
+
+**Cost accepted.** Two SQL implementations of one interface. The shared suites
+hold them together, so a storage bug fixed in one adds its case to
+`sessiontest`; what the suites cannot reach — the workbench's fold and fork —
+is the workbench's alone to test.
+
+Rules: [architecture](architecture.md#packages).

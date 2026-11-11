@@ -132,7 +132,7 @@ its own module, the heavy dependency that makes it one. Signatures live on
 | `mcp` | own — modelcontextprotocol/go-sdk and the seven indirect requirements it brought | Model Context Protocol client |
 | `models/anthropic` | own — anthropic-sdk-go | Anthropic Messages API backend (translated to Responses) |
 | `sandbox/docker` | own — the Docker client, x/crypto/ssh for remote daemons | Docker sandbox backend |
-| `sessions` | own — the SQL drivers | SQLite/PostgreSQL session store (uptrace/bun) |
+| `sessions` | own — the SQL drivers | SQLite/PostgreSQL session store (uptrace/bun); the workbench keeps its own ([decisions §5.120](decisions.md#5120-the-workbench-stores-sessions-itself)) |
 | `skills` | own — the YAML parser | Agent Skills (`SKILL.md`) parser |
 | `cmd/agents-server` | own — a web application, not a library | the workbench: web app (REST + WS + embedded UI) over the SDK |
 | `examples/anthropic` | own — the same anthropic-sdk-go dep | an example program |
