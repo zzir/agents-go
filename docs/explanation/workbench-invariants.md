@@ -160,8 +160,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
     highest sequence live in `append_points`, written inside the transaction
     that moved them (`appendTo`, `Clear`, `pop`, `ForkSession`, the compaction
     fold); `foldAppendPointIn` is the definition they must agree with, field
-    for field. A missing row falls back to the fold, never to "empty". Only
-    `GetEntries` still folds, once per read.
+    for field. A missing row falls back to the fold, never to "empty". Only a
+    read that already holds every row folds it: `GetEntries`, and the model's
+    view (`tipOfRows`).
 27. **A session's `workspace_id` binding is immutable and server-authoritative.**
     The first workspace-carrying run binds it (`BindWorkspaceIfEmpty`): no unbind,
     rebind or PATCH, the run overrides what the client sends, and no workspace
@@ -625,3 +626,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      checked by the SDK task manager at spawn and retry, under the parent's
      spawn lock; the run hub admits a task's run without counting, so the cap
      never refuses a running execution its next step — decisions §5.118.
+108. **A fold applies only where its checkpoint is.** The model's view drops
+     an entry only when a checkpoint on the ACTIVE branch names it
+     (`ExcludedIDs`); a branch that leaves the checkpoint behind reads those
+     entries again, and its own pass folds them. `entries.compacted` only
+     spares the read a body, and a fork renames what its checkpoints name
+     (`dropFoldedIn`, `foldedOn`, `renameFolded`) — decisions §5.119.

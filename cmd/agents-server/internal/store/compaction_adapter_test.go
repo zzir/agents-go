@@ -358,7 +358,10 @@ func TestPersistCompactionParentsTheCheckpointAtTheSurvivingTip(t *testing.T) {
 	insertItemRows(t, sa, []string{userItemJSON, assistantItemJSON, userItemJSON})
 	rows := loadRows(t, db, sessionID)
 
-	summary, err := session.NewCompactionEntry(session.CompactionPayload{Summary: "sum"})
+	summary, err := session.NewCompactionEntry(session.CompactionPayload{
+		Summary:     "sum",
+		ExcludedIDs: []string{rows[1].EntryID, rows[2].EntryID},
+	})
 	if err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}

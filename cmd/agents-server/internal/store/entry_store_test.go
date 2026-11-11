@@ -51,21 +51,22 @@ func quoteJSON(s string) string {
 	return string(b)
 }
 
-// markCompacted folds rows away the way the compaction adapter does: the flag
-// and the append point move together (see persistCompaction), or the next
-// append links to an entry the fold has just taken out of the view.
-func markCompacted(t *testing.T, s *EntryStore, entryIDs ...string) {
+// foldAway folds entries the way a pass does: the flag and a checkpoint naming
+// them, written together (persistCompaction).
+func foldAway(t *testing.T, s *EntryStore, entryIDs ...string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := s.db.NewUpdate().Model((*entryRow)(nil)).
-		Set("compacted = ?", true).
-		Where("session_id = ?", s.ref.ID).Where("gen = ?", s.ref.Gen).
-		Where("entry_id IN (?)", bun.List(entryIDs)).
-		Exec(ctx); err != nil {
-		t.Fatalf("mark compacted: %v", err)
+	var rowIDs []string
+	if err := s.scoped(s.db.NewSelect().Model((*entryRow)(nil))).Column("id").
+		Where("entry_id IN (?)", bun.List(entryIDs)).Scan(ctx, &rowIDs); err != nil {
+		t.Fatalf("fold away: %v", err)
 	}
-	if err := s.refreshAppendPointIn(ctx, s.db); err != nil {
-		t.Fatalf("refresh append point: %v", err)
+	cp, err := session.NewCompactionEntry(session.CompactionPayload{Summary: "folded", ExcludedIDs: entryIDs})
+	if err != nil {
+		t.Fatalf("fold away: %v", err)
+	}
+	if ok, err := (&CompactionAdapter{EntryStore: s}).persistCompaction(ctx, rowIDs, cp); err != nil || !ok {
+		t.Fatalf("fold away: applied=%v err=%v", ok, err)
 	}
 }
 
@@ -836,12 +837,10 @@ func TestForkMaterializesTheDestinationAppendPoint(t *testing.T) {
 	}
 }
 
-// A fork copies compacted rows too, so the destination's UI can still show what
-// was folded. Cutting ON one of them — regenerating from a message compaction
-// has since folded away — must not make it the destination's tip: the fork's
-// first entry would hang off an entry no view contains, putting folded messages
-// back on the branch with no checkpoint to explain them.
-func TestForkCutOnAFoldedEntry(t *testing.T) {
+// A fork cut before the checkpoint copies folded rows and no checkpoint, so
+// nothing folds them there: they are the fork's history, and its next entry
+// extends them.
+func TestForkCutBeforeACheckpointReadsWhatItCopied(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	id := ids(t)
@@ -858,7 +857,7 @@ func TestForkCutOnAFoldedEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("entries: %v", err)
 	}
-	markCompacted(t, s, stored[0].ID, stored[1].ID)
+	foldAway(t, s, stored[0].ID, stored[1].ID)
 	rows := loadRows(t, db, src.ID)
 
 	dst := &Session{OwnerID: LocalUserID, ID: NewID(), Name: "dst"}
@@ -879,17 +878,10 @@ func TestForkCutOnAFoldedEntry(t *testing.T) {
 		t.Fatalf("stored append point %+v, folded %+v", got, want)
 	}
 
-	// Everything the fork copied was folded away: the model's view closes
-	// its links over the copies, so the next entry is its root, while the
-	// transcript keeps the copies on the branch as the history they are.
 	forked.SetRunID(id("r2"))
 	seed(t, forked, userEntry(t, "regenerated"))
-	model, err := forked.Entries(ctx, session.Cursor{})
-	if err != nil {
-		t.Fatalf("entries: %v", err)
-	}
-	if len(model) != 1 || model[0].ParentID != "" {
-		t.Fatalf("the model's view = %d entries, first parent %q; want one root", len(model), model[0].ParentID)
+	if got, want := contextTexts(t, forked), []string{"one", "two", "regenerated"}; !slices.Equal(got, want) {
+		t.Fatalf("the fork's view = %q, want %q", got, want)
 	}
 	view, err := forked.GetEntries(ctx)
 	if err != nil {

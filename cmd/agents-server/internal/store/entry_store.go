@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -43,8 +44,8 @@ type entryRow struct {
 	// lifted out: a session is sized without reading bodies.
 	Usage     string `bun:"usage,nullzero" json:"-"`
 	EstTokens int    `bun:"est_tokens"     json:"-"`
-	// Compacted marks an entry the compaction pass folded away: a soft delete,
-	// the row stays.
+	// Compacted marks a row some pass folded: the model's read skips its body
+	// unless the active branch still reads it. It decides no fold itself.
 	Compacted bool      `bun:"compacted"          json:"compacted,omitempty"`
 	CreatedAt time.Time `bun:"created_at,notnull" json:"created_at"`
 }
@@ -390,9 +391,8 @@ func writeAppendPoint(ctx context.Context, db bun.IDB, ref session.Ref, at sessi
 	return nil
 }
 
-// load reads the session's entries in append order; the RUN collapses
-// compacted rows out of the tree (bodies unread, parent links closed over
-// them), the UI includes them.
+// load reads the session's entries in append order; the RUN's view leaves out
+// what the active branch folded, the UI's includes it — invariant 108.
 func (s *EntryStore) load(ctx context.Context, includeCompacted bool) ([]session.Entry, error) {
 	return s.loadIn(ctx, s.db, includeCompacted, false)
 }
@@ -402,11 +402,20 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 	q := s.scoped(db.NewSelect().Model(&rows)).
 		OrderExpr("seq ASC")
 	if !includeCompacted {
-		// A folded row comes back as a skeleton: id and parent still shape the tree.
-		q = q.ColumnExpr("id, entry_id, parent_id, kind, compacted, CASE WHEN compacted THEN '' ELSE entry END AS entry, source_model")
+		// A compacted row comes back without its body, a checkpoint excepted:
+		// its payload is what names a fold.
+		q = q.ColumnExpr("id, entry_id, parent_id, kind, compacted, CASE WHEN compacted AND kind <> ? THEN '' ELSE entry END AS entry, source_model",
+			string(session.EntryKindCompaction))
 	}
 	if err := q.Scan(ctx); err != nil {
 		return nil, fmt.Errorf("loading entries: %w", err)
+	}
+	var dropped map[string]bool
+	if !includeCompacted {
+		var err error
+		if dropped, err = s.dropFoldedIn(ctx, db, rows); err != nil {
+			return nil, err
+		}
 	}
 	// skipped remaps a dropped id onto its own parent so the survivors close the gap.
 	skipped := map[string]string{}
@@ -422,8 +431,8 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 
 	out := make([]session.Entry, 0, len(rows))
 	for i := range rows {
-		if !includeCompacted && rows[i].Compacted {
-			// Folded: out of the model's view, its parent link closed over it.
+		if dropped[rows[i].EntryID] {
+			// Out of the model's view, its parent link closed over it.
 			skipped[rows[i].EntryID] = rows[i].ParentID
 			continue
 		}
@@ -451,6 +460,95 @@ func (s *EntryStore) loadIn(ctx context.Context, db bun.IDB, includeCompacted, s
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// dropFoldedIn names the rows the model's view leaves out, and reads back the
+// body of a compacted row the active branch still reads — invariant 108.
+func (s *EntryStore) dropFoldedIn(ctx context.Context, db bun.IDB, rows []entryRow) (map[string]bool, error) {
+	// The tip of the rows in hand, not the stored one: one read, one tree.
+	on := onPath(rows, tipOfRows(rows))
+	var checkpoints []session.Entry
+	for i := range rows {
+		if rows[i].Kind != string(session.EntryKindCompaction) || !on[rows[i].EntryID] {
+			continue
+		}
+		var e session.Entry
+		if json.Unmarshal([]byte(rows[i].Entry), &e) == nil {
+			checkpoints = append(checkpoints, e)
+		}
+	}
+	dropped := session.FoldedEntryIDs(checkpoints)
+	if dropped == nil {
+		dropped = map[string]bool{}
+	}
+	var unread []string
+	for i := range rows {
+		if !rows[i].Compacted || dropped[rows[i].EntryID] {
+			continue
+		}
+		if !on[rows[i].EntryID] {
+			dropped[rows[i].EntryID] = true
+		} else if rows[i].Entry == "" {
+			unread = append(unread, rows[i].ID)
+		}
+	}
+	if len(unread) == 0 {
+		return dropped, nil
+	}
+	var bodies []entryRow
+	if err := s.scoped(db.NewSelect().Model(&bodies)).
+		Column("id", "entry").
+		Where("id IN (?)", bun.List(unread)).Scan(ctx); err != nil {
+		return nil, fmt.Errorf("loading the entries the branch reads again: %w", err)
+	}
+	body := make(map[string]string, len(bodies))
+	for i := range bodies {
+		body[bodies[i].ID] = bodies[i].Entry
+	}
+	for i := range rows {
+		if b, ok := body[rows[i].ID]; ok {
+			rows[i].Entry = b
+		}
+	}
+	return dropped, nil
+}
+
+// tipOfRows is session.LeafOf over rows whose leaf entries carry their bodies.
+func tipOfRows(rows []entryRow) string {
+	tip := ""
+	for i := range rows {
+		if rows[i].Kind != string(session.EntryKindLeaf) {
+			tip = rows[i].EntryID
+			continue
+		}
+		var e session.Entry
+		if json.Unmarshal([]byte(rows[i].Entry), &e) != nil {
+			continue
+		}
+		if p, err := e.LeafPayload(); err == nil {
+			tip = p.TargetID
+		}
+	}
+	return tip
+}
+
+// foldedOn names the entries the checkpoints on a branch fold, for rows read
+// without bodies; a fold applies only where its checkpoint is — invariant 108.
+func (s *EntryStore) foldedOn(ctx context.Context, rows []entryRow, on map[string]bool) (map[string]bool, error) {
+	var ids []string
+	for i := range rows {
+		if rows[i].Kind == string(session.EntryKindCompaction) && on[rows[i].EntryID] {
+			ids = append(ids, rows[i].ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	bodies, err := s.entryBodies(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	return session.FoldedEntryIDs(slices.Collect(maps.Values(bodies))), nil
 }
 
 // Entries implements session.Storage.
@@ -871,6 +969,8 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 	var runIDs []string
 	seen := map[string]bool{}
 	remap := make(map[string]string, len(rows))
+	// renamed holds only the rows copied: what a checkpoint may name.
+	renamed := make(map[string]string, len(rows))
 	copied := make([]entryRow, 0, len(rows))
 	now := time.Now().UTC()
 	// The fork's own numbering, from the shared allocator.
@@ -888,10 +988,16 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 		}
 		newID := session.EntryIDFor(seq)
 		remap[rows[i].EntryID] = newID
+		renamed[rows[i].EntryID] = newID
 		e.ID = newID
 		e.ParentID = remap[e.ParentID] // "" for a root maps to "" — the zero value
 		e.Seq = seq
 		seq++
+		if e.Kind == session.EntryKindCompaction {
+			if err := renameFolded(&e, renamed); err != nil {
+				return nil, fmt.Errorf("fork checkpoint %s: %w", rows[i].EntryID, err)
+			}
+		}
 		raw, err := json.Marshal(e)
 		if err != nil {
 			return nil, fmt.Errorf("fork entries encode: %w", err)
@@ -917,6 +1023,35 @@ func forkEntriesTx(ctx context.Context, tx bun.Tx, src, dst session.Ref, upToID 
 		return nil, err
 	}
 	return runIDs, nil
+}
+
+// renameFolded points a copied checkpoint at the copies of the entries it
+// names; one the fork did not copy is named no longer — invariant 108.
+func renameFolded(e *session.Entry, renamed map[string]string) error {
+	p, err := e.CompactionPayload()
+	if err != nil {
+		return err
+	}
+	rename := func(ids []string) []string {
+		out := ids[:0]
+		for _, id := range ids {
+			if to, ok := renamed[id]; ok {
+				out = append(out, to)
+			}
+		}
+		return out
+	}
+	p.ExcludedIDs = rename(p.ExcludedIDs)
+	for i := range p.Folds {
+		p.Folds[i].Replaces = rename(p.Folds[i].Replaces)
+		p.Folds[i].Before = renamed[p.Folds[i].Before]
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	e.Payload = raw
+	return nil
 }
 
 // ForkSession atomically creates dst and copies this session's entries into it

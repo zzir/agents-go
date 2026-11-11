@@ -2547,3 +2547,27 @@ unwound, so for that moment a parent has one more run in the hub than the cap
 allows. The spawn lock is this process's (scope, Roadmap: multiple instances).
 
 Rules: workbench invariant 107; spec §2.13.
+
+### 5.119 A fold is read from its checkpoint, not from the row
+
+Decided 2026-11-11.
+
+**Decision.** The workbench drops an entry from the model's view only when a
+checkpoint on the active branch names it. `entries.compacted` stays as a hint
+that lets the read skip a folded body; it decides nothing.
+
+**Rejected.** The row flag as the fold — it is one bit for every branch, so
+regenerating from a message the pass kept left the checkpoint on the old
+branch and the folded rows still hidden: the model read neither the history
+nor its summary. Clearing the flag when the tip moves — two branches share the
+row and want different answers. "Compacted, and a checkpoint later on the
+branch" as the rule — an earlier checkpoint that kept the row satisfies it.
+Returning every row for `Session.ContextEntries` to fold — every turn would
+read every folded body.
+
+**Cost accepted.** A branch that left its checkpoint behind reads its whole
+history, with one more query per read, until its own pass folds it. A fork
+rewrites the ids its checkpoints name; one made before this names its source's
+ids and reads unfolded until its next pass.
+
+Rules: workbench invariant 108; spec §2.5f.

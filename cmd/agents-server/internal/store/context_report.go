@@ -68,6 +68,10 @@ func (s *EntryStore) ContextReport(ctx context.Context) (*ContextReport, error) 
 	if err != nil {
 		return nil, err
 	}
+	folded, err := s.foldedOn(ctx, rows, on)
+	if err != nil {
+		return nil, err
+	}
 
 	rep := &ContextReport{}
 	var active []ContextSize // the history the compaction pass would size
@@ -85,7 +89,7 @@ func (s *EntryStore) ContextReport(ctx context.Context) (*ContextReport, error) 
 			rep.CachedTokens = u.InputTokensDetails.CachedTokens
 			rep.CacheWriteTokens = u.InputTokensDetails.CacheWriteTokens
 		}
-		if rows[i].Compacted {
+		if folded[rows[i].EntryID] {
 			continue
 		}
 		active = append(active, size)

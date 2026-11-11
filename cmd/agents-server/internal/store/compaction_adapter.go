@@ -31,8 +31,8 @@ type CompactionNotifier struct {
 	OnDone  func(before, after int)
 }
 
-// CompactionAdapter wraps an EntryStore with compaction that soft-deletes
-// folded entries (compacted=true) so the UI can still show what was folded away.
+// CompactionAdapter wraps an EntryStore with compaction that folds entries
+// under a checkpoint and keeps their rows, so the UI can still show them.
 type CompactionAdapter struct {
 	*EntryStore
 	summaryModel agents.Model
@@ -104,9 +104,13 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 	if err != nil {
 		return fmt.Errorf("compaction adapter: resolving the active branch: %w", err)
 	}
+	folded, err := ca.foldedOn(ctx, rows, on)
+	if err != nil {
+		return fmt.Errorf("compaction adapter: reading the branch's checkpoints: %w", err)
+	}
 	var active []entryRow
 	for i := range rows {
-		if on[rows[i].EntryID] && !rows[i].Compacted {
+		if on[rows[i].EntryID] && !folded[rows[i].EntryID] {
 			active = append(active, rows[i])
 		}
 	}

@@ -23,7 +23,7 @@ func hitTexts(hits []session.Entry) []string {
 	return out
 }
 
-// Compacted rows are exactly what the search exists for: Entries leaves them
+// Folded rows are exactly what the search exists for: Entries leaves them
 // out of the model's view, SearchHistory reads them back.
 func TestSearchHistoryReadsCompactedRows(t *testing.T) {
 	ctx := context.Background()
@@ -34,11 +34,12 @@ func TestSearchHistoryReadsCompactedRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	markCompacted(t, sa, entries[0].ID, entries[1].ID)
+	foldAway(t, sa, entries[0].ID, entries[1].ID)
 
+	// What is left is the kept message and the checkpoint.
 	visible, _ := sa.Entries(ctx, session.Cursor{})
-	if len(visible) != 1 {
-		t.Fatalf("Entries must leave compacted rows out, got %d", len(visible))
+	if len(visible) != 2 || visible[0].ID != entries[2].ID || visible[1].Kind != session.EntryKindCompaction {
+		t.Fatalf("Entries must leave folded rows out, got %d", len(visible))
 	}
 	hits, more, err := sa.SearchHistory(ctx, session.HistoryQuery{Query: "parser"})
 	if err != nil {
@@ -48,7 +49,7 @@ func TestSearchHistoryReadsCompactedRows(t *testing.T) {
 		t.Fatalf("hits = %v more=%v", hitTexts(hits), more)
 	}
 	if got, err := sa.Entry(ctx, entries[0].ID); err != nil || got == nil {
-		t.Fatalf("a compacted row reads by id: %v %v", got, err)
+		t.Fatalf("a folded row reads by id: %v %v", got, err)
 	}
 }
 

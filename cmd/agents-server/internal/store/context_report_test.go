@@ -100,7 +100,7 @@ func TestContextReportExcludesCompactedFromContextNotFromSpend(t *testing.T) {
 			ids = append(ids, e.ID)
 		}
 	}
-	markCompacted(t, s, ids...)
+	foldAway(t, s, ids...)
 
 	after, err := s.ContextReport(ctx)
 	if err != nil {
