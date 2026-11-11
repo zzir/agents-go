@@ -194,6 +194,7 @@ func (ca *CompactionAdapter) RunCompaction(ctx context.Context, args session.Com
 		msgSplit = itemMsgIdx[itemSplit]
 	}
 	toCompact := active[:msgSplit]
+	transcript = withEarlier(checkpointSummaries(toCompact, bodies), transcript)
 
 	if ca.notify.OnStart != nil {
 		ca.notify.OnStart()
@@ -274,7 +275,6 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 	// kinds never reach the model and stay.
 	var toCompact []entryRow
 	var folded []session.Entry
-	var earlier []string
 	for i := range active {
 		if i == keep {
 			continue
@@ -285,11 +285,6 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 				folded = append(folded, e)
 			}
 		case string(session.EntryKindCompaction):
-			if e, ok := bodies[active[i].ID]; ok {
-				if p, perr := e.CompactionPayload(); perr == nil && p.Summary != "" {
-					earlier = append(earlier, p.Summary)
-				}
-			}
 		default:
 			continue
 		}
@@ -312,7 +307,7 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 
 	var parts []string
 	if ca.Mode == CompactionModeHybrid && ca.summaryModel != nil {
-		if recap := ca.recap(ctx, earlier, folded); recap != "" {
+		if recap := ca.recap(ctx, checkpointSummaries(toCompact, bodies), folded); recap != "" {
 			parts = append(parts, recap)
 		}
 	}
@@ -354,6 +349,30 @@ func (ca *CompactionAdapter) resetPass(ctx context.Context, args session.Compact
 	return nil
 }
 
+// checkpointSummaries returns the summaries of the checkpoints among rows,
+// oldest first: what a pass that folds them hands on — invariant 109.
+func checkpointSummaries(rows []entryRow, bodies map[string]session.Entry) []string {
+	var out []string
+	for i := range rows {
+		if rows[i].Kind != string(session.EntryKindCompaction) {
+			continue
+		}
+		if p, err := bodies[rows[i].ID].CompactionPayload(); err == nil && p.Summary != "" {
+			out = append(out, p.Summary)
+		}
+	}
+	return out
+}
+
+// withEarlier puts the summaries a pass folds ahead of the transcript its
+// model reads.
+func withEarlier(earlier []string, transcript string) string {
+	if len(earlier) == 0 {
+		return transcript
+	}
+	return "Earlier in this conversation, as already summarized:\n" + strings.Join(earlier, "\n\n") + "\n\n" + transcript
+}
+
 // resetReason is the first line of a bare reset's checkpoint: who reset.
 func resetReason(args session.CompactionArgs) string {
 	switch {
@@ -376,10 +395,7 @@ func (ca *CompactionAdapter) recap(ctx context.Context, earlier []string, folded
 		}
 		replayable = append(replayable, session.Entry{Kind: session.EntryKindItem, Item: NormalizeItemJSON(raw)})
 	}
-	transcript := renderTranscript(replayable)
-	if len(earlier) > 0 {
-		transcript = "Earlier, before the previous reset:\n" + strings.Join(earlier, "\n\n") + "\n\n" + transcript
-	}
+	transcript := withEarlier(earlier, renderTranscript(replayable))
 	if strings.TrimSpace(transcript) == "" {
 		return ""
 	}

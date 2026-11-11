@@ -632,3 +632,8 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      entries again, and its own pass folds them. `entries.compacted` only
      spares the read a body, and a fork renames what its checkpoints name
      (`dropFoldedIn`, `foldedOn`, `renameFolded`) — decisions §5.119.
+109. **A pass that folds a checkpoint hands its summary on.** The summaries of
+     the checkpoints a pass folds ride ahead of the transcript its summary
+     model reads (`checkpointSummaries`, `withEarlier`), for a summary pass
+     and a hybrid recap alike, so the new checkpoint covers what the old ones
+     did. A prefix with no item in it is not summarized again.

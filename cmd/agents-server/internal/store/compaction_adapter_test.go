@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
+	"slices"
 	"strings"
 	"testing"
 
@@ -291,6 +292,32 @@ func TestCompactionAdapterPlainSplitUnchanged(t *testing.T) {
 	}
 	if started != 1 || doneBefore != 5 || doneAfter != 3 {
 		t.Errorf("notifier saw start=%d before=%d after=%d, want 1/5/3", started, doneBefore, doneAfter)
+	}
+}
+
+// A later pass folds the checkpoint before it, so that checkpoint's summary
+// rides ahead of the transcript: the new summary covers what the old one did.
+func TestALaterPassCarriesTheSummaryItFolds(t *testing.T) {
+	ctx := context.Background()
+	s, _, _ := foldedSession(t)
+	seed(t, s, assistantEntry(t, "six"), userEntry(t, "seven"), assistantEntry(t, "eight"))
+
+	model := &summaryFakeModel{summary: "second"}
+	if err := NewCompactionAdapter(s, model, 1, 2, "", CompactionNotifier{}).
+		RunCompaction(ctx, session.CompactionArgs{}); err != nil {
+		t.Fatalf("RunCompaction: %v", err)
+	}
+	if model.calls != 1 {
+		t.Fatalf("summary model calls = %d, want 1", model.calls)
+	}
+	tr := summaryTranscript(t, model.inputs[0])
+	earlier, kept := strings.Index(tr, "first-summary"), strings.Index(tr, "four")
+	if earlier < 0 || kept < 0 || earlier > kept {
+		t.Fatalf("the folded checkpoint's summary should lead the transcript: %s", tr)
+	}
+	want := []string{session.SummaryMarker + "\n\nsecond", "seven", "eight"}
+	if got := contextTexts(t, s); !slices.Equal(got, want) {
+		t.Fatalf("the view after the second pass = %q, want %q", got, want)
 	}
 }
 
