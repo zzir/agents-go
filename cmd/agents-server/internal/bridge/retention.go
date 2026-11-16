@@ -102,6 +102,8 @@ func (r *Runner) RunApprovalReaper(ctx context.Context) {
 				_ = entries.AppendAnnotation(ctx, p.RunID, banner)
 			}
 			r.PublishSessionStatus(ctx, p.SessionID)
+			// The pause is over: what the session is owed behind it can start.
+			r.drainWakeups(ctx, p.SessionID)
 			log.Info("expired pending approval", "run_id", p.RunID, "session_id", p.SessionID)
 		}
 	}

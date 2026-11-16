@@ -2596,3 +2596,30 @@ hold them together, so a storage bug fixed in one adds its case to
 is the workbench's alone to test.
 
 Rules: [architecture](architecture.md#packages).
+
+### 5.121 A trigger's delivery is a debt, like a task's result
+
+Decided 2026-11-16 (workbench invariant 110).
+
+**Decision.** A tick and a signed webhook call are written as a `wakeups` row
+of kind `trigger` before anything starts, tried at once and again wherever the
+waker drains. A session busy or paused on an approval, the task cap and a
+shutdown leave the row pending; one start carries a trigger's backlog. The
+row's unique key is the webhook's replay guard.
+
+**Rejected.** The call it was: a tick onto a busy session was lost, a webhook
+answered `409` and relied on its sender, and the guard was a map a restart
+emptied. A table of its own: the session cascade, the restart drain and the
+retention prune would each exist twice. A column for the delivery key: a
+schema change recreates the database (§5.59), and `attempt` already means
+"the try that owes this". Settling after the start, as a task's result does:
+a workflow's start holds no session, so two drains could both make it.
+Queueing a person's fire: someone is there to read the refusal.
+
+**Cost accepted.** A crash between the claim and the start loses that
+delivery, where a task's result would be delivered twice. Deliveries behind an
+unanswered approval wait as long as it stands — twenty to a webhook trigger,
+one tick to a cron. A sender that read anything but `201` as failure now sees
+`202`.
+
+Rules: [invariant 110](workbench-invariants.md)

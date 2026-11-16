@@ -650,9 +650,16 @@ MESSAGE of that session, run by that agent under the session's own
 sandbox binding, with a `trigger_fired` note before it. Either way the brief
 is the author's, written in advance, and a webhook's body (up to 64 KB)
 follows it as data, in an `<external>` block naming the trigger
-([invariant 85](../explanation/workbench-invariants.md)). A session busy with a run or paused on an
-approval (an agent turn; a workflow starts beside either), or at its cap,
-refuses — that refusal is what the trigger shows as `last_error`. Cron ticks
+([invariant 85](../explanation/workbench-invariants.md)). A tick or a webhook call that cannot start yet —
+the session busy with a run or paused on an approval (an agent turn; a
+workflow starts beside either), or at its task cap — is kept, and starts when
+a run or a task on the session ends, an approval expires, the next tick or
+call arrives, or the server starts. One start then carries what waited: the
+brief once and each payload in its own block, up to 64 KB of payload, the rest
+taking the next start. A cron trigger keeps one tick waiting and a webhook
+trigger twenty calls; what waits for a trigger disabled or deleted meanwhile
+is dropped. A fire that failed outright is what the trigger shows as
+`last_error`. Cron ticks
 missed while the process was down are not replayed. Deleting the session,
 the workflow or the agent a trigger fires deletes the trigger. Triggers are capped at 50 per owner (`409`
 above it), and the [how-to](../howto/workflows.md) has the cron syntax and a
@@ -665,16 +672,16 @@ timestamp must be within five minutes of the server's clock, a `sha256=`
 prefix is accepted, and a bad or stale signature is `401`. The secret is minted at creation and shown in
 that response only; `POST /triggers/:id/rotate-secret` mints another and the
 old one stops working the moment the rotation answers (`400` on a cron
-trigger). A delivery fires ONCE: the same timestamp and body sent again inside
-the window — a sender's retry, a captured request — is a replay and answers
-`409`, so a sender that wants a second run sends a new timestamp (the guard is
-in memory; a restart inside the five-minute window is the one gap). Only a
-delivery that FIRED is remembered: one refused before anything started — the
-session busy, paused on an approval or at its cap, the server draining — may
-be resent as it was.
-`POST /triggers/:id/fire` is a person's fire, answering `201` with the task (a
-workflow) or `{run_id}` (an agent turn), `400` when its target cannot start,
-`409` when the trigger is disabled or the session is busy, paused on an
+trigger). A valid call answers `201` with the task (a workflow) or `{run_id}`
+(an agent turn) it started, or `202 {"queued": true}` when it waits. A
+delivery is accepted ONCE: the same timestamp and body sent again — a sender's
+retry, a captured request — is a replay and answers `409`, so a sender that
+wants a second run sends a new timestamp. One refused outright — the trigger
+disabled or with twenty calls waiting (`409`), its target unable to start
+(`400`) — is not remembered, and may be resent as it was.
+`POST /triggers/:id/fire` is a person's fire and never waits: `201` with the
+task (a workflow) or `{run_id}` (an agent turn), `400` when its target cannot
+start, `409` when the trigger is disabled or the session is busy, paused on an
 approval or at its cap.
 
 ### Guardrails — `/api/v1/guardrails`

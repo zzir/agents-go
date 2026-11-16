@@ -114,7 +114,7 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
 19. **A person's message wins over a paused approval, a machine's turn waits
     it out; a branch move obsoletes every client view of the old path.** A
     send or cancel abandons the paused run (decisions §5.68); a trigger's turn
-    or wake-up is refused. Regenerate and attempt-switch are server-side
+    or a wake-up stays owed. Regenerate and attempt-switch are server-side
     appends (`POST /sessions/:id/branch`) reconciled by refetch, an off-path
     approval kept but out of view; `409` while a run is live (invariant 82).
 
@@ -637,3 +637,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      model reads (`checkpointSummaries`, `withEarlier`), for a summary pass
      and a hybrid recap alike, so the new checkpoint covers what the old ones
      did. A prefix with no item in it is not summarized again.
+110. **A trigger's delivery is owed before it is started.** A tick or a signed
+     call is a `wakeups` row of kind `trigger`, unique per trigger and delivery
+     key, paid by the waker (invariant 32): what cannot start yet stays
+     pending, and one start carries the backlog up to one delivery's size. The
+     row is claimed BEFORE the start; a person's fire is a call, and is
+     refused (`bridge/triggers.go`) — decisions §5.121.

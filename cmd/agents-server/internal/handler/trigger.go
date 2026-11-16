@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,14 +26,15 @@ const (
 	HookSignatureHeader = "X-Signature-256"
 	HookTimestampHeader = "X-Timestamp"
 	HookTimestampSkew   = 5 * time.Minute
-	// HookBodyLimit bounds a payload — it lands in a prompt, not a store.
-	HookBodyLimit = 64 << 10
+	// HookBodyLimit bounds a payload.
+	HookBodyLimit = bridge.FirePayloadLimit
 )
 
-// TriggerFirer fires triggers and keeps cron ones on the clock; the bridge's
-// TriggerScheduler.
+// TriggerFirer fires triggers — a person's fire now, a webhook's delivery as a
+// debt — and keeps cron ones on the clock; the bridge's TriggerScheduler.
 type TriggerFirer interface {
-	Fire(ctx context.Context, triggerID, payload, source string) (*bridge.Fired, error)
+	Fire(ctx context.Context, triggerID, payload string) (*bridge.Fired, error)
+	Deliver(ctx context.Context, triggerID, payload, key string) (*bridge.Fired, error)
 	Sync(ctx context.Context, triggerID string)
 }
 
@@ -46,7 +46,6 @@ type TriggerHandler struct {
 	workflows *store.WorkflowStore
 	agents    *store.AgentConfigStore
 	firer     TriggerFirer
-	replays   replayGuard
 }
 
 // maxTriggersPerOwner caps how many triggers one user may hold: unattended
@@ -56,39 +55,7 @@ const maxTriggersPerOwner = 50
 // NewTriggerHandler returns a handler over the stores and the firer; the
 // workflow and agent stores back the target-visibility checks.
 func NewTriggerHandler(s *store.TriggerStore, sessions *store.SessionStore, workflows *store.WorkflowStore, agents *store.AgentConfigStore, firer TriggerFirer) *TriggerHandler {
-	return &TriggerHandler{store: s, sessions: sessions, workflows: workflows, agents: agents, firer: firer, replays: replayGuard{seen: map[string]time.Time{}}}
-}
-
-// replayGuard remembers each delivery accepted within the timestamp window,
-// keyed by trigger and signature. In memory: a restart inside the window is the
-// one gap.
-type replayGuard struct {
-	mu   sync.Mutex
-	seen map[string]time.Time
-}
-
-// admit reports whether key is new within the window, recording it if so.
-func (g *replayGuard) admit(key string, now time.Time) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	for k, at := range g.seen {
-		if now.Sub(at) > 2*HookTimestampSkew {
-			delete(g.seen, k)
-		}
-	}
-	if _, dup := g.seen[key]; dup {
-		return false
-	}
-	g.seen[key] = now
-	return true
-}
-
-// forget releases a key admit recorded: the delivery did not fire, so the
-// same signed request may be sent again.
-func (g *replayGuard) forget(key string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	delete(g.seen, key)
+	return &TriggerHandler{store: s, sessions: sessions, workflows: workflows, agents: agents, firer: firer}
 }
 
 // TriggerView is a trigger as the API shows it: the secret only when just
@@ -359,25 +326,30 @@ func (h *TriggerHandler) Fire(c *gin.Context) error {
 	if err := bindOptional(c, &req); err != nil {
 		return err
 	}
-	return h.fire(c, c.Param("id"), req.Payload, bridge.FireManual)
-}
-
-// fire is the shared tail of a manual fire and a webhook call; nil means
-// something was started.
-func (h *TriggerHandler) fire(c *gin.Context, id, payload, source string) error {
-	fired, err := h.firer.Fire(c.Request.Context(), id, payload, source)
+	fired, err := h.firer.Fire(c.Request.Context(), c.Param("id"), req.Payload)
 	if err != nil {
-		switch {
-		case errors.Is(err, bridge.ErrWorkflowUnavailable), errors.Is(err, bridge.ErrTriggerTarget):
-			return badRequest(err.Error())
-		case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrSessionAwaitingApproval):
-			return conflict(err.Error())
-		default:
-			return err // busy, deleting, at the task cap, draining: classify
-		}
+		return fireError(err)
 	}
 	c.JSON(http.StatusCreated, fired)
 	return nil
+}
+
+// fireError maps what a fire or a delivery was refused with to its status.
+func fireError(err error) error {
+	switch {
+	case errors.Is(err, bridge.ErrWorkflowUnavailable), errors.Is(err, bridge.ErrTriggerTarget):
+		return badRequest(err.Error())
+	case errors.Is(err, bridge.ErrTriggerDisabled), errors.Is(err, bridge.ErrSessionAwaitingApproval),
+		errors.Is(err, bridge.ErrDeliveryReplayed), errors.Is(err, bridge.ErrTriggerBacklog):
+		return conflict(err.Error())
+	default:
+		return err // busy, deleting, at the task cap, draining: classify
+	}
+}
+
+// HookQueued answers a delivery that was accepted and waits for its session.
+type HookQueued struct {
+	Queued bool `json:"queued"`
 }
 
 // RotateSecret mints a webhook trigger a new secret, returned once.
@@ -426,15 +398,17 @@ func (h *TriggerHandler) Hook(c *gin.Context) error {
 	if t.Kind != store.TriggerKindWebhook || !verifyHookSignature(t.Secret, c.GetHeader(HookTimestampHeader), sig, body, now) {
 		return unauthorized("bad or stale signature")
 	}
-	// A valid delivery fires once: claimed before the fire (two copies must
-	// not both start something), released when the fire fails so a resend gets through.
-	key := id + ":" + strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sig), "sha256="))
-	if !h.replays.admit(key, now) {
-		return conflict("replayed delivery: this timestamp and body were already accepted or are being delivered")
-	}
-	if err := h.fire(c, id, string(body), bridge.FireWebhook); err != nil {
-		h.replays.forget(key)
-		return err
+	// A valid delivery is owed once, under its signature: 201 with what it
+	// started, 202 while its session cannot take it yet.
+	key := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(sig), "sha256="))
+	fired, err := h.firer.Deliver(ctx, id, string(body), key)
+	switch {
+	case err != nil:
+		return fireError(err)
+	case fired == nil:
+		c.JSON(http.StatusAccepted, HookQueued{Queued: true})
+	default:
+		c.JSON(http.StatusCreated, fired)
 	}
 	return nil
 }

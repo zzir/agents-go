@@ -92,11 +92,12 @@ against graduates into §1.2 above.
   instance's; the waker reads the local hub, so two instances can wake one
   session into concurrent runs; `ConnRegistry` broadcasts reach local
   connections only; the cron table is loaded per instance, so every schedule
-  fires once per instance; the webhook replay guard, the OAuth pending-login
+  fires once per instance; the OAuth pending-login
   and exchange maps, the MCP OAuth callback channel, refresh-token dedup, the
   sandbox instance cache and terminal fences, exec_command trust, and the
   rate budgets are all in-memory maps. Already shared through the database:
-  pending approvals, wake-up debts, auth tokens, the audit log, ownership.
+  pending approvals, wake-up debts (a trigger's waiting deliveries and the
+  webhook replay guard among them), auth tokens, the audit log, ownership.
   The direction chosen: shard by user (sticky load-balancing on the user
   id), an `instance_id` with a heartbeat table and lease-based ownership
   instead of "is it in my memory", maintenance loops kept idempotent,

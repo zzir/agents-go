@@ -51,6 +51,31 @@ func TestCreateSchemaIdempotentOnCurrentSchema(t *testing.T) {
 	}
 }
 
+// An index a build adds is not a layout change: a database made before it,
+// rows and all, opens and gains the index.
+func TestCreateSchemaAddsAnIndexToAnOlderDatabase(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	id := ids(t)
+	if _, err := db.ExecContext(ctx, `DROP INDEX idx_wakeups_trigger_delivery`); err != nil {
+		t.Fatal(err)
+	}
+	// Two debts of one task under one attempt: what the partial index leaves alone.
+	for range 2 {
+		w := &Wakeup{SessionID: id("s"), Kind: WakeKindTask, SourceID: id("task"), Attempt: "run"}
+		if _, err := db.NewInsert().Model(w).Exec(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := CreateSchema(ctx, db); err != nil {
+		t.Fatalf("CreateSchema on a database from before the index: %v", err)
+	}
+	defs, err := indexDefinitions(ctx, db)
+	if err != nil || defs["idx_wakeups_trigger_delivery"] == "" {
+		t.Fatalf("index definitions = %v (%v), want the index created", defs["idx_wakeups_trigger_delivery"], err)
+	}
+}
+
 // CREATE INDEX IF NOT EXISTS keeps an index of an older shape; the probe must
 // name it at startup instead of letting duplicate seqs in at run time.
 func TestCreateSchemaFailsOnStaleUniqueIndex(t *testing.T) {

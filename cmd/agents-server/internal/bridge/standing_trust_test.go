@@ -179,7 +179,7 @@ func TestTriggerRunHonorsOnlyItsOwnCards(t *testing.T) {
 	if err := sched.store.Create(ctx, trg); err != nil {
 		t.Fatal(err)
 	}
-	fired, err := sched.Fire(ctx, trg.ID, "", FireCron)
+	fired, err := sched.Deliver(ctx, trg.ID, "", store.NewID())
 	if err != nil {
 		t.Fatalf("Fire: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestTriggerRunHonorsOnlyItsOwnCards(t *testing.T) {
 	}
 
 	// The next fire is a new run: it asks again, from nothing.
-	again, err := sched.Fire(ctx, trg.ID, "", FireCron)
+	again, err := sched.Deliver(ctx, trg.ID, "", store.NewID())
 	if err != nil {
 		t.Fatalf("second Fire: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestGrantOnATriggerCardAlsoServesThePerson(t *testing.T) {
 	if err := sched.store.Create(ctx, trg); err != nil {
 		t.Fatal(err)
 	}
-	fired, err := sched.Fire(ctx, trg.ID, "", FireCron)
+	fired, err := sched.Deliver(ctx, trg.ID, "", store.NewID())
 	if err != nil {
 		t.Fatalf("Fire: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestTriggerWorkflowStateCarriesOrigin(t *testing.T) {
 	if err := sched.store.Create(ctx, trg); err != nil {
 		t.Fatal(err)
 	}
-	fired, err := sched.Fire(ctx, trg.ID, "", FireCron)
+	fired, err := sched.Deliver(ctx, trg.ID, "", store.NewID())
 	if err != nil {
 		t.Fatalf("Fire: %v", err)
 	}

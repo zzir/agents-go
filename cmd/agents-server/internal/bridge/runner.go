@@ -36,6 +36,9 @@ type Runner struct {
 	taskRows *store.TaskAdapter
 	// commands holds the background commands this process runs (invariant 96).
 	commands commandRuns
+	// triggers pays a trigger's waiting deliveries when the waker drains; set
+	// by NewTriggerScheduler, nil without one.
+	triggers *TriggerScheduler
 
 	// OnRunAttach, when set, runs with the run id right after a run registers,
 	// before any publish (invariant 14). Wired once at bootstrap, read unsynchronized.

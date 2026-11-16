@@ -138,6 +138,8 @@ func schemaIndexes(pg bool) []schemaIndex {
 		// session owed one, the hourly prune for the settled ones by age.
 		{model: (*Wakeup)(nil), name: "idx_wakeups_session_state", columns: []string{"session_id", "state"}},
 		{model: (*Wakeup)(nil), name: "idx_wakeups_state_created", columns: []string{"state", "created_at"}},
+		// A trigger's delivery is owed once: the replay guard, and its backlog's lookup.
+		{model: (*Wakeup)(nil), name: "idx_wakeups_trigger_delivery", unique: true, columns: []string{"source_id", "attempt"}, where: "kind = 'trigger'"},
 		// A workspace's name is how a person picks it per (owner, sandbox).
 		{model: (*Workspace)(nil), name: "idx_workspaces_owner_sandbox_name", unique: true, columns: []string{"owner_id", "sandbox_id", "name"}},
 		// Accounts merge by verified email; UNIQUE also arbitrates two first

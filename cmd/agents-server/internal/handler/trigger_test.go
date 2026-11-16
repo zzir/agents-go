@@ -18,19 +18,41 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/testdb"
 )
 
-// fakeFirer records fires and syncs; a name in refuse makes a fire fail.
+// fakeFirer records fires and syncs; refuse makes a fire or a delivery fail,
+// queue makes a delivery wait.
 type fakeFirer struct {
 	fires  []string // trigger id + "|" + payload
 	synced []string
 	refuse error
+	queue  bool
+	held   map[string]bool // trigger id + "|" + delivery key
 }
 
-func (f *fakeFirer) Fire(_ context.Context, id, payload, _ string) (*bridge.Fired, error) {
+func (f *fakeFirer) Fire(_ context.Context, id, payload string) (*bridge.Fired, error) {
 	f.fires = append(f.fires, id+"|"+payload)
 	if f.refuse != nil {
 		return nil, f.refuse
 	}
 	return &bridge.Fired{TaskInfo: &bridge.TaskInfo{TaskID: "task-" + id, Status: "working"}}, nil
+}
+
+// Deliver holds a delivery it accepted, started or waiting, as the scheduler's
+// table does; one it refused is not held.
+func (f *fakeFirer) Deliver(ctx context.Context, id, payload, key string) (*bridge.Fired, error) {
+	switch {
+	case f.held[id+"|"+key]:
+		return nil, bridge.ErrDeliveryReplayed
+	case f.refuse != nil:
+		return nil, f.refuse
+	}
+	if f.held == nil {
+		f.held = map[string]bool{}
+	}
+	f.held[id+"|"+key] = true
+	if f.queue {
+		return nil, nil
+	}
+	return f.Fire(ctx, id, payload)
 }
 
 func (f *fakeFirer) Sync(_ context.Context, id string) { f.synced = append(f.synced, id) }
@@ -178,17 +200,31 @@ func TestHookVerifiesTheSignature(t *testing.T) {
 	if code := call(now, "sha256="+SignHook(created.Secret, now, []byte(payload)), payload); code != http.StatusConflict {
 		t.Fatalf("a replayed call: %d, want 409", code)
 	}
-	// A delivery that did not fire (the session busy, say) is not one the
-	// guard holds: the sender's resend of the very same request goes through
-	// once the fire can.
+	// A delivery whose session cannot take it yet (busy, say) is accepted all
+	// the same — 202, nothing started — and is then a replay like any other.
 	busy := payload + `{"n":"busy"}`
-	firer.refuse = bridge.ErrSessionBusy{RunID: "r1"}
+	firer.queue = true
+	if code := call(now, SignHook(created.Secret, now, []byte(busy)), busy); code != http.StatusAccepted {
+		t.Fatalf("a delivery that must wait: %d, want 202", code)
+	}
 	if code := call(now, SignHook(created.Secret, now, []byte(busy)), busy); code != http.StatusConflict {
-		t.Fatalf("a fire that found the session busy: %d, want 409", code)
+		t.Fatalf("a waiting delivery sent again: %d, want 409", code)
+	}
+	firer.queue = false
+	// One that could not start at all is not held: the sender's resend of the
+	// very same request goes through once it can.
+	failed := payload + `{"n":"failed"}`
+	firer.refuse = bridge.ErrTriggerTarget
+	if code := call(now, SignHook(created.Secret, now, []byte(failed)), failed); code != http.StatusBadRequest {
+		t.Fatalf("a delivery whose target is gone: %d, want 400", code)
+	}
+	firer.refuse = bridge.ErrTriggerBacklog
+	if code := call(now, SignHook(created.Secret, now, []byte(failed)), failed); code != http.StatusConflict {
+		t.Fatalf("a delivery past the trigger's backlog: %d, want 409", code)
 	}
 	firer.refuse = nil
-	if code := call(now, SignHook(created.Secret, now, []byte(busy)), busy); code != http.StatusCreated {
-		t.Fatalf("the same delivery resent after a failed fire: %d, want 201, not a replay refusal", code)
+	if code := call(now, SignHook(created.Secret, now, []byte(failed)), failed); code != http.StatusCreated {
+		t.Fatalf("the same delivery resent after a refusal: %d, want 201, not a replay refusal", code)
 	}
 	firer.fires = firer.fires[:1]
 	// A different body at the same second is a new delivery.

@@ -9,9 +9,10 @@ import (
 	"github.com/zzir/agents-go/cmd/agents-server/internal/store"
 )
 
-// The waker turns finished background work into a turn on the session that
-// asked for it: a store.Wakeup row, drained at the end of any run on the
-// session and at startup — invariant 32. This file is the one place it lives.
+// The waker turns what a session is owed into a start on it — finished
+// background work into a turn, a trigger's waiting delivery into what it
+// fires: a store.Wakeup row, drained at the end of any run on the session and
+// at startup — invariant 32. This file is the one place it lives.
 
 // cancelWakeup drops what a task still owes for one attempt (its run id): the
 // result reached the session another way, or the work was cancelled.
@@ -21,18 +22,54 @@ func (r *Runner) cancelWakeup(ctx context.Context, taskID, attempt string) {
 	}
 }
 
-// drainWakeups wakes the session with everything it is owed, if it can be
-// woken now; a refusal leaves the debts pending for the next boundary.
+// drainWakeups pays the session what it is owed, if it can take it now: its
+// tasks' results as one turn, then each trigger's waiting deliveries. A
+// refusal leaves the debts pending for the next boundary.
 func (r *Runner) drainWakeups(ctx context.Context, sessionID string) {
-	if sessionID == "" || !r.canWake(ctx, sessionID) {
+	if sessionID == "" {
 		return
 	}
-	log := logging.Ctx(ctx)
-	pending, err := r.Deps.Wakeups.Pending(ctx, sessionID)
+	owed, err := r.Deps.Wakeups.Pending(ctx, sessionID)
 	if err != nil {
-		log.Warn("listing wake-up debts", "error", err, "session_id", sessionID)
+		logging.Ctx(ctx).Warn("listing wake-up debts", "error", err, "session_id", sessionID)
 		return
 	}
+	results, deliveries := splitOwed(owed)
+	if len(results) > 0 && r.canWake(ctx, sessionID) {
+		r.wake(ctx, sessionID, results)
+	}
+	// After the results: finished work lands before new work starts.
+	if r.triggers != nil {
+		for _, group := range deliveries {
+			r.triggers.payOwed(ctx, group[0].SourceID, group)
+		}
+	}
+}
+
+// splitOwed separates tasks' results from triggers' deliveries, those grouped
+// by trigger in the order each is first owed.
+func splitOwed(owed []store.Wakeup) (results []store.Wakeup, deliveries [][]store.Wakeup) {
+	at := map[string]int{}
+	for i := range owed {
+		if owed[i].Kind != store.WakeKindTrigger {
+			results = append(results, owed[i])
+			continue
+		}
+		g, seen := at[owed[i].SourceID]
+		if !seen {
+			g = len(deliveries)
+			at[owed[i].SourceID] = g
+			deliveries = append(deliveries, nil)
+		}
+		deliveries[g] = append(deliveries[g], owed[i])
+	}
+	return results, deliveries
+}
+
+// wake starts the one turn that delivers the oldest group of pending results
+// on a session that can be woken.
+func (r *Runner) wake(ctx context.Context, sessionID string, pending []store.Wakeup) {
+	log := logging.Ctx(ctx)
 	// A debt with no agent config is undeliverable for good (Inherit is
 	// frozen): cancelled — invariant 32.
 	deliverable := make([]store.Wakeup, 0, len(pending))

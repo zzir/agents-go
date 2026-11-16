@@ -100,9 +100,9 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 - `target: workflow` (`workflow_id`) starts an execution into `session_id`;
   `target: agent` (`agent_config_id`) sends the brief as a message of that
   session instead, run by that agent — the scheduled question, its reply
-  the next turn, with a `trigger_fired` note before it. A session paused on
-  an approval refuses every such turn, the reason in the trigger's
-  `last_error`, until someone answers or the approval expires
+  the next turn, with a `trigger_fired` note before it. A turn that finds the
+  session busy or paused on an approval waits, and starts once the run ends
+  or the approval is answered or expires
   (`approval_ttl_minutes`, [runtime settings](../reference/configuration.md#runtime-settings)).
 - `kind: webhook` fires on `POST /hooks/<trigger id>` (outside `/api/v1`, no
   token). The create response carries the `secret` **once** — the hub shows it
@@ -117,11 +117,12 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   ```
 
   `X-Timestamp` is UNIX seconds and `X-Signature-256` hex HMAC-SHA256 of
-  `timestamp + "." + body` under the secret; the window, the body cap, what
-  is refused and when a resend is a replay are in
+  `timestamp + "." + body` under the secret. The answer is `201` with what the
+  call started, or `202` when its session cannot take it yet; the window, the
+  body cap, what is refused and when a resend is a replay are in
   [the wire surface](../reference/protocol.md#workflows--apiv1workflows).
 - **Fire now** (`POST /triggers/:id/fire`, with an optional `payload`) runs a
-  trigger by hand, as a tick would. A payload — this one or a webhook's body —
+  trigger by hand, and is refused where a tick would wait. A payload — this one or a webhook's body —
   reaches the model after your brief, marked as data another system sent. Enable / disable, edit and delete are on
   the same row in the hub; a trigger's `last_error` says why the last fire
   started nothing.
