@@ -659,8 +659,8 @@ brief once and each payload in its own block, up to 64 KB of payload, the rest
 taking the next start. A cron trigger keeps one tick waiting and a webhook
 trigger twenty calls; what waits for a trigger disabled or deleted meanwhile
 is dropped. A fire that failed outright is what the trigger shows as
-`last_error`. Cron ticks
-missed while the process was down are not replayed. Deleting the session,
+`last_error`. A cron trigger whose tick came due while the process was down
+gets ONE at startup, however many it missed. Deleting the session,
 the workflow or the agent a trigger fires deletes the trigger. Triggers are capped at 50 per owner (`409`
 above it), and the [how-to](../howto/workflows.md) has the cron syntax and a
 signing example.

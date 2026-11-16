@@ -87,8 +87,8 @@ func scheduleFor(expr string, minEvery time.Duration) (cron.Schedule, error) {
 
 // TriggerScheduler fires triggers: cron ones on their schedule from a table it
 // keeps in step with the store (Sync), a webhook's call through Deliver, a
-// person's through Fire; what a start did is recorded on the trigger. Ticks
-// missed while down are not replayed.
+// person's through Fire; what a start did is recorded on the trigger. A tick
+// missed while down is made up once, at Start.
 type TriggerScheduler struct {
 	runner *Runner
 	store  *store.TriggerStore
@@ -129,20 +129,60 @@ func NewTriggerScheduler(r *Runner, s *store.TriggerStore) *TriggerScheduler {
 	return ts
 }
 
-// Start schedules every enabled cron trigger and starts the clock. A row whose
-// schedule no longer parses is skipped and logged, not fatal.
+// Start schedules every enabled cron trigger, starts the clock and makes up
+// the ticks missed while down. A row whose schedule no longer parses is
+// skipped and logged, not fatal.
 func (s *TriggerScheduler) Start(ctx context.Context) error {
 	all, err := s.store.List(ctx)
 	if err != nil {
 		return err
 	}
+	now := time.Now()
 	for i := range all {
 		s.Sync(ctx, all[i].ID)
 	}
 	s.cron.Start()
 	go s.reconcileLoop(ctx)
+	s.catchUp(all, now)
 	return nil
 }
+
+// catchUp delivers ONE tick for each cron trigger whose schedule had one due
+// while the process was down, however many it missed — invariant 111.
+func (s *TriggerScheduler) catchUp(all []store.Trigger, now time.Time) {
+	root := s.runner.hub.rootCtx
+	for i := range all {
+		t := &all[i]
+		if !t.Enabled || t.Kind != store.TriggerKindCron {
+			continue
+		}
+		due, missed := missedTick(t, s.minEvery, now)
+		if !missed {
+			continue
+		}
+		// Keyed as the tick itself would have been: one that was delivered
+		// after all is a replay.
+		if _, err := s.Deliver(root, t.ID, "", tickKey(due)); err != nil && !errors.Is(err, ErrDeliveryReplayed) {
+			logging.Ctx(root).Warn("a tick missed while down did not fire", "error", err, "trigger_id", t.ID, "due", due)
+		}
+	}
+}
+
+// missedTick returns the first tick the schedule had due since the trigger
+// last fired or changed (UpdatedAt moves with both), when that is in the past.
+func missedTick(t *store.Trigger, minEvery time.Duration, now time.Time) (time.Time, bool) {
+	sched, err := scheduleFor(t.Schedule, minEvery)
+	if err != nil {
+		return time.Time{}, false
+	}
+	// In now's zone: a schedule naming none ticks in the zone of the time it
+	// is asked from, and the stored time is UTC.
+	due := sched.Next(t.UpdatedAt.In(now.Location()))
+	return due, !due.IsZero() && !due.After(now)
+}
+
+// tickKey names a tick's delivery by the second it was due.
+func tickKey(due time.Time) string { return strconv.FormatInt(due.Unix(), 10) }
 
 // Stop halts the clock and the reconcile; a fire in progress finishes on its
 // own.
@@ -230,7 +270,7 @@ func (s *TriggerScheduler) Sync(ctx context.Context, triggerID string) {
 	entry, err := s.cron.AddFunc(t.Schedule, func() {
 		// The hub's root context: a fire outlives nothing but the process.
 		root := s.runner.hub.rootCtx
-		if _, err := s.Deliver(root, triggerID, "", strconv.FormatInt(time.Now().Unix(), 10)); err != nil {
+		if _, err := s.Deliver(root, triggerID, "", tickKey(time.Now())); err != nil {
 			logging.Ctx(root).Warn("cron trigger did not fire", "error", err, "trigger_id", triggerID)
 		}
 	})

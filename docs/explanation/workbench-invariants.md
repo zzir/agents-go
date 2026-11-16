@@ -643,3 +643,9 @@ mechanism (a file) lives; the SDK's rules are in the [spec](../reference/spec.md
      pending, and one start carries the backlog up to one delivery's size. The
      row is claimed BEFORE the start; a person's fire is a call, and is
      refused (`bridge/triggers.go`) — decisions §5.121.
+111. **A tick missed while down is made up once, at start.** A cron trigger
+     whose schedule had a tick due since `updated_at` — which a recorded fire
+     and an edit both move — is delivered one, keyed by that tick's time, as
+     any tick is (invariant 110): never one per tick missed, and none for a
+     trigger switched off or changed since (`TriggerScheduler.catchUp`) —
+     decisions §5.122.

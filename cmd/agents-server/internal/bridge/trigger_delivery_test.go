@@ -250,6 +250,120 @@ func TestExpiredApprovalStartsWhatWaited(t *testing.T) {
 	}
 }
 
+// ageTrigger moves the trigger's last change (and fire) into the past, as a
+// process that was down that long finds it.
+func ageTrigger(t *testing.T, runner *Runner, trg *store.Trigger, age time.Duration) {
+	t.Helper()
+	if _, err := runner.db.NewUpdate().Model((*store.Trigger)(nil)).
+		Set("updated_at = ?", time.Now().UTC().Add(-age)).Where("id = ?", trg.ID).Exec(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The tick made up is the first one due since the trigger last fired or
+// changed — one, however many came due after it — and only once it is past.
+func TestMissedTick(t *testing.T) {
+	day := func(d, h, m int) time.Time { return time.Date(2026, 11, d, h, m, 0, 0, time.UTC) }
+	trg := &store.Trigger{Schedule: "CRON_TZ=UTC 0 9 * * *", UpdatedAt: day(1, 10, 0)}
+	if due, missed := missedTick(trg, time.Minute, day(2, 8, 59)); missed {
+		t.Fatalf("before the next tick: missed %v, want nothing", due)
+	}
+	for _, now := range []time.Time{day(2, 9, 0), day(2, 9, 30), day(9, 12, 0)} {
+		if due, missed := missedTick(trg, time.Minute, now); !missed || !due.Equal(day(2, 9, 0)) {
+			t.Fatalf("at %v: due %v missed %v, want the 2nd's 09:00, the first one missed", now, due, missed)
+		}
+	}
+	trg.Schedule = "every morning"
+	if _, missed := missedTick(trg, time.Minute, day(9, 12, 0)); missed {
+		t.Fatal("a schedule the clock does not run missed a tick")
+	}
+
+	// A schedule naming no zone ticks in the server's, though the row's time
+	// is stored in UTC: 16:10 is ten past four where the clock is, not in UTC.
+	zone := time.FixedZone("UTC+8", 8*3600)
+	local := &store.Trigger{Schedule: "10 16 * * *", UpdatedAt: day(16, 8, 8)}
+	if due, missed := missedTick(local, time.Minute, day(16, 8, 9).In(zone)); missed {
+		t.Fatalf("a minute before 16:10 local: missed %v, want nothing", due)
+	}
+	want := time.Date(2026, 11, 16, 16, 10, 0, 0, zone)
+	if due, missed := missedTick(local, time.Minute, day(16, 8, 11).In(zone)); !missed || !due.Equal(want) {
+		t.Fatalf("a minute after 16:10 local: due %v missed %v, want %v", due, missed, want)
+	}
+}
+
+// A start makes up the tick a cron trigger missed while the process was down,
+// once: the make-up is a fire like any other, so the next start finds none.
+// What was switched off, never due or is not on a clock gets nothing.
+func TestStartMakesUpAMissedTickOnce(t *testing.T) {
+	ctx := context.Background()
+	srv := oneShotModel(t)
+	defer srv.Close()
+	runner, sess, wf, sched := triggerFixture(t, srv.URL)
+	missed := agentTrigger(t, sched, sess, wf, store.TriggerKindCron)
+	fresh := agentTrigger(t, sched, sess, wf, store.TriggerKindCron)
+	off := agentTrigger(t, sched, sess, wf, store.TriggerKindCron)
+	hook := agentTrigger(t, sched, sess, wf, store.TriggerKindWebhook)
+	off.Enabled = false
+	if err := sched.store.UpdateSettings(ctx, off.ID, off); err != nil {
+		t.Fatal(err)
+	}
+	for _, trg := range []*store.Trigger{missed, off, hook} {
+		ageTrigger(t, runner, trg, 72*time.Hour)
+	}
+
+	if err := sched.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer sched.Stop()
+	if briefs := awaitTurns(t, runner, sess.ID, 1); len(briefs) != 1 {
+		t.Fatalf("%d turns at start, want the one tick made up for three days down", len(briefs))
+	}
+	rec, err := sched.store.Get(ctx, missed.ID)
+	if err != nil || rec.LastStartedID == "" {
+		t.Fatalf("record = %+v (%v), want the make-up recorded as the trigger's fire", rec, err)
+	}
+	for _, trg := range []*store.Trigger{fresh, off, hook} {
+		if rec, err := sched.store.Get(ctx, trg.ID); err != nil || !rec.LastFiredAt.IsZero() {
+			t.Fatalf("trigger %s fired at %v (%v), want it left alone", trg.ID, rec.LastFiredAt, err)
+		}
+	}
+
+	all, err := sched.store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sched.catchUp(all, time.Now())
+	if briefs := firedBriefs(t, runner, sess.ID); len(briefs) != 1 || len(owedBy(t, runner, missed)) != 0 {
+		t.Fatalf("%d turns after a second start, want the make-up made once", len(briefs))
+	}
+}
+
+// A make-up that has to wait is still one: a second start folds into it.
+func TestMissedTickWaitsLikeAnyOther(t *testing.T) {
+	ctx := context.Background()
+	srv := oneShotModel(t)
+	defer srv.Close()
+	runner, sess, wf, sched := triggerFixture(t, srv.URL)
+	trg := agentTrigger(t, sched, sess, wf, store.TriggerKindCron)
+	ageTrigger(t, runner, trg, 72*time.Hour)
+	release := holdSession(t, runner, sess.ID, trg.AgentConfigID)
+	all, err := sched.store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		sched.catchUp(all, time.Now())
+	}
+	if owed := owedBy(t, runner, trg); len(owed) != 1 {
+		t.Fatalf("%d ticks waiting after two starts, want one", len(owed))
+	}
+	release()
+	runner.drainWakeups(ctx, sess.ID)
+	if briefs := awaitTurns(t, runner, sess.ID, 1); len(briefs) != 1 {
+		t.Fatalf("%d turns, want the one made up", len(briefs))
+	}
+}
+
 // A trigger may have only so many deliveries waiting.
 func TestDeliveryBacklogIsCapped(t *testing.T) {
 	ctx := context.Background()

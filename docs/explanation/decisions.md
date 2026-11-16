@@ -2623,3 +2623,24 @@ one tick to a cron. A sender that read anything but `201` as failure now sees
 `202`.
 
 Rules: [invariant 110](workbench-invariants.md)
+
+### 5.122 A tick missed while down is made up once
+
+Decided 2026-11-16 (workbench invariant 111).
+
+**Decision.** At start, a cron trigger whose schedule had a tick due since it
+last fired or changed gets ONE delivery, keyed as that tick would have been,
+however many came due. It is the same debt any tick is (§5.121).
+
+**Rejected.** Not replaying, as before: a process that is not always up — a
+laptop, a restart at the wrong minute — never runs "every day at nine". One
+delivery per tick missed: a week down is seven turns of one brief. A durable
+next-fire column the scheduler polls: a schema change (§5.59) for what
+`updated_at` already answers, since a recorded fire and an edit both move it.
+A cutoff age: a weekly tick six days late is still that week's.
+
+**Cost accepted.** A start can open with a turn for every cron trigger. A tick
+that waited and was never recorded is made up again at the next start, where
+it folds into the one still waiting or is refused as a replay.
+
+Rules: [invariant 111](workbench-invariants.md)

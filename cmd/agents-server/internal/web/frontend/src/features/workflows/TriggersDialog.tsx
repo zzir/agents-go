@@ -58,7 +58,7 @@ interface TriggerFields {
   brief: string;
 }
 
-const SCHEDULE_HINT = 'Five fields (0 9 * * 1-5), or @hourly / @daily / @every 30m (a minute at least). Ticks missed while the server is down are not replayed.';
+const SCHEDULE_HINT = 'Five fields (0 9 * * 1-5), or @hourly / @daily / @every 30m (a minute at least). A tick missed while down runs once at startup.';
 
 // SecretBox shows a freshly minted webhook secret, once, with what a caller
 // needs: the URL, the two headers, and a signing example.

@@ -95,8 +95,8 @@ curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   field; `@every` no shorter than a minute). Schedules tick in the **server's
   local time zone**, which `GET /api/v1/server` reports as `timezone`, unless
   the schedule names its own: `CRON_TZ=Asia/Shanghai 0 9 * * 1-5`. An enabled
-  cron trigger reports its `next_fire_at`. Ticks missed while the process was
-  down are not replayed.
+  cron trigger reports its `next_fire_at`. A tick that came due while the
+  process was down runs once at startup, however many were missed.
 - `target: workflow` (`workflow_id`) starts an execution into `session_id`;
   `target: agent` (`agent_config_id`) sends the brief as a message of that
   session instead, run by that agent — the scheduled question, its reply
